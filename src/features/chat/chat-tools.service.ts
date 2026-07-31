@@ -141,20 +141,21 @@ export class ChatToolsService {
 
   private removeTask(state: AppState, day: number, taskId: string): ChatToolResult {
     const d = clamp(day);
-    const entry = state.dynamicTaskBank.find((e) => e.id === taskId);
+    const entry = this.taskBank.getById(taskId);
     if (!entry) {
-      return { ok: false, summary: `Day ${d}: task id "${taskId}" user/AI-wale tasks mein nahi mila (built-in seed tasks remove nahi hote — sirf mark done kar sakte ho).` };
+      return { ok: false, summary: `Day ${d}: task id "${taskId}" nahi mila.` };
     }
     const next = state.dynamicTaskBank.filter((e) => e.id !== taskId);
+    if (entry.legacy) next.push({ ...entry, active: false });
     this.store.save({ ...state, dynamicTaskBank: next });
     return { ok: true, summary: `Removed from Day ${d}: ${entry.title} (id:${taskId}).` };
   }
 
   private editTask(state: AppState, action: Extract<ChatToolAction, { action: 'editTask' }>): ChatToolResult {
     const d = clamp(action.day);
-    const entry = state.dynamicTaskBank.find((e) => e.id === action.taskId);
+    const entry = this.taskBank.getById(action.taskId);
     if (!entry) {
-      return { ok: false, summary: `Day ${d}: task id "${action.taskId}" user/AI-wale tasks mein nahi mila (built-in seed tasks edit nahi hote).` };
+      return { ok: false, summary: `Day ${d}: task id "${action.taskId}" nahi mila.` };
     }
     const edited: typeof entry = {
       ...entry,
@@ -162,7 +163,7 @@ export class ChatToolsService {
       estimatedDurationMin: action.durationMin !== undefined ? clamp(action.durationMin) : entry.estimatedDurationMin,
       unlockConditions: action.dayTo !== undefined ? [{ type: 'day' as const, fromDay: clamp(action.dayTo) }] : entry.unlockConditions,
     };
-    const next = state.dynamicTaskBank.map((e) => (e.id === edited.id ? edited : e));
+    const next = [...state.dynamicTaskBank.filter((e) => e.id !== edited.id), edited];
     this.store.save({ ...state, dynamicTaskBank: next });
     const moved = action.dayTo !== undefined ? ` and moved to Day ${clamp(action.dayTo)}` : '';
     return { ok: true, summary: `Edited Day ${d}: ${edited.title} (${edited.estimatedDurationMin}min)${moved}.` };
