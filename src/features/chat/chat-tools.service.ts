@@ -1,5 +1,6 @@
 import type { StateStore } from '../../core/ports/repositories';
 import type { AppState } from '../../core/domain/state';
+import type { TaskBankEntry } from '../../core/domain/task-bank';
 import type { DailyPlan, ProgressionConfig } from '../../core/domain/progress';
 import { DEFAULT_PROGRESSION_CONFIG } from '../../core/domain/progress';
 import type { ChatToolAction, ChatToolResult } from '../../core/domain/chat-tools';
@@ -120,49 +121,49 @@ export class ChatToolsService {
   private async addTask(state: AppState, action: Extract<ChatToolAction, { action: 'addTask' }>): Promise<ChatToolResult> {
     const d = clamp(action.day);
     if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
-    const plan = this.planForDay(state, d);
     const result = await this.taskGeneration.generate(state, {
       intent: action.intent,
       dayNumber: d,
       durationMin: action.durationMin,
     });
-    if (plan.tasks.some((t) => t.entry.id === result.entry.id)) {
-      return { ok: true, summary: `Task already planned for Day ${d}: ${result.entry.title} (id:${result.entry.id})` };
-    }
-    const next = state.dynamicTaskBank.some((e) => e.id === result.entry.id)
-      ? state.dynamicTaskBank
-      : [...state.dynamicTaskBank, result.entry];
+    const entry = result.source === 'bank' ? cloneBankTask(result.entry, d) : moveTaskToDay(result.entry, d);
+    const next = state.dynamicTaskBank.some((e) => e.id === entry.id)
+      ? state.dynamicTaskBank.map((e) => (e.id === entry.id ? entry : e))
+      : [...state.dynamicTaskBank, entry];
     this.store.save({ ...state, dynamicTaskBank: next });
     return {
       ok: true,
-      summary: `Added for Day ${d}: ${result.entry.title} (id:${result.entry.id}, ${result.entry.estimatedDurationMin}min). Tell the user it will appear in that day's plan.`,
+      summary: `Added for Day ${d}: ${entry.title} (id:${entry.id}, ${entry.estimatedDurationMin}min). Tell the user it will appear in that day's plan and can be edited/deleted from Task Bank.`,
     };
   }
 
   private removeTask(state: AppState, day: number, taskId: string): ChatToolResult {
     const d = clamp(day);
-    const entry = state.dynamicTaskBank.find((e) => e.id === taskId);
-    if (!entry) {
-      return { ok: false, summary: `Day ${d}: task id "${taskId}" user/AI-wale tasks mein nahi mila (built-in seed tasks remove nahi hote — sirf mark done kar sakte ho).` };
-    }
-    const next = state.dynamicTaskBank.filter((e) => e.id !== taskId);
+    const dynamic = state.dynamicTaskBank.find((e) => e.id === taskId);
+    const bank = this.taskBank.getById(taskId);
+    const entry = dynamic ?? bank;
+    if (!entry) return { ok: false, summary: `Day ${d}: task id "${taskId}" nahi mila.` };
+    const next = dynamic
+      ? state.dynamicTaskBank.filter((e) => e.id !== taskId)
+      : [...state.dynamicTaskBank, { ...entry, active: false }];
     this.store.save({ ...state, dynamicTaskBank: next });
     return { ok: true, summary: `Removed from Day ${d}: ${entry.title} (id:${taskId}).` };
   }
 
   private editTask(state: AppState, action: Extract<ChatToolAction, { action: 'editTask' }>): ChatToolResult {
     const d = clamp(action.day);
-    const entry = state.dynamicTaskBank.find((e) => e.id === action.taskId);
-    if (!entry) {
-      return { ok: false, summary: `Day ${d}: task id "${action.taskId}" user/AI-wale tasks mein nahi mila (built-in seed tasks edit nahi hote).` };
-    }
+    const dynamic = state.dynamicTaskBank.find((e) => e.id === action.taskId);
+    const entry = dynamic ?? this.taskBank.getById(action.taskId);
+    if (!entry) return { ok: false, summary: `Day ${d}: task id "${action.taskId}" nahi mila.` };
     const edited: typeof entry = {
       ...entry,
       title: action.title !== undefined ? action.title : entry.title,
       estimatedDurationMin: action.durationMin !== undefined ? clamp(action.durationMin) : entry.estimatedDurationMin,
       unlockConditions: action.dayTo !== undefined ? [{ type: 'day' as const, fromDay: clamp(action.dayTo) }] : entry.unlockConditions,
     };
-    const next = state.dynamicTaskBank.map((e) => (e.id === edited.id ? edited : e));
+    const next = dynamic
+      ? state.dynamicTaskBank.map((e) => (e.id === edited.id ? edited : e))
+      : [...state.dynamicTaskBank, edited];
     this.store.save({ ...state, dynamicTaskBank: next });
     const moved = action.dayTo !== undefined ? ` and moved to Day ${clamp(action.dayTo)}` : '';
     return { ok: true, summary: `Edited Day ${d}: ${edited.title} (${edited.estimatedDurationMin}min)${moved}.` };
@@ -195,4 +196,16 @@ export class ChatToolsService {
 function clamp(day: number): number {
   if (!Number.isFinite(day)) return MIN_DAY;
   return Math.min(Math.max(day, MIN_DAY), MAX_DAY);
+}
+
+function moveTaskToDay(entry: TaskBankEntry, day: number): TaskBankEntry {
+  return { ...entry, unlockConditions: [{ type: 'day', fromDay: day }], active: true };
+}
+
+function cloneBankTask(entry: TaskBankEntry, day: number): TaskBankEntry {
+  return {
+    ...moveTaskToDay(entry, day),
+    id: `ai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    legacy: undefined,
+  };
 }
