@@ -1,0 +1,2191 @@
+{
+  "tasks": [
+    {
+      "id": "d1_t1",
+      "habitId": "daily_planning",
+      "title": "Top 3 study goals likho (1 line each)",
+      "description": "Top 3 study goals likho (1 line each)",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 2,
+      "energyLevel": "low",
+      "tags": [
+        "planning",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 0.9,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.4
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 1
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 1,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d1_t2",
+      "habitId": "deep_work",
+      "title": "Study block shuru karne se pehle phone doosre room mein rakho",
+      "description": "Study block shuru karne se pehle phone doosre room mein rakho",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 60,
+      "energyLevel": "high",
+      "tags": [
+        "focus",
+        "study-block",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.1,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "focus",
+        "discipline"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.8
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 1
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 1,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d1_t3",
+      "habitId": "deep_work",
+      "title": "Har study block ke baad 2-min active recall (bina notes dekhe likho kya yaad hai)",
+      "description": "Har study block ke baad 2-min active recall (bina notes dekhe likho kya yaad hai)",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 60,
+      "energyLevel": "high",
+      "tags": [
+        "focus",
+        "study-block",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.1,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "focus",
+        "discipline"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.8
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 1
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 1,
+        "slot": "blocks",
+        "order": 2
+      }
+    },
+    {
+      "id": "d1_t4",
+      "habitId": "night_review",
+      "title": "Likho: Kya complete hua? Sabse badi mistake? Kal ka pehla task?",
+      "description": "Likho: Kya complete hua? Sabse badi mistake? Kal ka pehla task?",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "review",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.9,
+      "backlogSuitability": 0.7,
+      "thinkingSkills": [
+        "reflection",
+        "recall"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.6
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 1
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 1,
+        "slot": "night",
+        "order": 3
+      }
+    },
+    {
+      "id": "d2_t1",
+      "habitId": "time_management",
+      "title": "Aaj ke study blocks ko exact time slots do (e.g. Physics 4-6 PM)",
+      "description": "Aaj ke study blocks ko exact time slots do (e.g. Physics 4-6 PM)",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "planning",
+        "time",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.3,
+      "backlogSuitability": 0.8,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.6
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 4
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 2,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d2_t2",
+      "habitId": "self_discipline",
+      "title": "Jis task ka time-slot hai usi time pe shuru karo — 10 min se zyada late nahi",
+      "description": "Jis task ka time-slot hai usi time pe shuru karo — 10 min se zyada late nahi",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 30,
+      "energyLevel": "high",
+      "tags": [
+        "discipline",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "discipline"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 4
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 2,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d2_t3",
+      "habitId": "consistency",
+      "title": "Consistency check: aaj 3/3 core habits hue? Agar nahi, reason likho (excuse nahi)",
+      "description": "Consistency check: aaj 3/3 core habits hue? Agar nahi, reason likho (excuse nahi)",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "consistency",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.6,
+      "backlogSuitability": 0.7,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.6
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 4
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 2,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d3_t1",
+      "habitId": "top3_priorities",
+      "title": "Top-3 mein se ek ko ⭐ mark karo — ye \"must-happen\" task hai",
+      "description": "Top-3 mein se ek ko ⭐ mark karo — ye \"must-happen\" task hai",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 2,
+      "energyLevel": "low",
+      "tags": [
+        "priorities",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 0.8,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 7
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 3,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d3_t2",
+      "habitId": "task_management",
+      "title": "Poori day ki task list banao (study + personal) ek jagah",
+      "description": "Poori day ki task list banao (study + personal) ek jagah",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "task-list",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 0.9,
+      "thinkingSkills": [
+        "planning",
+        "analysis"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.4
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 7
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 3,
+        "slot": "morning",
+        "order": 1
+      }
+    },
+    {
+      "id": "d3_t3",
+      "habitId": "goal_setting",
+      "title": "Is week ka goal yaad karo — aaj uske direction mein kaam hua?",
+      "description": "Is week ka goal yaad karo — aaj uske direction mein kaam hua?",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "goals",
+        "planning",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.8,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 7
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 3,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d4_t1",
+      "habitId": "distraction_control",
+      "title": "Block start karne se pehle: phone away, tabs band, desk clean (2 min setup)",
+      "description": "Block start karne se pehle: phone away, tabs band, desk clean (2 min setup)",
+      "phase": "jee-core",
+      "difficulty": 2,
+      "estimatedDurationMin": 2,
+      "energyLevel": "low",
+      "tags": [
+        "setup",
+        "focus",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.1,
+      "backlogSuitability": 0.8,
+      "thinkingSkills": [
+        "focus"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.6
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 10
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 4,
+        "slot": "blocks",
+        "order": 0
+      }
+    },
+    {
+      "id": "d4_t2",
+      "habitId": "single_tasking",
+      "title": "Ek block = ek hi subject/topic. Beech mein switch mat karo",
+      "description": "Ek block = ek hi subject/topic. Beech mein switch mat karo",
+      "phase": "jee-core",
+      "difficulty": 2,
+      "estimatedDurationMin": 45,
+      "energyLevel": "high",
+      "tags": [
+        "focus",
+        "study-block",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "focus"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.8
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 10
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 4,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d4_t3",
+      "habitId": "focus_concentration",
+      "title": "45 min focus → 5 min break → repeat (no phone in break)",
+      "description": "45 min focus → 5 min break → repeat (no phone in break)",
+      "phase": "jee-core",
+      "difficulty": 2,
+      "estimatedDurationMin": 50,
+      "energyLevel": "high",
+      "tags": [
+        "focus",
+        "pomodoro",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 0.4,
+      "thinkingSkills": [
+        "focus",
+        "discipline"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.8
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 10
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 4,
+        "slot": "blocks",
+        "order": 2
+      }
+    },
+    {
+      "id": "d5_t1",
+      "habitId": "preparation_readiness",
+      "title": "Kal ke liye books/notes/questions set ready karo (5 min)",
+      "description": "Kal ke liye books/notes/questions set ready karo (5 min)",
+      "phase": "jee-core",
+      "difficulty": 2,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "preparation",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.9,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 13
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 5,
+        "slot": "night",
+        "order": 0
+      }
+    },
+    {
+      "id": "d5_t2",
+      "habitId": "finish_tasks",
+      "title": "Jo task start kiya use complete kiye bina next pe mat jao (chhote chunks mein plan karo)",
+      "description": "Jo task start kiya use complete kiye bina next pe mat jao (chhote chunks mein plan karo)",
+      "phase": "jee-core",
+      "difficulty": 2,
+      "estimatedDurationMin": 60,
+      "energyLevel": "high",
+      "tags": [
+        "execution",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.3,
+      "backlogSuitability": 0.7,
+      "thinkingSkills": [
+        "focus",
+        "discipline"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 13
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 5,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d5_t3",
+      "habitId": "execution",
+      "title": "Plan vs actual compare karo — jo plan kiya wo hua ya nahi?",
+      "description": "Plan vs actual compare karo — jo plan kiya wo hua ya nahi?",
+      "phase": "jee-core",
+      "difficulty": 2,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "execution",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.5,
+      "backlogSuitability": 0.7,
+      "thinkingSkills": [
+        "planning",
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.6
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 13
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 5,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d6_t1",
+      "habitId": "conceptual_understanding",
+      "title": "Naya concept padhne ke baad: apne shabdon mein 2-3 lines mein explain likho (dekhe bina)",
+      "description": "Naya concept padhne ke baad: apne shabdon mein 2-3 lines mein explain likho (dekhe bina)",
+      "phase": "jee-core",
+      "difficulty": 2,
+      "estimatedDurationMin": 15,
+      "energyLevel": "medium",
+      "tags": [
+        "concepts",
+        "active-recall",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Advanced",
+      "revisionSuitability": 0.9,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reasoning",
+        "analysis"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 16
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 6,
+        "slot": "blocks",
+        "order": 0
+      }
+    },
+    {
+      "id": "d6_t2",
+      "habitId": "why_thinking",
+      "title": "Har concept pe likho: \"Ye WHY sach hai?\"",
+      "description": "Har concept pe likho: \"Ye WHY sach hai?\"",
+      "phase": "jee-core",
+      "difficulty": 2,
+      "estimatedDurationMin": 5,
+      "energyLevel": "medium",
+      "tags": [
+        "first-principles",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Advanced",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "reasoning",
+        "creativity"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 16
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 6,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d6_t3",
+      "habitId": "how_what_if_thinking",
+      "title": "Likho \"Ye HOW use hota hai\" + 1 WHAT-IF variation socho",
+      "description": "Likho \"Ye HOW use hota hai\" + 1 WHAT-IF variation socho",
+      "phase": "jee-core",
+      "difficulty": 2,
+      "estimatedDurationMin": 5,
+      "energyLevel": "medium",
+      "tags": [
+        "what-if",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Advanced",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "reasoning",
+        "creativity",
+        "analysis"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 16
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 6,
+        "slot": "blocks",
+        "order": 2
+      }
+    },
+    {
+      "id": "d7_t1",
+      "habitId": "active_recall",
+      "title": "10-min active recall: aaj jo padha wo bina dekhe likho",
+      "description": "10-min active recall: aaj jo padha wo bina dekhe likho",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 10,
+      "energyLevel": "medium",
+      "tags": [
+        "active-recall",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.95,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "recall"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 19
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 7,
+        "slot": "night",
+        "order": 0
+      }
+    },
+    {
+      "id": "d7_t2",
+      "habitId": "daily_revision",
+      "title": "Pichle 3 din ka quick revision (15-20 min)",
+      "description": "Pichle 3 din ka quick revision (15-20 min)",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 20,
+      "energyLevel": "medium",
+      "tags": [
+        "revision",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 1,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "recall",
+        "analysis"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 19
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 7,
+        "slot": "night",
+        "order": 1
+      }
+    },
+    {
+      "id": "d7_t3",
+      "habitId": "mistake_logging",
+      "title": "Koi bhi mistake ho to turant Mistake Log mein likho: Question / Galti / Sahi Method",
+      "description": "Koi bhi mistake ho to turant Mistake Log mein likho: Question / Galti / Sahi Method",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 10,
+      "energyLevel": "medium",
+      "tags": [
+        "mistakes",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.9,
+      "backlogSuitability": 0.7,
+      "thinkingSkills": [
+        "analysis",
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 19
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 7,
+        "slot": "blocks",
+        "order": 2
+      }
+    },
+    {
+      "id": "d8_t1",
+      "habitId": "problem_decomposition",
+      "title": "Tough question dekhte hi: \"ye kis chhote parts mein tootega?\" likho, phir solve karo",
+      "description": "Tough question dekhte hi: \"ye kis chhote parts mein tootega?\" likho, phir solve karo",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 20,
+      "energyLevel": "high",
+      "tags": [
+        "problem-solving",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Advanced",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "systems"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.95
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 22
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 8,
+        "slot": "blocks",
+        "order": 0
+      }
+    },
+    {
+      "id": "d8_t2",
+      "habitId": "problem_solving",
+      "title": "Roz min 5 questions solve karo jo pehle kabhi try nahi kiye",
+      "description": "Roz min 5 questions solve karo jo pehle kabhi try nahi kiye",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 90,
+      "energyLevel": "high",
+      "tags": [
+        "problem-solving",
+        "unseen",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Challenge",
+      "revisionSuitability": 0.5,
+      "backlogSuitability": 0.4,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 1
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 22
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 8,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d8_t3",
+      "habitId": "error_analysis",
+      "title": "Aaj ki galtiyon ko classify karo: Concept gap? Silly mistake? Time pressure?",
+      "description": "Aaj ki galtiyon ko classify karo: Concept gap? Silly mistake? Time pressure?",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 10,
+      "energyLevel": "medium",
+      "tags": [
+        "mistakes",
+        "error-analysis",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.9,
+      "backlogSuitability": 0.7,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 22
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 8,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d9_t1",
+      "habitId": "logical_thinking",
+      "title": "Solve karte time har step justify karo: \"ye step isliye kyunki...\"",
+      "description": "Solve karte time har step justify karo: \"ye step isliye kyunki...\"",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 20,
+      "energyLevel": "high",
+      "tags": [
+        "reasoning",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Advanced",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.95
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 25
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 9,
+        "slot": "blocks",
+        "order": 0
+      }
+    },
+    {
+      "id": "d9_t2",
+      "habitId": "critical_thinking",
+      "title": "Answer aane ke baad khud se poocho: \"ye galat kaise ho sakta hai?\" phir check karo",
+      "description": "Answer aane ke baad khud se poocho: \"ye galat kaise ho sakta hai?\" phir check karo",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 5,
+      "energyLevel": "medium",
+      "tags": [
+        "critical-thinking",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Advanced",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "reasoning",
+        "verification"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 25
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 9,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d9_t3",
+      "habitId": "analytical_thinking",
+      "title": "Naya question dekhte hi 10 sec ruko: \"ye kis concept/chapter ka hai?\" pehle identify karo",
+      "description": "Naya question dekhte hi 10 sec ruko: \"ye kis concept/chapter ka hai?\" pehle identify karo",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 5,
+      "energyLevel": "medium",
+      "tags": [
+        "analytical",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Advanced",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "analysis"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 25
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 9,
+        "slot": "blocks",
+        "order": 2
+      }
+    },
+    {
+      "id": "d10_t1",
+      "habitId": "observation",
+      "title": "Question padhte hi saare given data ek side underline/note karo",
+      "description": "Question padhte hi saare given data ek side underline/note karo",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "medium",
+      "tags": [
+        "observation",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Advanced",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "analysis",
+        "focus"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.95
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 28
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 10,
+        "slot": "blocks",
+        "order": 0
+      }
+    },
+    {
+      "id": "d10_t2",
+      "habitId": "detail_awareness",
+      "title": "Units aur special conditions (e.g. x>0, integer only) double-check karo before solving",
+      "description": "Units aur special conditions (e.g. x>0, integer only) double-check karo before solving",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "medium",
+      "tags": [
+        "accuracy",
+        "details",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Advanced",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "verification"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.95
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 28
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 10,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d10_t3",
+      "habitId": "pattern_recognition",
+      "title": "Solve karte time socho: \"aisa question maine pehle kahin dekha hai?\"",
+      "description": "Solve karte time socho: \"aisa question maine pehle kahin dekha hai?\"",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 10,
+      "energyLevel": "medium",
+      "tags": [
+        "patterns",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Advanced",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 28
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 10,
+        "slot": "blocks",
+        "order": 2
+      }
+    },
+    {
+      "id": "d11_t1",
+      "habitId": "verification",
+      "title": "Answer aane ke baad: reverse-check ya estimation se verify karo",
+      "description": "Answer aane ke baad: reverse-check ya estimation se verify karo",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 10,
+      "energyLevel": "medium",
+      "tags": [
+        "verification",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "verification"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 31
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 11,
+        "slot": "blocks",
+        "order": 0
+      }
+    },
+    {
+      "id": "d11_t2",
+      "habitId": "double_checking",
+      "title": "Final answer likhne se pehle poori working ek baar top se re-read karo",
+      "description": "Final answer likhne se pehle poori working ek baar top se re-read karo",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "medium",
+      "tags": [
+        "accuracy",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "verification"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 31
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 11,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d11_t3",
+      "habitId": "progress_tracking",
+      "title": "Aaj ka completion % note karo (Progress tab mein dikhega)",
+      "description": "Aaj ka completion % note karo (Progress tab mein dikhega)",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 2,
+      "energyLevel": "low",
+      "tags": [
+        "tracking",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.6,
+      "backlogSuitability": 0.8,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 31
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 11,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d12_t1",
+      "habitId": "daily_review_deep",
+      "title": "Deeper night review: Complete hua? Mistakes? Time waste kahan? Kal ka focus? Energy kaisa tha?",
+      "description": "Deeper night review: Complete hua? Mistakes? Time waste kahan? Kal ka focus? Energy kaisa tha?",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 8,
+      "energyLevel": "low",
+      "tags": [
+        "review",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.9,
+      "backlogSuitability": 0.7,
+      "thinkingSkills": [
+        "reflection",
+        "analysis"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.6
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 34
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 12,
+        "slot": "night",
+        "order": 0
+      }
+    },
+    {
+      "id": "d12_t2",
+      "habitId": "weekly_review",
+      "title": "Weekly Review tab open karo — is week ke patterns dekho",
+      "description": "Weekly Review tab open karo — is week ke patterns dekho",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 15,
+      "energyLevel": "medium",
+      "tags": [
+        "review",
+        "weekly"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.9,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "reflection",
+        "analysis",
+        "systems"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.6
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 34
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 12,
+        "slot": "weekly",
+        "order": 1
+      }
+    },
+    {
+      "id": "d12_t3",
+      "habitId": "performance_review",
+      "title": "Agar aaj koi test/mock hua, turant structured review karo (marks/time/error breakdown)",
+      "description": "Agar aaj koi test/mock hua, turant structured review karo (marks/time/error breakdown)",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 20,
+      "energyLevel": "medium",
+      "tags": [
+        "mock",
+        "review",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.9,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "analysis",
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 34
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 12,
+        "slot": "blocks",
+        "order": 2
+      }
+    },
+    {
+      "id": "d13_t1",
+      "habitId": "self_reflection",
+      "title": "Deep reflection: pichle 39 din mein sabse bada mindset shift kya raha?",
+      "description": "Deep reflection: pichle 39 din mein sabse bada mindset shift kya raha?",
+      "phase": "jee-core",
+      "difficulty": 5,
+      "estimatedDurationMin": 20,
+      "energyLevel": "low",
+      "tags": [
+        "reflection",
+        "monthly",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "reflection",
+        "systems"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 37
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 13,
+        "slot": "night",
+        "order": 0
+      }
+    },
+    {
+      "id": "d13_t2",
+      "habitId": "self_reflection",
+      "title": "Saare 12 levels ke habits ek saath run karo — koi bhi drop nahi hona chahiye",
+      "description": "Saare 12 levels ke habits ek saath run karo — koi bhi drop nahi hona chahiye",
+      "phase": "jee-core",
+      "difficulty": 5,
+      "estimatedDurationMin": 20,
+      "energyLevel": "low",
+      "tags": [
+        "reflection",
+        "monthly",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "reflection",
+        "systems"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 37
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 13,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d13_t3",
+      "habitId": "self_reflection",
+      "title": "Month 1 Assessment complete karo (Progress tab) — sabhi 21 habits ka score dekho",
+      "description": "Month 1 Assessment complete karo (Progress tab) — sabhi 21 habits ka score dekho",
+      "phase": "jee-core",
+      "difficulty": 5,
+      "estimatedDurationMin": 20,
+      "energyLevel": "low",
+      "tags": [
+        "reflection",
+        "monthly"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "reflection",
+        "systems"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 37
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 13,
+        "slot": "monthly",
+        "order": 2
+      }
+    },
+    {
+      "id": "mock_1",
+      "habitId": "protocols",
+      "title": "Full-syllabus mock test complete kiya (exact JEE timing follow ki)",
+      "description": "Full-syllabus mock test complete kiya (exact JEE timing follow ki)",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 180,
+      "energyLevel": "high",
+      "tags": [
+        "mock",
+        "weekly"
+      ],
+      "prerequisites": [],
+      "taskType": "Challenge",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.4,
+      "thinkingSkills": [
+        "analysis",
+        "recall",
+        "verification"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 1
+      },
+      "unlockConditions": [
+        {
+          "type": "mock-sunday"
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 0,
+        "slot": "weekly",
+        "order": 0
+      }
+    },
+    {
+      "id": "mock_2",
+      "habitId": "protocols",
+      "title": "Mock ke turant baad OMR/answers ka rough self-check kiya (same din)",
+      "description": "Mock ke turant baad OMR/answers ka rough self-check kiya (same din)",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 180,
+      "energyLevel": "high",
+      "tags": [
+        "mock",
+        "weekly"
+      ],
+      "prerequisites": [],
+      "taskType": "Challenge",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.4,
+      "thinkingSkills": [
+        "analysis",
+        "recall",
+        "verification"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 1
+      },
+      "unlockConditions": [
+        {
+          "type": "mock-sunday"
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 0,
+        "slot": "weekly",
+        "order": 1
+      }
+    },
+    {
+      "id": "mock_3",
+      "habitId": "protocols",
+      "title": "Har galat question Mistake Log mein daala (concept gap / silly / time pressure)",
+      "description": "Har galat question Mistake Log mein daala (concept gap / silly / time pressure)",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 180,
+      "energyLevel": "high",
+      "tags": [
+        "mock",
+        "weekly"
+      ],
+      "prerequisites": [],
+      "taskType": "Challenge",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.4,
+      "thinkingSkills": [
+        "analysis",
+        "recall",
+        "verification"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 1
+      },
+      "unlockConditions": [
+        {
+          "type": "mock-sunday"
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 0,
+        "slot": "weekly",
+        "order": 2
+      }
+    },
+    {
+      "id": "mock_4",
+      "habitId": "protocols",
+      "title": "Section-wise time-spent breakdown likha (Physics/Chem/Maths kitna time liya)",
+      "description": "Section-wise time-spent breakdown likha (Physics/Chem/Maths kitna time liya)",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 180,
+      "energyLevel": "high",
+      "tags": [
+        "mock",
+        "weekly"
+      ],
+      "prerequisites": [],
+      "taskType": "Challenge",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.4,
+      "thinkingSkills": [
+        "analysis",
+        "recall",
+        "verification"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 1
+      },
+      "unlockConditions": [
+        {
+          "type": "mock-sunday"
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 0,
+        "slot": "weekly",
+        "order": 3
+      }
+    },
+    {
+      "id": "mock_5",
+      "habitId": "protocols",
+      "title": "Top 3 improvement actions agle week ke liye likhe",
+      "description": "Top 3 improvement actions agle week ke liye likhe",
+      "phase": "jee-core",
+      "difficulty": 4,
+      "estimatedDurationMin": 180,
+      "energyLevel": "high",
+      "tags": [
+        "mock",
+        "weekly"
+      ],
+      "prerequisites": [],
+      "taskType": "Challenge",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.4,
+      "thinkingSkills": [
+        "analysis",
+        "recall",
+        "verification"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 1
+      },
+      "unlockConditions": [
+        {
+          "type": "mock-sunday"
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 0,
+        "slot": "weekly",
+        "order": 4
+      }
+    },
+    {
+      "id": "exam_1",
+      "habitId": "protocols",
+      "title": "Aaj koi NAYA topic nahi — sirf revision aur practice",
+      "description": "Aaj koi NAYA topic nahi — sirf revision aur practice",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 15,
+      "energyLevel": "medium",
+      "tags": [
+        "exam",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.4,
+      "thinkingSkills": [
+        "recall",
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "exam-window",
+          "daysBeforeExam": 30
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 0,
+        "slot": "night",
+        "order": 0
+      }
+    },
+    {
+      "id": "exam_2",
+      "habitId": "protocols",
+      "title": "Formula sheet / short notes revise kiye (20-30 min)",
+      "description": "Formula sheet / short notes revise kiye (20-30 min)",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 15,
+      "energyLevel": "medium",
+      "tags": [
+        "exam",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.4,
+      "thinkingSkills": [
+        "recall",
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "exam-window",
+          "daysBeforeExam": 30
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 0,
+        "slot": "night",
+        "order": 1
+      }
+    },
+    {
+      "id": "exam_3",
+      "habitId": "protocols",
+      "title": "Mistake Log ke top repeated errors dobara padhe",
+      "description": "Mistake Log ke top repeated errors dobara padhe",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 15,
+      "energyLevel": "medium",
+      "tags": [
+        "exam",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.4,
+      "thinkingSkills": [
+        "recall",
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "exam-window",
+          "daysBeforeExam": 30
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 0,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "exam_4",
+      "habitId": "protocols",
+      "title": "Ek timed practice set solve kiya (exam-pressure simulate)",
+      "description": "Ek timed practice set solve kiya (exam-pressure simulate)",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 15,
+      "energyLevel": "medium",
+      "tags": [
+        "exam",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.4,
+      "thinkingSkills": [
+        "recall",
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "exam-window",
+          "daysBeforeExam": 30
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 0,
+        "slot": "night",
+        "order": 3
+      }
+    },
+    {
+      "id": "exam_5",
+      "habitId": "protocols",
+      "title": "Sleep 7+ hours ka target — koi late-night cramming nahi",
+      "description": "Sleep 7+ hours ka target — koi late-night cramming nahi",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 15,
+      "energyLevel": "medium",
+      "tags": [
+        "exam",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.4,
+      "thinkingSkills": [
+        "recall",
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "exam-window",
+          "daysBeforeExam": 30
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 0,
+        "slot": "night",
+        "order": 4
+      }
+    },
+    {
+      "id": "exam_6",
+      "habitId": "protocols",
+      "title": "Admit card / stationery / ID check (agar exam week hai)",
+      "description": "Admit card / stationery / ID check (agar exam week hai)",
+      "phase": "jee-core",
+      "difficulty": 3,
+      "estimatedDurationMin": 15,
+      "energyLevel": "medium",
+      "tags": [
+        "exam",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.8,
+      "backlogSuitability": 0.4,
+      "thinkingSkills": [
+        "recall",
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "exam-window",
+          "daysBeforeExam": 30
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 0,
+        "slot": "night",
+        "order": 5
+      }
+    },
+    {
+      "id": "ai_rev_quick_recall",
+      "habitId": "active_recall",
+      "title": "Quick recall sweep: kal ke top concepts bina dekhe likho (5 min)",
+      "description": "Actively recall yesterday's top concepts in writing without looking at notes.",
+      "phase": "jee-core",
+      "difficulty": 2,
+      "estimatedDurationMin": 10,
+      "energyLevel": "low",
+      "tags": [
+        "revision",
+        "recall"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 1,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "recall"
+      ],
+      "jeeRelevance": {
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "revision",
+          "dueAfterDays": 1
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "ai_rev_mistake_scan",
+      "habitId": "mistake_logging",
+      "title": "Mistake Log review: top 5 repeated errors dobara dekho (10 min)",
+      "description": "Re-read your most recent mistake log entries and identify repeated error classes.",
+      "phase": "jee-core",
+      "difficulty": 2,
+      "estimatedDurationMin": 10,
+      "energyLevel": "medium",
+      "tags": [
+        "revision",
+        "mistakes"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 0.95,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "analysis",
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "revision",
+          "dueAfterDays": 2
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "ai_rev_formula_sheet",
+      "habitId": "daily_revision",
+      "title": "Formula sheet / short notes revise karo (20 min)",
+      "description": "Revise formulas and short notes of recently studied chapters.",
+      "phase": "jee-core",
+      "difficulty": 2,
+      "estimatedDurationMin": 20,
+      "energyLevel": "low",
+      "tags": [
+        "revision",
+        "formulas"
+      ],
+      "prerequisites": [],
+      "taskType": "Review",
+      "revisionSuitability": 1,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "recall"
+      ],
+      "jeeRelevance": {
+        "score": 0.9
+      },
+      "unlockConditions": [
+        {
+          "type": "revision",
+          "dueAfterDays": 3
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "ai_bk_finish_orphan",
+      "habitId": "finish_tasks",
+      "title": "Ek adhoora task close karo (15 min)",
+      "description": "Pick one incomplete task from your backlog and finish it in a focused 15-minute sprint.",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 15,
+      "energyLevel": "low",
+      "tags": [
+        "backlog",
+        "execution"
+      ],
+      "prerequisites": [],
+      "taskType": "Recovery",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 1,
+      "thinkingSkills": [
+        "focus",
+        "discipline"
+      ],
+      "jeeRelevance": {
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "backlog",
+          "thresholdDays": 1
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "ai_bk_cleanup_top3",
+      "habitId": "task_management",
+      "title": "Backlog cleanup: top-3 pending items list karo aur ek chuno (10 min)",
+      "description": "List the three most important pending items and pick one to clear today.",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 10,
+      "energyLevel": "low",
+      "tags": [
+        "backlog",
+        "planning"
+      ],
+      "prerequisites": [],
+      "taskType": "Recovery",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 1,
+      "thinkingSkills": [
+        "planning",
+        "analysis"
+      ],
+      "jeeRelevance": {
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "backlog",
+          "thresholdDays": 2
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "ai_gap_reentry",
+      "habitId": "self_discipline",
+      "title": "Re-entry: aaj ke liye sirf 2 core habits chuno (5 min)",
+      "description": "After a missed streak, pick just two core habits to restart gently instead of everything.",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "recovery",
+        "reentry"
+      ],
+      "prerequisites": [],
+      "taskType": "Recovery",
+      "revisionSuitability": 0.1,
+      "backlogSuitability": 0.8,
+      "thinkingSkills": [
+        "planning",
+        "discipline"
+      ],
+      "jeeRelevance": {
+        "score": 0.4
+      },
+      "unlockConditions": [
+        {
+          "type": "recovery"
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "ai_gap_plan_review",
+      "habitId": "night_review",
+      "title": "Gap review: kya hua aur kal ka chhota plan (10 min)",
+      "description": "Reflect on why days were missed and write a small, realistic plan for tomorrow.",
+      "phase": "jee-core",
+      "difficulty": 1,
+      "estimatedDurationMin": 10,
+      "energyLevel": "low",
+      "tags": [
+        "recovery",
+        "reflection"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.7,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "score": 0.4
+      },
+      "unlockConditions": [
+        {
+          "type": "recovery"
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "ai_weak_skill_review",
+      "habitId": "active_recall",
+      "title": "Weak habit rescue: 10-min focused session on weakest habit",
+      "description": "A short, low-pressure session targeting the habit with the lowest recent score.",
+      "phase": "jee-core",
+      "difficulty": 2,
+      "estimatedDurationMin": 10,
+      "energyLevel": "low",
+      "tags": [
+        "weak-habit",
+        "recovery"
+      ],
+      "prerequisites": [],
+      "taskType": "Recovery",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "focus"
+      ],
+      "jeeRelevance": {
+        "score": 0.6
+      },
+      "unlockConditions": [
+        {
+          "type": "recovery"
+        }
+      ],
+      "active": true
+    }
+  ]
+}

@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import type { AppState } from '../types';
-import { loadState, saveState, todayISO } from './storage';
+import { emptyAppState } from '../core/domain/state';
+import { container } from '../di/container';
+import { todayISO } from './storage';
 
+/**
+ * Single source of truth for the UI. Reads/writes through the DI container's
+ * StateStore so every service sees the same object graph the screens render.
+ */
 export function useAppState() {
-  const [state, setState] = useState<AppState>(() => loadState());
+  const [state, setState] = useState<AppState>(() => container.store.get());
   const [today, setToday] = useState<string>(() => todayISO());
-
-  useEffect(() => {
-    saveState(state);
-  }, [state]);
 
   // Keep "today" fresh if the app is left open across midnight
   useEffect(() => {
@@ -17,7 +19,16 @@ export function useAppState() {
   }, []);
 
   function update(updater: (s: AppState) => AppState) {
-    setState((s) => updater(s));
+    setState((s) => {
+      const next = updater(s);
+      container.store.save(next);
+      return next;
+    });
+  }
+
+  /** Re-reads the store snapshot (after service-level mutations, e.g. chat tools). */
+  function refresh() {
+    setState(container.store.get());
   }
 
   function startJourney() {
@@ -26,18 +37,9 @@ export function useAppState() {
 
   function resetAll() {
     if (confirm('Poora progress reset karna hai? Ye undo nahi ho sakta.')) {
-      update(() => ({
-        startDateISO: null,
-        bonusDaysUsed: 0,
-        taskLogs: {},
-        weeklyReviews: [],
-        monthlyAssessments: [],
-        failureLog: [],
-        examDateISO: null,
-        clearedLevels: [],
-      }));
+      update(() => emptyAppState());
     }
   }
 
-  return { state, today, update, startJourney, resetAll };
+  return { state, today, update, refresh, startJourney, resetAll };
 }
