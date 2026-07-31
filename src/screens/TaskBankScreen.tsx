@@ -14,13 +14,15 @@ const EMPTY_FORM = { title: '', description: '', day: 1, durationMin: 30, energy
 
 export default function TaskBankScreen({ state, update }: { state: AppState; update: (fn: (s: AppState) => AppState) => void }) {
   const dynamic = state.dynamicTaskBank;
-  const seedCount = useMemo(() => {
+  const allTasks = useMemo(() => {
     try {
-      return container.taskBank.getAll().length - dynamic.length;
+      return container.taskBank.getAll();
     } catch {
-      return 0;
+      return dynamic.filter((entry) => entry.active);
     }
-  }, [dynamic.length]);
+  }, [dynamic]);
+  const seedCount = allTasks.filter((entry) => entry.legacy).length;
+  const customCount = allTasks.length - seedCount;
 
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -28,7 +30,7 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
   const [editDraft, setEditDraft] = useState<{ title: string; day: number; durationMin: number } | null>(null);
   const [notice, setNotice] = useState('');
 
-  const sorted = [...dynamic].sort((a, b) => unlockDay(a) - unlockDay(b));
+  const sorted = [...allTasks].sort((a, b) => unlockDay(a) - unlockDay(b) || a.title.localeCompare(b.title));
 
   function flash(msg: string) {
     setNotice(msg);
@@ -76,27 +78,44 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
       flash('Title khaali nahi ho sakta.');
       return;
     }
-    update((s) => ({
-      ...s,
-      dynamicTaskBank: s.dynamicTaskBank.map((e) =>
-        e.id === editingId
-          ? {
-              ...e,
-              title: editDraft.title.trim(),
-              estimatedDurationMin: clampInt(editDraft.durationMin, 5, 180),
-              unlockConditions: [{ type: 'day', fromDay: clampInt(editDraft.day, 1, 90) }],
-            }
-          : e,
-      ),
-    }));
+    update((s) => {
+      const existing = allTasks.find((e) => e.id === editingId);
+      if (!existing) return s;
+      const edited = {
+        ...existing,
+        title: editDraft.title.trim(),
+        estimatedDurationMin: clampInt(editDraft.durationMin, 5, 180),
+        unlockConditions: [{ type: 'day' as const, fromDay: clampInt(editDraft.day, 1, 90) }],
+        active: true,
+      };
+      const found = s.dynamicTaskBank.some((e) => e.id === editingId);
+      return {
+        ...s,
+        dynamicTaskBank: found
+          ? s.dynamicTaskBank.map((e) => (e.id === editingId ? edited : e))
+          : [...s.dynamicTaskBank, edited],
+      };
+    });
     setEditingId(null);
     setEditDraft(null);
     flash('Task edit ho gaya.');
   }
 
-  function deleteTask(id: string) {
+  function deleteTask(entry: TaskBankEntry) {
     if (!window.confirm('Ye task task bank se hat jayega. Confirm?')) return;
-    update((s) => ({ ...s, dynamicTaskBank: s.dynamicTaskBank.filter((e) => e.id !== id) }));
+    update((s) => {
+      if (entry.legacy) {
+        const deleted = { ...entry, active: false };
+        const found = s.dynamicTaskBank.some((e) => e.id === entry.id);
+        return {
+          ...s,
+          dynamicTaskBank: found
+            ? s.dynamicTaskBank.map((e) => (e.id === entry.id ? deleted : e))
+            : [...s.dynamicTaskBank, deleted],
+        };
+      }
+      return { ...s, dynamicTaskBank: s.dynamicTaskBank.filter((e) => e.id !== entry.id) };
+    });
     flash('Task delete ho gaya.');
   }
 
@@ -114,8 +133,8 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
             <ListTodo size={17} color="var(--color-light)" />
           </span>
           <div>
-            <p className="font-display text-sm font-bold">{dynamic.length} user/AI task{dynamic.length === 1 ? '' : 's'}</p>
-            <p className="text-[11px] text-muted">{seedCount} built-in seed tasks · unlocked tasks har din ke plan mein aate hain</p>
+            <p className="font-display text-sm font-bold">{allTasks.length} active task{allTasks.length === 1 ? '' : 's'}</p>
+            <p className="text-[11px] text-muted">{seedCount} built-in · {customCount} user/AI · unlocked tasks har din ke plan mein aate hain</p>
           </div>
         </div>
         <button className="btn btn-primary px-3 py-2 text-xs font-bold" onClick={() => setShowForm((v) => !v)}>
@@ -167,9 +186,9 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
         </div>
       )}
 
-      <SectionHeader title="User / AI tasks" subtitle="Chat se aur yahan se add hue tasks" />
+      <SectionHeader accent="var(--color-l)" title="All active tasks" meta="Built-in + Chat + manual" />
       {sorted.length === 0 ? (
-        <div className="card p-4 text-xs text-muted">Abhi koi user/AI task nahi hai. "Add task" se banayein, ya chat mein bolo.</div>
+        <div className="card p-4 text-xs text-muted">Abhi koi task nahi hai. "Add task" se banayein, ya chat mein bolo.</div>
       ) : (
         <div className="space-y-2">
           {sorted.map((entry) => {
@@ -198,14 +217,14 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
                     <div className="min-w-0">
                       <p className="font-semibold leading-snug">{entry.title}</p>
                       <p className="mt-0.5 text-[10px] text-muted">
-                        Day {day} · {entry.estimatedDurationMin}min · {entry.energyLevel} · {entry.taskType}
+                        Day {day} · {entry.estimatedDurationMin}min · {entry.energyLevel} · {entry.taskType} · {entry.legacy ? 'built-in' : 'user/AI'}
                       </p>
                     </div>
                     <div className="flex shrink-0 gap-1">
                       <button className="btn btn-ghost px-2 py-1" onClick={() => startEdit(entry)} aria-label="Edit">
                         <Pencil size={13} />
                       </button>
-                      <button className="btn btn-ghost px-2 py-1 text-red-400" onClick={() => deleteTask(entry.id)} aria-label="Delete">
+                      <button className="btn btn-ghost px-2 py-1 text-red-400" onClick={() => deleteTask(entry)} aria-label="Delete">
                         <Trash2 size={13} />
                       </button>
                     </div>
