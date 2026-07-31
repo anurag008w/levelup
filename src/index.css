@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+@import "@fontsource/space-grotesk/500.css";
+@import "@fontsource/space-grotesk/700.css";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/ibm-plex-mono/600.css";
+
+@theme {
+  --color-bg: #0b1220;
+  --color-panel: #121b2e;
+  --color-panel-raised: #17223a;
+  --color-grid: #1e2a42;
+  --color-border: #24304a;
+  --color-text: #e8edf6;
+  --color-muted: #8592ad;
+  --color-l: #4fd1c5;
+  --color-l-dim: #245a55;
+  --color-light: #f2a65a;
+  --color-light-dim: #6b4a24;
+  --color-success: #7cd992;
+  --color-danger: #e5484d;
+  --color-peak: #b892f2;
+
+  --font-display: "Space Grotesk", sans-serif;
+  --font-body: "IBM Plex Sans", sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  background-image:
+    linear-gradient(var(--color-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-grid) 1px, transparent 1px);
+  background-size: 28px 28px;
+  background-attachment: fixed;
+  -webkit-tap-highlight-color: transparent;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 999px;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* checkbox custom look */
+.task-check {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  border-radius: 6px;
+  border: 2px solid var(--color-border);
+  background: var(--color-panel);
+  display: inline-block;
+  position: relative;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.task-check:checked {
+  background: var(--color-success);
+  border-color: var(--color-success);
+}
+.task-check:checked::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  width: 6px;
+  height: 11px;
+  border: solid #0b1220;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
