@@ -37,11 +37,10 @@ your ENTIRE reply must be exactly one JSON object, no extra text:
 - Plan for a day: {"action":"getPlan","day":N}
 - Overview of a range (max 7 days): {"action":"getRange","fromDay":A,"toDay":B}
 - Add a task: {"action":"addTask","day":N,"intent":"<what task>","durationMin":30}
-- Edit a task (only user/AI-added tasks; change title/duration/day): {"action":"editTask","day":N,"taskId":"<id from plan>","durationMin":20,"dayTo":5}
-- Remove a task (only user/AI-added tasks): {"action":"removeTask","day":N,"taskId":"<id from plan>"}
+- Edit a task (built-in or user/AI-added; change title/duration/day): {"action":"editTask","day":N,"taskId":"<id from plan>","durationMin":20,"dayTo":5}
+- Remove a task (built-in or user/AI-added): {"action":"removeTask","day":N,"taskId":"<id from plan>"}
 - Mark a task done: {"action":"markDone","day":N,"taskId":"<id from plan>"}
 
-Note: seed (built-in) tasks can only be marked done, not removed or edited.
 For ANYTHING else (concepts, motivation, general questions) reply normally in Hinglish.`;
 
 /** Correction prompt used when the model answered with prose instead of a tool action. */
