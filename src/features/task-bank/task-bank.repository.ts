@@ -39,11 +39,10 @@ export class TaskBankRepositoryImpl implements TaskBankRepository, HabitReposito
   }
 
   getAll(): TaskBankEntry[] {
-    const dynamic = this.dynamicEntries();
-    const overrides = new Map(dynamic.map((entry) => [entry.id, entry]));
-    const merged = this.seed.tasks.map((entry) => overrides.get(entry.id) ?? entry);
-    const custom = dynamic.filter((entry) => !this.seed.tasks.some((seed) => seed.id === entry.id));
-    return [...merged, ...custom].filter((entry) => entry.active);
+    const byId = new Map<string, TaskBankEntry>();
+    for (const entry of this.seed.tasks) byId.set(entry.id, entry);
+    for (const entry of this.dynamicEntries()) byId.set(entry.id, entry);
+    return [...byId.values()];
   }
 
   getById(id: string): TaskBankEntry | undefined {

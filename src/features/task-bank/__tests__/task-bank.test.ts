@@ -54,20 +54,17 @@ describe('task bank search', () => {
     expect(short.every((t) => t.estimatedDurationMin <= 5)).toBe(true);
   });
 
-  it('lets dynamic entries override or hide seed tasks', () => {
-    let state = { dynamicTaskBank: [] } as unknown as AppState;
+
+  it('lets dynamic entries override or disable built-in seed tasks', () => {
+    const editedSeed = { ...buildSeed().tasks.find((t) => t.id === 'd1_t1')!, title: 'Edited seed task title' };
     const repo = new TaskBankRepositoryImpl(
-      { load: () => state, save: (next) => { state = next; }, clear: () => undefined },
+      { load: () => ({ dynamicTaskBank: [editedSeed, { ...buildSeed().tasks.find((t) => t.id === 'd1_t2')!, active: false }] }) as unknown as AppState, save: () => undefined, clear: () => undefined },
       buildSeed(),
     );
-    const original = repo.getById('d1_t1');
-    expect(original?.active).toBe(true);
-    repo.saveEntry({ ...original!, title: 'Edited seed title' });
-    expect(repo.getById('d1_t1')?.title).toBe('Edited seed title');
-    repo.saveEntry({ ...original!, active: false });
-    expect(repo.getById('d1_t1')).toBeUndefined();
+    const bank = new TaskBankServiceImpl(repo);
+    expect(bank.getById('d1_t1')?.title).toBe('Edited seed task title');
+    expect(bank.search({ unlock: snapshot, activeOnly: true }).map((t) => t.id)).not.toContain('d1_t2');
   });
-
 });
 
 describe('rankCandidates', () => {
