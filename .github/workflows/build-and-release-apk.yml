@@ -1,0 +1,94 @@
+name: Build and Release APK
+
+# Runs automatically on every push to main, on version tags, and can also
+# be triggered manually from the Actions tab ("Run workflow").
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Cancel an older run on the same branch/tag if a newer push comes in
+# while it's still building, so we don't race two builds to the same
+# "latest" release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: "npm"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: "temurin"
+          java-version: "21"
+          cache: "gradle"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Sync Capacitor Android project
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK with version info
+        id: apk
+        run: |
+          mkdir -p release-out
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="$(git rev-parse --short HEAD)"
+          fi
+          NAME="human-os-${VERSION}.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "release-out/${NAME}"
+          echo "apk_path=release-out/${NAME}" >> "$GITHUB_OUTPUT"
+          echo "apk_name=${NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: human-os-apk
+          path: ${{ steps.apk.outputs.apk_path }}
+
+      - name: Publish to "latest" release (always up to date)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: latest
+          name: "Human OS — latest build"
+          body: "Auto-built from the latest `main` commit (${{ github.sha }}). Download the APK below and install it on your Android phone."
+          prerelease: true
+          make_latest: true
+          files: ${{ steps.apk.outputs.apk_path }}
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          name: "Human OS ${{ github.ref_name }}"
+          files: ${{ steps.apk.outputs.apk_path }}
