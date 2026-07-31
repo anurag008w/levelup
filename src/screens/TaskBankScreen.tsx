@@ -90,7 +90,7 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
     flash('Task edit ho gaya.');
   }
 
-  function deleteTask(id: string) {
+  function deleteTask(entry: TaskBankEntry) {
     if (!window.confirm('Ye task task bank se hat jayega. Confirm?')) return;
     update((s) => {
       const entry = container.taskBank.getById(id);
@@ -211,7 +211,7 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
                       <button className="btn btn-ghost px-2 py-1" onClick={() => startEdit(entry)} aria-label="Edit">
                         <Pencil size={13} />
                       </button>
-                      <button className="btn btn-ghost px-2 py-1 text-red-400" onClick={() => deleteTask(entry.id)} aria-label="Delete">
+                      <button className="btn btn-ghost px-2 py-1 text-red-400" onClick={() => deleteTask(entry)} aria-label="Delete">
                         <Trash2 size={13} />
                       </button>
                     </div>

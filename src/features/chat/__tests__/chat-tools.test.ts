@@ -154,6 +154,20 @@ describe('ChatToolsService', () => {
     expect(store.get().dynamicTaskBank.some((e) => e.id === 'ai-chat-test')).toBe(true);
   });
 
+
+
+  it('addTask clones bank matches into editable dynamic tasks', async () => {
+    const store = makeStore();
+    const { tools, taskGeneration } = makeTools(store);
+    taskGeneration.generate = async () => ({ entry: buildSeed().tasks[0], source: 'bank' });
+    const result = await tools.run({ action: 'addTask', day: 4, intent: 'existing bank task', durationMin: 20 });
+    expect(result.ok).toBe(true);
+    const added = store.get().dynamicTaskBank[0];
+    expect(added.id).toMatch(/^ai-/);
+    expect(added.legacy).toBeUndefined();
+    expect(added.unlockConditions).toEqual([{ type: 'day', fromDay: 4 }]);
+  });
+
   it('removeTask can disable built-in seed entries and remove dynamic entries', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
