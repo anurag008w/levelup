@@ -1,12 +1,13 @@
-import { Bot, CalendarCheck, LayoutList, LineChart, MessageCircle, NotebookPen } from 'lucide-react';
+import { Bot, CalendarCheck, LayoutList, LineChart, ListTodo, MessageCircle, NotebookPen } from 'lucide-react';
 
-export type Tab = 'today' | 'levels' | 'progress' | 'review' | 'ai' | 'chat';
+export type Tab = 'today' | 'levels' | 'progress' | 'review' | 'task-bank' | 'ai' | 'chat';
 
 const TABS: { id: Tab; label: string; icon: typeof CalendarCheck }[] = [
   { id: 'today', label: 'Today', icon: CalendarCheck },
   { id: 'levels', label: 'Levels', icon: LayoutList },
   { id: 'progress', label: 'Progress', icon: LineChart },
   { id: 'review', label: 'Review', icon: NotebookPen },
+  { id: 'task-bank', label: 'Tasks', icon: ListTodo },
   { id: 'ai', label: 'AI', icon: Bot },
   { id: 'chat', label: 'Chat', icon: MessageCircle },
 ];
