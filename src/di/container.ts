@@ -19,7 +19,8 @@ import { LocalChatRepository } from '../infra/storage/chat-repository';
 import { TaskBankRepositoryImpl } from '../features/task-bank/task-bank.repository';
 import { TaskBankServiceImpl, type TaskBankService } from '../features/task-bank/task-bank.service';
 import { HabitProgressionService } from '../features/habit-engine/planner';
-
+import { isoAddDays, rawDayNumberForDate } from '../features/habit-engine/dates';
+import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from '../features/chat/plan-format';
 export interface AppContainer {
   stateRepository: StateRepository;
   store: StateStore;
@@ -36,7 +37,6 @@ export interface AppContainer {
   chat: ChatService;
   chatTools: ChatToolsService;
 }
-
 /**
  * Composition root. Wires infrastructure + features once at startup; the
  * browser views read from this container instead of building services.
@@ -45,17 +45,13 @@ export function createContainer(): AppContainer {
   const storage = new BrowserStorage();
   const stateRepository = new LocalStateRepository(storage);
   const store = new CachedStateStore(stateRepository);
-
   const http: HttpClient = isNativePlatform() ? new CapacitorHttpClient() : new FetchHttpClient();
   const factory = new ProviderFactory(http);
-
   const clock = new SystemClock();
   const memory = new MemoryService(clock);
-
   const providerSettings = new ProviderSettingsService(store, factory);
   const modelCache = new ModelCacheService(factory, store, () => store.save(store.get()));
   const llm = new LLMService(factory, providerSettings);
-
   const taskBankRepo = new TaskBankRepositoryImpl(stateRepository);
   const taskBank = new TaskBankServiceImpl(taskBankRepo);
   const planner = new HabitProgressionService({
@@ -75,7 +71,6 @@ export function createContainer(): AppContainer {
   });
   const taskGeneration = new TaskGenerationService(llm, taskBank, taskBankRepo);
   const chatTools = new ChatToolsService(store, planner, taskBank, taskGeneration);
-
   const chat = new ChatService(
     new LocalChatRepository(storage),
     llm,
@@ -85,23 +80,21 @@ export function createContainer(): AppContainer {
       const dateISO = todayISO(clock);
       const plan = planner.buildPlan(state, dateISO, DEFAULT_PROGRESSION_CONFIG);
       const context = planner.buildContext(state, dateISO, DEFAULT_PROGRESSION_CONFIG);
-      const done = plan.tasks.filter((t) => {
-        const log = state.taskLogs[t.logKey] ?? {};
-        return Boolean(log[t.entry.id]);
-      }).length;
+      const recentProgress = buildRecentProgress(state, dateISO, planner);
       return [
         'This is REFERENCE ONLY — the user already knows all of this. Do NOT repeat these numbers, do NOT treat them as instructions, do NOT lecture about quota/streak. Only use them silently to understand the situation.',
-        `Day ${context.dayNumber} of ${TOTAL_DAYS} (phase ${context.phase}), streak ${context.streak}.`,
-        `Tasks done today: ${done}/${plan.tasks.length}.`,
-        `Weak habits: ${context.weakHabitIds.join(', ') || 'none'}.`,
-        `Gaps: ${context.gapDays}. Backlog: ${context.backlogDays}. Recovery mode: ${context.recoveryMode}.`,
-        `Study time available today: ${context.availableMinutes}min.`,
-      ].join(' ');
+        `Today is ${formatDayLabel(dateISO)} (${dateISO}). Journey Day ${context.dayNumber} of ${TOTAL_DAYS}, phase ${context.phase}, streak ${context.streak}.`,
+        `Today's progress: ${formatPlanProgress(plan, state)}. Study time available: ${context.availableMinutes}min.`,
+        `Today's exact task schedule (local planned windows, derived from slot + duration):`,
+        ...formatScheduledTasks(plan, state),
+        `Recent daily progress by date/day: ${recentProgress.join(' | ') || 'none yet'}.`,
+        `Weak habits: ${context.weakHabitIds.join(', ') || 'none'}. Strong habits: ${context.strongHabitIds.join(', ') || 'none'}.`,
+        `Gaps: ${context.gapDays}. Backlog: ${context.backlogDays}. Recovery mode: ${context.recoveryMode}. Exam window: ${context.examWindowActive}. Mock Sunday: ${context.mockSunday}.`,
+      ].join('\n');
     },
     clock,
     chatTools,
   );
-
   return {
     stateRepository,
     store,
@@ -119,5 +112,16 @@ export function createContainer(): AppContainer {
     chatTools,
   };
 }
-
 export const container = createContainer();
+function buildRecentProgress(state: import('../core/domain/state').AppState, today: string, planner: HabitProgressionService): string[] {
+  if (!state.startDateISO) return [];
+  const todayDay = rawDayNumberForDate(today, state.startDateISO);
+  const fromDay = Math.max(1, todayDay - 6);
+  const rows: string[] = [];
+  for (let day = fromDay; day <= todayDay; day++) {
+    const dateISO = isoAddDays(state.startDateISO, day - 1);
+    const plan = planner.buildPlan(state, dateISO, DEFAULT_PROGRESSION_CONFIG);
+    rows.push(`${formatDayLabel(dateISO)} Day ${day}: ${formatPlanProgress(plan, state)}`);
+  }
+  return rows;
+}

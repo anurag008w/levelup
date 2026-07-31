@@ -93,15 +93,14 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
   function deleteTask(entry: TaskBankEntry) {
     if (!window.confirm('Ye task task bank se hat jayega. Confirm?')) return;
     update((s) => {
-      const entry = container.taskBank.getById(id);
-      if (entry?.legacy) {
+      if (entry.legacy) {
         const inactive = { ...entry, active: false };
         return {
           ...s,
-          dynamicTaskBank: [...s.dynamicTaskBank.filter((e) => e.id !== id), inactive],
+          dynamicTaskBank: [...s.dynamicTaskBank.filter((e) => e.id !== entry.id), inactive],
         };
       }
-      return { ...s, dynamicTaskBank: s.dynamicTaskBank.filter((e) => e.id !== id) };
+      return { ...s, dynamicTaskBank: s.dynamicTaskBank.filter((e) => e.id !== entry.id) };
     });
     flash('Task delete ho gaya.');
   }
