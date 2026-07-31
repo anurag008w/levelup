@@ -66,6 +66,26 @@ describe('HabitProgressionService backward compatibility', () => {
     }
   });
 
+  it('has planned tasks for every journey day across all phases', () => {
+    const { planner } = makePlanner();
+    const state = healthyState();
+
+    for (let day = 1; day <= TOTAL_DAYS; day++) {
+      const plan = planner.buildPlan(state, isoFromDay(day), legacyConfig);
+      expect(plan.tasks.length, `Day ${day} should have at least one task`).toBeGreaterThan(0);
+    }
+  });
+
+  it('has seed task coverage for every level across all phases', () => {
+    const { bank } = makePlanner();
+    const entries = bank.getAll();
+
+    for (const level of LEVELS) {
+      const levelTasks = entries.filter((task) => task.legacy?.levelId === level.id && task.active);
+      expect(levelTasks.length, `Level ${level.id} should have seed tasks`).toBeGreaterThan(0);
+    }
+  });
+
   it('healthy plan requires all tasks and injects nothing', () => {
     const { planner, bank } = makePlanner();
     const state = healthyStateWithRecentCompletion(planner, 8);

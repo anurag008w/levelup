@@ -1241,6 +1241,788 @@
         "reflection",
         "systems"
       ]
+    },
+    {
+      "id": "evidence_check",
+      "name": "Evidence check",
+      "description": "Pick one weak concept/test mistake and write claim, evidence, and missing proof before studying.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 14,
+      "dayStart": 40,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "assumption_test",
+      "name": "Assumption test on one JEE problem",
+      "description": "Before solving, list two assumptions and verify them after solution.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 14,
+      "dayStart": 40,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "reality_review",
+      "name": "Reality review",
+      "description": "Compare planned vs actual study output and write one correction for tomorrow.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 14,
+      "dayStart": 40,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "hypothesis_drill",
+      "name": "Hypothesis drill for a tough concept",
+      "description": "Make one why/how hypothesis, test it with notes or solved examples, and record result.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 15,
+      "dayStart": 43,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "counterexample_search",
+      "name": "Find one counterexample",
+      "description": "For a formula/rule, find where it fails or what condition is required.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 15,
+      "dayStart": 43,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "assumption_log",
+      "name": "Assumption log update",
+      "description": "Log one wrong assumption from today and the corrected version.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 15,
+      "dayStart": 43,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "root_cause_5why",
+      "name": "5-Why root cause on one mistake",
+      "description": "Use five-whys on one repeated mistake until the real cause is specific.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 16,
+      "dayStart": 46,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "system_fix",
+      "name": "One system fix for a recurring miss",
+      "description": "Create a small checklist/process change that prevents a repeated error.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 16,
+      "dayStart": 46,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "feedback_loop",
+      "name": "Feedback loop close-out",
+      "description": "Review yesterday’s fix and mark whether it reduced the problem.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 16,
+      "dayStart": 46,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "first_principles",
+      "name": "Derive from first principles",
+      "description": "Derive one formula/result from definitions instead of memorising it.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 17,
+      "dayStart": 49,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "probability_estimate",
+      "name": "Probability estimate before answer",
+      "description": "Estimate answer range/sign before calculation and compare after solving.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 17,
+      "dayStart": 49,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "principle_map",
+      "name": "Principle map for a chapter",
+      "description": "Map one chapter topic to its core laws and common question patterns.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 17,
+      "dayStart": 49,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "bias_check",
+      "name": "Bias check before judging performance",
+      "description": "Separate facts from feelings about today’s performance in three bullets.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 18,
+      "dayStart": 52,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "independent_solution",
+      "name": "Independent solution attempt",
+      "description": "Try one problem fully before looking at hints/solution.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 18,
+      "dayStart": 52,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "objective_review",
+      "name": "Objective review of a wrong answer",
+      "description": "Write what data says went wrong: concept, calculation, interpretation, or time.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 18,
+      "dayStart": 52,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "deep_question",
+      "name": "One deep why question",
+      "description": "Ask and answer one deeper why behind a concept connection.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 19,
+      "dayStart": 55,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "link_two_topics",
+      "name": "Link two topics",
+      "description": "Connect two related ideas across chapters/subjects with an example.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 19,
+      "dayStart": 55,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "knowledge_gap",
+      "name": "Knowledge gap capture",
+      "description": "Write one gap discovered today and the exact source/action to close it.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 19,
+      "dayStart": 55,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "attention_reset",
+      "name": "Attention reset before study block",
+      "description": "Do a 60-second reset: desk clear, phone away, target visible.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 20,
+      "dayStart": 58,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "condition_scan",
+      "name": "Question condition scan",
+      "description": "Underline/list every condition in three problems before solving.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 20,
+      "dayStart": 58,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "vigilance_review",
+      "name": "Vigilance review",
+      "description": "Record one missed condition/sign/unit and prevention cue.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 20,
+      "dayStart": 58,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "precision_checklist",
+      "name": "Precision checklist run",
+      "description": "Run units/signs/boundary checks on today’s toughest solved problem.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 21,
+      "dayStart": 61,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "adapt_plan",
+      "name": "Adapt plan from evidence",
+      "description": "Change one plan item based on latest performance evidence.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 21,
+      "dayStart": 61,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "decision_log",
+      "name": "Decision log",
+      "description": "Write one keep/skip decision for tomorrow with reason.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "l-mindset",
+      "levelId": 21,
+      "dayStart": 61,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "scenario_plan",
+      "name": "Best/base/worst study scenario",
+      "description": "Plan today with best/base/worst-case time blocks.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 22,
+      "dayStart": 64,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "risk_buffer",
+      "name": "Add buffer for biggest risk",
+      "description": "Identify biggest schedule risk and add a backup slot.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 22,
+      "dayStart": 64,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "scenario_review",
+      "name": "Scenario review at night",
+      "description": "Check which scenario happened and what to adjust.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 22,
+      "dayStart": 64,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "priority_rank",
+      "name": "Rank tasks by marks impact",
+      "description": "Rank today’s tasks by JEE marks impact, not comfort.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 23,
+      "dayStart": 67,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "eat_frog",
+      "name": "Do highest-impact task first",
+      "description": "Start with the highest-impact task for at least 25 minutes.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 23,
+      "dayStart": 67,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "low_value_cut",
+      "name": "Cut one low-value activity",
+      "description": "Remove or shrink one low-value task/distraction today.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 23,
+      "dayStart": 67,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "resource_ready",
+      "name": "Prepare study resources upfront",
+      "description": "Keep notes, PYQs, timer, and formula sheet ready before block.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 24,
+      "dayStart": 70,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "folder_clean",
+      "name": "Clean one topic folder/list",
+      "description": "Organise one chapter’s pending questions/resources into clear buckets.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 24,
+      "dayStart": 70,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "resource_review",
+      "name": "Resource review",
+      "description": "Note one missing resource and when you will collect it.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 24,
+      "dayStart": 70,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "explain_aloud",
+      "name": "Explain one concept aloud",
+      "description": "Teach one concept aloud in simple language without notes.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 25,
+      "dayStart": 73,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "confidence_rep",
+      "name": "Confidence rep",
+      "description": "Solve one timed question and write what improved confidence.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 25,
+      "dayStart": 73,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "doubt_message",
+      "name": "Write one precise doubt",
+      "description": "Frame one doubt with context, attempt, and exact stuck point.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 25,
+      "dayStart": 73,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "persistence_block",
+      "name": "Finish a resistance block",
+      "description": "Do 20 minutes on the task you most want to avoid.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 26,
+      "dayStart": 76,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "commitment_check",
+      "name": "Commitment check",
+      "description": "Write why this goal matters and one promise for the next block.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 26,
+      "dayStart": 76,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "restart_fast",
+      "name": "Restart fast after slip",
+      "description": "If distracted, restart within 2 minutes and log the trigger.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 26,
+      "dayStart": 76,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "growth_reframe",
+      "name": "Reframe one weakness as trainable",
+      "description": "Turn one weak area into a concrete practice plan.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 27,
+      "dayStart": 79,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "self_eval_score",
+      "name": "Self-evaluate today honestly",
+      "description": "Score focus, accuracy, and consistency with one reason each.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 27,
+      "dayStart": 79,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "improvement_rep",
+      "name": "One improvement rep",
+      "description": "Repeat one previously wrong question/concept and verify improvement.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "light-execution",
+      "levelId": 27,
+      "dayStart": 79,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "stress_label",
+      "name": "Label stress before reacting",
+      "description": "Name the emotion, trigger, and next best action before study.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "peak-performance",
+      "levelId": 28,
+      "dayStart": 82,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "breathing_reset",
+      "name": "Two-minute breathing reset",
+      "description": "Do a calm reset before a mock/revision block.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "peak-performance",
+      "levelId": 28,
+      "dayStart": 82,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "pressure_review",
+      "name": "Pressure review",
+      "description": "Write how stress affected decisions and one correction.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "peak-performance",
+      "levelId": 28,
+      "dayStart": 82,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "sleep_plan",
+      "name": "Sleep plan lock",
+      "description": "Set bedtime/wakeup and shutdown study 30 minutes before sleep.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "peak-performance",
+      "levelId": 29,
+      "dayStart": 85,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "recovery_walk",
+      "name": "Recovery walk/stretch",
+      "description": "Do 10 minutes walk/stretch to protect energy.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "peak-performance",
+      "levelId": 29,
+      "dayStart": 85,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "energy_review",
+      "name": "Energy review",
+      "description": "Rate sleep/energy and adjust tomorrow’s load.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "peak-performance",
+      "levelId": 29,
+      "dayStart": 85,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
+    },
+    {
+      "id": "exam_protocol",
+      "name": "Exam-day protocol rehearsal",
+      "description": "Rehearse admit-card/material/time/checklist mentally and log gaps.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "peak-performance",
+      "levelId": 30,
+      "dayStart": 88,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "planning"
+      ]
+    },
+    {
+      "id": "final_revision",
+      "name": "Final revision only",
+      "description": "Revise formulae/mistake log; avoid new topics unless critical.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "peak-performance",
+      "levelId": 30,
+      "dayStart": 88,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "lifelong_system",
+      "name": "Lifelong system reflection",
+      "description": "Write the 3 systems you will keep after this 90-day cycle.",
+      "timeRequired": "5-30 min",
+      "criteria": "Complete the daily task and write a short evidence note.",
+      "phase": "peak-performance",
+      "levelId": 30,
+      "dayStart": 88,
+      "prerequisites": [],
+      "isCore": true,
+      "thinkingSkills": [
+        "reflection"
+      ]
     }
   ]
 }

@@ -53,6 +53,18 @@ describe('task bank search', () => {
     const short = bank.search({ unlock: snapshot, maxDurationMin: 5 });
     expect(short.every((t) => t.estimatedDurationMin <= 5)).toBe(true);
   });
+
+
+  it('lets dynamic entries override or disable built-in seed tasks', () => {
+    const editedSeed = { ...buildSeed().tasks.find((t) => t.id === 'd1_t1')!, title: 'Edited seed task title' };
+    const repo = new TaskBankRepositoryImpl(
+      { load: () => ({ dynamicTaskBank: [editedSeed, { ...buildSeed().tasks.find((t) => t.id === 'd1_t2')!, active: false }] }) as unknown as AppState, save: () => undefined, clear: () => undefined },
+      buildSeed(),
+    );
+    const bank = new TaskBankServiceImpl(repo);
+    expect(bank.getById('d1_t1')?.title).toBe('Edited seed task title');
+    expect(bank.search({ unlock: snapshot, activeOnly: true }).map((t) => t.id)).not.toContain('d1_t2');
+  });
 });
 
 describe('rankCandidates', () => {
