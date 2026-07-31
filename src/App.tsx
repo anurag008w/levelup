@@ -6,6 +6,7 @@ import ProgressScreen from './screens/ProgressScreen';
 import ReviewScreen from './screens/ReviewScreen';
 import AISettingsScreen from './screens/AISettingsScreen';
 import ChatScreen from './screens/ChatScreen';
+import TaskBankScreen from './screens/TaskBankScreen';
 import { useAppState } from './lib/useAppState';
 
 export default function App() {
@@ -18,6 +19,7 @@ export default function App() {
       {tab === 'levels' && <LevelsScreen state={state} today={today} />}
       {tab === 'progress' && <ProgressScreen state={state} today={today} />}
       {tab === 'review' && <ReviewScreen state={state} today={today} update={update} resetAll={resetAll} />}
+      {tab === 'task-bank' && <TaskBankScreen state={state} update={update} />}
       {tab === 'ai' && <AISettingsScreen state={state} update={update} />}
       {tab === 'chat' && <ChatScreen />}
       <TabBar
