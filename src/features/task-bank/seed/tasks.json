@@ -2186,6 +2186,1910 @@
         }
       ],
       "active": true
+    },
+    {
+      "id": "d40_t1",
+      "habitId": "evidence_check",
+      "title": "Evidence check: claim → proof → gap",
+      "description": "Pick one weak concept/test mistake and write claim, evidence, and missing proof before studying.",
+      "phase": "l-mindset",
+      "difficulty": 3,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 40
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 14,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d40_t2",
+      "habitId": "assumption_test",
+      "title": "Assumption test on one JEE problem",
+      "description": "Before solving, list two assumptions and verify them after solution.",
+      "phase": "l-mindset",
+      "difficulty": 3,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "l-mindset",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 40
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 14,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d40_t3",
+      "habitId": "reality_review",
+      "title": "Reality review: score vs effort",
+      "description": "Compare planned vs actual study output and write one correction for tomorrow.",
+      "phase": "l-mindset",
+      "difficulty": 3,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 40
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 14,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d43_t1",
+      "habitId": "hypothesis_drill",
+      "title": "Hypothesis drill for a tough concept",
+      "description": "Make one why/how hypothesis, test it with notes or solved examples, and record result.",
+      "phase": "l-mindset",
+      "difficulty": 3,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 43
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 15,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d43_t2",
+      "habitId": "counterexample_search",
+      "title": "Find one counterexample",
+      "description": "For a formula/rule, find where it fails or what condition is required.",
+      "phase": "l-mindset",
+      "difficulty": 3,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "l-mindset",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 43
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 15,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d43_t3",
+      "habitId": "assumption_log",
+      "title": "Assumption log update",
+      "description": "Log one wrong assumption from today and the corrected version.",
+      "phase": "l-mindset",
+      "difficulty": 3,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 43
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 15,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d46_t1",
+      "habitId": "root_cause_5why",
+      "title": "5-Why root cause on one mistake",
+      "description": "Use five-whys on one repeated mistake until the real cause is specific.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 46
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 16,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d46_t2",
+      "habitId": "system_fix",
+      "title": "One system fix for a recurring miss",
+      "description": "Create a small checklist/process change that prevents a repeated error.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "l-mindset",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 46
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 16,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d46_t3",
+      "habitId": "feedback_loop",
+      "title": "Feedback loop close-out",
+      "description": "Review yesterday’s fix and mark whether it reduced the problem.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 46
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 16,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d49_t1",
+      "habitId": "first_principles",
+      "title": "Derive from first principles",
+      "description": "Derive one formula/result from definitions instead of memorising it.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 49
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 17,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d49_t2",
+      "habitId": "probability_estimate",
+      "title": "Probability estimate before answer",
+      "description": "Estimate answer range/sign before calculation and compare after solving.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "l-mindset",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 49
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 17,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d49_t3",
+      "habitId": "principle_map",
+      "title": "Principle map for a chapter",
+      "description": "Map one chapter topic to its core laws and common question patterns.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 49
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 17,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d52_t1",
+      "habitId": "bias_check",
+      "title": "Bias check before judging performance",
+      "description": "Separate facts from feelings about today’s performance in three bullets.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 52
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 18,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d52_t2",
+      "habitId": "independent_solution",
+      "title": "Independent solution attempt",
+      "description": "Try one problem fully before looking at hints/solution.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "l-mindset",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 52
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 18,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d52_t3",
+      "habitId": "objective_review",
+      "title": "Objective review of a wrong answer",
+      "description": "Write what data says went wrong: concept, calculation, interpretation, or time.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 52
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 18,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d55_t1",
+      "habitId": "deep_question",
+      "title": "One deep why question",
+      "description": "Ask and answer one deeper why behind a concept connection.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 55
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 19,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d55_t2",
+      "habitId": "link_two_topics",
+      "title": "Link two topics",
+      "description": "Connect two related ideas across chapters/subjects with an example.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "l-mindset",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 55
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 19,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d55_t3",
+      "habitId": "knowledge_gap",
+      "title": "Knowledge gap capture",
+      "description": "Write one gap discovered today and the exact source/action to close it.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 55
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 19,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d58_t1",
+      "habitId": "attention_reset",
+      "title": "Attention reset before study block",
+      "description": "Do a 60-second reset: desk clear, phone away, target visible.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 58
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 20,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d58_t2",
+      "habitId": "condition_scan",
+      "title": "Question condition scan",
+      "description": "Underline/list every condition in three problems before solving.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "l-mindset",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 58
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 20,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d58_t3",
+      "habitId": "vigilance_review",
+      "title": "Vigilance review",
+      "description": "Record one missed condition/sign/unit and prevention cue.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 58
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 20,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d61_t1",
+      "habitId": "precision_checklist",
+      "title": "Precision checklist run",
+      "description": "Run units/signs/boundary checks on today’s toughest solved problem.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 61
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 21,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d61_t2",
+      "habitId": "adapt_plan",
+      "title": "Adapt plan from evidence",
+      "description": "Change one plan item based on latest performance evidence.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "l-mindset",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 61
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 21,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d61_t3",
+      "habitId": "decision_log",
+      "title": "Decision log: what to skip/keep",
+      "description": "Write one keep/skip decision for tomorrow with reason.",
+      "phase": "l-mindset",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "l-mindset",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 61
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 21,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d64_t1",
+      "habitId": "scenario_plan",
+      "title": "Best/base/worst study scenario",
+      "description": "Plan today with best/base/worst-case time blocks.",
+      "phase": "light-execution",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "light-execution",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 64
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 22,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d64_t2",
+      "habitId": "risk_buffer",
+      "title": "Add buffer for biggest risk",
+      "description": "Identify biggest schedule risk and add a backup slot.",
+      "phase": "light-execution",
+      "difficulty": 4,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "light-execution",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 64
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 22,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d64_t3",
+      "habitId": "scenario_review",
+      "title": "Scenario review at night",
+      "description": "Check which scenario happened and what to adjust.",
+      "phase": "light-execution",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "light-execution",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 64
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 22,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d67_t1",
+      "habitId": "priority_rank",
+      "title": "Rank tasks by marks impact",
+      "description": "Rank today’s tasks by JEE marks impact, not comfort.",
+      "phase": "light-execution",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "light-execution",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 67
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 23,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d67_t2",
+      "habitId": "eat_frog",
+      "title": "Do highest-impact task first",
+      "description": "Start with the highest-impact task for at least 25 minutes.",
+      "phase": "light-execution",
+      "difficulty": 4,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "light-execution",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 67
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 23,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d67_t3",
+      "habitId": "low_value_cut",
+      "title": "Cut one low-value activity",
+      "description": "Remove or shrink one low-value task/distraction today.",
+      "phase": "light-execution",
+      "difficulty": 4,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "light-execution",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 67
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 23,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d70_t1",
+      "habitId": "resource_ready",
+      "title": "Prepare study resources upfront",
+      "description": "Keep notes, PYQs, timer, and formula sheet ready before block.",
+      "phase": "light-execution",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "light-execution",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 70
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 24,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d70_t2",
+      "habitId": "folder_clean",
+      "title": "Clean one topic folder/list",
+      "description": "Organise one chapter’s pending questions/resources into clear buckets.",
+      "phase": "light-execution",
+      "difficulty": 5,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "light-execution",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 70
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 24,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d70_t3",
+      "habitId": "resource_review",
+      "title": "Resource review",
+      "description": "Note one missing resource and when you will collect it.",
+      "phase": "light-execution",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "light-execution",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 70
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 24,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d73_t1",
+      "habitId": "explain_aloud",
+      "title": "Explain one concept aloud",
+      "description": "Teach one concept aloud in simple language without notes.",
+      "phase": "light-execution",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "light-execution",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 73
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 25,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d73_t2",
+      "habitId": "confidence_rep",
+      "title": "Confidence rep: timed answer",
+      "description": "Solve one timed question and write what improved confidence.",
+      "phase": "light-execution",
+      "difficulty": 5,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "light-execution",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 73
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 25,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d73_t3",
+      "habitId": "doubt_message",
+      "title": "Write one precise doubt",
+      "description": "Frame one doubt with context, attempt, and exact stuck point.",
+      "phase": "light-execution",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "light-execution",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 73
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 25,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d76_t1",
+      "habitId": "persistence_block",
+      "title": "Finish a resistance block",
+      "description": "Do 20 minutes on the task you most want to avoid.",
+      "phase": "light-execution",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "light-execution",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 76
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 26,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d76_t2",
+      "habitId": "commitment_check",
+      "title": "Commitment check",
+      "description": "Write why this goal matters and one promise for the next block.",
+      "phase": "light-execution",
+      "difficulty": 5,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "light-execution",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 76
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 26,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d76_t3",
+      "habitId": "restart_fast",
+      "title": "Restart fast after slip",
+      "description": "If distracted, restart within 2 minutes and log the trigger.",
+      "phase": "light-execution",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "light-execution",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 76
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 26,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d79_t1",
+      "habitId": "growth_reframe",
+      "title": "Reframe one weakness as trainable",
+      "description": "Turn one weak area into a concrete practice plan.",
+      "phase": "light-execution",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "light-execution",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 79
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 27,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d79_t2",
+      "habitId": "self_eval_score",
+      "title": "Self-evaluate today honestly",
+      "description": "Score focus, accuracy, and consistency with one reason each.",
+      "phase": "light-execution",
+      "difficulty": 5,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "light-execution",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 79
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 27,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d79_t3",
+      "habitId": "improvement_rep",
+      "title": "One improvement rep",
+      "description": "Repeat one previously wrong question/concept and verify improvement.",
+      "phase": "light-execution",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "light-execution",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": false,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 79
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 27,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d82_t1",
+      "habitId": "stress_label",
+      "title": "Label stress before reacting",
+      "description": "Name the emotion, trigger, and next best action before study.",
+      "phase": "peak-performance",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "peak-performance",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 82
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 28,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d82_t2",
+      "habitId": "breathing_reset",
+      "title": "Two-minute breathing reset",
+      "description": "Do a calm reset before a mock/revision block.",
+      "phase": "peak-performance",
+      "difficulty": 5,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "peak-performance",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 82
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 28,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d82_t3",
+      "habitId": "pressure_review",
+      "title": "Pressure review",
+      "description": "Write how stress affected decisions and one correction.",
+      "phase": "peak-performance",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "peak-performance",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 82
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 28,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d85_t1",
+      "habitId": "sleep_plan",
+      "title": "Sleep plan lock",
+      "description": "Set bedtime/wakeup and shutdown study 30 minutes before sleep.",
+      "phase": "peak-performance",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "peak-performance",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 85
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 29,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d85_t2",
+      "habitId": "recovery_walk",
+      "title": "Recovery walk/stretch",
+      "description": "Do 10 minutes walk/stretch to protect energy.",
+      "phase": "peak-performance",
+      "difficulty": 5,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "peak-performance",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 85
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 29,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d85_t3",
+      "habitId": "energy_review",
+      "title": "Energy review",
+      "description": "Rate sleep/energy and adjust tomorrow’s load.",
+      "phase": "peak-performance",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "peak-performance",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 85
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 29,
+        "slot": "night",
+        "order": 2
+      }
+    },
+    {
+      "id": "d88_t1",
+      "habitId": "exam_protocol",
+      "title": "Exam-day protocol rehearsal",
+      "description": "Rehearse admit-card/material/time/checklist mentally and log gaps.",
+      "phase": "peak-performance",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "peak-performance",
+        "morning"
+      ],
+      "prerequisites": [],
+      "taskType": "Beginner",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "planning"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 88
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 30,
+        "slot": "morning",
+        "order": 0
+      }
+    },
+    {
+      "id": "d88_t2",
+      "habitId": "final_revision",
+      "title": "Final revision only",
+      "description": "Revise formulae/mistake log; avoid new topics unless critical.",
+      "phase": "peak-performance",
+      "difficulty": 5,
+      "estimatedDurationMin": 30,
+      "energyLevel": "medium",
+      "tags": [
+        "peak-performance",
+        "blocks"
+      ],
+      "prerequisites": [],
+      "taskType": "Intermediate",
+      "revisionSuitability": 0.7,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "analysis",
+        "reasoning"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.7
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 88
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 30,
+        "slot": "blocks",
+        "order": 1
+      }
+    },
+    {
+      "id": "d88_t3",
+      "habitId": "lifelong_system",
+      "title": "Lifelong system reflection",
+      "description": "Write the 3 systems you will keep after this 90-day cycle.",
+      "phase": "peak-performance",
+      "difficulty": 5,
+      "estimatedDurationMin": 5,
+      "energyLevel": "low",
+      "tags": [
+        "peak-performance",
+        "night"
+      ],
+      "prerequisites": [],
+      "taskType": "Reflection",
+      "revisionSuitability": 0.4,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "examWindow": true,
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "day",
+          "fromDay": 88
+        }
+      ],
+      "active": true,
+      "legacy": {
+        "levelId": 30,
+        "slot": "night",
+        "order": 2
+      }
     }
   ]
 }

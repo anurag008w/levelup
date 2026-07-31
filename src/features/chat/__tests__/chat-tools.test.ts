@@ -168,10 +168,11 @@ describe('ChatToolsService', () => {
     expect(added.unlockConditions).toEqual([{ type: 'day', fromDay: 4 }]);
   });
 
-  it('removeTask can hide built-in tasks and remove dynamic entries', async () => {
+  it('removeTask can disable built-in seed entries and remove dynamic entries', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    expect((await tools.run({ action: 'removeTask', day: 1, taskId: 'd1_t1' })).ok).toBe(true);
+    const seedResult = await tools.run({ action: 'removeTask', day: 1, taskId: 'd1_t1' });
+    expect(seedResult.ok).toBe(true);
     expect(store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1')?.active).toBe(false);
     store.save({ ...store.get(), dynamicTaskBank: [parseTaskBankEntry({
       id: 'ai-xyz', habitId: 'h1', title: 'temp', description: '', phase: 'jee-core', difficulty: 1,
