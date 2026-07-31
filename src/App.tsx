@@ -4,10 +4,12 @@ import TodayScreen from './screens/TodayScreen';
 import LevelsScreen from './screens/LevelsScreen';
 import ProgressScreen from './screens/ProgressScreen';
 import ReviewScreen from './screens/ReviewScreen';
+import AISettingsScreen from './screens/AISettingsScreen';
+import ChatScreen from './screens/ChatScreen';
 import { useAppState } from './lib/useAppState';
 
 export default function App() {
-  const { state, today, update, resetAll } = useAppState();
+  const { state, today, update, refresh, resetAll } = useAppState();
   const [tab, setTab] = useState<Tab>('today');
 
   return (
@@ -16,7 +18,15 @@ export default function App() {
       {tab === 'levels' && <LevelsScreen state={state} today={today} />}
       {tab === 'progress' && <ProgressScreen state={state} today={today} />}
       {tab === 'review' && <ReviewScreen state={state} today={today} update={update} resetAll={resetAll} />}
-      <TabBar active={tab} onChange={setTab} />
+      {tab === 'ai' && <AISettingsScreen state={state} update={update} />}
+      {tab === 'chat' && <ChatScreen />}
+      <TabBar
+        active={tab}
+        onChange={(next) => {
+          refresh();
+          setTab(next);
+        }}
+      />
     </div>
   );
 }

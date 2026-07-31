@@ -1,0 +1,272 @@
+import type {
+  LLMProvider,
+  LLMRequest,
+  LLMResponse,
+  ModelInfo,
+  ProviderConfig,
+  ProviderId,
+  HealthCheckResult,
+  ThinkingLevel,
+} from '../../core/domain/llm';
+import { ProviderError } from '../../core/domain/llm';
+import type { HttpClient, HttpError } from './http';
+
+const MAX_GEMINI_MODEL_PAGES = 5;
+
+const THINKING_BUDGETS: Record<Exclude<ThinkingLevel, 'off'>, number> = {
+  low: 2048,
+  medium: 4096,
+  high: 16384,
+};
+
+interface GeminiRolePart {
+  role?: string;
+  parts: Array<{ text?: string; thought?: boolean }>;
+}
+
+interface GeminiGenerateRequest {
+  contents: GeminiRolePart[];
+  system_instruction?: { parts: Array<{ text: string }> };
+  generationConfig: {
+    temperature?: number;
+    maxOutputTokens?: number;
+    thinkingConfig?: { thinkingBudget: number };
+  };
+}interface GeminiGenerateResponse {
+  candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+}
+
+interface GeminiModelsList {
+  models?: Array<Record<string, unknown>>;
+  nextPageToken?: string;
+}
+
+/** Gemini native REST adapter (v1beta). */
+export class GeminiProvider implements LLMProvider {
+  readonly id: ProviderConfig['id'];
+  readonly label: string;
+  readonly config: ProviderConfig;
+  private readonly http: HttpClient;
+
+  constructor(config: ProviderConfig, http: HttpClient) {
+    this.config = config;
+    this.http = http;
+    this.id = config.id;
+    this.label = config.label;
+  }
+
+  private baseUrl(): string {
+    return (this.config.baseUrl ?? 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+  }
+
+  isConfigured(): boolean {
+    return Boolean(this.config.apiKey);
+  }
+
+  private headers(): Record<string, string> {
+    return { ...(this.config.customHeaders ?? {}), 'x-goog-api-key': this.config.apiKey ?? '' };
+  }
+
+  private resolveModel(request: LLMRequest): string {
+    const model = request.model ?? this.config.model;
+    if (!model) throw new ProviderError(this.id, 'bad-request', 'no model configured for Gemini provider');
+    return model;
+  }
+
+  private buildBody(request: LLMRequest): GeminiGenerateRequest {
+    const contents: GeminiRolePart[] = [];
+    let systemInstruction: { parts: Array<{ text: string }> } | undefined;
+    for (const msg of request.messages) {
+      if (msg.role === 'system') {
+        if (!systemInstruction) systemInstruction = { parts: [] };
+        systemInstruction.parts.push({ text: msg.content });
+      } else if (msg.content) {
+        contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
+      }
+    }
+    const maxTokens = request.maxTokens ?? this.config.maxTokens;
+    let thinkingBudget: number | undefined;
+    if (request.thinking && request.thinking !== 'off') {
+      const requested = THINKING_BUDGETS[request.thinking];
+      // Gemini requires thinkingBudget < maxOutputTokens. Clamp when a small
+      // window is set so thinking never breaks the request; skip it entirely
+      // when the window is too small to leave any room for visible output.
+      if (maxTokens !== undefined) {
+        const room = maxTokens - 256;
+        if (room >= 1) thinkingBudget = Math.min(requested, room);
+      } else {
+        thinkingBudget = requested;
+      }
+    }
+    return {
+      contents,
+      ...(systemInstruction ? { system_instruction: systemInstruction } : {}),
+      generationConfig: {
+        ...(request.temperature ?? this.config.temperature !== undefined ? { temperature: request.temperature ?? this.config.temperature } : {}),
+        ...(maxTokens !== undefined ? { maxOutputTokens: maxTokens } : {}),
+        ...(thinkingBudget !== undefined ? { thinkingConfig: { thinkingBudget } } : {}),
+      },
+    };
+  }
+
+  async complete(request: LLMRequest): Promise<LLMResponse> {
+    const model = this.resolveModel(request);
+    const body = this.buildBody(request);
+    const res = await this.http
+      .requestJson<GeminiGenerateResponse>(
+        {
+          url: `${this.baseUrl()}/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+          headers: this.headers(),
+          body,
+          timeoutMs: this.config.timeoutMs,
+          retries: this.config.retries,
+          signal: request.signal,
+        },
+      )
+      .catch((err) => {
+        throw this.normalize(err);
+      });
+    const split = splitParts(res?.candidates?.[0]?.content?.parts);
+    return {
+      text: split.text,
+      model,
+      reasoning: split.reasoning || undefined,
+      usage: res?.usageMetadata
+        ? {
+            inputTokens: res.usageMetadata.promptTokenCount,
+            outputTokens: res.usageMetadata.candidatesTokenCount,
+          }
+        : undefined,
+    };
+  }
+
+  async stream(request: LLMRequest): Promise<LLMResponse> {
+    const model = this.resolveModel(request);
+    const body = this.buildBody(request);
+    let full = '';
+    let reasoning = '';
+    const onData = (payload: string) => {
+      try {
+        const chunk = JSON.parse(payload) as GeminiGenerateResponse;
+        const parts = chunk?.candidates?.[0]?.content?.parts;
+        if (!parts) return;
+        const split = splitParts(parts);
+        if (split.text) {
+          full += split.text;
+          request.onDelta?.(split.text);
+        }
+        if (split.reasoning) {
+          reasoning += split.reasoning;
+          request.onReasoningDelta?.(split.reasoning);
+        }
+      } catch {
+        // Ignore malformed chunks.
+      }
+    };
+    await this.http
+      .requestSse(
+        {
+          url: `${this.baseUrl()}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
+          headers: this.headers(),
+          body,
+          timeoutMs: this.config.timeoutMs,
+          retries: this.config.retries,
+          signal: request.signal,
+        },
+        onData,
+      )
+      .catch((err) => {
+        throw this.normalize(err);
+      });
+    // If the streamed response carried no content, fall back to one non-streaming call.
+    if (full.length === 0 && !request.signal?.aborted) {
+      const resp = await this.complete(request);
+      request.onDelta?.(resp.text);
+      return resp;
+    }
+    return { text: full, model, reasoning: reasoning || undefined };
+  }
+
+  async fetchModels(): Promise<ModelInfo[]> {
+    const models: ModelInfo[] = [];
+    let pageToken: string | undefined;
+    for (let page = 0; page < MAX_GEMINI_MODEL_PAGES; page++) {
+      const url =
+        `${this.baseUrl()}/v1beta/models?pageSize=200` + (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
+      const res = await this.http
+        .requestJson<GeminiModelsList>({ url, headers: this.headers(), method: 'GET', timeoutMs: this.config.timeoutMs, retries: this.config.retries })
+        .catch((err) => {
+          throw this.normalize(err);
+        });
+      for (const raw of res?.models ?? []) {
+        const model = mapGeminiModel(raw, this.id, Date.now());
+        if (model) models.push(model);
+      }
+      pageToken = res?.nextPageToken;
+      if (!pageToken) break;
+    }
+    return models;
+  }
+
+  async healthCheck(): Promise<HealthCheckResult> {
+    const start = Date.now();
+    try {
+      await this.http.requestJson<unknown>({
+        url: `${this.baseUrl()}/v1beta/models`,
+        headers: this.headers(),
+        method: 'GET',
+        timeoutMs: Math.min(this.config.timeoutMs ?? 15_000, 15_000),
+        retries: 0,
+      });
+      return { ok: true, provider: this.id, latencyMs: Date.now() - start };
+    } catch (err) {
+      return { ok: false, provider: this.id, latencyMs: Date.now() - start, message: err instanceof Error ? err.message : 'health check failed' };
+    }
+  }
+
+  normalize(err: unknown): ProviderError {
+    const httpErr = err as HttpError;
+    const kind = httpErr.kind ?? 'unknown';
+    return new ProviderError(this.id, kind, err instanceof Error ? err.message : 'provider request failed', httpErr.status);
+  }
+}
+
+export function mapGeminiModel(raw: Record<string, unknown>, provider: ProviderId, fetchedAt: number): ModelInfo | null {
+  const name = typeof raw.name === 'string' ? raw.name : '';
+  const id = name.replace(/^models\//, '');
+  if (!id) return null;
+  const displayName = typeof raw.displayName === 'string' ? raw.displayName : id;
+  const description = typeof raw.description === 'string' ? raw.description : '';
+  const methods = Array.isArray(raw.supportedGenerationMethods) ? (raw.supportedGenerationMethods as string[]) : [];
+  const desc = description.toLowerCase();
+  return {
+    id,
+    name: displayName,
+    provider,
+    contextLength: typeof raw.inputTokenLimit === 'number' ? raw.inputTokenLimit : null,
+    modalities: { input: ['text'], output: ['text'] },
+    supportsStreaming: methods.includes('streamGenerateContent'),
+    supportsVision: /vision|image|multimodal/.test(desc) ? true : null,
+    supportsReasoning: /reasoning/.test(desc) ? true : null,
+    supportsToolCalling: /function calling|tools/.test(desc) ? true : null,
+    supportsStructuredOutputs: null,
+    supportsThinking: /thinking/.test(desc) ? true : null,
+    pricing: null,
+    isFree: false,
+    deprecated: false,
+    fetchedAt,
+  };
+}
+
+/** Splits Gemini content parts into visible text vs thinking (thought) text. */
+export function splitParts(parts: Array<{ text?: string; thought?: boolean }> | undefined): { text: string; reasoning: string } {
+  let text = '';
+  let reasoning = '';
+  for (const part of parts ?? []) {
+    const value = part.text ?? '';
+    if (part.thought) reasoning += value;
+    else text += value;
+  }
+  return { text, reasoning };
+}

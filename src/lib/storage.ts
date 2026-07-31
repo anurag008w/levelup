@@ -1,39 +1,16 @@
 import type { AppState } from '../types';
+import { BrowserStorage } from '../infra/storage/local-storage';
+import { LocalStateRepository, normalizeState, STATE_KEY, STATE_KEY_V1 } from '../infra/storage/state-repository';
 
-const KEY = 'human-os-state-v1';
+const store = new BrowserStorage();
+const repository = new LocalStateRepository(store);
 
 export function loadState(): AppState {
-  const raw = localStorage.getItem(KEY);
-  if (!raw) {
-    return {
-      startDateISO: null,
-      bonusDaysUsed: 0,
-      taskLogs: {},
-      weeklyReviews: [],
-      monthlyAssessments: [],
-      failureLog: [],
-      examDateISO: null,
-      clearedLevels: [],
-    };
-  }
-  try {
-    return JSON.parse(raw) as AppState;
-  } catch {
-    return {
-      startDateISO: null,
-      bonusDaysUsed: 0,
-      taskLogs: {},
-      weeklyReviews: [],
-      monthlyAssessments: [],
-      failureLog: [],
-      examDateISO: null,
-      clearedLevels: [],
-    };
-  }
+  return repository.load();
 }
 
 export function saveState(state: AppState) {
-  localStorage.setItem(KEY, JSON.stringify(state));
+  repository.save(state);
 }
 
 export function todayISO(): string {
@@ -45,3 +22,10 @@ export function dateISO(offsetDays: number): string {
   d.setDate(d.getDate() + offsetDays);
   return d.toISOString().slice(0, 10);
 }
+
+// Exposed for diagnostics / future "reset" UI. The v1 key is deliberately kept.
+export function storageKeys(): { v1: string; v2: string } {
+  return { v1: STATE_KEY_V1, v2: STATE_KEY };
+}
+
+export { normalizeState };

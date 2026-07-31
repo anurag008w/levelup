@@ -6,11 +6,11 @@ interface Props {
 }
 
 export default function DayGauge({ dayNumber, totalDays, todayPct, levelCode }: Props) {
-  const size = 168;
-  const stroke = 10;
+  const size = 176;
+  const stroke = 11;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
-  const journeyFrac = dayNumber / totalDays;
+  const journeyFrac = Math.min(1, dayNumber / totalDays);
   const ticks = Array.from({ length: 30 }, (_, i) => i); // one tick per level
 
   return (
@@ -51,7 +51,7 @@ export default function DayGauge({ dayNumber, totalDays, todayPct, levelCode }: 
           strokeDasharray={c}
           strokeDashoffset={c - journeyFrac * c}
           strokeLinecap="round"
-          opacity={0.35}
+          style={{ opacity: 0.35, transition: 'stroke-dashoffset 0.6s ease' }}
         />
         {/* today's completion ring, inner accent */}
         <circle
@@ -72,6 +72,7 @@ export default function DayGauge({ dayNumber, totalDays, todayPct, levelCode }: 
           strokeDasharray={2 * Math.PI * (r - stroke - 2)}
           strokeDashoffset={2 * Math.PI * (r - stroke - 2) * (1 - todayPct / 100)}
           strokeLinecap="round"
+          style={{ transition: 'stroke-dashoffset 0.6s ease' }}
         />
       </svg>
       <div className="absolute flex flex-col items-center">
@@ -80,7 +81,10 @@ export default function DayGauge({ dayNumber, totalDays, todayPct, levelCode }: 
           {dayNumber}
           <span className="text-base text-muted">/{totalDays}</span>
         </span>
-        <span className="font-mono text-[10px] mt-1 tracking-widest text-light">{levelCode}</span>
+        <span className="mt-1 font-mono text-[10px] tracking-widest text-light">{levelCode}</span>
+        <span className="mt-1 rounded-full bg-grid px-2 py-0.5 font-mono text-[10px] font-semibold text-l">
+          {todayPct}% done
+        </span>
       </div>
     </div>
   );

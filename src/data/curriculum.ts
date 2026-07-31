@@ -1,4 +1,8 @@
-import type { Level, Phase } from '../types';
+import type { Level, Phase } from '../core/domain/habit';
+
+// Levels and phases define the 90-day curriculum STRUCTURE only. Task content
+// lives in the Task Bank (src/features/task-bank/seed/*.json). Habits are
+// referenced by id and resolved through the HabitRepository.
 
 export const PHASES: Phase[] = [
   {
@@ -39,8 +43,7 @@ function placeholder(id: number, dayStart: number, dayEnd: number, phase: Level[
     dayEnd,
     phase,
     title,
-    newHabits: [],
-    dailyTasks: [],
+    newHabitIds: [],
     passCriteria: 'Content coming in the next update.',
     unlockCondition: 'Content coming in the next update.',
     commonMistakes: [],
@@ -57,17 +60,7 @@ export const LEVELS: Level[] = [
     dayEnd: 3,
     phase: 'jee-core',
     title: 'Foundation: Plan → Focus → Review',
-    newHabits: [
-      { id: 'daily_planning', name: 'Daily Planning', timeRequired: '2 min', criteria: 'Likha hua top-3 goals list exist karta hai before 9 AM daily.' },
-      { id: 'deep_work', name: 'Deep Work', timeRequired: 'per study block (min 45 min)', criteria: 'Phone doosre room mein hai during every study block.' },
-      { id: 'night_review', name: 'Night Review', timeRequired: '5 min', criteria: '3-question review likha gaya har raat sone se pehle.' },
-    ],
-    dailyTasks: [
-      { id: 'd1_t1', slot: 'morning', text: 'Top 3 study goals likho (1 line each)', habitId: 'daily_planning' },
-      { id: 'd1_t2', slot: 'blocks', text: 'Study block shuru karne se pehle phone doosre room mein rakho', habitId: 'deep_work' },
-      { id: 'd1_t3', slot: 'blocks', text: 'Har study block ke baad 2-min active recall (bina notes dekhe likho kya yaad hai)', habitId: 'deep_work' },
-      { id: 'd1_t4', slot: 'night', text: 'Likho: Kya complete hua? Sabse badi mistake? Kal ka pehla task?', habitId: 'night_review' },
-    ],
+    newHabitIds: ['daily_planning', 'deep_work', 'night_review'],
     passCriteria: '3 din continuously — teeno habits ke tasks 100% complete.',
     unlockCondition: 'Level 2 unlock jab Day 3 ka night review submit ho jaye (recovery mode se bhi chalta hai).',
     commonMistakes: [
@@ -84,16 +77,7 @@ export const LEVELS: Level[] = [
     dayEnd: 6,
     phase: 'jee-core',
     title: 'Discipline Engine',
-    newHabits: [
-      { id: 'self_discipline', name: 'Self-Discipline', timeRequired: 'throughout day', criteria: 'Ek bhi "mann nahi kar raha" excuse pe task skip nahi kiya.' },
-      { id: 'consistency', name: 'Consistency', timeRequired: 'ongoing', criteria: 'Same core tasks daily bina miss kiye.' },
-      { id: 'time_management', name: 'Time Management', timeRequired: '5 min', criteria: 'Din ke study blocks ko exact clock time assign kiya.' },
-    ],
-    dailyTasks: [
-      { id: 'd2_t1', slot: 'morning', text: 'Aaj ke study blocks ko exact time slots do (e.g. Physics 4-6 PM)', habitId: 'time_management' },
-      { id: 'd2_t2', slot: 'blocks', text: 'Jis task ka time-slot hai usi time pe shuru karo — 10 min se zyada late nahi', habitId: 'self_discipline' },
-      { id: 'd2_t3', slot: 'night', text: 'Consistency check: aaj 3/3 core habits hue? Agar nahi, reason likho (excuse nahi)', habitId: 'consistency' },
-    ],
+    newHabitIds: ['self_discipline', 'consistency', 'time_management'],
     passCriteria: '3/3 din complete.',
     unlockCondition: 'Automatic after Day 6 night review.',
     commonMistakes: [
@@ -110,16 +94,7 @@ export const LEVELS: Level[] = [
     dayEnd: 9,
     phase: 'jee-core',
     title: 'Direction: Goals & Priorities',
-    newHabits: [
-      { id: 'goal_setting', name: 'Goal Setting', timeRequired: '5 min/week', criteria: 'Weekly goal likha hai aur roz uske against progress check ho raha hai.' },
-      { id: 'top3_priorities', name: 'Top 3 Priorities', timeRequired: '2 min', criteria: 'Roz ke 3 goals mein se sabse important ek highlight kiya.' },
-      { id: 'task_management', name: 'Task Management', timeRequired: '5 min', criteria: 'Din ke saare tasks (study + non-study) ek jagah list kiye.' },
-    ],
-    dailyTasks: [
-      { id: 'd3_t1', slot: 'morning', text: 'Top-3 mein se ek ko ⭐ mark karo — ye "must-happen" task hai', habitId: 'top3_priorities' },
-      { id: 'd3_t2', slot: 'morning', text: 'Poori day ki task list banao (study + personal) ek jagah', habitId: 'task_management' },
-      { id: 'd3_t3', slot: 'night', text: 'Is week ka goal yaad karo — aaj uske direction mein kaam hua?', habitId: 'goal_setting' },
-    ],
+    newHabitIds: ['goal_setting', 'top3_priorities', 'task_management'],
     passCriteria: '3/3 din complete.',
     unlockCondition: 'Automatic after Day 9.',
     commonMistakes: [
@@ -136,18 +111,9 @@ export const LEVELS: Level[] = [
     dayEnd: 12,
     phase: 'jee-core',
     title: 'Deep Focus',
-    newHabits: [
-      { id: 'single_tasking', name: 'Single-tasking', timeRequired: 'per block', criteria: 'Ek block mein sirf ek subject/topic, switching nahi.' },
-      { id: 'focus_concentration', name: 'Focus & Concentration', timeRequired: 'per block', criteria: 'Block ke beech mein koi voluntary break/check nahi (sirf planned breaks).' },
-      { id: 'distraction_control', name: 'Distraction Control', timeRequired: '2 min setup', criteria: 'Study space se phone/notifications/clutter hata ke start kiya.' },
-    ],
-    dailyTasks: [
-      { id: 'd4_t1', slot: 'blocks', text: 'Block start karne se pehle: phone away, tabs band, desk clean (2 min setup)', habitId: 'distraction_control' },
-      { id: 'd4_t2', slot: 'blocks', text: 'Ek block = ek hi subject/topic. Beech mein switch mat karo', habitId: 'single_tasking' },
-      { id: 'd4_t3', slot: 'blocks', text: '45 min focus → 5 min break → repeat (no phone in break)', habitId: 'focus_concentration' },
-    ],
+    newHabitIds: ['single_tasking', 'focus_concentration', 'distraction_control'],
     passCriteria: '3/3 din complete.',
-    unlockCondition: 'Automatic.',
+    unlockCondition: 'Automatic after Day 12.',
     commonMistakes: [
       '"Multitasking" ko efficient samajhna — do subjects ek saath karne se dono weak rehte hain.',
       'Break mein phone use karna — dopamine reset ho jaata hai aur wapas focus mushkil.',
@@ -162,18 +128,9 @@ export const LEVELS: Level[] = [
     dayEnd: 15,
     phase: 'jee-core',
     title: 'Execution & Readiness',
-    newHabits: [
-      { id: 'execution', name: 'Execution', timeRequired: 'ongoing', criteria: 'Jo plan kiya wahi din mein actually kiya (plan-do gap zero).' },
-      { id: 'finish_tasks', name: 'Finish Tasks', timeRequired: 'ongoing', criteria: 'Shuru kiya har task usi din complete kiya, adhoora nahi chhoda.' },
-      { id: 'preparation_readiness', name: 'Preparation & Readiness', timeRequired: '5 min (raat ko)', criteria: 'Agle din ke study materials raat ko hi ready kiye.' },
-    ],
-    dailyTasks: [
-      { id: 'd5_t1', slot: 'night', text: 'Kal ke liye books/notes/questions set ready karo (5 min)', habitId: 'preparation_readiness' },
-      { id: 'd5_t2', slot: 'blocks', text: 'Jo task start kiya use complete kiye bina next pe mat jao (chhote chunks mein plan karo)', habitId: 'finish_tasks' },
-      { id: 'd5_t3', slot: 'night', text: 'Plan vs actual compare karo — jo plan kiya wo hua ya nahi?', habitId: 'execution' },
-    ],
+    newHabitIds: ['execution', 'finish_tasks', 'preparation_readiness'],
     passCriteria: '3/3 din complete.',
-    unlockCondition: 'Automatic.',
+    unlockCondition: 'Automatic after Day 15.',
     commonMistakes: [
       'Bahut bade tasks plan karna jo ek din mein finish hi na ho — chunk karo.',
       '"Kal se ready karunga" — prep hamesha ek raat pehle.',
@@ -188,18 +145,9 @@ export const LEVELS: Level[] = [
     dayEnd: 18,
     phase: 'jee-core',
     title: 'Conceptual Thinking',
-    newHabits: [
-      { id: 'conceptual_understanding', name: 'Conceptual Understanding', timeRequired: 'per topic', criteria: 'Formula/concept ko apne shabdon mein explain kar sake bina dekhe.' },
-      { id: 'why_thinking', name: 'Why Thinking', timeRequired: '2 min/concept', criteria: 'Har naye concept pe "ye kyun sach hai" likha.' },
-      { id: 'how_what_if_thinking', name: 'How & What-if Thinking', timeRequired: '2 min/concept', criteria: '"Ye kaise use hota hai" + ek what-if variation socha.' },
-    ],
-    dailyTasks: [
-      { id: 'd6_t1', slot: 'blocks', text: 'Naya concept padhne ke baad: apne shabdon mein 2-3 lines mein explain likho (dekhe bina)', habitId: 'conceptual_understanding' },
-      { id: 'd6_t2', slot: 'blocks', text: 'Har concept pe likho: "Ye WHY sach hai?"', habitId: 'why_thinking' },
-      { id: 'd6_t3', slot: 'blocks', text: 'Likho "Ye HOW use hota hai" + 1 WHAT-IF variation socho', habitId: 'how_what_if_thinking' },
-    ],
+    newHabitIds: ['conceptual_understanding', 'why_thinking', 'how_what_if_thinking'],
     passCriteria: '3/3 din complete.',
-    unlockCondition: 'Automatic.',
+    unlockCondition: 'Automatic after Day 18.',
     commonMistakes: [
       'Formula ratt lena bina samjhe — JEE Advanced twisted questions rattafication ko fail kar deta hai.',
       'Why/How sirf mental mein sochna, likhna nahi — likhne se gaps pata chalte hain.',
@@ -214,18 +162,9 @@ export const LEVELS: Level[] = [
     dayEnd: 21,
     phase: 'jee-core',
     title: 'Memory & Mistake Systems',
-    newHabits: [
-      { id: 'active_recall', name: 'Active Recall', timeRequired: '10 min/day', criteria: 'Bina notes dekhe, kal ka content likh ke test kiya.' },
-      { id: 'daily_revision', name: 'Daily Revision', timeRequired: '15-20 min', criteria: 'Pichle 3 din ka content ek baar revise kiya.' },
-      { id: 'mistake_logging', name: 'Mistake Logging', timeRequired: 'as needed', criteria: 'Har mistake dedicated Mistake Log mein likhi.' },
-    ],
-    dailyTasks: [
-      { id: 'd7_t1', slot: 'night', text: '10-min active recall: aaj jo padha wo bina dekhe likho', habitId: 'active_recall' },
-      { id: 'd7_t2', slot: 'night', text: 'Pichle 3 din ka quick revision (15-20 min)', habitId: 'daily_revision' },
-      { id: 'd7_t3', slot: 'blocks', text: 'Koi bhi mistake ho to turant Mistake Log mein likho: Question / Galti / Sahi Method', habitId: 'mistake_logging' },
-    ],
+    newHabitIds: ['active_recall', 'daily_revision', 'mistake_logging'],
     passCriteria: '3/3 din complete.',
-    unlockCondition: 'Automatic.',
+    unlockCondition: 'Automatic after Day 21.',
     commonMistakes: [
       'Revision ko "re-reading" samajhna — active recall (bina dekhe likhna) hi asli revision hai.',
       'Mistake log mein sirf "wrong answer" likhna — WHY galat hua wo likhna zaroori hai.',
@@ -240,18 +179,9 @@ export const LEVELS: Level[] = [
     dayEnd: 24,
     phase: 'jee-core',
     title: 'Problem Solving Core',
-    newHabits: [
-      { id: 'error_analysis', name: 'Error Analysis', timeRequired: 'ongoing', criteria: 'Har galat question ka root cause classify kiya.' },
-      { id: 'problem_decomposition', name: 'Problem Decomposition', timeRequired: 'per question', criteria: 'Tough question ko chhote steps mein toda before solving.' },
-      { id: 'problem_solving', name: 'Problem Solving (unseen)', timeRequired: 'daily', criteria: 'Roz min 5 unseen-type questions attempt kiye.' },
-    ],
-    dailyTasks: [
-      { id: 'd8_t1', slot: 'blocks', text: 'Tough question dekhte hi: "ye kis chhote parts mein tootega?" likho, phir solve karo', habitId: 'problem_decomposition' },
-      { id: 'd8_t2', slot: 'blocks', text: 'Roz min 5 questions solve karo jo pehle kabhi try nahi kiye', habitId: 'problem_solving' },
-      { id: 'd8_t3', slot: 'night', text: 'Aaj ki galtiyon ko classify karo: Concept gap? Silly mistake? Time pressure?', habitId: 'error_analysis' },
-    ],
+    newHabitIds: ['error_analysis', 'problem_decomposition', 'problem_solving'],
     passCriteria: '3/3 din complete.',
-    unlockCondition: 'Automatic.',
+    unlockCondition: 'Automatic after Day 24.',
     commonMistakes: [
       'Sirf familiar/comfortable questions practice karna — growth unseen problems se aata hai.',
       'Error ko sirf "silly mistake" bol ke ignore karna — zyadatar silly mistakes actually concept gaps hote hain.',
@@ -266,18 +196,9 @@ export const LEVELS: Level[] = [
     dayEnd: 27,
     phase: 'jee-core',
     title: 'Reasoning Trinity',
-    newHabits: [
-      { id: 'logical_thinking', name: 'Logical Thinking', timeRequired: 'per question', criteria: 'Solution ke har step ka reason clear hai.' },
-      { id: 'critical_thinking', name: 'Critical Thinking', timeRequired: 'per question', criteria: 'Apna hi answer verify karne se pehle "ye galat kyun ho sakta hai" socha.' },
-      { id: 'analytical_thinking', name: 'Analytical Thinking', timeRequired: 'per question', criteria: 'Solve karne se pehle "ye kis concept se related hai" identify kiya.' },
-    ],
-    dailyTasks: [
-      { id: 'd9_t1', slot: 'blocks', text: 'Solve karte time har step justify karo: "ye step isliye kyunki..."', habitId: 'logical_thinking' },
-      { id: 'd9_t2', slot: 'blocks', text: 'Answer aane ke baad khud se poocho: "ye galat kaise ho sakta hai?" phir check karo', habitId: 'critical_thinking' },
-      { id: 'd9_t3', slot: 'blocks', text: 'Naya question dekhte hi 10 sec ruko: "ye kis concept/chapter ka hai?" pehle identify karo', habitId: 'analytical_thinking' },
-    ],
+    newHabitIds: ['logical_thinking', 'critical_thinking', 'analytical_thinking'],
     passCriteria: '3/3 din complete.',
-    unlockCondition: 'Automatic.',
+    unlockCondition: 'Automatic after Day 27.',
     commonMistakes: [
       'Steps ko justify kiye bina mechanically solve karna.',
       'Critical thinking ko overthinking bana dena — 30 sec ka quick sanity check kaafi hai.',
@@ -292,18 +213,9 @@ export const LEVELS: Level[] = [
     dayEnd: 30,
     phase: 'jee-core',
     title: 'Observation Systems (L)',
-    newHabits: [
-      { id: 'observation', name: 'Observation', timeRequired: 'per question', criteria: 'Question ke saare given data pehle carefully note kiye.' },
-      { id: 'detail_awareness', name: 'Detail Awareness', timeRequired: 'per question', criteria: 'Units, signs, conditions miss nahi kiye.' },
-      { id: 'pattern_recognition', name: 'Pattern Recognition', timeRequired: 'per question', criteria: 'Similar solved questions se pattern connect kiya.' },
-    ],
-    dailyTasks: [
-      { id: 'd10_t1', slot: 'blocks', text: 'Question padhte hi saare given data ek side underline/note karo', habitId: 'observation' },
-      { id: 'd10_t2', slot: 'blocks', text: 'Units aur special conditions (e.g. x>0, integer only) double-check karo before solving', habitId: 'detail_awareness' },
-      { id: 'd10_t3', slot: 'blocks', text: 'Solve karte time socho: "aisa question maine pehle kahin dekha hai?"', habitId: 'pattern_recognition' },
-    ],
+    newHabitIds: ['observation', 'detail_awareness', 'pattern_recognition'],
     passCriteria: '3/3 din complete. Day 30 = Month-1 checkpoint.',
-    unlockCondition: 'Automatic.',
+    unlockCondition: 'Automatic after Day 30.',
     commonMistakes: [
       'Jaldi mein question ko skim karna aur ek condition miss karna — zyadatar silly mistakes yahin se aate hain.',
       'Pattern recognition ko "yaad rakhna" samajhna — ye connection banane ki skill hai, rattafication nahi.',
@@ -318,18 +230,9 @@ export const LEVELS: Level[] = [
     dayEnd: 33,
     phase: 'jee-core',
     title: 'Verification & Tracking',
-    newHabits: [
-      { id: 'verification', name: 'Verification', timeRequired: 'per question', criteria: 'Har solved answer ko alternate method/estimation se verify kiya.' },
-      { id: 'double_checking', name: 'Double Checking', timeRequired: 'per question', criteria: 'Final karne se pehle poora solution ek baar re-read kiya.' },
-      { id: 'progress_tracking', name: 'Progress Tracking', timeRequired: '2 min', criteria: 'Roz ka completion % note kiya.' },
-    ],
-    dailyTasks: [
-      { id: 'd11_t1', slot: 'blocks', text: 'Answer aane ke baad: reverse-check ya estimation se verify karo', habitId: 'verification' },
-      { id: 'd11_t2', slot: 'blocks', text: 'Final answer likhne se pehle poori working ek baar top se re-read karo', habitId: 'double_checking' },
-      { id: 'd11_t3', slot: 'night', text: 'Aaj ka completion % note karo (Progress tab mein dikhega)', habitId: 'progress_tracking' },
-    ],
+    newHabitIds: ['verification', 'double_checking', 'progress_tracking'],
     passCriteria: '3/3 din complete.',
-    unlockCondition: 'Automatic.',
+    unlockCondition: 'Automatic after Day 33.',
     commonMistakes: [
       'Verification ko time-waste samajhna — 30 sec ka estimation check bade marks bacha sakta hai.',
       'Double-check ko "poora dobara solve karna" samajh lena — sirf re-read karo.',
@@ -344,18 +247,9 @@ export const LEVELS: Level[] = [
     dayEnd: 36,
     phase: 'jee-core',
     title: 'Review Systems',
-    newHabits: [
-      { id: 'performance_review', name: 'Performance Review', timeRequired: 'per test', criteria: 'Har mock/test ke baad structured review kiya.' },
-      { id: 'daily_review_deep', name: 'Daily Review (deep)', timeRequired: '8 min', criteria: 'Night review ab 5 questions ka deeper review hai.' },
-      { id: 'weekly_review', name: 'Weekly Review', timeRequired: '15 min', criteria: 'Har 7th din ek weekly review session hua.' },
-    ],
-    dailyTasks: [
-      { id: 'd12_t1', slot: 'night', text: 'Deeper night review: Complete hua? Mistakes? Time waste kahan? Kal ka focus? Energy kaisa tha?', habitId: 'daily_review_deep' },
-      { id: 'd12_t2', slot: 'weekly', text: 'Weekly Review tab open karo — is week ke patterns dekho', habitId: 'weekly_review' },
-      { id: 'd12_t3', slot: 'blocks', text: 'Agar aaj koi test/mock hua, turant structured review karo (marks/time/error breakdown)', habitId: 'performance_review' },
-    ],
+    newHabitIds: ['performance_review', 'daily_review_deep', 'weekly_review'],
     passCriteria: '3/3 din + 1 weekly review is window mein complete.',
-    unlockCondition: 'Automatic.',
+    unlockCondition: 'Automatic after Day 36.',
     commonMistakes: [
       'Review ko "feel good" summary banana — honest gaps likhna zaroori hai.',
       'Weekly review skip karna kyunki "daily to kar hi raha hoon" — weekly pattern daily se nahi dikhta.',
@@ -370,14 +264,7 @@ export const LEVELS: Level[] = [
     dayEnd: 39,
     phase: 'jee-core',
     title: 'Phase 1 Capstone — Full Integration',
-    newHabits: [
-      { id: 'self_reflection', name: 'Self-Reflection (Month 1)', timeRequired: '20 min', criteria: 'Month 1 Reflection likha: strong habits, weak habits, agle phase ke adjustments.' },
-    ],
-    dailyTasks: [
-      { id: 'd13_t1', slot: 'night', text: 'Deep reflection: pichle 39 din mein sabse bada mindset shift kya raha?', habitId: 'self_reflection' },
-      { id: 'd13_t2', slot: 'blocks', text: 'Saare 12 levels ke habits ek saath run karo — koi bhi drop nahi hona chahiye', habitId: 'self_reflection' },
-      { id: 'd13_t3', slot: 'monthly', text: 'Month 1 Assessment complete karo (Progress tab) — sabhi 21 habits ka score dekho', habitId: 'self_reflection' },
-    ],
+    newHabitIds: ['self_reflection'],
     passCriteria: '3/3 din + Month 1 Assessment complete.',
     unlockCondition: 'Phase 1 COMPLETE badge unlock. Phase 2 tab mein content agle update mein aayega.',
     commonMistakes: [
