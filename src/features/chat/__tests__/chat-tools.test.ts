@@ -154,10 +154,25 @@ describe('ChatToolsService', () => {
     expect(store.get().dynamicTaskBank.some((e) => e.id === 'ai-chat-test')).toBe(true);
   });
 
-  it('removeTask only removes dynamic entries', async () => {
+
+
+  it('addTask clones bank matches into editable dynamic tasks', async () => {
+    const store = makeStore();
+    const { tools, taskGeneration } = makeTools(store);
+    taskGeneration.generate = async () => ({ entry: buildSeed().tasks[0], source: 'bank' });
+    const result = await tools.run({ action: 'addTask', day: 4, intent: 'existing bank task', durationMin: 20 });
+    expect(result.ok).toBe(true);
+    const added = store.get().dynamicTaskBank[0];
+    expect(added.id).toMatch(/^ai-/);
+    expect(added.legacy).toBeUndefined();
+    expect(added.unlockConditions).toEqual([{ type: 'day', fromDay: 4 }]);
+  });
+
+  it('removeTask can hide built-in tasks and remove dynamic entries', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    expect((await tools.run({ action: 'removeTask', day: 1, taskId: 'd1_t1' })).ok).toBe(false);
+    expect((await tools.run({ action: 'removeTask', day: 1, taskId: 'd1_t1' })).ok).toBe(true);
+    expect(store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1')?.active).toBe(false);
     store.save({ ...store.get(), dynamicTaskBank: [parseTaskBankEntry({
       id: 'ai-xyz', habitId: 'h1', title: 'temp', description: '', phase: 'jee-core', difficulty: 1,
       estimatedDurationMin: 10, energyLevel: 'low', tags: [], prerequisites: [], taskType: 'Beginner',
