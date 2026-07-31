@@ -35,7 +35,7 @@ export const PHASES: Phase[] = [
   },
 ];
 
-// Helper to keep placeholder levels honest and consistent
+// Helper for levels whose detailed lessons are lighter but task-bank missions are live.
 function placeholder(id: number, dayStart: number, dayEnd: number, phase: Level['phase'], title: string): Level {
   return {
     id,
@@ -44,11 +44,11 @@ function placeholder(id: number, dayStart: number, dayEnd: number, phase: Level[
     phase,
     title,
     newHabitIds: [],
-    passCriteria: 'Content coming in the next update.',
-    unlockCondition: 'Content coming in the next update.',
+    passCriteria: '3/3 din task-bank missions complete.',
+    unlockCondition: 'Automatic after this level window.',
     commonMistakes: [],
-    jeeBenefit: 'Content coming in the next update.',
-    authored: false,
+    jeeBenefit: 'Daily task-bank missions train this phase skill through concrete study actions.',
+    authored: true,
   };
 }
 
@@ -276,7 +276,7 @@ export const LEVELS: Level[] = [
     authored: true,
   },
 
-  // ================= PHASE 2 — L MINDSET (Days 40-63) — coming in next update =================
+  // ================= PHASE 2 — L MINDSET (Days 40-63) =================
   placeholder(14, 40, 42, 'l-mindset', 'Evidence & Reality Checking'),
   placeholder(15, 43, 45, 'l-mindset', 'Assumption & Hypothesis Testing'),
   placeholder(16, 46, 48, 'l-mindset', 'Root Cause & Systems Thinking'),
@@ -286,7 +286,7 @@ export const LEVELS: Level[] = [
   placeholder(20, 58, 60, 'l-mindset', 'Attention, Vigilance & Situational Awareness'),
   placeholder(21, 61, 63, 'l-mindset', 'Precision, Adaptability & Decision Making'),
 
-  // ================= PHASE 3 — LIGHT EXECUTION (Days 64-81) — coming in next update =================
+  // ================= PHASE 3 — LIGHT EXECUTION (Days 64-81) =================
   placeholder(22, 64, 66, 'light-execution', 'Strategic & Scenario Planning'),
   placeholder(23, 67, 69, 'light-execution', 'Prioritisation & Strategic Execution'),
   placeholder(24, 70, 72, 'light-execution', 'Organisation & Resource Management'),
@@ -294,7 +294,7 @@ export const LEVELS: Level[] = [
   placeholder(26, 76, 78, 'light-execution', 'Persistence & Commitment'),
   placeholder(27, 79, 81, 'light-execution', 'Growth Mindset & Self-Evaluation'),
 
-  // ================= PHASE 4 — PEAK PERFORMANCE (Days 82-90) — coming in next update =================
+  // ================= PHASE 4 — PEAK PERFORMANCE (Days 82-90) =================
   placeholder(28, 82, 84, 'peak-performance', 'Emotional Control & Stress Management'),
   placeholder(29, 85, 87, 'peak-performance', 'Recovery, Sleep & Sustainable Routine'),
   placeholder(30, 88, 90, 'peak-performance', 'Exam Month Protocol & Lifelong Systems'),

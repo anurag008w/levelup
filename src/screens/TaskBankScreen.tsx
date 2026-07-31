@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Check, ListTodo, Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { AppState } from '../types';
 import type { EnergyLevel, TaskBankEntry, TaskType } from '../core/domain/task-bank';
@@ -13,14 +13,10 @@ const ENERGY_LEVELS: EnergyLevel[] = ['low', 'medium', 'high'];
 const EMPTY_FORM = { title: '', description: '', day: 1, durationMin: 30, energyLevel: 'medium' as EnergyLevel, taskType: 'Beginner' as TaskType };
 
 export default function TaskBankScreen({ state, update }: { state: AppState; update: (fn: (s: AppState) => AppState) => void }) {
-  const dynamic = state.dynamicTaskBank;
-  const seedCount = useMemo(() => {
-    try {
-      return container.taskBank.getAll().length - dynamic.length;
-    } catch {
-      return 0;
-    }
-  }, [dynamic.length]);
+  const allTasks = container.taskBank.getAll().filter((entry) => entry.active);
+  const seedCount = allTasks.filter((entry) => entry.legacy).length;
+  const customCount = allTasks.length - seedCount;
+  const hiddenOverrideCount = state.dynamicTaskBank.filter((entry) => !entry.active).length;
 
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -28,7 +24,7 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
   const [editDraft, setEditDraft] = useState<{ title: string; day: number; durationMin: number } | null>(null);
   const [notice, setNotice] = useState('');
 
-  const sorted = [...dynamic].sort((a, b) => unlockDay(a) - unlockDay(b));
+  const sorted = [...allTasks].sort((a, b) => unlockDay(a) - unlockDay(b) || a.id.localeCompare(b.id));
 
   function flash(msg: string) {
     setNotice(msg);
@@ -78,16 +74,16 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
     }
     update((s) => ({
       ...s,
-      dynamicTaskBank: s.dynamicTaskBank.map((e) =>
-        e.id === editingId
-          ? {
-              ...e,
-              title: editDraft.title.trim(),
-              estimatedDurationMin: clampInt(editDraft.durationMin, 5, 180),
-              unlockConditions: [{ type: 'day', fromDay: clampInt(editDraft.day, 1, 90) }],
-            }
-          : e,
-      ),
+      dynamicTaskBank: [
+        ...s.dynamicTaskBank.filter((e) => e.id !== editingId),
+        {
+          ...(container.taskBank.getById(editingId) ?? s.dynamicTaskBank.find((e) => e.id === editingId)!),
+          title: editDraft.title.trim(),
+          estimatedDurationMin: clampInt(editDraft.durationMin, 5, 180),
+          unlockConditions: [{ type: 'day', fromDay: clampInt(editDraft.day, 1, 90) }],
+          active: true,
+        },
+      ],
     }));
     setEditingId(null);
     setEditDraft(null);
@@ -96,7 +92,17 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
 
   function deleteTask(id: string) {
     if (!window.confirm('Ye task task bank se hat jayega. Confirm?')) return;
-    update((s) => ({ ...s, dynamicTaskBank: s.dynamicTaskBank.filter((e) => e.id !== id) }));
+    update((s) => {
+      const entry = container.taskBank.getById(id);
+      if (entry?.legacy) {
+        const inactive = { ...entry, active: false };
+        return {
+          ...s,
+          dynamicTaskBank: [...s.dynamicTaskBank.filter((e) => e.id !== id), inactive],
+        };
+      }
+      return { ...s, dynamicTaskBank: s.dynamicTaskBank.filter((e) => e.id !== id) };
+    });
     flash('Task delete ho gaya.');
   }
 
@@ -114,8 +120,8 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
             <ListTodo size={17} color="var(--color-light)" />
           </span>
           <div>
-            <p className="font-display text-sm font-bold">{dynamic.length} user/AI task{dynamic.length === 1 ? '' : 's'}</p>
-            <p className="text-[11px] text-muted">{seedCount} built-in seed tasks · unlocked tasks har din ke plan mein aate hain</p>
+            <p className="font-display text-sm font-bold">{allTasks.length} editable task{allTasks.length === 1 ? '' : 's'}</p>
+            <p className="text-[11px] text-muted">{seedCount} built-in · {customCount} user/AI · {hiddenOverrideCount} hidden · sab edit/delete ho sakte hain</p>
           </div>
         </div>
         <button className="btn btn-primary px-3 py-2 text-xs font-bold" onClick={() => setShowForm((v) => !v)}>
@@ -167,9 +173,9 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
         </div>
       )}
 
-      <SectionHeader title="User / AI tasks" subtitle="Chat se aur yahan se add hue tasks" />
+      <SectionHeader title="All Task Bank tasks" accent="var(--color-light)" meta="built-in + user/AI" />
       {sorted.length === 0 ? (
-        <div className="card p-4 text-xs text-muted">Abhi koi user/AI task nahi hai. "Add task" se banayein, ya chat mein bolo.</div>
+        <div className="card p-4 text-xs text-muted">Abhi koi active task nahi hai. "Add task" se banayein, ya chat mein bolo.</div>
       ) : (
         <div className="space-y-2">
           {sorted.map((entry) => {
@@ -198,7 +204,7 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
                     <div className="min-w-0">
                       <p className="font-semibold leading-snug">{entry.title}</p>
                       <p className="mt-0.5 text-[10px] text-muted">
-                        Day {day} · {entry.estimatedDurationMin}min · {entry.energyLevel} · {entry.taskType}
+                        Day {day} · {entry.estimatedDurationMin}min · {entry.energyLevel} · {entry.taskType} · {entry.legacy ? 'built-in' : 'user/AI'}
                       </p>
                     </div>
                     <div className="flex shrink-0 gap-1">

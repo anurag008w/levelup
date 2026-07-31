@@ -39,7 +39,10 @@ export class TaskBankRepositoryImpl implements TaskBankRepository, HabitReposito
   }
 
   getAll(): TaskBankEntry[] {
-    return [...this.seed.tasks, ...this.dynamicEntries()];
+    const byId = new Map<string, TaskBankEntry>();
+    for (const entry of this.seed.tasks) byId.set(entry.id, entry);
+    for (const entry of this.dynamicEntries()) byId.set(entry.id, entry);
+    return [...byId.values()];
   }
 
   getById(id: string): TaskBankEntry | undefined {
