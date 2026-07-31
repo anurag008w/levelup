@@ -1,3 +1,4 @@
+import { INTERNAL_SYSTEM_PROMPT } from '../../core/domain/chat';
 import type { ChatMessage, ChatSession, ChatPreferences, ChatStoreState } from '../../core/domain/chat';
 import {
   MAX_MESSAGES_PER_SESSION,
@@ -231,7 +232,7 @@ export class ChatService {
 
   private buildDecisionRequest(session: ChatSession, signal?: AbortSignal): LLMRequest {
     return {
-      messages: this.buildMessages(session, `${session.prefs.systemPrompt}\n\n${CHAT_TOOL_INSTRUCTIONS}`),
+      messages: this.buildMessages(session, CHAT_TOOL_INSTRUCTIONS),
       temperature: session.prefs.temperature,
       maxTokens: 500,
       signal,
@@ -243,7 +244,7 @@ export class ChatService {
 
   private buildRetryRequest(session: ChatSession, previousReply: string, signal?: AbortSignal): LLMRequest {
     const system =
-      `${session.prefs.systemPrompt}\n\n${CHAT_TOOL_INSTRUCTIONS}\n\n${CHAT_TOOL_RETRY}\n\n` +
+      `${CHAT_TOOL_INSTRUCTIONS}\n\n${CHAT_TOOL_RETRY}\n\n` +
       `Your previous reply was:\n${previousReply}\n\nReplace it with exactly one JSON object now.`;
     return {
       messages: this.buildMessages(session, system),
@@ -262,7 +263,6 @@ export class ChatService {
     onReasoningDelta?: (d: string) => void,
   ): LLMRequest {
     const system =
-      `${session.prefs.systemPrompt}\n\n` +
       `A plan tool executed and returned:\n${toolSummary}\n\n` +
       `Reply to the user's request in concise Hinglish. Tell them what was done (or why it failed).`;
     const request: LLMRequest = {
@@ -280,8 +280,8 @@ export class ChatService {
     return request;
   }
 
-  private buildMessages(session: ChatSession, systemPrompt: string): LLMMessage[] {
-    const messages: LLMMessage[] = [{ role: 'system', content: systemPrompt }];
+  private buildMessages(session: ChatSession, extraSystemPrompt = ''): LLMMessage[] {
+    const messages: LLMMessage[] = [{ role: 'system', content: composeSystemPrompt(session.prefs.systemPrompt, extraSystemPrompt) }];
     if (session.prefs.includeContext) {
       const ctx = this.contextProvider();
       if (ctx) messages.push({ role: 'system', content: `Today's Human OS context: ${ctx}` });
@@ -315,7 +315,7 @@ export class ChatService {
     onReasoningDelta?: (d: string) => void,
   ): LLMRequest {
     const request: LLMRequest = {
-      messages: this.buildMessages(session, session.prefs.systemPrompt),
+      messages: this.buildMessages(session),
       temperature: session.prefs.temperature,
       maxTokens: 2048,
       onDelta,
@@ -350,4 +350,13 @@ function uid(): string {
 function deriveTitle(text: string): string {
   const t = text.trim().replace(/\s+/g, ' ');
   return t.length > 40 ? `${t.slice(0, 40)}…` : t;
+}
+
+function composeSystemPrompt(userPersona: string, extraSystemPrompt = ''): string {
+  const blocks = [INTERNAL_SYSTEM_PROMPT];
+  const persona = userPersona.trim();
+  if (persona) blocks.push(`User-editable persona / custom instructions:\n${persona}`);
+  const extra = extraSystemPrompt.trim();
+  if (extra) blocks.push(extra);
+  return blocks.join('\n\n');
 }

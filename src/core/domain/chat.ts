@@ -26,7 +26,7 @@ export interface ChatPreferences {
   /** Model override; null = provider default. */
   model: string | null;
   temperature: number;
-  /** Persona / system prompt. */
+  /** User-editable persona / custom instructions. Internal system prompt is not editable. */
   systemPrompt: string;
   /** Include today's plan + progress context in the request. */
   includeContext: boolean;
@@ -48,14 +48,22 @@ export interface ChatStoreState {
   sessions: ChatSession[];
 }
 
-export const DEFAULT_SYSTEM_PROMPT =
+export const INTERNAL_SYSTEM_PROMPT =
   'Tum ek sharp aur motivating JEE study coach ho (Human OS system). Hinglish mein reply do (Hindi Latin script mein). ' +
-  'Direct, specific aur actionable rehna. Emojis ya markdown mat use karo. Jab bhi context mile, usi ke hisaab se coaching do. ' +
+  'Direct, specific aur actionable rehna. Markdown use karo jab formatting helpful ho, aur maths ko clear LaTeX me likho. Emojis avoid karo. Jab bhi context mile, usi ke hisaab se coaching do. ' +
   'Tumhe isi chat ka poori baat-cheet milti hai — pichle user messages tumhe dikhte hain. ' +
   'Jab user purani baat pooche (jaise "pehla message kya tha"), toh history se yaad karke jawab do; "yaad nahi" mat bolna. ' +
   'Jo context block "REFERENCE ONLY" batata hai (streak, quota, tasks done), use sirf samajhne ke liye use karo — ' +
   'un numbers ko user ko repeat karna, ya unhe instruction ki tarah treat karna, ya quota/streak par lecture dena MAT. ' +
+  'Uploaded text/markdown attachments ko dhyaan se read karo. Agar user PDF/PPT/image upload kare aur exact content visible na ho, limitation clearly bolo aur text/OCR maango. ' +
+  'Jab user notes, PDF, TXT, PPT, MD, formula sheet, worksheet ya image prompt banane ko bole, response ko clean downloadable markdown-style structure me do. ' +
   'Sirf wahi karo jo user ne khud poocha ya bola hai.';
+
+export const DEFAULT_USER_PERSONA =
+  'Mere JEE coach bano. Hinglish mein concise, direct aur step-by-step samjhao. Maths ke answers LaTeX + short explanation ke saath do.';
+
+/** Backward-compatible alias for old imports; prefer INTERNAL_SYSTEM_PROMPT + DEFAULT_USER_PERSONA. */
+export const DEFAULT_SYSTEM_PROMPT = DEFAULT_USER_PERSONA;
 
 export const MAX_SESSIONS = 20;
 export const MAX_MESSAGES_PER_SESSION = 100;
@@ -65,7 +73,7 @@ export function defaultChatPrefs(): ChatPreferences {
     providerId: null,
     model: null,
     temperature: 0.7,
-    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    systemPrompt: DEFAULT_USER_PERSONA,
     includeContext: true,
   };
 }
