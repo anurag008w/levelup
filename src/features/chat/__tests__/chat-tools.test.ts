@@ -181,7 +181,18 @@ describe('ChatToolsService', () => {
     })] });
     const result = await tools.run({ action: 'removeTask', day: 1, taskId: 'ai-xyz' });
     expect(result.ok).toBe(true);
-    expect(store.get().dynamicTaskBank).toHaveLength(0);
+    expect(store.get().dynamicTaskBank.some((e) => e.id === 'ai-xyz')).toBe(false);
+  });
+
+  it('editTask can override a built-in seed entry', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const result = await tools.run({ action: 'editTask', day: 1, taskId: 'd1_t1', title: 'Updated built-in task', durationMin: 25, dayTo: 2 });
+    expect(result.ok).toBe(true);
+    const override = store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1');
+    expect(override?.title).toBe('Updated built-in task');
+    expect(override?.estimatedDurationMin).toBe(25);
+    expect(override?.unlockConditions).toEqual([{ type: 'day', fromDay: 2 }]);
   });
 });
 

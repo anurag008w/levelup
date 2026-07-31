@@ -66,6 +66,30 @@ describe('HabitProgressionService backward compatibility', () => {
     }
   });
 
+  it('has planned tasks for every Phase 1 day', () => {
+    const { planner } = makePlanner();
+    const state = healthyState();
+    const phase1Levels = LEVELS.filter((level) => level.phase === 'jee-core' && level.authored);
+    const phase1Start = Math.min(...phase1Levels.map((level) => level.dayStart));
+    const phase1End = Math.max(...phase1Levels.map((level) => level.dayEnd));
+
+    for (let day = phase1Start; day <= phase1End; day++) {
+      const plan = planner.buildPlan(state, isoFromDay(day), legacyConfig);
+      expect(plan.tasks.length, `Day ${day} should have at least one task`).toBeGreaterThan(0);
+    }
+  });
+
+  it('has seed task coverage for every authored Phase 1 level', () => {
+    const { bank } = makePlanner();
+    const entries = bank.getAll();
+    const phase1Levels = LEVELS.filter((level) => level.phase === 'jee-core' && level.authored);
+
+    for (const level of phase1Levels) {
+      const levelTasks = entries.filter((task) => task.legacy?.levelId === level.id && task.active);
+      expect(levelTasks.length, `Level ${level.id} should have seed tasks`).toBeGreaterThan(0);
+    }
+  });
+
   it('healthy plan requires all tasks and injects nothing', () => {
     const { planner, bank } = makePlanner();
     const state = healthyStateWithRecentCompletion(planner, 8);
