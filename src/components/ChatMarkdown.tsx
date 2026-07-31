@@ -9,7 +9,7 @@ const components: Components = {
   a: ({ node: _node, ...props }) => (
     <a {...props} target="_blank" rel="noreferrer" style={{ color: 'var(--color-l)', textDecoration: 'underline' }} />
   ),
-  p: ({ node: _node, ...props }) => <p className="mb-1.5 leading-relaxed last:mb-0" {...props} />,
+  p: ({ node: _node, ...props }) => <p className="mb-2 leading-relaxed last:mb-0" {...props} />,
   ul: ({ node: _node, ...props }) => <ul className="mb-1.5 list-disc space-y-0.5 pl-5" {...props} />,
   ol: ({ node: _node, ...props }) => <ol className="mb-1.5 list-decimal space-y-0.5 pl-5" {...props} />,
   li: ({ node: _node, ...props }) => <li className="leading-relaxed" {...props} />,
@@ -31,7 +31,7 @@ const components: Components = {
       </code>
     );
   },
-  pre: ({ node: _node, children }) => <pre className="mb-2 overflow-hidden rounded-md border border-border">{children}</pre>,
+  pre: ({ node: _node, children }) => <pre className="mb-2 overflow-hidden rounded-lg border border-border shadow-inner">{children}</pre>,
   blockquote: ({ node: _node, ...props }) => (
     <blockquote className="mb-1.5 border-l-2 border-peak/40 pl-2 text-muted" {...props} />
   ),
@@ -39,17 +39,20 @@ const components: Components = {
   h2: ({ node: _node, ...props }) => <h2 className="mb-1 font-display text-sm font-bold" {...props} />,
   h3: ({ node: _node, ...props }) => <h3 className="mb-1 font-display text-[13px] font-bold" {...props} />,
   table: ({ node: _node, ...props }) => (
-    <table className="mb-1.5 w-full border-collapse text-xs" {...props} />
+    <div className="mb-2 overflow-x-auto rounded-lg border border-border">
+      <table className="w-full border-collapse text-xs" {...props} />
+    </div>
   ),
   th: ({ node: _node, ...props }) => (
-    <th className="border border-border bg-peak/10 px-2 py-1 text-left font-bold" {...props} />
+    <th className="border-b border-r border-border bg-peak/10 px-2 py-1.5 text-left font-bold" {...props} />
   ),
-  td: ({ node: _node, ...props }) => <td className="border border-border px-2 py-1" {...props} />,
+  td: ({ node: _node, ...props }) => <td className="border-b border-r border-border px-2 py-1.5 align-top" {...props} />,
+  hr: ({ node: _node, ...props }) => <hr className="my-3 border-border" {...props} />,
 };
 
 export default function ChatMarkdown({ text }: { text: string }) {
   return (
-    <div className="text-[13px] text-text">
+    <div className="text-[13px] leading-relaxed text-text [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:rounded-lg [&_.katex-display]:border [&_.katex-display]:border-border [&_.katex-display]:bg-black/20 [&_.katex-display]:px-2 [&_.katex-display]:py-2">
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={components}>
         {text}
       </ReactMarkdown>

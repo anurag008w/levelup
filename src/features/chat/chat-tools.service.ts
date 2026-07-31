@@ -9,6 +9,7 @@ import type { HabitProgressionService } from '../habit-engine/planner';
 import type { TaskBankService } from '../task-bank/task-bank.service';
 import type { TaskGenerationService } from '../ai/task-generation.service';
 import { isAbortError } from '../../core/domain/llm';
+import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from './plan-format';
 
 const MIN_DAY = 1;
 const MAX_DAY = 90;
@@ -92,13 +93,11 @@ export class ChatToolsService {
   private getPlan(state: AppState, day: number): ChatToolResult {
     if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
     const d = clamp(day);
-    const plan = this.planForDay(state, d);
-    if (plan.tasks.length === 0) return { ok: true, summary: `Day ${d}: no tasks planned.` };
-    const lines = [`Day ${d} plan (${plan.tasks.length} tasks):`];
-    for (const t of plan.tasks) {
-      const done = Boolean((state.taskLogs[t.logKey] ?? {})[t.entry.id]);
-      lines.push(`- id:${t.entry.id} | ${done ? '[done]' : '[todo]'} | ${t.entry.title} | ${t.group} | ${t.entry.estimatedDurationMin}min`);
-    }
+    const dateISO = this.dateForDay(state, d);
+    const plan = this.planner.buildPlan(state, dateISO, this.config);
+    if (plan.tasks.length === 0) return { ok: true, summary: `Day ${d} — ${formatDayLabel(dateISO)} (${dateISO}): no tasks planned.` };
+    const lines = [`Day ${d} plan — ${formatDayLabel(dateISO)} (${dateISO}) — ${formatPlanProgress(plan, state)}:`];
+    lines.push(...formatScheduledTasks(plan, state));
     return { ok: true, summary: lines.join('\n') };
   }
 
@@ -111,9 +110,9 @@ export class ChatToolsService {
     const lines = [`Plan overview Day ${from}-${to}:`];
     for (let d = from; d <= to; d++) {
       const plan = this.planForDay(state, d);
-      const done = plan.tasks.filter((t) => Boolean((state.taskLogs[t.logKey] ?? {})[t.entry.id])).length;
-      const first = plan.tasks.slice(0, 4).map((t) => t.entry.title).join('; ');
-      lines.push(`Day ${d}: ${plan.tasks.length} tasks (${done} done). ${first}`);
+      const dateISO = this.dateForDay(state, d);
+      const first = formatScheduledTasks(plan, state, 4).join('; ');
+      lines.push(`Day ${d} — ${formatDayLabel(dateISO)} (${dateISO}): ${formatPlanProgress(plan, state)}. ${first}`);
     }
     return { ok: true, summary: lines.join('\n') };
   }

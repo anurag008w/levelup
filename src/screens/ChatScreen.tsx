@@ -1,13 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Check, ChevronDown, Eraser, MessageSquarePlus, Pause, Send, Settings2, User, Wrench, X } from 'lucide-react';
+import { Bot, Check, ChevronDown, Download, Eraser, FileText, Image, MessageSquarePlus, Paperclip, Pause, Send, Settings2, Sigma, Sparkles, User, Wrench, X } from 'lucide-react';
 import type { ChatMessage, ChatPreferences, ChatSession } from '../core/domain/chat';
-import { DEFAULT_SYSTEM_PROMPT } from '../core/domain/chat';
+import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT } from '../core/domain/chat';
 import type { ModelInfo } from '../core/domain/llm';
 import { container } from '../di/container';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import EmptyState from '../components/ui/EmptyState';
 import AddProviderForm from '../components/AddProviderForm';
 import ChatMarkdown from '../components/ChatMarkdown';
+
+interface DraftAttachment {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  kind: 'text' | 'image' | 'binary';
+  content?: string;
+  previewUrl?: string;
+}
+
+const TEXT_EXTENSIONS = new Set(['txt', 'md', 'markdown', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'css', 'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'tex']);
+const MAX_TEXT_ATTACHMENT_CHARS = 24_000;
 
 export default function ChatScreen() {
   const [sessions, setSessions] = useState<ChatSession[]>(() => container.chat.listSessions());
@@ -18,11 +31,13 @@ export default function ChatScreen() {
   const [streamReasoning, setStreamReasoning] = useState('');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const [showOptions, setShowOptions] = useState(false);
   const [catalog, setCatalog] = useState<ModelInfo[]>([]);
   const [providerCount, setProviderCount] = useState(container.providerSettings.listStoredProviders().length);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? null, [sessions, activeId]);
   const providers = useMemo(
@@ -48,6 +63,7 @@ export default function ChatScreen() {
     refresh();
     setActiveId(session.id);
     setDraft('');
+    setAttachments([]);
     setError('');
   }
 
@@ -93,10 +109,11 @@ export default function ChatScreen() {
   }, [active?.prefs.providerId]);
 
   async function send() {
-    const text = draft.trim();
+    const text = buildPromptWithAttachments(draft.trim(), attachments);
     if (!text || streaming || !active) return;
     setError('');
     setDraft('');
+    setAttachments([]);
     setStreaming(true);
     setStreamText('');
     setStreamReasoning('');
@@ -128,6 +145,34 @@ export default function ChatScreen() {
     abortRef.current?.abort();
   }
 
+
+  async function attachFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setError('');
+    try {
+      const next = await Promise.all(Array.from(files).map(readAttachment));
+      setAttachments((prev) => [...prev, ...next]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((prev) => {
+      const item = prev.find((a) => a.id === id);
+      if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  }
+
+  function insertPromptTemplate(template: string) {
+    setDraft((prev) => (prev.trim() ? `${prev.trim()}
+
+${template}` : template));
+  }
+
   function keydown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -152,9 +197,18 @@ export default function ChatScreen() {
         }
       />
 
-      <p className="mb-3 rounded-lg border border-peak/20 bg-peak/5 px-3 py-2 text-[10px] leading-relaxed text-muted">
-        Task add/remove/mark yahan se bhi kar sakte ho — jaise &quot;aaj ek 30min revision task add karo&quot; ya &quot;day 5 ka plan batao&quot;.
-      </p>
+      <div className="mb-3 rounded-2xl border border-peak/20 bg-gradient-to-br from-peak/10 via-panel to-l/5 p-3 text-[10px] leading-relaxed text-muted">
+        <div className="mb-2 flex items-center gap-2 font-display text-sm font-bold text-text">
+          <Sparkles size={15} color="var(--color-peak)" />
+          Doubts, maths, files aur creations
+        </div>
+        <p>Task tools ke saath LaTeX maths, markdown notes, file uploads aur downloadable answers bhi supported hain.</p>
+        <div className="mt-2 grid grid-cols-3 gap-1.5">
+          <QuickAction icon={<Sigma size={12} />} label="Math solve" onClick={() => insertPromptTemplate('Is maths problem ko step-by-step solve karo, fractions ko LaTeX me dikhao: \\(\\frac{2}{3} + 3\\times3\\)')} />
+          <QuickAction icon={<FileText size={12} />} label="MD summary" onClick={() => insertPromptTemplate('Uploaded notes ko clean markdown summary + formula sheet me convert karo.')} />
+          <QuickAction icon={<Download size={12} />} label="Canvas file" onClick={() => insertPromptTemplate('Is content se ek downloadable .md/.txt style file bana do, headings aur tables ke saath.')} />
+        </div>
+      </div>
 
       {sessions.length > 0 && (
         <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
@@ -247,10 +301,10 @@ export default function ChatScreen() {
         {lastAssistantStreaming && (
           <div className="mb-2 flex items-end gap-2">
             <Avatar role="assistant" />
-            <div className="max-w-[80%] rounded-xl border border-border bg-bg px-3 py-2.5">
+            <div className="max-w-[90%] rounded-2xl border border-border bg-bg px-3 py-2.5 shadow-sm">
               {streamReasoning && <ThinkingBlock text={streamReasoning} />}
-              <div className="whitespace-pre-wrap text-sm text-text">
-                {streamText}
+              <div className="markdown-body text-sm text-text">
+                <ChatMarkdown text={streamText} />
                 <span className="ml-0.5 inline-block h-3.5 w-0.5 animate-pulse bg-light align-middle" />
               </div>
             </div>
@@ -263,33 +317,60 @@ export default function ChatScreen() {
       )}
 
       {active && (
-        <div className="mt-3 flex items-end gap-2">
-          <textarea
-            rows={2}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={keydown}
-            placeholder="Message likho… (Enter = bhejo)"
-            className="field max-h-32 flex-1 resize-none"
-          />
-          {streaming ? (
-            <button
-              onClick={stop}
-              className="btn flex h-10 w-10 shrink-0 items-center justify-center border border-border bg-panel"
-              aria-label="Stop generating"
-            >
-              <Pause size={18} color="var(--color-light)" />
-            </button>
-          ) : (
-            <button
-              onClick={() => void send()}
-              disabled={draft.trim().length === 0}
-              className="btn flex h-10 w-10 shrink-0 items-center justify-center bg-l"
-              aria-label="Send message"
-            >
-              <Send size={18} color="var(--color-bg)" />
-            </button>
+        <div className="mt-3 rounded-2xl border border-border bg-panel p-2 shadow-lg shadow-black/10">
+          {attachments.length > 0 && (
+            <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+              {attachments.map((a) => (
+                <AttachmentChip key={a.id} attachment={a} onRemove={() => removeAttachment(a.id)} />
+              ))}
+            </div>
           )}
+          <div className="flex items-end gap-2">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="btn flex h-10 w-10 shrink-0 items-center justify-center border border-border bg-bg"
+              aria-label="Attach files"
+              title="Attach files like ChatGPT. Text/MD/code files are read into the prompt."
+            >
+              <Paperclip size={17} color="var(--color-light)" />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".txt,.md,.markdown,.csv,.json,.yaml,.yml,.tex,.pdf,.ppt,.pptx,.doc,.docx,image/*"
+              className="hidden"
+              onChange={(e) => void attachFiles(e.target.files)}
+            />
+            <textarea
+              rows={2}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={keydown}
+              placeholder="Maths ya doubt likho… e.g. (2/3) + 3*3, ya file attach karo"
+              className="field max-h-36 flex-1 resize-none border-0 bg-bg"
+            />
+            {streaming ? (
+              <button
+                onClick={stop}
+                className="btn flex h-10 w-10 shrink-0 items-center justify-center border border-border bg-bg"
+                aria-label="Stop generating"
+              >
+                <Pause size={18} color="var(--color-light)" />
+              </button>
+            ) : (
+              <button
+                onClick={() => void send()}
+                disabled={draft.trim().length === 0 && attachments.length === 0}
+                className="btn flex h-10 w-10 shrink-0 items-center justify-center bg-l disabled:opacity-40"
+                aria-label="Send message"
+              >
+                <Send size={18} color="var(--color-bg)" />
+              </button>
+            )}
+          </div>
+          <p className="mt-1.5 px-1 text-[10px] text-muted">Markdown/LaTeX supported: <span className="font-mono">\\frac&#123;2&#125;&#123;3&#125;</span>, tables, code blocks. Text/MD files AI ko content ke saath milte hain.</p>
         </div>
       )}
 
@@ -302,6 +383,42 @@ export default function ChatScreen() {
           Chat clear karo
         </button>
       )}
+    </div>
+  );
+}
+
+
+function QuickAction({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center justify-center gap-1 rounded-lg border border-border bg-bg/70 px-2 py-1.5 font-semibold text-text transition-colors hover:border-l"
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function AttachmentChip({ attachment, onRemove }: { attachment: DraftAttachment; onRemove: () => void }) {
+  const isImage = attachment.kind === 'image';
+  return (
+    <div className="flex min-w-0 shrink-0 items-center gap-2 rounded-xl border border-border bg-bg px-2 py-1.5 text-[10px]">
+      {isImage && attachment.previewUrl ? (
+        <img src={attachment.previewUrl} alt="" className="h-7 w-7 rounded-lg object-cover" />
+      ) : isImage ? (
+        <Image size={15} color="var(--color-light)" />
+      ) : (
+        <FileText size={15} color="var(--color-l)" />
+      )}
+      <div className="max-w-32 min-w-0">
+        <p className="truncate font-semibold text-text">{attachment.name}</p>
+        <p className="text-muted">{formatBytes(attachment.size)} · {attachment.kind}</p>
+      </div>
+      <button type="button" onClick={onRemove} className="rounded-full p-0.5 text-muted hover:bg-danger/10 hover:text-danger" aria-label="Remove attachment">
+        <X size={11} />
+      </button>
     </div>
   );
 }
@@ -347,7 +464,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     <div className={`mb-2 flex items-end gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
       {!isUser && <Avatar role="assistant" />}
       <div
-        className={`max-w-[80%] rounded-xl px-3 py-2.5 text-sm ${
+        className={`max-w-[90%] rounded-2xl px-3 py-2.5 text-sm shadow-sm ${
           isUser
             ? 'border border-light/40 bg-panel text-text'
             : 'border border-border bg-bg text-text'
@@ -364,23 +481,82 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           </span>
         )}
         <div className={isUser ? '' : 'markdown-body'}>
-          {isUser ? (
-            <div className="whitespace-pre-wrap">{message.content}</div>
-          ) : (
-            <ChatMarkdown text={message.content} />
-          )}
+          <ChatMarkdown text={message.content} />
         </div>
         <div className="mt-1 flex items-center gap-2">
           {message.model && <span className="font-mono text-[9px] text-muted">{message.model}</span>}
           {message.stopped && (
             <span className="rounded bg-panel px-1.5 py-0.5 text-[9px] text-muted">stopped</span>
           )}
-          {message.role === 'assistant' && <Check size={10} color="var(--color-success)" />}
+          {message.role === 'assistant' && (
+            <>
+              <Check size={10} color="var(--color-success)" />
+              <button onClick={() => downloadMessage(message)} className="ml-auto inline-flex items-center gap-1 rounded bg-panel px-1.5 py-0.5 text-[9px] text-muted hover:text-text">
+                <Download size={9} /> save .md
+              </button>
+            </>
+          )}
         </div>
       </div>
       {isUser && <Avatar role="user" />}
     </div>
   );
+}
+
+
+async function readAttachment(file: File): Promise<DraftAttachment> {
+  const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+  const isText = file.type.startsWith('text/') || TEXT_EXTENSIONS.has(extension);
+  if (isText) {
+    const raw = await file.text();
+    const truncated = raw.length > MAX_TEXT_ATTACHMENT_CHARS;
+    return {
+      id: uid('att'),
+      name: file.name,
+      type: file.type || extension || 'text',
+      size: file.size,
+      kind: 'text',
+      content: truncated ? `${raw.slice(0, MAX_TEXT_ATTACHMENT_CHARS)}\n\n[Attachment truncated after ${MAX_TEXT_ATTACHMENT_CHARS} characters]` : raw,
+    };
+  }
+  if (file.type.startsWith('image/')) {
+    return { id: uid('att'), name: file.name, type: file.type, size: file.size, kind: 'image', previewUrl: URL.createObjectURL(file) };
+  }
+  return { id: uid('att'), name: file.name, type: file.type || extension || 'binary', size: file.size, kind: 'binary' };
+}
+
+function buildPromptWithAttachments(draft: string, attachments: DraftAttachment[]): string {
+  if (attachments.length === 0) return draft;
+  const blocks = attachments.map((a, idx) => {
+    const header = `Attachment ${idx + 1}: ${a.name} (${a.type || 'unknown'}, ${formatBytes(a.size)})`;
+    if (a.kind === 'text') return `<attached_file>\n${header}\n\n${a.content ?? ''}\n</attached_file>`;
+    if (a.kind === 'image') return `<attached_image>\n${header}\nImage preview attached in UI. If your model cannot view images here, ask the user for text/OCR or describe what is needed.\n</attached_image>`;
+    return `<attached_file>\n${header}\nBinary document uploaded. Ask for text export if exact contents are required.\n</attached_file>`;
+  });
+  return [draft || 'In uploaded attachments ko analyze karo.', ...blocks].join('\n\n');
+}
+
+function downloadMessage(message: ChatMessage) {
+  const blob = new Blob([message.content], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `human-os-ai-${new Date(message.createdAt).toISOString().slice(0, 10)}.md`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function uid(prefix: string): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 function OptionsPanel({
@@ -461,18 +637,24 @@ function OptionsPanel({
       </div>
 
       <div>
-        <label className="mb-1 block font-semibold text-muted">Persona / System prompt</label>
+        <div className="mb-2 rounded-lg border border-border bg-bg px-2.5 py-2">
+          <p className="mb-1 font-semibold text-muted">Internal system prompt</p>
+          <p className="line-clamp-3 text-[10px] leading-relaxed text-muted">{INTERNAL_SYSTEM_PROMPT}</p>
+          <p className="mt-1 text-[10px] text-light">Locked — app safety, tools, context aur attachment rules yahan se aate hain.</p>
+        </div>
+        <label className="mb-1 block font-semibold text-muted">Your persona / Custom instructions</label>
         <textarea
-          rows={3}
+          rows={4}
           value={prefs.systemPrompt}
           onChange={(e) => onChange({ systemPrompt: e.target.value })}
+          placeholder="e.g. Mujhe JEE maths step-by-step Hinglish mein samjhao; formulas LaTeX mein do."
           className="field resize-none"
         />
         <button
-          onClick={() => onChange({ systemPrompt: DEFAULT_SYSTEM_PROMPT })}
+          onClick={() => onChange({ systemPrompt: DEFAULT_USER_PERSONA })}
           className="mt-1 text-muted underline-offset-2 hover:text-text hover:underline"
         >
-          Default persona reset
+          Default user persona reset
         </button>
       </div>
 
