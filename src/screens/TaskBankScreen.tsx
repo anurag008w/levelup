@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Check, ListTodo, Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { AppState } from '../types';
 import type { EnergyLevel, TaskBankEntry, TaskType } from '../core/domain/task-bank';
