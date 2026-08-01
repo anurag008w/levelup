@@ -110,14 +110,22 @@ export class FetchHttpClient implements HttpClient {
     const timeoutMs = init.timeoutMs ?? this.defaultTimeoutMs;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let signal = controller.signal;
+    let signal: AbortSignal = controller.signal;
+    
     if (init.signal) {
-      signal = AbortSignal.any([controller.signal, init.signal]);
       if (init.signal.aborted) {
         clearTimeout(timer);
         throw new HttpError('Request aborted', 0, 'aborted', null);
       }
+      // AbortSignal.any() is not supported in all browsers, use fallback
+      if (typeof AbortSignal.any === 'function') {
+        signal = AbortSignal.any([controller.signal, init.signal]);
+      } else {
+        // Fallback for older browsers: manually abort when either signals
+        init.signal.addEventListener('abort', () => controller.abort(), { once: true });
+      }
     }
+    
     try {
       return await this.fetchFn(init.url, {
         method: init.method ?? 'POST',
