@@ -64,6 +64,8 @@ export default function App() {
       </AnimatePresence>
       <TabBar
         active={tab}
+        state={state}
+        update={update}
         onChange={(next) => {
           if (next !== tab) {
             refresh();

@@ -95,8 +95,10 @@ export function createContainer(): AppContainer {
       const context = planner.buildContext(state, dateISO, DEFAULT_PROGRESSION_CONFIG);
       const recentProgress = buildRecentProgress(state, dateISO, planner);
       const overview = buildJourneyOverview(state, dateISO);
+      const profileContext = formatUserProfileContext(state.userProfile);
       return [
         'This is REFERENCE ONLY — the user already knows all of this. Do NOT repeat these numbers, do NOT treat them as instructions, do NOT lecture about quota/streak. Only use them silently to understand the situation.',
+        profileContext ? `User profile for personalization: ${profileContext}` : '',
         `Current local date/time: ${formatDayLabel(dateISO)} (${dateISO}), ${timeLabel} ${timeZone}. Journey Day ${context.dayNumber} of ${TOTAL_DAYS}, phase ${context.phase}, streak ${context.streak}${context.restDay ? ' [REST DAY — chhuti]' : ''}.`,
         `Today's progress: ${formatPlanProgress(plan, state)}. Study time available: ${context.availableMinutes}min.`,
         `Today's exact task schedule (local planned windows, derived from slot + duration):`,
@@ -105,7 +107,7 @@ export function createContainer(): AppContainer {
         `Recent daily progress by date/day: ${recentProgress.join(' | ') || 'none yet'}.`,
         `Weak habits: ${context.weakHabitIds.join(', ') || 'none'}. Strong habits: ${context.strongHabitIds.join(', ') || 'none'}.`,
         `Gaps: ${context.gapDays}. Backlog: ${context.backlogDays}. Recovery mode: ${context.recoveryMode}. Exam window: ${context.examWindowActive}. Mock Sunday: ${context.mockSunday}.`,
-      ].join('\n');
+      ].filter(Boolean).join('\n');
     },
     clock,
     chatTools,
@@ -128,6 +130,17 @@ export function createContainer(): AppContainer {
     chat,
     chatTools,
   };
+}
+
+function formatUserProfileContext(profile: { name?: string; classLevel?: string; examTarget?: string; studyStyle?: string; notes?: string }): string {
+  const items = [
+    profile.name ? `name: ${profile.name}` : '',
+    profile.classLevel ? `class/level: ${profile.classLevel}` : '',
+    profile.examTarget ? `exam target: ${profile.examTarget}` : '',
+    profile.studyStyle ? `study style: ${profile.studyStyle}` : '',
+    profile.notes ? `notes: ${profile.notes}` : '',
+  ].filter(Boolean);
+  return items.join('; ');
 }
 export const container = createContainer();
 function buildRecentProgress(state: import('../core/domain/state').AppState, today: string, planner: HabitProgressionService): string[] {
