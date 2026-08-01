@@ -183,7 +183,7 @@ export default function ChatScreen() {
   function ensureSession(): ChatSession {
     let s = active;
     if (!s) {
-      s = container.chat.createSession();
+      s = container.chat.createSession('', globalChatPrefs());
       refresh();
       setActiveId(s.id);
     }
@@ -192,7 +192,7 @@ export default function ChatScreen() {
 
   function newChat() {
     haptic();
-    const session = container.chat.createSession();
+    const session = container.chat.createSession('', globalChatPrefs());
     refresh();
     setActiveId(session.id);
     setDraft('');
@@ -1312,6 +1312,18 @@ function SettingsSheet({
       </div>
     </Sheet>
   );
+}
+
+function globalChatPrefs(): ChatPreferences {
+  const global = container.store.get().aiSettings.chat;
+  return {
+    ...defaultChatPrefs(),
+    temperature: global.temperature,
+    maxTokens: global.maxTokens,
+    systemPrompt: global.systemPrompt,
+    userPersona: global.userPersona,
+    includeContext: global.includeJourneyContext,
+  };
 }
 
 function ActionRow({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {

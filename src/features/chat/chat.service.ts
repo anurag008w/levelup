@@ -73,13 +73,13 @@ export class ChatService {
     return this.state().sessions.find((s) => s.id === id) ?? null;
   }
 
-  createSession(title = ''): ChatSession {
+  createSession(title = '', prefs: ChatPreferences = defaultChatPrefs()): ChatSession {
     const now = this.clock.now().toISOString();
     const session: ChatSession = {
       id: uid(),
       title,
       messages: [],
-      prefs: defaultChatPrefs(),
+      prefs: normalizePrefs(prefs),
       createdAt: now,
       updatedAt: now,
     };
