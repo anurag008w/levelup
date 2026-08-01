@@ -223,6 +223,12 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
   async healthCheck(): Promise<HealthCheckResult> {
     const start = Date.now();
+    
+    // Must have API key for remote providers
+    if (!this.config.apiKey) {
+      return { ok: false, provider: this.id, latencyMs: Date.now() - start, message: 'API key missing' };
+    }
+    
     try {
       await this.http.requestJson<unknown>({
         url: `${this.baseUrl()}/models`,
