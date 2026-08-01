@@ -1,4 +1,4 @@
-import { Brain, ChevronLeft, MessageSquare, Save, Sparkles, Trash2, Type } from 'lucide-react';
+import { Brain, ChevronLeft, MessageSquare, Save, Sparkles, Type } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ChatSettings } from '../core/domain/state';
 import ScreenHeader from '../components/ui/ScreenHeader';
@@ -184,33 +184,37 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
         </div>
       </div>
 
-      {/* System Prompt */}
+      {/* Advanced system persona */}
       <div className="mb-6">
         <SectionHeader
           icon={<span className="font-mono text-xs text-text">L</span>}
           accent="var(--color-text)"
-          title="Editable system persona"
+          title="Advanced settings"
         />
 
         <div className="gradient-border rounded-[1.25rem] p-px">
-          <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4">
-            <textarea
-              className="field min-h-[120px] resize-none"
-              value={chat.systemPrompt}
-              onChange={(e) => updateChat({ systemPrompt: e.target.value })}
-              placeholder="Divya coach persona, tone aur LaTeX rules..."
-            />
-            <div className="mt-2 flex items-center justify-between">
-              <span className="text-[10px] text-muted">{chat.systemPrompt.length} characters</span>
-              <button
-                className="btn btn-ghost text-xs"
-                onClick={() => updateChat({ systemPrompt: INTERNAL_SYSTEM_PROMPT })}
-              >
-                <Trash2 size={12} className="mr-1" />
-                Reset Divya
-              </button>
+          <details className="rounded-[calc(1.25rem-1px)] bg-panel p-4">
+            <summary className="cursor-pointer select-none text-sm font-medium text-muted marker:text-muted-dim">
+              System persona (hidden)
+            </summary>
+            <div className="mt-3">
+              <textarea
+                className="field min-h-[120px] resize-none"
+                value={chat.systemPrompt}
+                onChange={(e) => updateChat({ systemPrompt: e.target.value })}
+                placeholder="Divya coach persona, tone aur LaTeX rules..."
+              />
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-[10px] text-muted">{chat.systemPrompt.length} characters</span>
+                <button
+                  className="btn btn-ghost text-xs"
+                  onClick={() => updateChat({ systemPrompt: INTERNAL_SYSTEM_PROMPT })}
+                >
+                  Reset Divya
+                </button>
+              </div>
             </div>
-          </div>
+          </details>
         </div>
       </div>
     </div>
