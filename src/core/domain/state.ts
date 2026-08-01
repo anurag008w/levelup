@@ -54,6 +54,83 @@ export function defaultChatSettings(): ChatSettings {
   };
 }
 
+// ===== POST-JOURNEY SYSTEM =====
+
+export type MasteryLevel = 'beginner' | 'intermediate' | 'advanced' | 'expert';
+
+export interface MasteryConfig {
+  /** User's overall mastery level */
+  level: MasteryLevel;
+  /** Topic-wise mastery scores (topicId -> score 0-100) */
+  topicScores: Record<string, number>;
+  /** Mastery unlocked date */
+  unlockedAt: string | null;
+}
+
+export interface CustomPhase {
+  id: string;
+  name: string;
+  description: string;
+  dayStart: number;
+  dayEnd: number;
+  goals: string[];
+  habits: string[];
+  difficulty: 'easy' | 'medium' | 'hard' | 'extreme';
+  createdBy: 'ai' | 'user';
+  createdAt: string;
+}
+
+export interface PostJourneyState {
+  /** Is journey complete (day 90+ reached) */
+  journeyComplete: boolean;
+  /** Date when journey was completed */
+  completedAt: string | null;
+  /** Total days in current extension */
+  extensionDays: number;
+  /** Mastery configuration */
+  mastery: MasteryConfig;
+  /** Custom phases created by user or AI */
+  customPhases: CustomPhase[];
+  /** Current active custom phase */
+  activeCustomPhaseId: string | null;
+  /** AI-generated phase suggestions pending approval */
+  pendingAISuggestions: CustomPhase[];
+  /** Stats from completed journey */
+  finalStats: JourneyFinalStats | null;
+}
+
+export interface JourneyFinalStats {
+  totalTasksCompleted: number;
+  averageAccuracy: number;
+  strongestHabit: string;
+  weakestHabit: string;
+  totalStudyHours: number;
+  streakDays: number;
+  levelCleared: number;
+  phaseReached: string;
+}
+
+export function defaultMasteryConfig(): MasteryConfig {
+  return {
+    level: 'beginner',
+    topicScores: {},
+    unlockedAt: null,
+  };
+}
+
+export function defaultPostJourney(): PostJourneyState {
+  return {
+    journeyComplete: false,
+    completedAt: null,
+    extensionDays: 0,
+    mastery: defaultMasteryConfig(),
+    customPhases: [],
+    activeCustomPhaseId: null,
+    pendingAISuggestions: [],
+    finalStats: null,
+  };
+}
+
 export interface AppState {
   schemaVersion: number;
 
@@ -82,6 +159,10 @@ export interface AppState {
   /** Versioned, undoable audit trail for AI-generated application changes. */
   aiActionHistory: AiActionHistoryState;
   lastSummaryDate: string | null;
+  
+  // --- v3: Post-Journey System ---
+  /** Post-journey state for users who completed 90 days */
+  postJourney: PostJourneyState;
 }
 
 export function defaultAiSettings(): AiSettings {
@@ -114,5 +195,6 @@ export function emptyAppState(): AppState {
     studyTimeMinutes: 360,
     aiActionHistory: emptyAiActionHistory(),
     lastSummaryDate: null,
+    postJourney: defaultPostJourney(),
   };
 }

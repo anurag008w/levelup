@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { CalendarClock, CalendarRange, Check, ChevronRight, ClipboardList, History, NotebookPen, Siren, Trash2 } from 'lucide-react';
+import { lazy, Suspense, useState } from 'react';
+import { CalendarClock, CalendarRange, Check, ChevronRight, ClipboardList, History, Medal, NotebookPen, Siren, Trash2 } from 'lucide-react';
 import type { AppState } from '../types';
 import {
   currentMonthNumber,
@@ -13,6 +13,8 @@ import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { haptic, hapticSuccess } from '../lib/haptics';
+
+const PostJourneyScreen = lazy(() => import('./PostJourneyScreen'));
 
 export default function ReviewScreen({
   state,
@@ -30,6 +32,16 @@ export default function ReviewScreen({
   const [plan, setPlan] = useState('');
   const [reflection, setReflection] = useState('');
   const [examDate, setExamDate] = useState(state.examDateISO ?? '');
+  const [showPostJourney, setShowPostJourney] = useState(false);
+
+  // Show Post-Journey screen if navigating there
+  if (showPostJourney) {
+    return (
+      <Suspense fallback={<div className="screen"><ScreenHeader eyebrow="" title="Loading..." /></div>}>
+        <PostJourneyScreen state={state} update={update} onBack={() => setShowPostJourney(false)} />
+      </Suspense>
+    );
+  }
 
   if (!state.startDateISO) {
     return (
@@ -255,6 +267,34 @@ export default function ReviewScreen({
         <Trash2 size={14} />
         Reset All Progress
       </button>
+
+      {/* Post-Journey Section */}
+      {(state.postJourney?.journeyComplete || dayNumber >= 85) && (
+        <div className="mt-6">
+          <button
+            type="button"
+            onClick={() => setShowPostJourney(true)}
+            className="gradient-border w-full rounded-[1.25rem] p-px text-left"
+          >
+            <div className="flex items-center justify-between rounded-[calc(1.25rem-1px)] bg-panel p-4">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(245,179,103,0.15)' }}>
+                  <Medal size={18} color="var(--color-light)" />
+                </span>
+                <div>
+                  <p className="font-display text-[15px] font-bold">Post-Journey</p>
+                  <p className="text-xs leading-snug text-muted">
+                    {state.postJourney?.journeyComplete 
+                      ? `${state.postJourney.customPhases.length} custom phases`
+                      : `${90 - dayNumber} days to complete!`}
+                  </p>
+                </div>
+              </div>
+              <ChevronRight size={18} className="text-muted" />
+            </div>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
