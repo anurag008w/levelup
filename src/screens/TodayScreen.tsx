@@ -649,7 +649,7 @@ function StartScreen({ onStart }: { onStart: () => void }) {
             <Flame size={26} color="var(--color-light)" />
           </div>
         </div>
-        <p className="eyebrow">HUMAN OS · JEE PROTOCOL</p>
+        <p className="eyebrow">LEVELUP · JEE PROTOCOL</p>
         <h1 className="mt-2 font-display text-3xl font-bold leading-tight tracking-tight">
           L × Light × <span className="text-light">JEE</span>
         </h1>
