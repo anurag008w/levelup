@@ -14,7 +14,7 @@ import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from './plan
 
 const MIN_DAY = 1;
 const MAX_DAY = 90;
-const MAX_RANGE_DAYS = 7;
+const MAX_RANGE_DAYS = 10;
 
 const ACTIONS = new AiActionRegistry();
 ACTIONS.register({ id: 'addTask', label: 'Add task', description: 'Create an editable task for one plan day.', entityType: 'dynamicTaskBank', permissions: ['create'] });
@@ -23,6 +23,9 @@ ACTIONS.register({ id: 'removeTask', label: 'Remove task from a day', descriptio
 ACTIONS.register({ id: 'markDone', label: 'Mark task done', description: 'Update completion log for one task.', entityType: 'taskLogs', permissions: ['edit'] });
 ACTIONS.register({ id: 'bulkMarkDone', label: 'Bulk mark done', description: 'Update completion logs for multiple tasks.', entityType: 'taskLogs', permissions: ['bulk-edit'], confirmationRequired: true, supportsBulk: true });
 ACTIONS.register({ id: 'setDayMode', label: 'Mark rest/study day', description: 'Mark or unmark a journey day as a rest (holiday) day.', entityType: 'restDays', permissions: ['edit'] });
+// Task Bank management
+ACTIONS.register({ id: 'editAnyTask', label: 'Edit any task', description: 'Edit any task in the task bank (title, duration, category).', entityType: 'taskBank', permissions: ['edit'] });
+ACTIONS.register({ id: 'deleteAnyTask', label: 'Delete task from bank', description: 'Permanently delete a task from the task bank.', entityType: 'taskBank', permissions: ['delete'], confirmationRequired: true });
 // Block management actions
 ACTIONS.register({ id: 'createBlock', label: 'Create custom block', description: 'Create a custom study block for post-journey mode.', entityType: 'customBlocks', permissions: ['create'] });
 ACTIONS.register({ id: 'deleteBlock', label: 'Delete block', description: 'Delete a custom study block.', entityType: 'customBlocks', permissions: ['delete'], confirmationRequired: true });
@@ -219,6 +222,15 @@ export class ChatToolsService {
           return this.listBlocks(state);
         case 'extendBlock':
           return this.extendBlock(state, action.blockId, action.days);
+        // Task Bank Management
+        case 'getAllTasks':
+          return this.getAllTasks(state, action.day);
+        case 'getTaskBank':
+          return this.getTaskBank(state, action.category);
+        case 'editAnyTask':
+          return this.editAnyTask(state, action);
+        case 'deleteAnyTask':
+          return this.deleteAnyTask(state, action.taskId, action.confirmed === true);
       }
     } catch (err) {
       if (isAbortError(err)) throw err;
@@ -428,6 +440,154 @@ export class ChatToolsService {
       ok: true,
       summary: `✅ Extended "${block.name}"!\n\nAdded ${daysToAdd} days → now Days ${block.dayStart}-${block.dayEnd + daysToAdd}`,
     };
+  }
+
+  // ========== TASK BANK MANAGEMENT ==========
+
+  private getAllTasks(state: AppState, day: number): ChatToolResult {
+    const d = clamp(day);
+    if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
+    
+    const dateISO = this.dateForDay(state, d);
+    const plan = this.planForDay(state, d);
+    const dynamicTasks = state.dynamicTaskBank.filter(t => 
+      t.unlockConditions.some(c => c.type === 'day-exact' && c.day === d)
+    );
+    
+    const lines: string[] = [];
+    lines.push(`📋 All Tasks for Day ${d} — ${formatDayLabel(dateISO)} (${dateISO}):\n`);
+    
+    if (plan.tasks.length === 0) {
+      lines.push('No tasks scheduled for this day.');
+    } else {
+      lines.push(`\n🔵 Scheduled Tasks (${plan.tasks.length}):`);
+      for (const item of plan.tasks) {
+        const entry = item.entry;
+        const isDynamic = entry.id.startsWith('ai-') || dynamicTasks.some(t => t.id === entry.id);
+        const creator = isDynamic ? '🤖 AI' : '📚 Bank';
+        lines.push(`\n• ${creator} **${entry.title}** (ID: ${entry.id})`);
+        lines.push(`  ⏱️ ${entry.estimatedDurationMin} min`);
+        if (entry.tags.length > 0) lines.push(`  🏷️ ${entry.tags.join(', ')}`);
+      }
+    }
+    
+    lines.push(`\n\n💡 AI can add more tasks with: addTask, bulkAddTasks`);
+    
+    return { ok: true, summary: lines.join('\n') };
+  }
+
+  private getTaskBank(state: AppState, category?: string): ChatToolResult {
+    const allTasks = this.taskBank.getAll();
+    const dynamicTasks = state.dynamicTaskBank.filter(t => !t.unlockConditions.some(c => c.type === 'day-exact'));
+    
+    const combined = [...allTasks, ...dynamicTasks];
+    
+    // Filter by category if provided
+    const filtered = category 
+      ? combined.filter(t => 
+          t.tags.some(tag => tag.toLowerCase().includes(category.toLowerCase())) ||
+          t.title.toLowerCase().includes(category.toLowerCase())
+        )
+      : combined;
+    
+    if (filtered.length === 0) {
+      return { 
+        ok: true, 
+        summary: category 
+          ? `No tasks found for "${category}". Try: physics, chemistry, maths, revision, mock, concept, problem`
+          : 'Task bank is empty.' 
+      };
+    }
+    
+    const lines: string[] = [];
+    lines.push(`📚 Task Bank (${filtered.length} tasks${category ? ` in "${category}"` : ''}):\n`);
+    
+    // Group by tags
+    const byTag: Record<string, typeof filtered> = {};
+    for (const task of filtered) {
+      const tag = task.tags[0] || 'General';
+      if (!byTag[tag]) byTag[tag] = [];
+      byTag[tag].push(task);
+    }
+    
+    for (const [tag, tasks] of Object.entries(byTag)) {
+      lines.push(`\n🏷️ ${tag} (${tasks.length}):`);
+      for (const task of tasks.slice(0, 10)) {
+        const isDynamic = task.id.startsWith('ai-');
+        const creator = isDynamic ? '🤖' : '📚';
+        lines.push(`  ${creator} **${task.title}** (ID: ${task.id}, ${task.estimatedDurationMin}min)`);
+      }
+      if (tasks.length > 10) {
+        lines.push(`  ... +${tasks.length - 10} more`);
+      }
+    }
+    
+    lines.push(`\n\n💡 Use editAnyTask or deleteAnyTask to modify any task by ID.`);
+    
+    return { ok: true, summary: lines.join('\n') };
+  }
+
+  private editAnyTask(state: AppState, action: Extract<ChatToolAction, { action: 'editAnyTask' }>): ChatToolResult {
+    const { taskId, title, durationMin, category } = action;
+    
+    // Check in dynamic task bank first
+    const dynamicIdx = state.dynamicTaskBank.findIndex(t => t.id === taskId);
+    
+    if (dynamicIdx === -1) {
+      // Check in base task bank
+      const baseTask = this.taskBank.getById(taskId);
+      if (!baseTask) {
+        return { ok: false, summary: `Task "${taskId}" not found in any task bank.` };
+      }
+      return { 
+        ok: false, 
+        summary: `Task "${taskId}" is a base task and cannot be edited directly. Add a custom task instead.` 
+      };
+    }
+    
+    const task = state.dynamicTaskBank[dynamicIdx];
+    const updated = {
+      ...task,
+      title: title ?? task.title,
+      estimatedDurationMin: durationMin ?? task.estimatedDurationMin,
+      tags: category ? [category, ...task.tags.filter(t => t !== category)] : task.tags,
+    };
+    
+    const next = state.dynamicTaskBank.map((t, i) => i === dynamicIdx ? updated : t);
+    
+    this.store.save({ ...state, dynamicTaskBank: next });
+    
+    const changes: string[] = [];
+    if (title) changes.push(`title → "${title}"`);
+    if (durationMin) changes.push(`duration → ${durationMin} min`);
+    if (category) changes.push(`tag → ${category}`);
+    
+    return {
+      ok: true,
+      summary: `✅ Updated task "${updated.title}"!\n\nChanges: ${changes.join(', ')}`,
+    };
+  }
+
+  private deleteAnyTask(state: AppState, taskId: string, confirmed: boolean): ChatToolResult {
+    const task = state.dynamicTaskBank.find(t => t.id === taskId);
+    
+    if (!task) {
+      return { ok: false, summary: `Task "${taskId}" not found in dynamic task bank.` };
+    }
+    
+    if (!confirmed) {
+      return {
+        ok: false,
+        requiresConfirmation: true,
+        summary: `⚠️ Delete task "${task.title}" (ID: ${taskId})?\n\nThis will permanently remove it from the task bank.\n\nSay the action again with "confirmed":true to confirm.`,
+      };
+    }
+    
+    const next = state.dynamicTaskBank.filter(t => t.id !== taskId);
+    
+    this.store.save({ ...state, dynamicTaskBank: next });
+    
+    return { ok: true, summary: `🗑️ Deleted task "${task.title}".` };
   }
 
   private detectFocusAreas(text: string): string[] {
