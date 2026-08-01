@@ -36,7 +36,9 @@ import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, defaultChatPrefs } from '
 import { container } from '../di/container';
 import { redoLastAiAction, undoLastAiAction } from '../core/domain/ai-actions';
 import ChatMarkdown from '../components/ChatMarkdown';
+import FileCard from '../components/FileCard';
 import AddProviderForm from '../components/AddProviderForm';
+import { detectFileDoc, looksLikeMarkdown } from '../components/markdown-utils';
 import { haptic, hapticError, hapticSuccess } from '../lib/haptics';
 import { extractPdfText } from '../lib/pdf';
 
@@ -844,6 +846,8 @@ function MessageBubble({ message, isLast, ...actions }: MessageActions & { messa
   const isUser = message.role === 'user';
   const holdTimer = useRef<number | null>(null);
   const firedRef = useRef(false);
+  const doc = useMemo(() => (isUser ? null : detectFileDoc(message.content)), [isUser, message.content]);
+  const [showPreview, setShowPreview] = useState(true);
 
   function triggerMenu(clientX: number, clientY: number) {
     haptic(20);
@@ -900,7 +904,19 @@ function MessageBubble({ message, isLast, ...actions }: MessageActions & { messa
           <UserMessageContent content={message.content} />
         ) : (
           <div className="markdown-body">
-            <ChatMarkdown text={message.content} />
+            {doc && (
+              <FileCard
+                name={doc.name}
+                sizeLabel={doc.sizeLabel}
+                preview={showPreview}
+                onTogglePreview={() => {
+                  haptic();
+                  setShowPreview((v) => !v);
+                }}
+                onDownload={() => actions.onDownload(message)}
+              />
+            )}
+            {(!doc || showPreview) && <ChatMarkdown text={message.content} />}
           </div>
         )}
 
@@ -1665,10 +1681,12 @@ function stripAttachmentBlocks(text: string): string {
  * Parses a sent user message into its typed text plus one descriptor per
  * attached file, so attachments render as chips instead of raw block text.
  */
-function parseUserMessageContent(content: string): { text: string; files: { name: string; meta: string }[] } {
+function parseUserMessageContent(content: string): { text: string; files: { name: string; meta: string }[]; hasImage: boolean } {
   const files: { name: string; meta: string }[] = [];
+  let hasImage = false;
   const text = content
-    .replace(/<attached_(?:file|image)>([\s\S]*?)<\/attached_(?:file|image)>/g, (_whole, inner: string) => {
+    .replace(/<attached_(?:file|image)>([\s\S]*?)<\/attached_(?:file|image)>/g, (_whole, inner: string, tag: string) => {
+      if (tag === 'image') hasImage = true;
       const header = (inner.trim().split('\n')[0] ?? '').replace(/^Attachment\s+\d+:\s*/i, '');
       if (header) {
         const match = header.match(/^(.+?)\s*\((.*)\)\s*$/);
@@ -1680,14 +1698,21 @@ function parseUserMessageContent(content: string): { text: string; files: { name
       return '';
     })
     .trim();
-  return { text, files };
+  return { text, files, hasImage };
 }
 
 function UserMessageContent({ content }: { content: string }) {
-  const { text, files } = parseUserMessageContent(content);
+  const { text, files, hasImage } = parseUserMessageContent(content);
+  const renderMarkdown = !hasImage && looksLikeMarkdown(text);
   return (
-    <div className="whitespace-pre-wrap break-words font-medium">
-      {text || '—'}
+    <div className={renderMarkdown ? '' : 'whitespace-pre-wrap break-words font-medium'}>
+      {renderMarkdown ? (
+        <div className="markdown-body">
+          <ChatMarkdown text={text} />
+        </div>
+      ) : (
+        text || '—'
+      )}
       {files.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {files.map((f, i) => (

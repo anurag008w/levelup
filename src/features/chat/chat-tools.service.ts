@@ -26,8 +26,9 @@ ACTIONS.register({ id: 'setDayMode', label: 'Mark rest/study day', description: 
 
 const TASK_QUERY_WORDS = [
   'task', 'plan', 'din', 'day', 'aaj', 'kal', 'parso', 'week', 'hafta', 'month', 'mahina',
-  'mark', 'done', 'complete', 'delete', 'remove', 'hata', 'add', 'badlo', 'badal', 'schedule',
-  'goal', 'target', 'revision', 'padhai', 'tasks', 'saare', 'all', 'bulk',
+  'mark', 'done', 'complete', 'delete', 'remove', 'hata', 'hatao', 'add', 'badlo', 'badal',
+  'schedule', 'change', 'edit', 'update', 'replan', 'reschedule', 'shift', 'increase',
+  'decrease', 'reduce', 'goal', 'target', 'revision', 'padhai', 'tasks', 'saare', 'all', 'bulk',
 ];
 
 /**
@@ -138,17 +139,30 @@ export class ChatToolsService {
     const summaries: string[] = [];
     let anyOk = false;
     let confirmationPending = false;
+    const missingDays = new Set<number>();
     for (const a of actions) {
       const r = await this.run(a);
       summaries.push(r.summary);
       if (r.ok) anyOk = true;
       else if (r.requiresConfirmation) confirmationPending = true;
+      for (const d of r.missingTaskIdDays ?? []) missingDays.add(d);
     }
     return {
       ok: anyOk && !confirmationPending,
       requiresConfirmation: confirmationPending || undefined,
       summary: summaries.join('\n'),
+      missingTaskIdDays: missingDays.size > 0 ? [...missingDays] : undefined,
     };
+  }
+
+  /**
+   * Deterministic getPlan summaries for the given days — used by the chat
+   * service to show the model a day's real task ids after a guessed-id failure.
+   */
+  renderPlans(days: number[]): string {
+    const state = this.store.get();
+    const unique = [...new Set(days)].sort((a, b) => a - b);
+    return unique.map((d) => this.getPlan(state, d).summary).join('\n\n');
   }
 
   async run(action: ChatToolAction): Promise<ChatToolResult> {
@@ -206,7 +220,20 @@ export class ChatToolsService {
     const from = clamp(Math.min(fromDay, toDay));
     const to = clamp(Math.max(fromDay, toDay));
     const span = to - from + 1;
-    if (span > MAX_RANGE_DAYS) return { ok: false, summary: `Range se zyada din (max ${MAX_RANGE_DAYS}) — chhota range bhejo.` };
+    if (span > MAX_RANGE_DAYS) {
+      // No hard failure: split into ≤7-day windows so "next 15 din ka plan"
+      // just works in one call instead of erroring out.
+      const parts: string[] = [];
+      for (let f = from; f <= to; f += MAX_RANGE_DAYS) {
+        const t = Math.min(f + MAX_RANGE_DAYS - 1, to);
+        parts.push(this.formatRange(state, f, t));
+      }
+      return { ok: true, summary: parts.join('\n\n') };
+    }
+    return { ok: true, summary: this.formatRange(state, from, to) };
+  }
+
+  private formatRange(state: AppState, from: number, to: number): string {
     const lines = [`Plan overview Day ${from}-${to}:`];
     for (let d = from; d <= to; d++) {
       const plan = this.planForDay(state, d);
@@ -215,7 +242,7 @@ export class ChatToolsService {
       const first = formatScheduledTasks(plan, state, 4).join('; ');
       lines.push(`Day ${d} — ${formatDayLabel(dateISO)} (${dateISO})${rest ? ' [REST DAY]' : ''}: ${formatPlanProgress(plan, state)}. ${first}`);
     }
-    return { ok: true, summary: lines.join('\n') };
+    return lines.join('\n');
   }
 
   private async addTask(state: AppState, action: Extract<ChatToolAction, { action: 'addTask' }>): Promise<ChatToolResult> {
@@ -251,16 +278,24 @@ export class ChatToolsService {
     const d = clamp(action.day);
     if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
     const added: TaskBankEntry[] = [];
+    const failed: string[] = [];
     for (const intent of action.intents.slice(0, 6)) {
-      const result = await this.taskGeneration.generate(state, {
-        intent,
-        dayNumber: d,
-        durationMin: action.durationMin,
-      });
-      const entry = result.source === 'bank' ? cloneBankTask(result.entry, d) : scheduleForDay(result.entry, d);
-      added.push(entry);
+      try {
+        const result = await this.taskGeneration.generate(state, {
+          intent,
+          dayNumber: d,
+          durationMin: action.durationMin,
+        });
+        const entry = result.source === 'bank' ? cloneBankTask(result.entry, d) : scheduleForDay(result.entry, d);
+        added.push(entry);
+      } catch {
+        // Partial success: one bad intent must not abort the whole batch.
+        failed.push(intent);
+      }
     }
-    if (added.length === 0) return { ok: false, summary: `Day ${d}: koi task add nahi ho saka.` };
+    if (added.length === 0) {
+      return { ok: false, summary: `Day ${d}: koi task add nahi ho saka${failed.length ? ` (fail hua: ${failed.join('; ')})` : ''}.` };
+    }
     let next = [...state.dynamicTaskBank];
     for (const entry of added) {
       next = next.some((e) => e.id === entry.id) ? next.map((e) => (e.id === entry.id ? entry : e)) : [...next, entry];
@@ -275,10 +310,11 @@ export class ChatToolsService {
       confirmed: true,
     });
     this.store.save(resultAction.state);
+    const failedNote = failed.length > 0 ? `\n${failed.length} task(s) generate nahi ho paye: ${failed.join('; ')}.` : '';
     return {
       ok: true,
       versionId: resultAction.versionId,
-      summary: `${resultAction.summary} All scheduled ONLY for Day ${d}. ${this.planPreview(resultAction.state, d)}`,
+      summary: `${resultAction.summary}${failedNote} All added tasks scheduled ONLY for Day ${d}. ${this.planPreview(resultAction.state, d)}`,
     };
   }
 
@@ -289,7 +325,7 @@ export class ChatToolsService {
     const ids = taskIds ?? [];
     if (ids.length === 0) return { ok: false, summary: `Day ${d}: task id(s) chahiye (plan se).` };
     const invalid = ids.filter((id) => !visible.has(id));
-    if (invalid.length > 0) return { ok: false, summary: `Day ${d}: task id(s) planned list mein nahi mile: ${invalid.join(', ')}.` };
+    if (invalid.length > 0) return { ok: false, summary: `Day ${d}: task id(s) planned list mein nahi mile: ${invalid.join(', ')}.`, missingTaskIdDays: [d] };
 
     let next = [...state.dynamicTaskBank];
     for (const id of ids) {
@@ -321,8 +357,8 @@ export class ChatToolsService {
     const planned = plan.tasks.find((t) => t.entry.id === taskId);
     if (!planned) {
       const known = state.dynamicTaskBank.find((e) => e.id === taskId) ?? this.taskBank.getById(taskId);
-      if (!known) return { ok: false, summary: `Day ${d}: task id "${taskId}" nahi mila.` };
-      return { ok: false, summary: `Day ${d}: "${known.title}" is day ke plan mein nahi hai (shayad kisi aur din ke liye scheduled). Pehle getPlan bhejo.` };
+      if (!known) return { ok: false, summary: `Day ${d}: task id "${taskId}" nahi mila.`, missingTaskIdDays: [d] };
+      return { ok: false, summary: `Day ${d}: "${known.title}" is day ke plan mein nahi hai (shayad kisi aur din ke liye scheduled). Pehle getPlan bhejo.`, missingTaskIdDays: [d] };
     }
     const next = applyDayRemoval([...state.dynamicTaskBank], planned.entry, d);
     const resultAction = executeAiAction({
@@ -374,7 +410,7 @@ export class ChatToolsService {
     const d = clamp(action.day);
     const dynamic = state.dynamicTaskBank.find((e) => e.id === action.taskId);
     const entry = dynamic ?? this.taskBank.getById(action.taskId);
-    if (!entry) return { ok: false, summary: `Day ${d}: task id "${action.taskId}" nahi mila.` };
+    if (!entry) return { ok: false, summary: `Day ${d}: task id "${action.taskId}" nahi mila.`, missingTaskIdDays: [d] };
     const edited: typeof entry = {
       ...entry,
       title: action.title !== undefined ? action.title : entry.title,
@@ -407,7 +443,7 @@ export class ChatToolsService {
     const d = clamp(day);
     const dateISO = this.dateForDay(state, d);
     const logKey = this.logKeyForTask(state, d, taskId);
-    if (!logKey) return { ok: false, summary: `Day ${d}: task id "${taskId}" nahi mila.` };
+    if (!logKey) return { ok: false, summary: `Day ${d}: task id "${taskId}" nahi mila.`, missingTaskIdDays: [d] };
     const log = { ...(state.taskLogs[logKey] ?? {}) };
     log[taskId] = true;
     const nextLogs = { ...state.taskLogs, [logKey]: log };
@@ -433,7 +469,7 @@ export class ChatToolsService {
     const ids = taskIds && taskIds.length > 0 ? taskIds : [...visible.keys()];
     const invalid = ids.filter((id) => !visible.has(id));
     if (ids.length === 0) return { ok: false, summary: `Day ${d}: koi tasks planned nahi hain.` };
-    if (invalid.length > 0) return { ok: false, summary: `Day ${d}: task id(s) planned list mein nahi mile: ${invalid.join(', ')}.` };
+    if (invalid.length > 0) return { ok: false, summary: `Day ${d}: task id(s) planned list mein nahi mile: ${invalid.join(', ')}.`, missingTaskIdDays: [d] };
 
     const nextLogs = { ...state.taskLogs };
     for (const id of ids) {

@@ -48,6 +48,10 @@ export interface ChatToolResult {
   requiresConfirmation?: boolean;
   /** Version id recorded for an applied mutation. */
   versionId?: string;
+  /** Days whose task-id action failed because the id wasn't in that day's
+   *  plan. Lets the chat service auto-fetch the day's plan and retry once with
+   *  the real ids — the "pehle plan dekho, phir edit karo" chaining. */
+  missingTaskIdDays?: number[];
 }
 
 /** Description of the tool protocol embedded in the system prompt. */
@@ -58,7 +62,7 @@ your ENTIRE reply must be exactly one JSON object, no extra text.
 
 ONE action (single-object form):
 - Plan for a day: {"action":"getPlan","day":N}
-- Overview of a range (max 7 days): {"action":"getRange","fromDay":A,"toDay":B}
+- Overview of a range: {"action":"getRange","fromDay":A,"toDay":B} (max 7 days per call; for a wider span send SEVERAL getRange actions, one 7-day window each, in the actions array — a single oversized range is auto-split too)
 - Add a task: {"action":"addTask","day":N,"intent":"<what task>","durationMin":30}. The task appears ONLY on Day N.
 - Add multiple tasks at once: {"action":"bulkAddTasks","day":N,"intents":["maths 10 questions","thermo revision"],"durationMin":30}. All appear ONLY on Day N.
 - Edit a task (title/duration, or move to another day): {"action":"editTask","day":N,"taskId":"<id from plan>","durationMin":20,"dayTo":5}. "dayTo" moves it so it only appears on that exact day.
@@ -68,6 +72,8 @@ ONE action (single-object form):
 - Mark a task done: {"action":"markDone","day":N,"taskId":"<id from plan>"}
 - Mark multiple/all tasks done for one day: {"action":"bulkMarkDone","day":N,"taskIds":["id1","id2"],"confirmed":true}. If the user says all/saare tasks, omit taskIds to target all visible plan tasks. This is bulk edit: first call without confirmed to preview; only call with "confirmed":true after explicit confirmation.
 
+Task ids come from today's plan context or from a plan you saw in this chat (format "id:<taskId>", e.g. d1_t1, mock_1, ai-xxxxx). If a day's plan is NOT visible to you yet, DO NOT refuse — still emit the requested action with your best guess for the task id. The system will automatically fetch that day's plan (with the real ids) and let you retry with the correct id in the next step.
+
 SEVERAL changes in ONE request (e.g. "3 tasks add karo, ek hatao, aur 2 mark done"):
 emit EVERY change together in an actions array, e.g.
 {"actions":[{"action":"addTask","day":5,"intent":"maths 10 questions","durationMin":30},{"action":"addTask","day":5,"intent":"thermo revision","durationMin":40},{"action":"removeTask","day":5,"taskId":"d1_t1","confirmed":true},{"action":"markDone","day":5,"taskId":"d1_t2"}]}
@@ -75,6 +81,7 @@ Multi-action rules:
 - Do EVERYTHING the user asked for in the same reply — never execute only one of several requested changes.
 - Max 6 actions per reply. Actions run top-to-bottom and all results come back combined with task ids.
 - Destructive/bulk actions (removeTask, bulkRemoveTasks, setDayMode, bulkMarkDone) still need "confirmed":true once the user has explicitly agreed; without it the WHOLE batch is only previewed and NOTHING is applied.
+- For a range longer than 7 days, use multiple getRange actions (7 days each) in one batch instead of failing.
 
 The tool result always returns the updated plan with task ids. Sundays (Day 7, 14, 21...) are MOCK test days, NOT automatically holidays: on a mock Sunday the mock protocol tasks appear AND you can still add tasks with addTask/bulkAddTasks. Only use setDayMode "rest" when the user actually wants a holiday/rest day.
 For ANYTHING else (concepts, motivation, general questions) reply normally in Hinglish.`;

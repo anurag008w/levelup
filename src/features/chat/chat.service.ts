@@ -8,6 +8,7 @@ import {
 import type { LLMMessage, LLMRequest, ThinkingLevel } from '../../core/domain/llm';
 import { isAbortError } from '../../core/domain/llm';
 import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY } from '../../core/domain/chat-tools';
+import type { ChatToolResult } from '../../core/domain/chat-tools';
 import { createStreamSanitizer, sanitizeTimestampLeaks } from './leak-sanitizer';
 import type { Clock } from '../../core/ports/clock';
 import type { ChatRepository, StateStore } from '../../core/ports/repositories';
@@ -20,6 +21,8 @@ const HISTORY_FOR_PROMPT = 30;
 const MEMORY_FOR_PROMPT = 8;
 const MEMORY_USER_MAX_CHARS = 500;
 const MEMORY_AI_MAX_CHARS = 400;
+/** Max decision hops per message: initial guess + plan-fetch replans. */
+const MAX_TOOL_HOPS = 3;
 
 /**
  * Chat feature service: session persistence + LLM streaming. Chat data lives in
@@ -198,7 +201,33 @@ export class ChatService {
             ? `${actions.length} tools chala raha hai…`
             : `Tool chala raha hai: ${actions[0].action}`,
         );
-        const toolResult = await this.tools.runMany(actions);
+        // Tool agent loop: if the model guessed task ids that aren't in a
+        // day's plan, fetch that day's plan deterministically and let the model
+        // retry with the REAL ids — "pehle plan dekho, phir edit karo" without
+        // the user having to show the plan first. The failed attempt is rolled
+        // back before re-running so the corrected batch never double-applies;
+        // if the model gives up, the partial mutations are kept so the summary
+        // below matches the real state.
+        let toolResult: ChatToolResult | null = null;
+        for (let hop = 0; hop < MAX_TOOL_HOPS; hop++) {
+          const preRun = this.store?.get();
+          toolResult = await this.tools.runMany(actions);
+          const postRun = this.store?.get();
+          const missing = toolResult.missingTaskIdDays ?? [];
+          const canReplan = missing.length > 0 && !toolResult.requiresConfirmation && this.store !== null && preRun !== undefined && postRun !== undefined;
+          if (!canReplan) break;
+          onStatus?.('Pehle plan fetch kar raha hai…');
+          const plans = this.tools.renderPlans(missing);
+          const replan = await this.llm.complete(this.buildReplanRequest(session, plans, toolResult.summary, signal));
+          const next = this.tools.parseTools(replan.text);
+          if (next.length === 0) {
+            this.store!.save(postRun);
+            break;
+          }
+          this.store!.save(preRun);
+          actions = next;
+        }
+        if (!toolResult) throw new Error('Tool execution failed');
         onStatus?.('Jawab likh raha hai…');
         let reasoning = '';
         const streamSani = createStreamSanitizer();
@@ -304,6 +333,32 @@ export class ChatService {
       `Your previous reply was:\n${previousReply}\n\nReplace it with exactly one JSON object now.`;
     const request: LLMRequest = {
       messages: this.buildMessages(session, system),
+      temperature: session.prefs.temperature,
+      maxTokens: 500,
+      providerId: session.prefs.providerId,
+      signal,
+      thinking: 'off',
+    };
+    const model = this.resolveModel(session);
+    if (model) request.model = model;
+    return request;
+  }
+
+  /**
+   * Decision-hop follow-up after a task-id action failed: shows the day's real
+   * plan (with task ids) and asks the model to re-emit the corrected JSON.
+   */
+  private buildReplanRequest(session: ChatSession, plans: string, failure: string, signal?: AbortSignal): LLMRequest {
+    const system =
+      `${CHAT_TOOL_INSTRUCTIONS}\n\n` +
+      `Your previous tool call failed because the task id was NOT in that day's plan.\n` +
+      `Below is the affected day's exact plan with REAL task ids (format "id:<taskId>").\n` +
+      `Re-emit your ENTIRE reply as exactly one JSON object (or an actions array) using a VALID task id from the plan. ` +
+      `Do NOT explain, refuse or apologize — just the corrected JSON.`;
+    const messages = this.buildMessages(session, system);
+    messages.push({ role: 'user', content: `Previous tool result:\n${failure}\n\nPlan with task ids:\n${plans}` });
+    const request: LLMRequest = {
+      messages,
       temperature: session.prefs.temperature,
       maxTokens: 500,
       providerId: session.prefs.providerId,

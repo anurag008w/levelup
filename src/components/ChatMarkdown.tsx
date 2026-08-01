@@ -1,61 +1,196 @@
-import ReactMarkdown from 'react-markdown';
+import { Component, useState, type ReactNode } from 'react';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import rehypeHighlight from 'rehype-highlight';
+import { Check, Copy } from 'lucide-react';
 import 'katex/dist/katex.min.css';
-import type { Components } from 'react-markdown';
+import { unwrapMarkdownFence } from './markdown-utils';
+
+/* ------------------------------------------------------------------ *
+   Production markdown renderer for chat bubbles.
+   - GFM (tables, task lists, strikethrough, autolinks)
+   - KaTeX (inline $...$, \(...\) and display $$...$$, \[...\])
+   - highlight.js syntax highlighting + per-block copy button
+   - LaTeX errors render inline (never crash the bubble, stream-safe)
+   - A single wrapping ```markdown fence is unwrapped automatically
+   * ------------------------------------------------------------------ */
+
+interface MdNode {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: MdNode[];
+}
+
+function hastToText(node: MdNode | undefined): string {
+  if (!node) return '';
+  if (node.type === 'text' || node.type === 'raw') return node.value ?? '';
+  return (node.children ?? []).map(hastToText).join('');
+}
+
+function codeInfo(node: MdNode | undefined): { lang: string; raw: string } {
+  const code = (node?.children ?? []).find((c) => c?.tagName === 'code');
+  const classes = code?.properties?.className;
+  const cls = Array.isArray(classes) ? classes.join(' ') : String(classes ?? '');
+  const lang = /language-([\w-]+)/.exec(cls)?.[1] ?? 'text';
+  return { lang, raw: hastToText(code ?? node) };
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to legacy path
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '0';
+    ta.style.left = '0';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="codeblock-copy"
+      aria-label="Copy code"
+      title="Copy code"
+      onClick={(e) => {
+        e.stopPropagation();
+        void copyText(text).then((ok) => {
+          if (!ok) return;
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1600);
+        });
+      }}
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+      <span>{copied ? 'copied' : 'copy'}</span>
+    </button>
+  );
+}
 
 const components: Components = {
-  a: ({ node: _node, ...props }) => (
-    <a {...props} target="_blank" rel="noreferrer" style={{ color: 'var(--color-l)', textDecoration: 'underline' }} />
+  a: ({ node: _node, ...props }) => <a className="md-a" target="_blank" rel="noreferrer" {...props} />,
+  p: ({ node: _node, ...props }) => <p className="md-p" {...props} />,
+  h1: ({ node: _node, ...props }) => <h1 className="md-h1" {...props} />,
+  h2: ({ node: _node, ...props }) => <h2 className="md-h2" {...props} />,
+  h3: ({ node: _node, ...props }) => <h3 className="md-h3" {...props} />,
+  h4: ({ node: _node, ...props }) => <h4 className="md-h4" {...props} />,
+  h5: ({ node: _node, ...props }) => <h5 className="md-h5" {...props} />,
+  h6: ({ node: _node, ...props }) => <h6 className="md-h6" {...props} />,
+  ul: ({ node: _node, ...props }) => <ul className="md-ul" {...props} />,
+  ol: ({ node: _node, ...props }) => <ol className="md-ol" {...props} />,
+  li: ({ node: _node, ...props }) => <li className="md-li" {...props} />,
+  blockquote: ({ node: _node, ...props }) => <blockquote className="md-quote" {...props} />,
+  hr: ({ node: _node }) => <hr className="md-hr" />,
+  del: ({ node: _node, ...props }) => <del className="md-del" {...props} />,
+  strong: ({ node: _node, ...props }) => <strong className="md-strong" {...props} />,
+  em: ({ node: _node, ...props }) => <em className="md-em" {...props} />,
+  table: ({ node: _node, ...props }) => (
+    <div className="md-table-wrap">
+      <table className="md-table" {...props} />
+    </div>
   ),
-  p: ({ node: _node, ...props }) => <p className="mb-2 leading-relaxed last:mb-0" {...props} />,
-  ul: ({ node: _node, ...props }) => <ul className="mb-1.5 list-disc space-y-0.5 pl-5" {...props} />,
-  ol: ({ node: _node, ...props }) => <ol className="mb-1.5 list-decimal space-y-0.5 pl-5" {...props} />,
-  li: ({ node: _node, ...props }) => <li className="leading-relaxed" {...props} />,
-  strong: ({ node: _node, ...props }) => <strong className="font-bold text-text" {...props} />,
-  em: ({ node: _node, ...props }) => <em className="italic" {...props} />,
-  code: ({ node: _node, className, children, ...props }) => {
-    const inline = !className;
-    return inline ? (
-      <code className="rounded bg-peak/10 px-1 py-0.5 font-mono text-[0.85em]" style={{ color: 'var(--color-peak)' }} {...props}>
-        {children}
-      </code>
-    ) : (
-      <code
-        className="block overflow-x-auto rounded-md bg-black/40 px-3 py-2 font-mono text-[0.85em] leading-relaxed"
-        style={{ color: '#d6e2ff' }}
-        {...props}
-      >
-        {children}
-      </code>
+  tr: ({ node: _node, ...props }) => <tr className="md-tr" {...props} />,
+  th: ({ node: _node, ...props }) => <th className="md-th" {...props} />,
+  td: ({ node: _node, ...props }) => <td className="md-td" {...props} />,
+  img: ({ node: _node, ...props }) => (
+    <img
+      className="md-img"
+      loading="lazy"
+      onClick={() => {
+        if (typeof props.src === 'string' && /^https?:/.test(props.src)) window.open(props.src, '_blank');
+      }}
+      {...props}
+    />
+  ),
+  input: ({ node: _node, checked }) => (
+    <input
+      type="checkbox"
+      className="md-task-check"
+      defaultChecked={checked === true}
+      key={checked === true ? 'on' : 'off'}
+      readOnly
+      aria-label="task checkbox"
+    />
+  ),
+  code: ({ node: _node, className, children, ...props }) => (
+    <code className={['md-code', className].filter(Boolean).join(' ')} {...props}>
+      {children}
+    </code>
+  ),
+  pre: ({ node, children }) => {
+    const { lang, raw } = codeInfo(node as MdNode | undefined);
+    return (
+      <div className="codeblock">
+        <div className="codeblock-head">
+          <span className="codeblock-lang">{lang || 'code'}</span>
+          <CopyButton text={raw} />
+        </div>
+        <pre className="md-pre">{children}</pre>
+      </div>
     );
   },
-  pre: ({ node: _node, children }) => <pre className="mb-2 overflow-hidden rounded-lg border border-border shadow-inner">{children}</pre>,
-  blockquote: ({ node: _node, ...props }) => (
-    <blockquote className="mb-1.5 border-l-2 border-peak/40 pl-2 text-muted" {...props} />
-  ),
-  h1: ({ node: _node, ...props }) => <h1 className="mb-1 font-display text-base font-bold" {...props} />,
-  h2: ({ node: _node, ...props }) => <h2 className="mb-1 font-display text-sm font-bold" {...props} />,
-  h3: ({ node: _node, ...props }) => <h3 className="mb-1 font-display text-[13px] font-bold" {...props} />,
-  table: ({ node: _node, ...props }) => (
-    <div className="mb-2 overflow-x-auto rounded-lg border border-border">
-      <table className="w-full border-collapse text-xs" {...props} />
-    </div>
-  ),
-  th: ({ node: _node, ...props }) => (
-    <th className="border-b border-r border-border bg-peak/10 px-2 py-1.5 text-left font-bold" {...props} />
-  ),
-  td: ({ node: _node, ...props }) => <td className="border-b border-r border-border px-2 py-1.5 align-top" {...props} />,
-  hr: ({ node: _node, ...props }) => <hr className="my-3 border-border" {...props} />,
 };
 
+/** Safety net: if a plugin chokes on unusual content, fall back to raw text
+ *  instead of taking the whole bubble down. Resets when the stream advances. */
+class MdBoundary extends Component<{ text: string; children: ReactNode }, { failed: boolean; lastText: string }> {
+  state = { failed: false, lastText: '' };
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+  static getDerivedStateFromProps(
+    props: { text: string },
+    state: { failed: boolean; lastText: string },
+  ): Partial<{ failed: boolean; lastText: string }> | null {
+    if (state.lastText !== props.text) {
+      return { failed: false, lastText: props.text };
+    }
+    return null;
+  }
+  render(): ReactNode {
+    if (this.state.failed) return <pre className="md-fallback">{this.props.text}</pre>;
+    return this.props.children;
+  }
+}
+
 export default function ChatMarkdown({ text }: { text: string }) {
+  const processed = unwrapMarkdownFence(text);
   return (
-    <div className="text-[13px] leading-relaxed text-text [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:rounded-lg [&_.katex-display]:border [&_.katex-display]:border-border [&_.katex-display]:bg-black/20 [&_.katex-display]:px-2 [&_.katex-display]:py-2">
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={components}>
-        {text}
-      </ReactMarkdown>
-    </div>
+    <MdBoundary text={processed}>
+      <div className="md">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkMath]}
+          rehypePlugins={[
+            rehypeKatex({ output: 'html', strict: false, trust: false, maxSize: 10, errorColor: '#f25d68' }),
+            rehypeHighlight({ detect: false, plainText: ['txt', 'text', 'plaintext', 'md', 'markdown', 'log'] }),
+          ]}
+          components={components}
+        >
+          {processed}
+        </ReactMarkdown>
+      </div>
+    </MdBoundary>
   );
 }

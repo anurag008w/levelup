@@ -86,8 +86,14 @@ export class GeminiProvider implements LLMProvider {
       }
     }
     const maxTokens = request.maxTokens ?? this.config.maxTokens;
-    let thinkingBudget: number | undefined;
-    if (request.thinking && request.thinking !== 'off') {
+    let thinkingConfig: { thinkingBudget: number } | undefined;
+    if (request.thinking === 'off') {
+      // Gemini 2.5-series models default to DYNAMIC thinking whenever
+      // thinkingConfig is absent — so an "off" request would silently burn the
+      // maxTokens window reasoning (tiny decision hops run on 500 tokens and
+      // came back blank/truncated). An explicit zero budget disables thinking.
+      thinkingConfig = { thinkingBudget: 0 };
+    } else if (request.thinking) {
       const requested = THINKING_BUDGETS[request.thinking];
       // Gemini requires thinkingBudget < maxOutputTokens. Reserve a guaranteed
       // output window so a reasoning model never burns its whole budget
@@ -95,9 +101,9 @@ export class GeminiProvider implements LLMProvider {
       // room to leave that window, skip thinking entirely.
       if (maxTokens !== undefined) {
         const room = maxTokens - 512;
-        thinkingBudget = room >= 256 ? Math.min(requested, room) : undefined;
+        thinkingConfig = room >= 256 ? { thinkingBudget: Math.min(requested, room) } : undefined;
       } else {
-        thinkingBudget = requested;
+        thinkingConfig = { thinkingBudget: requested };
       }
     }
     return {
@@ -106,7 +112,7 @@ export class GeminiProvider implements LLMProvider {
       generationConfig: {
         ...(request.temperature ?? this.config.temperature !== undefined ? { temperature: request.temperature ?? this.config.temperature } : {}),
         ...(maxTokens !== undefined ? { maxOutputTokens: maxTokens } : {}),
-        ...(thinkingBudget !== undefined ? { thinkingConfig: { thinkingBudget } } : {}),
+        ...(thinkingConfig !== undefined ? { thinkingConfig } : {}),
       },
     };
   }
