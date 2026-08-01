@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createStreamSanitizer, sanitizeTimestampLeaks } from '../leak-sanitizer';
+import { createStreamSanitizer, sanitizeAssistantLeaks, sanitizeTimestampLeaks, sanitizeToolLeaks } from '../leak-sanitizer';
 
 describe('sanitizeTimestampLeaks', () => {
   it('strips a leading leaked timestamp (mimicked reply header)', () => {
@@ -41,6 +41,40 @@ describe('sanitizeTimestampLeaks', () => {
   });
 });
 
+
+describe('sanitizeToolLeaks', () => {
+  it('strips raw tool headers and plan-manager function calls', () => {
+    const text = `Task add kar diya.
+
+tool: addTask
+call_plan_manager_add_tasks(tasks=[{'title':'x'}])
+
+Ab plan clean hai.`;
+    expect(sanitizeToolLeaks(text)).toBe(`Task add kar diya.
+
+Ab plan clean hai.`);
+  });
+
+  it('strips raw JSON tool actions and batches', () => {
+    expect(sanitizeToolLeaks(`{"action":"getPlan","day":1}
+Done`)).toBe('Done');
+    expect(sanitizeToolLeaks(`{"actions":[{"action":"addTask","day":2,"intent":"x","durationMin":10}]}
+Done`)).toBe('Done');
+  });
+
+  it('keeps normal student-facing text', () => {
+    const text = 'Perfect, Day 1 reset kar diya. Ab fresh start karo.';
+    expect(sanitizeToolLeaks(text)).toBe(text);
+  });
+});
+
+describe('sanitizeAssistantLeaks', () => {
+  it('strips timestamps and tool traces together', () => {
+    expect(sanitizeAssistantLeaks(`[05:42 PM] Done.
+tool: bulkRemoveTasks`)).toBe(' Done.');
+  });
+});
+
 describe('createStreamSanitizer', () => {
   it('holds back a partial timestamp across deltas and strips it when complete', () => {
     const sani = createStreamSanitizer();
@@ -66,5 +100,17 @@ describe('createStreamSanitizer', () => {
     const sani = createStreamSanitizer();
     expect(sani.push('answer: [11:0')).toBe('answer: ');
     expect(sani.push('1 am] done')).toBe(' done');
+  });
+
+  it('holds and removes streamed tool traces without leaking partial prefixes', () => {
+    const sani = createStreamSanitizer();
+    expect(sani.push('Done.\nto')).toBe('Done.\n');
+    expect(sani.push('ol: addTask\nSafe')).toBe('Safe');
+    expect(sani.flush()).toBe('');
+  });
+
+  it('does not hold normal words starting with p', () => {
+    const sani = createStreamSanitizer();
+    expect(sani.push('Perfect')).toBe('Perfect');
   });
 });
