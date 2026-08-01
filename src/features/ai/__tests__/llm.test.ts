@@ -94,6 +94,28 @@ describe('LLMService', () => {
     expect(res.text).toBe('namaste');
   });
 
+
+  it('honors an explicit provider override instead of the active provider', async () => {
+    const svc = buildService(
+      {
+        gemini: providerFor('gemini', 'g', 'active text'),
+        openrouter: providerFor('openrouter', 'a', 'selected text'),
+      },
+      {
+        providers: {
+          gemini: { id: 'gemini', label: 'Gemini', model: 'g', enabled: true },
+          openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true },
+        },
+        activeProviderId: 'gemini',
+        aiEnabled: true,
+      },
+    );
+
+    const res = await svc.complete({ providerId: 'openrouter', messages: [{ role: 'user', content: 'x' }] });
+
+    expect(res.text).toBe('selected text');
+  });
+
   it('falls back to another usable provider when the active one fails', async () => {
     const svc = buildService(
       {

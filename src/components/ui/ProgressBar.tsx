@@ -12,7 +12,7 @@ export default function ProgressBar({
   const clamped = Math.max(0, Math.min(100, value));
   return (
     <div
-      className="w-full overflow-hidden rounded-full"
+      className="progress-track"
       style={{ backgroundColor: track, height }}
       role="progressbar"
       aria-valuenow={Math.round(clamped)}
@@ -20,7 +20,7 @@ export default function ProgressBar({
       aria-valuemax={100}
     >
       <div
-        className="h-full rounded-full transition-[width] duration-500 ease-out"
+        className="progress-bar"
         style={{ width: `${clamped}%`, backgroundColor: color }}
       />
     </div>

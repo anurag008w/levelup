@@ -48,6 +48,15 @@ export class HabitProgressionService {
   }
 
   planFromContext(context: PlanningContext, config: ProgressionConfig): DailyPlan {
+    // Rest/holiday day: no auto curriculum and no AI injection. Only tasks the
+    // user explicitly scheduled for this exact day (day-exact) are planned, so
+    // "chhuti" days stay light unless study was deliberately requested.
+    if (context.restDay) {
+      const planned: PlannedTask[] = [];
+      this.injectDynamic(context, planned);
+      return this.finalize(context, planned, config);
+    }
+
     const snapshot = this.snapshotFromContext(context);
     const candidates = this.deps.taskBank.search({ unlock: snapshot, activeOnly: true });
 
@@ -244,6 +253,7 @@ export class HabitProgressionService {
     if (context.revisionDueHabitIds.length > 0) parts.push(`revision ${context.revisionDueHabitIds.length}`);
     if (context.gapDays > 0) parts.push(`gap ${context.gapDays}`);
     if (context.recoveryMode) parts.push('recovery');
+    if (context.restDay) parts.push('rest-day');
     if (context.examWindowActive) parts.push('exam-window');
     return parts.join(' · ');
   }
@@ -278,6 +288,7 @@ export class HabitProgressionService {
       unlockedHabitIds: context.unlockedHabitIds,
       examWindowActive: context.examWindowActive,
       mockSunday: context.mockSunday,
+      weekday: context.weekday,
       recoveryMode: context.recoveryMode,
       backlogDays: context.backlogDays,
       revisionDueHabitIds: context.revisionDueHabitIds,

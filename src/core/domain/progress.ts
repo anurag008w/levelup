@@ -84,6 +84,10 @@ export interface PlanningContext {
   recoveryMode: boolean;
   examWindowActive: boolean;
   mockSunday: boolean;
+  /** Actual calendar weekday (0=Sunday..6=Saturday) of the planned date. */
+  weekday: number;
+  /** True when this journey day is marked as a rest/holiday day. */
+  restDay: boolean;
   /** Days since last fully-completed day (gap detection). */
   gapDays: number;
   recentSummaries: DailySummary[];

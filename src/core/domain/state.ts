@@ -3,6 +3,8 @@ import type { DailySummary } from './summary';
 import type { DailyPlan } from './progress';
 import type { ProviderConfig, ModelInfo } from './llm';
 import type { TaskBankEntry } from './task-bank';
+import type { AiActionHistoryState } from './ai-actions';
+import { emptyAiActionHistory } from './ai-actions';
 
 // Persisted application state (localStorage). Schema v2.
 
@@ -36,10 +38,14 @@ export interface AppState {
   aiSettings: AiSettings;
   /** AI-generated / user-created tasks persisted into the dynamic bank. */
   dynamicTaskBank: TaskBankEntry[];
+  /** Journey day numbers marked as rest/holiday (no auto-plan; only explicit tasks). */
+  restDays: number[];
   /** One generated plan per dateISO. */
   planCache: Record<string, DailyPlan>;
   /** Daily available study time in minutes. */
   studyTimeMinutes: number;
+  /** Versioned, undoable audit trail for AI-generated application changes. */
+  aiActionHistory: AiActionHistoryState;
   lastSummaryDate: string | null;
 }
 
@@ -62,8 +68,10 @@ export function emptyAppState(): AppState {
     summaries: [],
     aiSettings: defaultAiSettings(),
     dynamicTaskBank: [],
+    restDays: [],
     planCache: {},
     studyTimeMinutes: 360,
+    aiActionHistory: emptyAiActionHistory(),
     lastSummaryDate: null,
   };
 }

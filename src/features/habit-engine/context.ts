@@ -128,12 +128,17 @@ export function buildPlanningContext(
   const level = getLevelForDay(levels, dayNumber);
   const examWindowActive = isExamMonthActive(state, dateISO);
 
+  const date = new Date(dateISO + 'T00:00:00');
+  const weekday = date.getDay(); // 0 = Sunday, matches JS Date.getDay()
+
   let jeeWorkload = 0.3 + (dayNumber / totalDays) * 0.2;
   if (examWindowActive) jeeWorkload += 0.3;
   if (backlogDays >= 2) jeeWorkload += 0.2;
   jeeWorkload = Math.max(0, Math.min(1, jeeWorkload));
 
   const recoveryMode = isRecoveryModeActive(state, dateISO, config, deps);
+
+  const restDay = (state.restDays ?? []).includes(dayNumber);
 
   return {
     dateISO,
@@ -151,7 +156,9 @@ export function buildPlanningContext(
     availableMinutes: state.studyTimeMinutes > 0 ? state.studyTimeMinutes : config.availableMinutes,
     recoveryMode,
     examWindowActive,
-    mockSunday: dayNumber % 7 === 0,
+    mockSunday: weekday === 0,
+    weekday,
+    restDay,
     gapDays,
     recentSummaries,
     dynamicEntries: state.dynamicTaskBank,

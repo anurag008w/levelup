@@ -9,6 +9,8 @@ export interface UnlockSnapshot {
   unlockedHabitIds: string[];
   examWindowActive: boolean;
   mockSunday: boolean;
+  /** Actual calendar weekday (0=Sunday..6=Saturday) of the planned date. */
+  weekday: number;
   recoveryMode: boolean;
   backlogDays: number;
   revisionDueHabitIds: string[];
@@ -41,6 +43,12 @@ export function isUnlockMet(entry: TaskBankEntry, snapshot: UnlockSnapshot): boo
       case 'day':
         if (snapshot.dayNumber < cond.fromDay) return false;
         break;
+      case 'day-exact':
+        if (snapshot.dayNumber !== cond.day) return false;
+        break;
+      case 'not-day':
+        if (snapshot.dayNumber === cond.day) return false;
+        break;
       case 'phase':
         if (snapshot.phase !== cond.phase) return false;
         break;
@@ -52,6 +60,12 @@ export function isUnlockMet(entry: TaskBankEntry, snapshot: UnlockSnapshot): boo
         break;
       case 'mock-sunday':
         if (!snapshot.mockSunday) return false;
+        break;
+      case 'weekday':
+        if (!cond.days.includes(snapshot.weekday)) return false;
+        break;
+      case 'day-in':
+        if (!cond.days.includes(snapshot.dayNumber)) return false;
         break;
       case 'recovery':
         if (!snapshot.recoveryMode) return false;

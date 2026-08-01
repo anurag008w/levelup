@@ -258,7 +258,8 @@ describe('GeminiProvider', () => {
     await provider.complete({ messages: [], thinking: 'high', maxTokens: 1024 });
     const config = (captured!.body as { generationConfig: { thinkingConfig: { thinkingBudget: number }; maxOutputTokens: number } }).generationConfig;
     expect(config.maxOutputTokens).toBe(1024);
-    expect(config.thinkingConfig.thinkingBudget).toBe(768);
+    // Reserves a 512-token output window so thinking never leaves a blank reply.
+    expect(config.thinkingConfig.thinkingBudget).toBe(512);
   });
 
   it('drops thinkingConfig when the window leaves no room for output', async () => {

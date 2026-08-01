@@ -39,6 +39,8 @@ export interface LLMMessage {
 
 export interface LLMRequest {
   messages: LLMMessage[];
+  /** Provider override; omitted = app active provider/fallback chain. */
+  providerId?: string | null;
   model?: string;
   temperature?: number;
   maxTokens?: number;
