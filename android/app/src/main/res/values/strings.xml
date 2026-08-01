@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Human OS</string>
-    <string name="title_activity_main">Human OS</string>
-    <string name="package_name">com.anurag.humanos</string>
-    <string name="custom_url_scheme">com.anurag.humanos</string>
+    <string name="app_name">LevelUp</string>
+    <string name="title_activity_main">LevelUp</string>
+    <string name="package_name">com.anurag.levelup</string>
+    <string name="custom_url_scheme">com.anurag.levelup</string>
 </resources>

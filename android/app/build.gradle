@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.anurag.humanos"
+    namespace = "com.anurag.levelup"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.anurag.humanos"
+        applicationId "com.anurag.levelup"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
