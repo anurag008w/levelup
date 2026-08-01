@@ -1356,6 +1356,12 @@
         {
           "type": "day",
           "fromDay": 34
+        },
+        {
+          "type": "weekday",
+          "days": [
+            0
+          ]
         }
       ],
       "active": true,
@@ -1485,8 +1491,8 @@
     {
       "id": "d13_t3",
       "habitId": "self_reflection",
-      "title": "Month 1 Assessment complete karo (Progress tab) — sabhi 21 habits ka score dekho",
-      "description": "Month 1 Assessment complete karo (Progress tab) — sabhi 21 habits ka score dekho",
+      "title": "Month Assessment complete karo (Progress tab) — sabhi habits ka score dekho",
+      "description": "Month Assessment complete karo (Progress tab) — sabhi habits ka score dekho",
       "phase": "jee-core",
       "difficulty": 5,
       "estimatedDurationMin": 20,
@@ -1509,8 +1515,12 @@
       },
       "unlockConditions": [
         {
-          "type": "day",
-          "fromDay": 37
+          "type": "day-in",
+          "days": [
+            30,
+            60,
+            90
+          ]
         }
       ],
       "active": true,

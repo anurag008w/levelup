@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Calendar, Check, Flame, Pencil, Plus, ShieldAlert, Siren, Sunrise, Sunset, Target, Timer, Trash2, X, Zap } from 'lucide-react';
+import { memo, useEffect, useRef, useState } from 'react';
+import { Calendar, Check, Flame, Pencil, Plus, ShieldAlert, ShieldCheck, Siren, Sunrise, Sunset, Target, Timer, Trash2, X, Zap } from 'lucide-react';
 import type { AppState } from '../types';
 import type { EnergyLevel, TaskType } from '../core/domain/task-bank';
 import { PHASES, TOTAL_DAYS } from '../data/curriculum';
@@ -8,11 +8,15 @@ import { TASK_TYPES } from '../core/domain/task-bank';
 import { getCurrentDayNumber, getLevelForDay, isExamMonthActive, daysUntilExam } from '../lib/engine';
 import { container } from '../di/container';
 import DayGauge from '../components/DayGauge';
-import AICoach from '../components/AICoach';
+import Confetti from '../components/Confetti';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
+import ProgressBar from '../components/ui/ProgressBar';
+import AdminLogin from '../components/AdminLogin';
+import DaySwitcher from '../components/DaySwitcher';
 import { phaseAccent } from '../lib/phaseColors';
 import { parseTaskBankEntry } from '../features/task-bank/validation';
+import { haptic } from '../lib/haptics';
 
 const ENERGY_LEVELS: EnergyLevel[] = ['low', 'medium', 'high'];
 const EMPTY_FORM = { title: '', durationMin: 30, energyLevel: 'medium' as EnergyLevel, taskType: 'Beginner' as TaskType };
@@ -21,20 +25,27 @@ export default function TodayScreen({
   state,
   today,
   update,
+  adminUnlocked,
+  onUnlockAdmin,
+  onLockAdmin,
+  onSetAdminDay,
 }: {
   state: AppState;
   today: string;
   update: (fn: (s: AppState) => AppState) => void;
+  adminUnlocked: boolean;
+  onUnlockAdmin: (username: string, password: string) => boolean;
+  onLockAdmin: () => void;
+  onSetAdminDay: (day: number | null) => void;
 }) {
   const [showAdd, setShowAdd] = useState(false);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{ title: string; durationMin: number } | null>(null);
   const [notice, setNotice] = useState('');
-
-  if (!state.startDateISO) {
-    return <StartScreen onStart={() => update((s) => ({ ...s, startDateISO: today }))} />;
-  }
+  const [confettiKey, setConfettiKey] = useState(0);
+  const celebratedRef = useRef(false);
 
   const dayNumber = getCurrentDayNumber(state, today);
   const level = getLevelForDay(dayNumber);
@@ -45,18 +56,33 @@ export default function TodayScreen({
     availableMinutes: state.studyTimeMinutes > 0 ? state.studyTimeMinutes : DEFAULT_PROGRESSION_CONFIG.availableMinutes,
     aiEnabled: container.providerSettings.isAiEnabled(),
   };
-  const context = container.planner.buildContext(state, today, config);
-  const plan: DailyPlan = container.planner.buildPlan(state, today, config);
 
-  const pct = planPct(plan, state);
-  const doneCount = plan.tasks.filter((t) => isDone(state, t)).length;
-  const totalCount = plan.tasks.length;
-  const recovery = context.recoveryMode;
+  const context = state.startDateISO ? container.planner.buildContext(state, today, config) : null;
+  const plan: DailyPlan | null = state.startDateISO ? container.planner.buildPlan(state, today, config) : null;
+
+  const pct = plan ? planPct(plan, state) : 0;
+  const doneCount = plan ? plan.tasks.filter((t) => isDone(state, t)).length : 0;
+  const totalCount = plan ? plan.tasks.length : 0;
+  const recovery = context?.recoveryMode ?? false;
   const examMode = isExamMonthActive(state, today);
   const examLeft = daysUntilExam(state, today);
-  const streak = context.streak;
+  const streak = context?.streak ?? 0;
   const accent = phaseAccent(phase?.color ?? 'core');
   const dateLabel = formatDate(today);
+
+  useEffect(() => {
+    if (pct === 100 && totalCount > 0 && !celebratedRef.current) {
+      celebratedRef.current = true;
+      setConfettiKey((n) => n + 1);
+    }
+  }, [pct, totalCount]);
+
+  if (!state.startDateISO) {
+    return <StartScreen onStart={() => update((s) => ({ ...s, startDateISO: today }))} />;
+  }
+
+  const activePlan: DailyPlan = plan!;
+  const activeContext = context!;
 
   function flash(msg: string) {
     setNotice(msg);
@@ -64,12 +90,13 @@ export default function TodayScreen({
   }
 
   function onToggleTask(task: PlannedTask) {
+    haptic(8);
     update((s) => togglePlanned(s, task));
   }
 
   function addTodayTask() {
     if (!form.title.trim()) {
-      flash('Title bharo.');
+      flash('Pehle task ka title bharo.');
       return;
     }
     const entry = parseTaskBankEntry({
@@ -88,13 +115,13 @@ export default function TodayScreen({
       backlogSuitability: 0.3,
       thinkingSkills: ['focus'],
       jeeRelevance: { score: 0.5 },
-      unlockConditions: [{ type: 'day', fromDay: dayNumber }],
+      unlockConditions: [{ type: 'day-exact', day: dayNumber }],
       active: true,
     });
     update((s) => ({ ...s, dynamicTaskBank: [...s.dynamicTaskBank, entry] }));
     setForm(EMPTY_FORM);
     setShowAdd(false);
-    flash('Aaj ka task add ho gaya.');
+    flash('Task aaj ke plan mein add ho gaya.');
   }
 
   function startEditTask(task: PlannedTask) {
@@ -125,138 +152,146 @@ export default function TodayScreen({
   }
 
   function deleteTask(task: PlannedTask) {
-    if (!window.confirm('Ye task aaj ke plan/task bank se delete ho jayega. Confirm?')) return;
+    if (!window.confirm('Ye task aaj ke plan se hata dega (Task Bank delete nahi hota). Confirm?')) return;
     update((s) => {
       if (task.entry.legacy) {
+        const existing = s.dynamicTaskBank.find((e) => e.id === task.entry.id);
+        const base = existing ?? task.entry;
+        if (base.unlockConditions.some((c) => c.type === 'not-day' && c.day === dayNumber)) return s;
+        const updated = { ...base, active: true, unlockConditions: [...base.unlockConditions, { type: 'not-day' as const, day: dayNumber }] };
         return {
           ...s,
-          dynamicTaskBank: [...s.dynamicTaskBank.filter((e) => e.id !== task.entry.id), { ...task.entry, active: false }],
+          dynamicTaskBank: existing ? s.dynamicTaskBank.map((e) => (e.id === updated.id ? updated : e)) : [...s.dynamicTaskBank, updated],
         };
       }
       return { ...s, dynamicTaskBank: s.dynamicTaskBank.filter((e) => e.id !== task.entry.id) };
     });
-    flash('Task delete ho gaya.');
+    flash('Task aaj ke plan se hata diya (bank safe).');
   }
 
   const groups = ['exam', 'morning', 'blocks', 'night', 'weekly', 'monthly', 'bonus', 'mock'] as const;
 
   return (
     <div className="screen fade-up">
+      <Confetti trigger={confettiKey} />
+
       <ScreenHeader
-        eyebrow="HUMAN OS"
-        title="Mission Dashboard"
-        subtitle={dateLabel}
+        eyebrow={`DAY ${dayNumber} / ${TOTAL_DAYS}`}
+        title={greeting()}
+        subtitle={`${dateLabel} · ${level?.title ?? ''}`}
         right={
-          <div className="flex items-center gap-1.5 rounded-full border border-border bg-panel px-3 py-1.5">
-            <Flame size={14} color="var(--color-light)" className={streak > 0 ? 'pulse-dot' : ''} />
-            <span className="font-mono text-xs font-semibold">{streak}</span>
+          <div className="flex items-center gap-2">
+            <StreakPill streak={streak} />
+            <button
+              type="button"
+              aria-label={adminUnlocked ? 'Admin panel khula hai (lock karo)' : 'Admin login'}
+              className="icon-btn"
+              style={adminUnlocked ? { color: 'var(--color-peak)' } : undefined}
+              onClick={() => (adminUnlocked ? onLockAdmin() : setShowAdminLogin(true))}
+            >
+              <ShieldCheck size={16} />
+            </button>
           </div>
         }
       />
 
+      {adminUnlocked && (
+        <DaySwitcher
+          dayNumber={dayNumber}
+          totalDays={TOTAL_DAYS}
+          dateLabel={dateLabel}
+          onJump={(n) => onSetAdminDay(n)}
+          onToday={() => onSetAdminDay(null)}
+          onLock={onLockAdmin}
+        />
+      )}
+
       {/* Hero */}
-      <div className="gradient-border mb-4 rounded-2xl p-1">
-        <div className="rounded-[14px] bg-panel/80 px-4 pb-4 pt-5">
+      <div className="gradient-border mb-4 rounded-[1.25rem] p-px">
+        <div className="rounded-[calc(1.25rem-1px)] bg-panel/90 px-4 pb-4 pt-5">
           <div className="flex items-center justify-center">
-            <DayGauge dayNumber={dayNumber} totalDays={TOTAL_DAYS} todayPct={pct} levelCode={`LVL-${String(level?.id ?? 0).padStart(2, '0')}`} />
+            <DayGauge
+              dayNumber={dayNumber}
+              totalDays={TOTAL_DAYS}
+              todayPct={pct}
+              levelCode={`LVL-${String(level?.id ?? 0).padStart(2, '0')}`}
+            />
           </div>
           {level && (
             <div className="mt-3 text-center">
-              <p className="font-mono text-[10px] tracking-[0.18em] uppercase" style={{ color: accent }}>
+              <p className="eyebrow" style={{ color: accent }}>
                 {phase?.title}
               </p>
-              <h2 className="mt-0.5 font-display text-base font-bold">{level.title}</h2>
-              <p className="mt-0.5 text-[11px] text-muted">
+              <h2 className="mt-1 font-display text-lg font-bold tracking-tight">{level.title}</h2>
+              <p className="mt-0.5 text-xs text-muted">
                 Days {level.dayStart}–{level.dayEnd}
               </p>
             </div>
           )}
+          <div className="mt-4">
+            <div className="mb-1.5 flex items-center justify-between text-xs">
+              <span className="font-medium text-muted">Today's plan</span>
+              <span className="font-display font-bold" style={{ color: pct === 100 ? 'var(--color-success)' : 'var(--color-text)' }}>
+                {doneCount}/{totalCount} · {pct}%
+              </span>
+            </div>
+            <ProgressBar value={pct} height={8} color={pct === 100 ? 'var(--color-success)' : 'var(--color-l)'} />
+          </div>
         </div>
       </div>
 
       {/* Quick stats */}
-      <div className="mb-4 grid grid-cols-3 gap-2">
-        <StatCard
-          icon={<Target size={14} color="var(--color-l)" />}
-          value={`${doneCount}/${totalCount}`}
-          label="Tasks done"
-        />
-        <StatCard
-          icon={<Zap size={14} color="var(--color-light)" />}
-          value={context.availableMinutes}
-          label="Min today"
-        />
-        <StatCard
-          icon={<Calendar size={14} color="var(--color-peak)" />}
-          value={`${context.gapDays}`}
+      <div className="mb-4 grid grid-cols-3 gap-2.5">
+        <StatTile icon={<Target size={15} color="var(--color-l)" />} value={`${doneCount}/${totalCount}`} label="Tasks done" />
+        <StatTile icon={<Zap size={15} color="var(--color-light)" />} value={activeContext.availableMinutes} label="Min today" />
+        <StatTile
+          icon={<Calendar size={15} color={activeContext.gapDays >= 2 ? 'var(--color-danger)' : 'var(--color-peak)'} />}
+          value={activeContext.gapDays}
           label="Gap days"
-          warn={context.gapDays >= 2}
+          warn={activeContext.gapDays >= 2}
         />
       </div>
 
-      <AICoach
-        today={today}
-        dayNumber={dayNumber}
-        levelTitle={level?.title ?? 'Unknown'}
-        pct={pct}
-        streak={streak}
-        recovery={recovery}
-        examLeft={examMode ? examLeft : null}
-        done={doneCount}
-        total={totalCount}
-      />
-
-      {notice && <div className="mb-3 rounded-xl border border-border bg-panel px-3 py-2 text-xs text-light">{notice}</div>}
-
-      <div className="mb-4 rounded-2xl border border-border bg-panel p-3">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <p className="font-display text-sm font-bold">Aaj ke tasks manage karo</p>
-            <p className="text-[11px] text-muted">Today tab se direct add, edit, delete — AI bhi same bank use karega.</p>
-          </div>
-          <button className="btn btn-primary px-3 py-2 text-xs font-bold" onClick={() => setShowAdd((v) => !v)}>
-            {showAdd ? <X size={14} /> : <Plus size={14} />}
-            {showAdd ? 'Cancel' : 'Add'}
-          </button>
+      {notice && (
+        <div className="toast mb-4 fade-in" role="status">
+          <Check size={15} color="var(--color-l)" />
+          {notice}
         </div>
-        {showAdd && (
-          <div className="mt-3 space-y-2 text-xs">
-            <input className="field" placeholder="Aaj ka task title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-            <div className="grid grid-cols-3 gap-2">
-              <input className="field" type="number" min={5} max={180} value={form.durationMin} onChange={(e) => setForm({ ...form, durationMin: Number(e.target.value) || 30 })} />
-              <select className="field" value={form.energyLevel} onChange={(e) => setForm({ ...form, energyLevel: e.target.value as EnergyLevel })}>
-                {ENERGY_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
-              </select>
-              <select className="field" value={form.taskType} onChange={(e) => setForm({ ...form, taskType: e.target.value as TaskType })}>
-                {TASK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <button className="btn btn-primary w-full py-2 text-xs font-bold" onClick={addTodayTask}>Add to today's plan</button>
-          </div>
-        )}
-      </div>
-
+      )}
 
       {!level?.authored && (
-        <div className="card mb-4 p-4 text-sm text-muted">
-          Is level ka detailed content agle update mein add hoga. Tab tak pichle levels ke habits continue rakho — wahi list neeche dikh rahi hai.
+        <div className="card mb-4 flex items-start gap-2.5 p-3.5 text-sm text-muted">
+          <SparkleIcon />
+          <p>Is level ka detailed content agle update mein add hoga. Tab tak pichle levels ke habits continue rakho — wahi list neeche dikh rahi hai.</p>
         </div>
       )}
 
       {recovery && (
-        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-danger/40 bg-danger/10 p-3.5">
+        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-danger/40 bg-danger/10 p-3.5 fade-in">
           <ShieldAlert size={18} color="var(--color-danger)" className="mt-0.5 shrink-0" />
           <div>
             <p className="font-display text-sm font-bold text-danger">Recovery Mode</p>
             <p className="mt-0.5 text-xs leading-relaxed text-muted">
-              Kal ka completion bahut kam tha. Aaj sirf current level ke CORE tasks required hain — baaki bonus mein optional hain. Momentum wapas banao.
+              Kal ka completion bahut kam tha. Aaj sirf current level ke core tasks required hain — baaki bonus mein optional hain. Momentum wapas banao.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {activeContext.restDay && (
+        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-light-dim/50 bg-[rgba(245,179,103,0.08)] p-3.5 fade-in">
+          <Sunset size={18} color="var(--color-light)" className="mt-0.5 shrink-0" />
+          <div>
+            <p className="font-display text-sm font-bold text-light">Rest Day — Chhuti</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted">
+              Aaj koi auto-plan nahi hai. Sirf wahi tasks dikhenge jo aapne/tumhare coach ne is din ke liye explicitly schedule kiye hain. Fully relax karo ya optional light study karo.
             </p>
           </div>
         </div>
       )}
 
       {examMode && (
-        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-light-dim/50 bg-[rgba(242,166,90,0.08)] p-3.5">
+        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-light-dim/50 bg-[rgba(245,179,103,0.08)] p-3.5 fade-in">
           <Siren size={18} color="var(--color-light)" className="mt-0.5 shrink-0" />
           <div>
             <p className="font-display text-sm font-bold text-light">Exam Month — {examLeft} din baaki</p>
@@ -265,21 +300,72 @@ export default function TodayScreen({
         </div>
       )}
 
+      {/* Add task (inline form, triggered by FAB) */}
+      {showAdd && (
+        <div className="card mb-4 p-4 fade-in">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="font-display text-sm font-bold">Aaj ka naya task</p>
+            <button type="button" onClick={() => setShowAdd(false)} className="icon-btn" aria-label="Close add task">
+              <X size={16} />
+            </button>
+          </div>
+          <div className="space-y-2.5 text-sm">
+            <input
+              className="field"
+              placeholder="Aaj ka task title"
+              value={form.title}
+              onChange={(e) => setForm({ ...form, title: e.target.value })}
+              autoFocus
+            />
+            <div className="grid grid-cols-3 gap-2.5">
+              <input
+                className="field"
+                type="number"
+                min={5}
+                max={180}
+                aria-label="Duration in minutes"
+                value={form.durationMin}
+                onChange={(e) => setForm({ ...form, durationMin: Number(e.target.value) || 30 })}
+              />
+              <select
+                className="field"
+                aria-label="Energy level"
+                value={form.energyLevel}
+                onChange={(e) => setForm({ ...form, energyLevel: e.target.value as EnergyLevel })}
+              >
+                {ENERGY_LEVELS.map((l) => (
+                  <option key={l} value={l}>{l}</option>
+                ))}
+              </select>
+              <select
+                className="field"
+                aria-label="Task type"
+                value={form.taskType}
+                onChange={(e) => setForm({ ...form, taskType: e.target.value as TaskType })}
+              >
+                {TASK_TYPES.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+            <button className="btn btn-primary w-full text-sm font-bold" onClick={addTodayTask}>
+              <Plus size={15} />
+              Add to today's plan
+            </button>
+          </div>
+        </div>
+      )}
+
       {groups.map((g) => {
-        const tasks = group(plan, g);
+        const tasks = group(activePlan, g);
         if (tasks.length === 0) return null;
         const done = tasks.filter((t) => isDone(state, t)).length;
         const accent = groupAccent(g);
         const dim = g === 'bonus';
         return (
           <div key={g} className="mb-4">
-            <SectionHeader
-              icon={groupIcon(g)}
-              accent={accent}
-              title={groupLabel(g, tasks.length)}
-              meta={`${done}/${tasks.length}`}
-            />
-            <div className="space-y-2">
+            <SectionHeader icon={groupIcon(g)} accent={accent} title={groupLabel(g)} meta={`${done}/${tasks.length}`} />
+            <div className="space-y-2.5">
               {tasks.map((t) => (
                 <TaskRow
                   key={t.entry.id}
@@ -302,33 +388,76 @@ export default function TodayScreen({
         );
       })}
 
-      {plan.contextSummary && (
-        <p className="mt-2 text-center font-mono text-[10px] text-muted">plan: {plan.contextSummary}</p>
-      )}
+      {/* Floating add button */}
+      <button
+        type="button"
+        onClick={() => setShowAdd((v) => !v)}
+        className="fixed z-30 flex items-center gap-1.5 rounded-full border border-l/30 bg-panel-raised px-4 py-3 font-display text-sm font-bold text-l shadow-fab transition-transform active:scale-95"
+        style={{ bottom: 'calc(4.5rem + env(safe-area-inset-bottom, 0px))', right: 'max(1.25rem, calc(50vw - 13.75rem + 1.25rem))' }}
+        aria-label={showAdd ? 'Close add task' : 'Add task'}
+      >
+        {showAdd ? <X size={17} /> : <Plus size={17} />}
+        {showAdd ? 'Cancel' : 'Add'}
+      </button>
+
+      {showAdminLogin && <AdminLogin onLogin={onUnlockAdmin} onClose={() => setShowAdminLogin(false)} />}
     </div>
   );
 }
 
-function StatCard({ icon, value, label, warn }: { icon: React.ReactNode; value: string | number; label: string; warn?: boolean }) {
+function StreakPill({ streak }: { streak: number }) {
+  const active = streak > 0;
   return (
-    <div className="card flex flex-col items-center gap-1 px-2 py-3 text-center">
-      <span className="opacity-80">{icon}</span>
+    <div
+      className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 transition-colors"
+      style={{
+        borderColor: active ? 'rgba(245,179,103,0.45)' : 'var(--color-border)',
+        backgroundColor: active ? 'rgba(245,179,103,0.08)' : 'var(--color-panel)',
+      }}
+    >
+      <Flame size={15} color={active ? 'var(--color-light)' : 'var(--color-muted-dim)'} className={active ? 'pulse-dot' : ''} />
+      <span className="font-mono text-sm font-bold" style={{ color: active ? 'var(--color-light)' : 'var(--color-muted)' }}>
+        {streak}
+      </span>
+    </div>
+  );
+}
+
+function StatTile({ icon, value, label, warn }: { icon: React.ReactNode; value: string | number; label: string; warn?: boolean }) {
+  return (
+    <div className="card flex flex-col items-center gap-1 px-2 py-3.5 text-center">
+      <span className="opacity-90">{icon}</span>
       <span className="font-display text-lg font-bold leading-none" style={{ color: warn ? 'var(--color-danger)' : 'var(--color-text)' }}>
         {value}
       </span>
-      <span className="text-[10px] text-muted">{label}</span>
+      <span className="text-[11px] text-muted">{label}</span>
     </div>
   );
+}
+
+function SparkleIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-l)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0">
+      <path d="M12 3l1.9 5.7L19.6 10.6l-5.7 1.9L12 18.2l-1.9-5.7L4.4 10.6l5.7-1.9L12 3z" />
+    </svg>
+  );
+}
+
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
 }
 
 function group(plan: DailyPlan, g: PlannedTask['group']): PlannedTask[] {
   return plan.tasks.filter((t) => t.group === g);
 }
 
-function groupLabel(g: PlannedTask['group'], count: number): string {
+function groupLabel(g: PlannedTask['group']): string {
   switch (g) {
     case 'morning':
-      return 'Morning';
+      return 'Morning Rituals';
     case 'blocks':
       return 'Study Blocks';
     case 'night':
@@ -340,7 +469,7 @@ function groupLabel(g: PlannedTask['group'], count: number): string {
     case 'exam':
       return 'Exam Month Checklist';
     case 'bonus':
-      return `Bonus (optional) · ${count}`;
+      return 'Bonus (optional)';
     case 'mock':
       return 'Sunday Mock Protocol';
   }
@@ -402,7 +531,7 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-function TaskRow({
+const TaskRow = memo(function TaskRow({
   task,
   done,
   onToggle,
@@ -431,13 +560,25 @@ function TaskRow({
 }) {
   if (editing && editDraft) {
     return (
-      <div className="rounded-xl border border-border bg-panel p-3 text-xs">
-        <div className="space-y-2">
-          <input className="field" value={editDraft.title} onChange={(e) => onEditDraft({ ...editDraft, title: e.target.value })} />
-          <input className="field" type="number" min={5} max={180} value={editDraft.durationMin} onChange={(e) => onEditDraft({ ...editDraft, durationMin: Number(e.target.value) || 30 })} />
+      <div className="card p-3.5 text-sm fade-in">
+        <div className="space-y-2.5">
+          <input className="field" aria-label="Task title" value={editDraft.title} onChange={(e) => onEditDraft({ ...editDraft, title: e.target.value })} />
+          <input
+            className="field"
+            type="number"
+            min={5}
+            max={180}
+            aria-label="Duration in minutes"
+            value={editDraft.durationMin}
+            onChange={(e) => onEditDraft({ ...editDraft, durationMin: Number(e.target.value) || 30 })}
+          />
           <div className="flex gap-2">
-            <button className="btn btn-primary flex-1 py-1.5 text-xs font-bold" onClick={onSaveEdit}><Check size={13} /> Save</button>
-            <button className="btn btn-ghost px-3 py-1.5 text-xs" onClick={onCancelEdit}>Cancel</button>
+            <button className="btn btn-primary flex-1 py-2 text-sm font-bold" onClick={onSaveEdit}>
+              <Check size={15} /> Save
+            </button>
+            <button className="btn btn-ghost px-4" onClick={onCancelEdit}>
+              Cancel
+            </button>
           </div>
         </div>
       </div>
@@ -446,28 +587,49 @@ function TaskRow({
 
   return (
     <div
-      className="group flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-all duration-200"
+      className="card card-press flex items-center gap-3 p-3"
       style={{
-        borderColor: done ? 'var(--color-success)' : 'var(--color-border)',
-        backgroundColor: done ? 'rgba(124,217,146,0.07)' : 'var(--color-panel)',
+        borderColor: done ? 'rgba(52,211,153,0.5)' : 'var(--color-border)',
+        backgroundColor: done ? 'rgba(52,211,153,0.06)' : undefined,
         opacity: dim && !done ? 0.55 : 1,
       }}
     >
-      <label className="flex flex-1 cursor-pointer items-center gap-3">
       <span
-        className="h-5 w-1 shrink-0 rounded-full transition-colors"
-        style={{ backgroundColor: done ? 'var(--color-success)' : accent, opacity: done ? 0.4 : 0.35 }}
+        className="h-10 w-1 shrink-0 rounded-full transition-colors"
+        style={{ backgroundColor: done ? 'var(--color-success)' : accent, opacity: done ? 0.45 : 0.5 }}
       />
-      <input type="checkbox" className="task-check mt-0.5" checked={done} onChange={onToggle} />
-      <span className={`text-sm leading-snug ${done ? 'text-muted line-through' : ''}`}>{task.entry.title}</span>
-      </label>
-      <div className="ml-auto flex shrink-0 gap-1 opacity-80">
-        <button type="button" className="btn btn-ghost px-2 py-1" onClick={onStartEdit} aria-label="Edit task"><Pencil size={13} /></button>
-        <button type="button" className="btn btn-ghost px-2 py-1 text-red-400" onClick={onDelete} aria-label="Delete task"><Trash2 size={13} /></button>
+      <input
+        type="checkbox"
+        className="task-check shrink-0"
+        checked={done}
+        onChange={onToggle}
+        aria-label={`Mark ${task.entry.title} ${done ? 'incomplete' : 'complete'}`}
+      />
+      <div className="min-w-0 flex-1">
+        <p className={`text-sm font-medium leading-snug ${done ? 'strike text-muted' : 'text-text'}`}>{task.entry.title}</p>
+        <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted">
+          <Timer size={11} /> {task.entry.estimatedDurationMin} min
+          <span className="h-1 w-1 rounded-full bg-muted-dim" />
+          {task.entry.energyLevel}
+          {task.entry.taskType && (
+            <>
+              <span className="h-1 w-1 rounded-full bg-muted-dim" />
+              {task.entry.taskType}
+            </>
+          )}
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-0.5">
+        <button type="button" className="icon-btn" onClick={onStartEdit} aria-label="Edit task">
+          <Pencil size={15} />
+        </button>
+        <button type="button" className="icon-btn text-red-400/70 hover:bg-danger/10 hover:text-danger" onClick={onDelete} aria-label="Delete task">
+          <Trash2 size={15} />
+        </button>
       </div>
     </div>
   );
-}
+});
 
 function clampInt(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(v)));
@@ -480,34 +642,41 @@ function uid(prefix: string): string {
 
 function StartScreen({ onStart }: { onStart: () => void }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
-      <p className="eyebrow">HUMAN OS · JEE PROTOCOL</p>
-      <h1 className="mt-2 font-display text-3xl font-bold leading-tight">
-        L × Light × <span className="text-light">JEE</span>
-      </h1>
-      <p className="mt-3 max-w-xs text-sm leading-relaxed text-muted">
-        90 din. 30 levels. 130+ habits ek-ek karke build honge — har din ek clear plan, streak aur AI coach ke saath.
-      </p>
-
-      <div className="mt-6 grid w-full max-w-xs grid-cols-3 gap-2">
-        {[
-          { icon: <Target size={15} color="var(--color-l)" />, label: 'Task Bank' },
-          { icon: <Flame size={15} color="var(--color-light)" />, label: 'Streaks' },
-          { icon: <Zap size={15} color="var(--color-peak)" />, label: 'AI Coach' },
-        ].map((f) => (
-          <div key={f.label} className="card flex flex-col items-center gap-1.5 px-2 py-3">
-            {f.icon}
-            <span className="text-[10px] text-muted">{f.label}</span>
+    <div className="screen flex min-h-screen flex-col items-center justify-center text-center">
+      <div className="fade-up">
+        <div className="gradient-border mb-6 rounded-full p-px">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-panel">
+            <Flame size={26} color="var(--color-light)" />
           </div>
-        ))}
-      </div>
+        </div>
+        <p className="eyebrow">HUMAN OS · JEE PROTOCOL</p>
+        <h1 className="mt-2 font-display text-3xl font-bold leading-tight tracking-tight">
+          L × Light × <span className="text-light">JEE</span>
+        </h1>
+        <p className="mx-auto mt-3 max-w-xs text-sm leading-relaxed text-muted">
+          90 din. 30 levels. 130+ habits ek-ek karke build honge — har din ek clear plan, streak aur AI coach ke saath.
+        </p>
 
-      <button onClick={onStart} className="btn btn-primary mt-8 px-8 py-3 font-display text-sm font-bold">
-        Mission Start — Day 1
-      </button>
-      <p className="mt-3 max-w-[240px] text-[11px] leading-relaxed text-muted/70">
-        Abhi shuru karo — data bilkul local hai, koi signup nahi.
-      </p>
+        <div className="mt-7 grid w-full max-w-xs grid-cols-3 gap-2.5">
+          {[
+            { icon: <Target size={16} color="var(--color-l)" />, label: 'Task Bank' },
+            { icon: <Flame size={16} color="var(--color-light)" />, label: 'Streaks' },
+            { icon: <Zap size={16} color="var(--color-peak)" />, label: 'AI Coach' },
+          ].map((f) => (
+            <div key={f.label} className="card flex flex-col items-center gap-1.5 px-2 py-3.5">
+              {f.icon}
+              <span className="text-[11px] text-muted">{f.label}</span>
+            </div>
+          ))}
+        </div>
+
+        <button onClick={onStart} className="btn btn-primary mt-8 px-8 font-display text-base font-bold">
+          Mission Start — Day 1
+        </button>
+        <p className="mt-3 text-[11px] leading-relaxed text-muted-dim">
+          Abhi shuru karo — data bilkul local hai, koi signup nahi.
+        </p>
+      </div>
     </div>
   );
 }

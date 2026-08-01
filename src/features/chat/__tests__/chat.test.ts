@@ -7,6 +7,7 @@ import type { LLMProvider, ProviderError, LLMResponse, HealthCheckResult, ModelI
 import type { StateStore } from '../../../core/ports/repositories';
 import type { ProviderFactory } from '../../../infra/ai/provider-factory';
 import { LLMService } from '../../ai/llm.service';
+import { MemoryService } from '../../ai/memory.service';
 import { ProviderSettingsService } from '../../ai/provider-settings.service';
 import { ChatService } from '../chat.service';
 
@@ -76,7 +77,8 @@ function buildService(deps: {
   context?: () => string;
   aiSettings?: Partial<AppState['aiSettings']>;
   repo?: ChatRepository;
-}): { chat: ChatService; repo: ChatRepository } {
+  withMemory?: boolean;
+}): { chat: ChatService; repo: ChatRepository; store: StateStore } {
   const repo = deps.repo ?? new MemoryChatRepository();
   const store = makeStore(
     deps.aiSettings ?? {
@@ -90,8 +92,9 @@ function buildService(deps: {
   } as unknown as ProviderFactory;
   const settings = new ProviderSettingsService(store, factory);
   const llm = new LLMService(factory, settings);
-  const chat = new ChatService(repo, llm, settings, deps.context ?? (() => 'ctx'), new FakeClock());
-  return { chat, repo };
+  const memory = deps.withMemory ? new MemoryService(new FakeClock()) : null;
+  const chat = new ChatService(repo, llm, settings, deps.context ?? (() => 'ctx'), new FakeClock(), null, memory, deps.withMemory ? store : null);
+  return { chat, repo, store };
 }
 
 describe('ChatService', () => {
@@ -144,7 +147,40 @@ describe('ChatService', () => {
     const systemContents = captured!.messages.filter((m) => m.role === 'system').map((m) => m.content);
     expect(systemContents.join('\n')).toContain('ctx-xyz');
     expect(systemContents[0]).toContain('JEE');
-    expect(captured!.messages.at(-1)).toEqual({ role: 'user', content: 'hi' });
+    const last = captured!.messages.at(-1)!;
+    expect(last.role).toBe('user');
+    expect(last.content).toMatch(/^\[[^\]]+\] hi$/);
+  });
+
+  it('tags every history message with its local send time', async () => {
+    let captured: LLMRequest | null = null;
+    const repo = new MemoryChatRepository();
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+    });
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({ text: '', model: 'a' }),
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        captured = req;
+        return { text: 'done', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock());
+    const session = chat.createSession();
+    await chat.send(session.id, 'pehla');
+    await chat.send(session.id, 'doosra');
+    const history = captured!.messages.filter((m) => m.role !== 'system');
+    expect(history).toHaveLength(3);
+    for (const m of history) expect(m.content).toMatch(/^\[[^\]]+\] /);
   });
 
   it('rolls back the user message when the provider errors hard', async () => {
@@ -197,5 +233,48 @@ describe('ChatService', () => {
     const stored = repo.load().sessions[0];
     expect(stored.title).toBe('hello');
     expect(stored.messages.map((m) => m.content)).toEqual(['hello', 'reply']);
+  });
+
+  it('stores each exchange as AI memory', async () => {
+    const { chat, store } = buildService({ replies: ['reply-one', 'reply-two'], withMemory: true });
+    const s1 = chat.createSession();
+    await chat.send(s1.id, 'Meri aim IIT hai');
+    expect(store.get().memory.entries).toHaveLength(2);
+    const userEntry = store.get().memory.entries.find((e) => e.source === 'user');
+    expect(userEntry?.content).toContain('Meri aim IIT hai');
+    expect(userEntry?.context.tags).toContain(s1.id);
+  });
+
+  it('recalls earlier-conversation memories into later sessions', async () => {
+    let captured: LLMRequest | null = null;
+    const repo = new MemoryChatRepository();
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+    });
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({ text: '', model: 'a' }),
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        captured = req;
+        return { text: 'done', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const memory = new MemoryService(new FakeClock());
+    const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), null, memory, store);
+    const s1 = chat.createSession();
+    await chat.send(s1.id, 'Meri aim IIT ka preparation hai');
+    const s2 = chat.createSession();
+    await chat.send(s2.id, 'Kya yaad hai mujhe?');
+    expect(captured).not.toBeNull();
+    const systemContents = captured!.messages.filter((m) => m.role === 'system').map((m) => m.content);
+    expect(systemContents.join('\n')).toContain('Meri aim IIT ka preparation hai');
   });
 });

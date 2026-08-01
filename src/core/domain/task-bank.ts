@@ -33,10 +33,14 @@ export type ThinkingSkill =
 
 export type UnlockCondition =
   | { type: 'day'; fromDay: number }
+  | { type: 'day-exact'; day: number }
+  | { type: 'not-day'; day: number }
   | { type: 'phase'; phase: PhaseId }
   | { type: 'habit'; habitId: string }
   | { type: 'exam-window'; daysBeforeExam: number }
   | { type: 'mock-sunday' }
+  | { type: 'weekday'; days: number[] }
+  | { type: 'day-in'; days: number[] }
   | { type: 'recovery' }
   | { type: 'backlog'; thresholdDays: number }
   | { type: 'revision'; dueAfterDays: number };

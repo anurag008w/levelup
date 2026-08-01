@@ -146,6 +146,16 @@ describe('ChatToolsService', () => {
     expect(store.get().taskLogs['2026-07-01']?.['d1_t1']).toBe(true);
   });
 
+  it('markDone uses special plan log keys such as mock days', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    // Day 5 (2026-07-05) is an actual Sunday → mock protocol active.
+    const result = await tools.run({ action: 'markDone', day: 5, taskId: 'mock_1' });
+    expect(result.ok).toBe(true);
+    expect(store.get().taskLogs['mock:2026-07-05']?.mock_1).toBe(true);
+    expect(store.get().taskLogs['2026-07-05']?.mock_1).toBeUndefined();
+  });
+
   it('addTask appends a dynamic entry through the store', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
@@ -165,24 +175,106 @@ describe('ChatToolsService', () => {
     const added = store.get().dynamicTaskBank[0];
     expect(added.id).toMatch(/^ai-/);
     expect(added.legacy).toBeUndefined();
-    expect(added.unlockConditions).toEqual([{ type: 'day', fromDay: 4 }]);
+    expect(added.unlockConditions).toEqual([{ type: 'day-exact', day: 4 }]);
   });
 
-  it('removeTask can disable built-in seed entries and remove dynamic entries', async () => {
+  it('addTask schedules the task only for that exact day', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    const seedResult = await tools.run({ action: 'removeTask', day: 1, taskId: 'd1_t1' });
-    expect(seedResult.ok).toBe(true);
-    expect(store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1')?.active).toBe(false);
-    store.save({ ...store.get(), dynamicTaskBank: [parseTaskBankEntry({
-      id: 'ai-xyz', habitId: 'h1', title: 'temp', description: '', phase: 'jee-core', difficulty: 1,
-      estimatedDurationMin: 10, energyLevel: 'low', tags: [], prerequisites: [], taskType: 'Beginner',
-      revisionSuitability: 0.1, backlogSuitability: 0.1, thinkingSkills: ['recall'],
-      jeeRelevance: { score: 0.1 }, unlockConditions: [{ type: 'day', fromDay: 1 }], active: true,
-    })] });
-    const result = await tools.run({ action: 'removeTask', day: 1, taskId: 'ai-xyz' });
+    await tools.run({ action: 'addTask', day: 5, intent: 'chat se task', durationMin: 20 });
+    const day5 = store.get().dynamicTaskBank.find((e) => e.id === 'ai-chat-test');
+    expect(day5?.unlockConditions).toEqual([{ type: 'day-exact', day: 5 }]);
+    const planDay5 = tools.run({ action: 'getPlan', day: 5 });
+    const planDay6 = tools.run({ action: 'getPlan', day: 6 });
+    expect((await planDay5).summary).toContain('Chat se add hua task');
+    expect((await planDay6).summary).not.toContain('Chat se add hua task');
+  });
+
+  it('removeTask hides a built-in task for one day only; the bank entry is untouched', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const preview = await tools.run({ action: 'removeTask', day: 1, taskId: 'd1_t1' });
+    expect(preview.ok).toBe(false);
+    expect(preview.requiresConfirmation).toBe(true);
+    expect(store.get().dynamicTaskBank.some((e) => e.id === 'd1_t1')).toBe(false);
+
+    const result = await tools.run({ action: 'removeTask', day: 1, taskId: 'd1_t1', confirmed: true });
     expect(result.ok).toBe(true);
-    expect(store.get().dynamicTaskBank.some((e) => e.id === 'ai-xyz')).toBe(false);
+    const override = store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1');
+    expect(override?.active).toBe(true);
+    expect(override?.unlockConditions).toEqual([{ type: 'day', fromDay: 1 }, { type: 'not-day', day: 1 }]);
+    // The bank seed is still present (never deleted).
+    expect(buildSeed().tasks.some((t) => t.id === 'd1_t1')).toBe(true);
+    // Gone from day 1, still planned on day 2.
+    expect((await tools.run({ action: 'getPlan', day: 1 })).summary).not.toContain('id:d1_t1');
+    expect((await tools.run({ action: 'getPlan', day: 2 })).summary).toContain('id:d1_t1');
+  });
+
+  it('removeTask deletes an explicitly scheduled dynamic task for that day', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    await tools.run({ action: 'addTask', day: 3, intent: 'chat se task', durationMin: 20 });
+    expect(store.get().dynamicTaskBank.some((e) => e.id === 'ai-chat-test')).toBe(true);
+    const result = await tools.run({ action: 'removeTask', day: 3, taskId: 'ai-chat-test', confirmed: true });
+    expect(result.ok).toBe(true);
+    expect(store.get().dynamicTaskBank.some((e) => e.id === 'ai-chat-test')).toBe(false);
+  });
+
+  it('bulkRemoveTasks removes multiple built-in tasks from one day only', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const result = await tools.run({ action: 'bulkRemoveTasks', day: 1, taskIds: ['d1_t1', 'd1_t2'], confirmed: true });
+    expect(result.ok).toBe(true);
+    const overrides = store.get().dynamicTaskBank.filter((e) => e.unlockConditions.some((c) => c.type === 'not-day' && c.day === 1));
+    expect(overrides.length).toBe(2);
+    const day1 = await tools.run({ action: 'getPlan', day: 1 });
+    expect(day1.summary).not.toContain('id:d1_t1');
+    expect(day1.summary).not.toContain('id:d1_t2');
+    const day2 = await tools.run({ action: 'getPlan', day: 2 });
+    expect(day2.summary).toContain('id:d1_t1');
+    expect(day2.summary).toContain('id:d1_t2');
+  });
+
+  it('setDayMode rest empties the plan and study restores it', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const rest = await tools.run({ action: 'setDayMode', day: 2, mode: 'rest' });
+    expect(rest.ok).toBe(true);
+    expect(store.get().restDays).toEqual([2]);
+    const restPlan = await tools.run({ action: 'getPlan', day: 2 });
+    expect(restPlan.summary).toContain('REST DAY');
+    expect(restPlan.summary).not.toContain('id:d');
+    const study = await tools.run({ action: 'setDayMode', day: 2, mode: 'study' });
+    expect(study.ok).toBe(true);
+    expect(store.get().restDays).toEqual([]);
+    const studyPlan = await tools.run({ action: 'getPlan', day: 2 });
+    expect(studyPlan.summary).toContain('id:d1_t');
+  });
+
+  it('can add tasks on a mock Sunday and they appear in that plan', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    // Day 5 (2026-07-05) is an actual Sunday → mock protocol active.
+    const sunday = await tools.run({ action: 'getPlan', day: 5 });
+    expect(sunday.summary).toContain('id:mock_1');
+    const add = await tools.run({ action: 'addTask', day: 5, intent: 'sunday revision', durationMin: 20 });
+    expect(add.ok).toBe(true);
+    const updated = await tools.run({ action: 'getPlan', day: 5 });
+    expect(updated.summary).toContain('Chat se add hua task');
+  });
+
+  it('bulkMarkDone previews and then marks all visible day tasks together', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const preview = await tools.run({ action: 'bulkMarkDone', day: 1 });
+    expect(preview.ok).toBe(false);
+    expect(preview.requiresConfirmation).toBe(true);
+    expect(store.get().taskLogs['2026-07-01']).toBeUndefined();
+
+    const result = await tools.run({ action: 'bulkMarkDone', day: 1, confirmed: true });
+    expect(result.ok).toBe(true);
+    expect(result.versionId).toBeTruthy();
+    expect(Object.values(store.get().taskLogs['2026-07-01'] ?? {}).every(Boolean)).toBe(true);
   });
 
   it('editTask can override a built-in seed entry', async () => {
@@ -193,7 +285,7 @@ describe('ChatToolsService', () => {
     const override = store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1');
     expect(override?.title).toBe('Updated built-in task');
     expect(override?.estimatedDurationMin).toBe(25);
-    expect(override?.unlockConditions).toEqual([{ type: 'day', fromDay: 2 }]);
+    expect(override?.unlockConditions).toEqual([{ type: 'day-exact', day: 2 }]);
   });
 });
 
@@ -245,7 +337,7 @@ describe('ChatService tool retry + reasoning', () => {
       complete: async (): Promise<LLMResponse> => {
         calls += 1;
         if (calls === 1) return { text: 'Main tasks delete nahi kar sakta. Skip karke chalo.', model: 'a' };
-        return { text: '{"action":"removeTask","day":1,"taskId":"d1_t1"}', model: 'a' };
+        return { text: '{"action":"removeTask","day":1,"taskId":"d1_t1","confirmed":true}', model: 'a' };
       },
       stream: async (req: LLMRequest): Promise<LLMResponse> => {
         req.onDelta?.('Hata diya.');
@@ -315,7 +407,7 @@ describe('ChatService tool retry + reasoning', () => {
     };
     const chat = makeChat(store, provider, tools);
     const session = chat.createSession();
-    session.prefs = { ...session.prefs, thinking: 'high' };
+    session.prefs = { ...session.prefs, model: 'custom-tool-model', thinking: 'high' };
     const statuses: string[] = [];
     await chat.send(session.id, 'day 2 ka plan kya hai?', undefined, undefined, (s) => statuses.push(s));
     expect(statuses.join(' | ')).toContain('AI soch raha hai');
@@ -323,7 +415,76 @@ describe('ChatService tool retry + reasoning', () => {
     expect(statuses.join(' | ')).toContain('Jawab likh raha hai');
     // Decision hops stay deterministic JSON (thinking off); only the streamed
     // summary carries the chat's thinking level.
+    expect(requests[0].model).toBe('custom-tool-model');
     expect(requests[0].thinking).toBe('off');
     expect(requests[1].thinking).toBe('high');
+  });
+
+  it('parseTools accepts a batch wrapper, a bare array and prose-wrapped json', () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    expect(
+      tools.parseTools(
+        '{"actions":[{"action":"addTask","day":5,"intent":"maths"},{"action":"removeTask","day":5,"taskId":"d1_t1","confirmed":true}]}',
+      ),
+    ).toEqual([
+      { action: 'addTask', day: 5, intent: 'maths' },
+      { action: 'removeTask', day: 5, taskId: 'd1_t1', confirmed: true },
+    ]);
+    expect(tools.parseTools('[{"action":"markDone","day":3,"taskId":"d1_t2"}]')).toEqual([
+      { action: 'markDone', day: 3, taskId: 'd1_t2' },
+    ]);
+    expect(tools.parseTools('ok so {"actions":[{"action":"getPlan","day":9}]} done')).toEqual([
+      { action: 'getPlan', day: 9 },
+    ]);
+    expect(tools.parseTools('koi json nahi')).toEqual([]);
+  });
+
+  it('runMany applies several actions in order on fresh state', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const result = await tools.runMany([
+      { action: 'addTask', day: 3, intent: 'pehla task', durationMin: 20 },
+      { action: 'addTask', day: 3, intent: 'dusra task', durationMin: 20 },
+      { action: 'markDone', day: 1, taskId: 'd1_t1' },
+    ]);
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('Day 3');
+    const planDay3 = await tools.run({ action: 'getPlan', day: 3 });
+    expect(planDay3.summary).toContain('ai-chat-test');
+    const log = store.get().taskLogs['2026-07-03'] ?? store.get().taskLogs['2026-07-01'];
+    expect(Object.values(log).some(Boolean)).toBe(true);
+  });
+
+  it('runMany previews the WHOLE batch when a destructive action lacks confirmation', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const before = store.get().taskLogs;
+    const result = await tools.runMany([
+      { action: 'addTask', day: 4, intent: 'add hona chahiye', durationMin: 20 },
+      { action: 'removeTask', day: 1, taskId: 'd1_t1' },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.requiresConfirmation).toBe(true);
+    expect(result.summary).toContain('Preview');
+    // Nothing applied: the addTask in the same batch must NOT have run.
+    const planDay4 = await tools.run({ action: 'getPlan', day: 4 });
+    expect(planDay4.summary).not.toContain('ai-chat-test');
+    expect(store.get().taskLogs).toEqual(before);
+  });
+
+  it('runMany applies destructive actions once confirmed', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const result = await tools.runMany([
+      { action: 'setDayMode', day: 2, mode: 'rest', confirmed: true },
+      { action: 'bulkMarkDone', day: 1, taskIds: ['d1_t1', 'd1_t2'], confirmed: true },
+    ]);
+    expect(result.ok).toBe(true);
+    const restPlan = await tools.run({ action: 'getPlan', day: 2 });
+    expect(restPlan.summary).toContain('REST');
+    const log = store.get().taskLogs['2026-07-01'];
+    expect(log['d1_t1']).toBe(true);
+    expect(log['d1_t2']).toBe(true);
   });
 });

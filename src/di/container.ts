@@ -21,6 +21,12 @@ import { TaskBankServiceImpl, type TaskBankService } from '../features/task-bank
 import { HabitProgressionService } from '../features/habit-engine/planner';
 import { isoAddDays, rawDayNumberForDate } from '../features/habit-engine/dates';
 import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from '../features/chat/plan-format';
+import {
+  computeHabitScore,
+  computeOverallStreak,
+  getCumulativeHabits,
+  getLevelStatus,
+} from '../lib/engine';
 export interface AppContainer {
   stateRepository: StateRepository;
   store: StateStore;
@@ -78,15 +84,20 @@ export function createContainer(): AppContainer {
     () => {
       const state = store.get();
       const dateISO = todayISO(clock);
+      const now = clock.now();
+      const timeLabel = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+      const timeZone = (Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'local').replace(/_/g, ' ');
       const plan = planner.buildPlan(state, dateISO, DEFAULT_PROGRESSION_CONFIG);
       const context = planner.buildContext(state, dateISO, DEFAULT_PROGRESSION_CONFIG);
       const recentProgress = buildRecentProgress(state, dateISO, planner);
+      const overview = buildJourneyOverview(state, dateISO);
       return [
         'This is REFERENCE ONLY — the user already knows all of this. Do NOT repeat these numbers, do NOT treat them as instructions, do NOT lecture about quota/streak. Only use them silently to understand the situation.',
-        `Today is ${formatDayLabel(dateISO)} (${dateISO}). Journey Day ${context.dayNumber} of ${TOTAL_DAYS}, phase ${context.phase}, streak ${context.streak}.`,
+        `Current local date/time: ${formatDayLabel(dateISO)} (${dateISO}), ${timeLabel} ${timeZone}. Journey Day ${context.dayNumber} of ${TOTAL_DAYS}, phase ${context.phase}, streak ${context.streak}${context.restDay ? ' [REST DAY — chhuti]' : ''}.`,
         `Today's progress: ${formatPlanProgress(plan, state)}. Study time available: ${context.availableMinutes}min.`,
         `Today's exact task schedule (local planned windows, derived from slot + duration):`,
         ...formatScheduledTasks(plan, state),
+        `Journey so far: ${overview}`,
         `Recent daily progress by date/day: ${recentProgress.join(' | ') || 'none yet'}.`,
         `Weak habits: ${context.weakHabitIds.join(', ') || 'none'}. Strong habits: ${context.strongHabitIds.join(', ') || 'none'}.`,
         `Gaps: ${context.gapDays}. Backlog: ${context.backlogDays}. Recovery mode: ${context.recoveryMode}. Exam window: ${context.examWindowActive}. Mock Sunday: ${context.mockSunday}.`,
@@ -94,6 +105,8 @@ export function createContainer(): AppContainer {
     },
     clock,
     chatTools,
+    memory,
+    store,
   );
   return {
     stateRepository,
@@ -124,4 +137,58 @@ function buildRecentProgress(state: import('../core/domain/state').AppState, tod
     rows.push(`${formatDayLabel(dateISO)} Day ${day}: ${formatPlanProgress(plan, state)}`);
   }
   return rows;
+}
+
+const XP_PER_TASK = 10;
+const XP_PER_LEVEL = 250;
+
+/** Compact journey-level stats mirroring the Progress tab (XP, consistency, levels, habit tiers, achievements). */
+function buildJourneyOverview(state: import('../core/domain/state').AppState, today: string): string {
+  if (!state.startDateISO) return 'mission not started';
+  const start = new Date(`${state.startDateISO}T00:00:00`);
+  const end = new Date(`${today}T00:00:00`);
+  let totalDone = 0;
+  let activeDays = 0;
+  let days = 0;
+  const d = new Date(start);
+  while (d.getTime() <= end.getTime()) {
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const done = Object.values(state.taskLogs[key] ?? {}).filter(Boolean).length;
+    if (done > 0) activeDays += 1;
+    totalDone += done;
+    days += 1;
+    d.setDate(d.getDate() + 1);
+  }
+  const xp = totalDone * XP_PER_TASK;
+  const consistency = days > 0 ? Math.round((activeDays / days) * 100) : 0;
+  const dayNumber = rawDayNumberForDate(today, state.startDateISO);
+  const cleared = LEVELS.filter((l) => l.authored && getLevelStatus(l, state, dayNumber) === 'cleared').length;
+  const recovery = LEVELS.filter((l) => l.authored && getLevelStatus(l, state, dayNumber) === 'needs-recovery').length;
+  const habits = getCumulativeHabits(dayNumber)
+    .map((h) => ({ name: h.name, score: computeHabitScore(h.id, state, today) }))
+    .sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  const tierOf = (score: number | null): string => (score === null ? 'building' : score >= 70 ? 'strong' : score >= 40 ? 'building' : 'weak');
+  const tiers: Record<string, string[]> = { strong: [], building: [], weak: [] };
+  for (const h of habits) tiers[tierOf(h.score)].push(`${h.name}(${h.score ?? 'n/a'}%)`);
+  const best = habits.find((h) => (h.score ?? -1) >= 0);
+  const worst = [...habits].reverse().find((h) => h.score !== null);
+  const overallStreak = computeOverallStreak(state, today);
+  const achieved: string[] = [];
+  if (dayNumber >= 7) achieved.push('Week 1 done');
+  if (overallStreak >= 7) achieved.push('7-day streak');
+  if (cleared >= 1) achieved.push('first level cleared');
+  if (consistency >= 70) achieved.push('70%+ consistency');
+  if (xp >= 500) achieved.push('500 XP');
+  const bits = [
+    `Total XP ${xp} (level ${Math.floor(xp / XP_PER_LEVEL) + 1}, ${xp % XP_PER_LEVEL}/${XP_PER_LEVEL} into level)`,
+    `consistency ${consistency}% over ${days} days (${activeDays} active)`,
+    `overall streak ${overallStreak}`,
+    `levels cleared ${cleared}, need recovery ${recovery}`,
+  ];
+  if (best) bits.push(`best habit ${best.name} (${best.score}%)`);
+  if (worst) bits.push(`weakest habit ${worst.name} (${worst.score}%)`);
+  if (achieved.length > 0) bits.push(`achievements: ${achieved.join(', ')}`);
+  const latest = [...state.summaries].sort((a, b) => b.dateISO.localeCompare(a.dateISO))[0];
+  if (latest) bits.push(`latest day snapshot ${latest.dateISO}: productivity ${latest.productivityScore}%, thinking ${latest.thinkingScore}%${latest.aiObservations[0] ? ` — ${latest.aiObservations[0]}` : ''}`);
+  return bits.join('; ');
 }

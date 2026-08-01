@@ -1,13 +1,44 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Check, ChevronDown, Download, Eraser, FileText, Image, MessageSquarePlus, Paperclip, Pause, Send, Settings2, Sigma, Sparkles, User, Wrench, X } from 'lucide-react';
+import { motion } from 'framer-motion';
+import {
+  Camera,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Download,
+  Eraser,
+  FileText,
+  Image,
+  ImagePlus,
+  MessageSquarePlus,
+  MessageSquareText,
+  Mic,
+  MoreHorizontal,
+  NotebookPen,
+  Paperclip,
+  Pause,
+  PenLine,
+  RefreshCw,
+  Send,
+  Settings2,
+  Share,
+  Sigma,
+  Sparkles,
+  StickyNote,
+  Trash2,
+  Wrench,
+  X,
+} from 'lucide-react';
 import type { ChatMessage, ChatPreferences, ChatSession } from '../core/domain/chat';
-import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT } from '../core/domain/chat';
-import type { ModelInfo } from '../core/domain/llm';
+import type { ModelInfo, ThinkingLevel } from '../core/domain/llm';
+import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, defaultChatPrefs } from '../core/domain/chat';
 import { container } from '../di/container';
-import ScreenHeader from '../components/ui/ScreenHeader';
-import EmptyState from '../components/ui/EmptyState';
-import AddProviderForm from '../components/AddProviderForm';
+import { redoLastAiAction, undoLastAiAction } from '../core/domain/ai-actions';
 import ChatMarkdown from '../components/ChatMarkdown';
+import AddProviderForm from '../components/AddProviderForm';
+import { haptic, hapticError, hapticSuccess } from '../lib/haptics';
+import { extractPdfText } from '../lib/pdf';
 
 interface DraftAttachment {
   id: string;
@@ -19,8 +50,58 @@ interface DraftAttachment {
   previewUrl?: string;
 }
 
-const TEXT_EXTENSIONS = new Set(['txt', 'md', 'markdown', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'css', 'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'tex']);
+interface MenuState {
+  message: ChatMessage;
+  x: number;
+  y: number;
+}
+
+interface SpeechRecognitionLike {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  start(): void;
+  stop(): void;
+  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript?: string }>> }) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+}
+
+const TEXT_EXTENSIONS = new Set([
+  'txt', 'md', 'markdown', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'htm', 'css', 'scss', 'less',
+  'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'cs', 'go', 'rs', 'rb', 'php', 'swift', 'kt',
+  'sh', 'bash', 'bat', 'ps1', 'sql', 'toml', 'ini', 'cfg', 'log', 'tex', 'env', 'properties',
+]);
 const MAX_TEXT_ATTACHMENT_CHARS = 24_000;
+const VISIBLE_MESSAGES = 40;
+
+const MATH_TEMPLATE =
+  'Is maths problem ko step-by-step solve karo, LaTeX me dikhao: \\(\\frac{2}{3} + 3\\times3\\)';
+const MD_TEMPLATE = 'Uploaded notes ko clean markdown summary + formula sheet me convert karo.';
+const CANVAS_TEMPLATE = 'Is content se ek downloadable .md/.txt file bana do, headings aur tables ke saath.';
+
+const SUGGESTIONS = [
+  {
+    label: 'Solve JEE question',
+    prompt: 'Ek JEE-level maths problem bana kar step-by-step solve karo, LaTeX me. Example: \\(\\int_0^1 x^2\\,dx\\)',
+  },
+  { label: 'Create revision plan', prompt: 'Aaj ke liye ek tight revision plan banao — weak topics pe focus karo.' },
+  { label: 'Summarize notes', prompt: 'Uploaded notes ko clean markdown summary + formula sheet me convert karo.' },
+  { label: 'Explain concept', prompt: 'Ek JEE concept ko simple Hinglish me explain karo with example.' },
+  { label: 'Generate flashcards', prompt: 'Is topic ke flashcards generate karo — Q&A pairs me.' },
+];
+
+const ATTACH_TOOLS: { id: string; label: string; hint: string; icon: React.ReactNode }[] = [
+  { id: 'math', label: 'Math Solver', hint: 'LaTeX solve', icon: <Sigma size={20} /> },
+  { id: 'image', label: 'Image', hint: 'Upload photo', icon: <Image size={20} /> },
+  { id: 'pdf', label: 'PDF', hint: 'Docs upload', icon: <FileText size={20} /> },
+  { id: 'canvas', label: 'Canvas', hint: 'File output', icon: <PenLine size={20} /> },
+  { id: 'markdown', label: 'Markdown', hint: 'Notes → MD', icon: <NotebookPen size={20} /> },
+  { id: 'camera', label: 'Camera', hint: 'Live photo', icon: <Camera size={20} /> },
+  { id: 'gallery', label: 'Gallery', hint: 'Pick photo', icon: <ImagePlus size={20} /> },
+  { id: 'voice', label: 'Voice', hint: 'Bol ke bhejo', icon: <Mic size={20} /> },
+  { id: 'notes', label: 'Notes', hint: 'Text files', icon: <StickyNote size={20} /> },
+];
 
 export default function ChatScreen() {
   const [sessions, setSessions] = useState<ChatSession[]>(() => container.chat.listSessions());
@@ -31,19 +112,39 @@ export default function ChatScreen() {
   const [streamReasoning, setStreamReasoning] = useState('');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
-  const [showOptions, setShowOptions] = useState(false);
+  const [processing, setProcessing] = useState<string[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showAttach, setShowAttach] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showProviderPicker, setShowProviderPicker] = useState(false);
   const [catalog, setCatalog] = useState<ModelInfo[]>([]);
   const [providerCount, setProviderCount] = useState(container.providerSettings.listStoredProviders().length);
+  const [listening, setListening] = useState(false);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const recognitionRef = useRef<{ stop(): void } | null>(null);
 
   const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? null, [sessions, activeId]);
   const providers = useMemo(
     () => (void providerCount, container.providerSettings.listStoredProviders()),
     [providerCount],
   );
+  const messages = active?.messages ?? [];
+  const hasMessages = active !== null && messages.length > 0;
+  const lastAssistantStreaming = streaming && streamText.length > 0;
+  const aiEnabled = container.providerSettings.isAiEnabled();
+
+  const modelChip = useMemo(() => {
+    const pid = active?.prefs.providerId ?? null;
+    const provider = pid ? providers.find((p) => p.id === pid) : container.providerSettings.getActiveProvider();
+    if (!provider) return { label: 'AI off', model: null as string | null };
+    return { label: provider.label, model: (active?.prefs.model ?? provider.model ?? null) as string | null };
+  }, [active?.prefs.providerId, active?.prefs.model, providers]);
 
   useEffect(() => {
     if (!activeId && sessions.length > 0) setActiveId(sessions[0].id);
@@ -54,17 +155,64 @@ export default function ChatScreen() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [active?.messages.length, streamText, streaming]);
 
+  useEffect(() => {
+    void loadCatalog();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.prefs.providerId]);
+
+  useEffect(() => {
+    setDraft('');
+    setAttachments([]);
+    setError('');
+    setVisibleFrom(0);
+  }, [activeId]);
+
+  useEffect(() => {
+    const open = showSettings || showAttach || showHistory || showProviderPicker || menu !== null;
+    document.body.style.overflow = open ? 'hidden' : '';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [showSettings, showAttach, showHistory, showProviderPicker, menu]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = window.setTimeout(() => setNotice(''), 2400);
+    return () => window.clearTimeout(t);
+  }, [notice]);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
+  }, [draft]);
+
   function refresh() {
     setSessions(container.chat.listSessions());
   }
 
+  function ensureSession(): ChatSession {
+    let s = active;
+    if (!s) {
+      s = container.chat.createSession();
+      refresh();
+      setActiveId(s.id);
+    }
+    return s;
+  }
+
   function newChat() {
+    haptic();
     const session = container.chat.createSession();
     refresh();
     setActiveId(session.id);
     setDraft('');
+    revokeAttachmentUrls(attachments);
     setAttachments([]);
     setError('');
+    setShowHistory(false);
+    focusComposer();
   }
 
   function openSession(id: string) {
@@ -92,6 +240,14 @@ export default function ChatScreen() {
     refresh();
   }
 
+  function resetPrefs() {
+    if (!active) return;
+    container.chat.updatePrefs(active.id, defaultChatPrefs());
+    refresh();
+    haptic();
+    setNotice('Chat settings reset ho gaye');
+  }
+
   async function loadCatalog() {
     if (!active?.prefs.providerId) return;
     const config = container.providerSettings.getProviderById(active.prefs.providerId);
@@ -103,14 +259,24 @@ export default function ChatScreen() {
     }
   }
 
-  useEffect(() => {
-    void loadCatalog();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.prefs.providerId]);
-
   async function send() {
-    const text = buildPromptWithAttachments(draft.trim(), attachments);
-    if (!text || streaming || !active) return;
+    const pendingDraft = draft;
+    const pendingAttachments = attachments;
+    const text = buildPromptWithAttachments(pendingDraft.trim(), pendingAttachments);
+    if (!text || streaming) return;
+    const s = ensureSession();
+    setShowAttach(false);
+    await doSend(s.id, text, pendingDraft, pendingAttachments);
+  }
+
+  async function doSend(
+    sessionId: string,
+    text: string,
+    pendingDraft: string,
+    pendingAttachments: DraftAttachment[],
+  ) {
+    if (!text || streaming) return;
+    let sent = false;
     setError('');
     setDraft('');
     setAttachments([]);
@@ -120,18 +286,27 @@ export default function ChatScreen() {
     setStatus('');
     const controller = new AbortController();
     abortRef.current = controller;
+    const pending = container.chat.send(
+      sessionId,
+      text,
+      (delta) => setStreamText((prev) => prev + delta),
+      controller.signal,
+      (s) => setStatus(s),
+      (reasoning) => setStreamReasoning((prev) => prev + reasoning),
+    );
+    // chat.send() pushes the user message synchronously before its first await,
+    // so re-read sessions now — the user's own message appears immediately
+    // while the AI streams, instead of only after the reply completes.
+    refresh();
     try {
-      await container.chat.send(
-        active.id,
-        text,
-        (delta) => setStreamText((prev) => prev + delta),
-        controller.signal,
-        (s) => setStatus(s),
-        (reasoning) => setStreamReasoning((prev) => prev + reasoning),
-      );
+      await pending;
+      sent = true;
     } catch (err) {
+      setDraft(pendingDraft);
+      setAttachments(pendingAttachments);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      if (sent) revokeAttachmentUrls(pendingAttachments);
       abortRef.current = null;
       setStreaming(false);
       setStreamText('');
@@ -145,16 +320,86 @@ export default function ChatScreen() {
     abortRef.current?.abort();
   }
 
+  function regenerate() {
+    if (!active || streaming) return;
+    const msgs = active.messages;
+    const last = msgs[msgs.length - 1];
+    if (!last || last.role !== 'assistant') return;
+    const userMsg = msgs[msgs.length - 2];
+    if (!userMsg || userMsg.role !== 'user') return;
+    container.chat.deleteMessagesFrom(active.id, userMsg.id);
+    refresh();
+    haptic();
+    void doSend(active.id, userMsg.content, '', []);
+  }
+
+  function deleteMessage(message: ChatMessage) {
+    if (!active) return;
+    container.chat.deleteMessage(active.id, message.id);
+    refresh();
+    haptic();
+    setNotice('Message delete ho gaya');
+  }
+
+  function editMessage(message: ChatMessage) {
+    if (!active) return;
+    container.chat.deleteMessagesFrom(active.id, message.id);
+    refresh();
+    setDraft(stripAttachmentBlocks(message.content));
+    setError('');
+    haptic();
+    focusComposer();
+  }
+
+  async function copyMessage(message: ChatMessage) {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setNotice('Copied');
+      hapticSuccess();
+    } catch {
+      hapticError();
+    }
+  }
+
+  function shareMessage(message: ChatMessage) {
+    if ('share' in navigator) {
+      navigator
+        .share({ text: message.content })
+        .then(() => {})
+        .catch(() => {});
+    } else {
+      void copyMessage(message);
+    }
+  }
+
+  function downloadMessage(message: ChatMessage) {
+    downloadText(message.content, `human-os-ai-${new Date(message.createdAt).toISOString().slice(0, 10)}.md`);
+  }
+
+  function exportChat() {
+    if (!active) return;
+    const md = [
+      `# ${active.title || 'Human OS chat'}`,
+      '',
+      ...active.messages.map((m) => `**${m.role === 'user' ? 'User' : 'AI'}:**\n\n${m.content}`),
+      '',
+    ].join('\n\n');
+    downloadText(md, `human-os-chat-${(active.title || 'session').slice(0, 30).replace(/[^\w-]+/g, '_')}.md`);
+    setNotice('Chat export ho gaya');
+  }
 
   async function attachFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     setError('');
+    const pending = Array.from(files);
+    setProcessing((prev) => [...prev, ...pending.map((f) => f.name)]);
     try {
-      const next = await Promise.all(Array.from(files).map(readAttachment));
+      const next = await Promise.all(pending.map(readAttachment));
       setAttachments((prev) => [...prev, ...next]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      setProcessing((prev) => prev.filter((name) => !pending.some((f) => f.name === name)));
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }
@@ -167,10 +412,54 @@ export default function ChatScreen() {
     });
   }
 
-  function insertPromptTemplate(template: string) {
-    setDraft((prev) => (prev.trim() ? `${prev.trim()}
+  function pickFiles(accept: string, capture?: string) {
+    const input = fileInputRef.current;
+    if (!input) return;
+    input.accept = accept;
+    if (capture) input.setAttribute('capture', capture);
+    else input.removeAttribute('capture');
+    input.click();
+  }
 
-${template}` : template));
+  function insertPromptTemplate(template: string) {
+    setDraft((prev) => (prev.trim() ? `${prev.trim()}\n\n${template}` : template));
+  }
+
+  function attachTool(id: string) {
+    setShowAttach(false);
+    haptic();
+    switch (id) {
+      case 'math':
+        insertPromptTemplate(MATH_TEMPLATE);
+        break;
+      case 'canvas':
+        insertPromptTemplate(CANVAS_TEMPLATE);
+        break;
+      case 'markdown':
+        insertPromptTemplate(MD_TEMPLATE);
+        break;
+      case 'image':
+      case 'gallery':
+        pickFiles('image/*');
+        break;
+      case 'camera':
+        pickFiles('image/*', 'environment');
+        break;
+      case 'pdf':
+        pickFiles('.pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.zip');
+        break;
+      case 'notes':
+        pickFiles('.txt,.md,.markdown,.csv,.json,.yaml,.yml,.xml,.html,.htm,.css,.scss,.less,.js,.jsx,.ts,.tsx,.py,.java,.cpp,.c,.h,.cs,.go,.rs,.rb,.php,.swift,.kt,.sh,.bash,.bat,.ps1,.sql,.toml,.ini,.cfg,.log,.tex,.env,.properties');
+        break;
+      case 'voice':
+        toggleVoice();
+        break;
+    }
+    focusComposer();
+  }
+
+  function focusComposer() {
+    requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
   function keydown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -180,261 +469,538 @@ ${template}` : template));
     }
   }
 
-  const hasMessages = active !== null && active.messages.length > 0;
-  const lastAssistantStreaming = streaming && streamText.length > 0;
+  function toggleVoice() {
+    const w = window as unknown as Record<string, unknown>;
+    const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (typeof Ctor !== 'function') {
+      hapticError();
+      setNotice('Voice is browser me supported nahi hai');
+      return;
+    }
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const rec = new (Ctor as new () => SpeechRecognitionLike)();
+    rec.lang = 'en-IN';
+    rec.interimResults = true;
+    rec.continuous = true;
+    rec.onresult = (e) => {
+      const last = e.results[e.results.length - 1];
+      const t = last[0]?.transcript ?? '';
+      if (t) setDraft((prev) => (prev.trim() ? `${prev.trim()} ${t}` : t));
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recognitionRef.current = rec;
+    try {
+      rec.start();
+      setListening(true);
+      haptic();
+      setNotice('Bolna shuru karo…');
+    } catch {
+      setListening(false);
+    }
+  }
+
+  const [visibleFrom, setVisibleFrom] = useState(0);
+  const windowedMessages = messages.length <= VISIBLE_MESSAGES ? messages : messages.slice(-visibleFrom || -VISIBLE_MESSAGES);
+  const showEarlier = messages.length > VISIBLE_MESSAGES;
+
+  function openMenu(e: { clientX: number; clientY: number }, message: ChatMessage) {
+    setMenu({
+      message,
+      x: Math.max(8, Math.min(e.clientX, window.innerWidth - 200)),
+      y: Math.max(8, Math.min(e.clientY, window.innerHeight - 280)),
+    });
+  }
+
+  const composerText = draft.trim();
+  const showSend = composerText.length > 0 || attachments.length > 0;
 
   return (
-    <div className="mx-auto flex h-full max-w-md flex-col px-4 pb-28 pt-6 fade-up">
-      <ScreenHeader
-        eyebrow="HUMAN OS"
-        title="AI Chat"
-        subtitle="Apna JEE coach — plan, doubts aur motivation."
-        right={
-          <button onClick={newChat} className="btn btn-primary px-3 py-2 text-xs font-bold">
-            <MessageSquarePlus size={14} />
-            New
-          </button>
-        }
-      />
-
-      <div className="mb-3 rounded-2xl border border-peak/20 bg-gradient-to-br from-peak/10 via-panel to-l/5 p-3 text-[10px] leading-relaxed text-muted">
-        <div className="mb-2 flex items-center gap-2 font-display text-sm font-bold text-text">
-          <Sparkles size={15} color="var(--color-peak)" />
-          Doubts, maths, files aur creations
-        </div>
-        <p>Task tools ke saath LaTeX maths, markdown notes, file uploads aur downloadable answers bhi supported hain.</p>
-        <div className="mt-2 grid grid-cols-3 gap-1.5">
-          <QuickAction icon={<Sigma size={12} />} label="Math solve" onClick={() => insertPromptTemplate('Is maths problem ko step-by-step solve karo, fractions ko LaTeX me dikhao: \\(\\frac{2}{3} + 3\\times3\\)')} />
-          <QuickAction icon={<FileText size={12} />} label="MD summary" onClick={() => insertPromptTemplate('Uploaded notes ko clean markdown summary + formula sheet me convert karo.')} />
-          <QuickAction icon={<Download size={12} />} label="Canvas file" onClick={() => insertPromptTemplate('Is content se ek downloadable .md/.txt style file bana do, headings aur tables ke saath.')} />
-        </div>
-      </div>
-
-      {sessions.length > 0 && (
-        <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
-          {sessions.map((s) => (
-            <div
-              key={s.id}
-              className={`chip shrink-0 cursor-pointer gap-1.5 py-1.5 pl-3 pr-2 transition-colors ${s.id === activeId ? '!text-text' : ''}`}
-              style={s.id === activeId ? { borderColor: 'var(--color-l)', color: 'var(--color-text)' } : undefined}
-              onClick={() => openSession(s.id)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') openSession(s.id);
-              }}
-            >
-              {s.title || 'Naya chat'}
-              <button
-                className="rounded-full p-0.5 text-muted transition-colors hover:bg-danger/10 hover:text-danger"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeSession(s.id);
-                }}
-                aria-label="Delete chat"
-              >
-                <X size={11} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {active && (
+    <div
+      className="fade-up mx-auto flex h-dvh w-full max-w-[27.5rem] flex-col overflow-hidden"
+      style={{ paddingTop: 'env(safe-area-inset-top, 0px)', paddingBottom: 'calc(4.5rem + env(safe-area-inset-bottom, 0px))' }}
+    >
+      {/* Top bar */}
+      <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border/60 px-3">
         <button
-          onClick={() => setShowOptions((v) => !v)}
-          className="mb-3 flex w-full items-center justify-between rounded-xl border border-border bg-panel px-3.5 py-2.5 text-xs transition-colors hover:border-light"
+          type="button"
+          onClick={newChat}
+          className="icon-btn"
+          aria-label="New chat"
+          title="New chat"
         >
-          <span className="flex items-center gap-1.5 font-semibold">
-            <Settings2 size={14} color="var(--color-light)" />
-            Chat Options
-          </span>
-          <span className="text-muted">{showOptions ? 'chhupao' : 'kholo'}</span>
+          <MessageSquarePlus size={19} color="var(--color-l)" />
         </button>
-      )}
-
-      {active && showOptions && (
-        <OptionsPanel
-          prefs={active.prefs}
-          providers={providers}
-          catalog={catalog}
-          onChange={updatePrefs}
-          onLoadCatalog={() => void loadCatalog()}
-          onProviderAdded={() => setProviderCount((c) => c + 1)}
-        />
-      )}
-
-      <div ref={scrollRef} className="flex-1 overflow-y-auto rounded-xl border border-border bg-panel/40 px-3 py-3">
-        {!active && (
-          <EmptyState
-            icon={<Bot size={28} color="var(--color-muted)" />}
-            title="Naya chat shuru karo"
-            hint="Provider configure karke apna JEE plan, concepts aur doubts discuss karo."
+        <button
+          type="button"
+          onClick={() => setShowHistory(true)}
+          className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-1 text-left"
+          aria-label="Open chat history"
+        >
+          <span className="truncate font-display text-[15px] font-bold leading-none">{active?.title || 'Naya chat'}</span>
+          <ChevronDown size={13} className="shrink-0 text-muted" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowSettings(true)}
+          className="flex h-8 max-w-[9.5rem] shrink-0 items-center gap-1.5 rounded-full border border-border bg-panel px-2.5 text-[10px] font-semibold text-muted transition-colors hover:border-border-strong"
+          aria-label="Model settings"
+          title="Model settings"
+        >
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{ background: aiEnabled ? 'var(--color-success)' : 'var(--color-muted-dim)' }}
           />
-        )}
+          <span className="truncate">
+            {modelChip.label}
+            {modelChip.model ? ` · ${modelChip.model}` : ''}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowSettings(true)}
+          className="icon-btn"
+          aria-label="Chat settings"
+          title="Chat settings"
+        >
+          <MoreHorizontal size={20} />
+        </button>
+      </header>
 
-        {active && !hasMessages && !streaming && (
-          <EmptyState
-            icon={<Bot size={28} color="var(--color-muted)" />}
-            title="Aaj ka plan poochho"
-            hint="Concept samjho, motivation lo ya plan discuss karo — sab Hinglish mein."
-          />
-        )}
-
-        {active &&
-          active.messages.map((m) => (
-            <MessageBubble key={m.id} message={m} />
-          ))}
-
-        {streaming && !lastAssistantStreaming && (
-          <div className="mb-2 flex items-end gap-2">
-            <Avatar role="assistant" />
-            <div className="flex items-center gap-2 rounded-xl border border-border bg-bg px-3 py-2.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-l pulse-dot" />
-              <span className="h-1.5 w-1.5 rounded-full bg-l pulse-dot" style={{ animationDelay: '0.2s' }} />
-              <span className="h-1.5 w-1.5 rounded-full bg-l pulse-dot" style={{ animationDelay: '0.4s' }} />
-              {status && <span className="ml-1 text-[11px] text-muted">{status}</span>}
-            </div>
-          </div>
-        )}
-
-        {lastAssistantStreaming && (
-          <div className="mb-2 flex items-end gap-2">
-            <Avatar role="assistant" />
-            <div className="max-w-[90%] rounded-2xl border border-border bg-bg px-3 py-2.5 shadow-sm">
-              {streamReasoning && <ThinkingBlock text={streamReasoning} />}
-              <div className="markdown-body text-sm text-text">
-                <ChatMarkdown text={streamText} />
-                <span className="ml-0.5 inline-block h-3.5 w-0.5 animate-pulse bg-light align-middle" />
+      {/* Conversation */}
+      <main ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3" aria-label="Messages">
+        {!hasMessages && !streaming ? (
+          <EmptyChat onPick={(t) => setDraft(t)} />
+        ) : (
+          <div className="mx-auto max-w-[34rem] py-4">
+            {showEarlier && (
+              <div className="mb-4 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic();
+                    setVisibleFrom((v) => Math.max(VISIBLE_MESSAGES, (v || VISIBLE_MESSAGES) + VISIBLE_MESSAGES));
+                    requestAnimationFrame(() => {
+                      const el = scrollRef.current;
+                      if (el) el.scrollTop = 0;
+                    });
+                  }}
+                  className="rounded-full border border-border bg-panel px-3.5 py-1.5 text-xs font-semibold text-muted transition-colors hover:text-text"
+                >
+                  Earlier messages
+                </button>
               </div>
-            </div>
+            )}
+            {windowedMessages.map((m, i) => (
+              <MessageBubble
+                key={m.id}
+                message={m}
+                isLast={i === windowedMessages.length - 1}
+                onMenu={openMenu}
+                onCopy={(msg) => void copyMessage(msg)}
+                onEdit={editMessage}
+                onRegenerate={regenerate}
+                onDelete={deleteMessage}
+                onDownload={downloadMessage}
+                onShare={(msg) => shareMessage(msg)}
+              />
+            ))}
+            {streaming &&
+              (lastAssistantStreaming ? (
+                <StreamBubble reasoning={streamReasoning} text={streamText} />
+              ) : (
+                <TypingBubble status={status} />
+              ))}
           </div>
         )}
-      </div>
+      </main>
 
-      {error && (
-        <div className="mt-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">{error}</div>
-      )}
-
-      {active && (
-        <div className="mt-3 rounded-2xl border border-border bg-panel p-2 shadow-lg shadow-black/10">
-          {attachments.length > 0 && (
-            <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+      {/* Composer */}
+      <div className="shrink-0 px-3 pt-2">
+        {(error || notice) && (
+          <div
+            className={`mb-2 flex justify-center text-center ${error ? 'text-danger' : 'text-muted'}`}
+            role={error ? 'alert' : 'status'}
+          >
+            <span className="rounded-full border border-border bg-panel px-3 py-1.5 text-[11px]">
+              {error || notice}
+            </span>
+          </div>
+        )}
+        <div className="chat-input rounded-[1.5rem] p-1.5">
+          {(processing.length > 0 || attachments.length > 0) && (
+            <div className="no-scrollbar mb-1.5 flex gap-2 overflow-x-auto px-1 pt-1">
+              {processing.map((name) => (
+                <span
+                  key={`proc-${name}`}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-l/30 bg-l/10 px-2 py-1 text-[10px] font-semibold text-l"
+                  role="status"
+                >
+                  <span className="spinner" aria-hidden="true" />
+                  <span className="truncate">{name}</span>
+                </span>
+              ))}
               {attachments.map((a) => (
                 <AttachmentChip key={a.id} attachment={a} onRemove={() => removeAttachment(a.id)} />
               ))}
             </div>
           )}
-          <div className="flex items-end gap-2">
+          <div className="flex items-end gap-1">
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="btn flex h-10 w-10 shrink-0 items-center justify-center border border-border bg-bg"
+              onClick={() => setShowAttach(true)}
+              className="icon-btn shrink-0"
               aria-label="Attach files"
-              title="Attach files like ChatGPT. Text/MD/code files are read into the prompt."
+              title="Attach files"
             >
-              <Paperclip size={17} color="var(--color-light)" />
+              <Paperclip size={19} color="var(--color-muted)" />
             </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept=".txt,.md,.markdown,.csv,.json,.yaml,.yml,.tex,.pdf,.ppt,.pptx,.doc,.docx,image/*"
-              className="hidden"
-              onChange={(e) => void attachFiles(e.target.files)}
-            />
             <textarea
-              rows={2}
+              ref={textareaRef}
+              rows={1}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={keydown}
-              placeholder="Maths ya doubt likho… e.g. (2/3) + 3*3, ya file attach karo"
-              className="field max-h-36 flex-1 resize-none border-0 bg-bg"
+              placeholder="Maths, doubts ya notes likho…"
+              className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-[14px] leading-snug text-text outline-none placeholder:text-muted-dim"
+              aria-label="Message"
             />
             {streaming ? (
               <button
+                type="button"
                 onClick={stop}
-                className="btn flex h-10 w-10 shrink-0 items-center justify-center border border-border bg-bg"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-danger/40 bg-danger/10 transition-transform active:scale-90"
                 aria-label="Stop generating"
               >
-                <Pause size={18} color="var(--color-light)" />
+                <Pause size={17} color="var(--color-danger)" />
+              </button>
+            ) : showSend ? (
+              <button
+                type="button"
+                onClick={() => void send()}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-l transition-transform active:scale-90"
+                aria-label="Send message"
+              >
+                <Send size={17} color="#06201e" />
               </button>
             ) : (
               <button
-                onClick={() => void send()}
-                disabled={draft.trim().length === 0 && attachments.length === 0}
-                className="btn flex h-10 w-10 shrink-0 items-center justify-center bg-l disabled:opacity-40"
-                aria-label="Send message"
+                type="button"
+                onClick={toggleVoice}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-transform active:scale-90"
+                style={{
+                  background: listening ? 'rgba(242,93,104,0.16)' : 'transparent',
+                  border: listening ? '1px solid rgba(242,93,104,0.5)' : '1px solid var(--color-border)',
+                }}
+                aria-label={listening ? 'Stop voice input' : 'Voice input'}
               >
-                <Send size={18} color="var(--color-bg)" />
+                <Mic size={17} color={listening ? 'var(--color-danger)' : 'var(--color-muted)'} />
               </button>
             )}
           </div>
-          <p className="mt-1.5 px-1 text-[10px] text-muted">Markdown/LaTeX supported: <span className="font-mono">\\frac&#123;2&#125;&#123;3&#125;</span>, tables, code blocks. Text/MD files AI ko content ke saath milte hain.</p>
         </div>
+        <p className="pb-1 pt-1 text-center text-[9px] tracking-wide text-muted-dim">
+          Hinglish · LaTeX maths · files · 100% local
+        </p>
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".pdf,.txt,.md,.markdown,.csv,.json,.yaml,.yml,.tex,.ppt,.pptx,.doc,.docx,.xls,.xlsx,image/*"
+        className="hidden"
+        onChange={(e) => void attachFiles(e.target.files)}
+      />
+
+      {/* Overlays */}
+      {active && showSettings && (
+        <SettingsSheet
+          prefs={active.prefs}
+          providers={providers}
+          catalog={catalog}
+          onChange={updatePrefs}
+          onReset={resetPrefs}
+          onLoadCatalog={() => void loadCatalog()}
+          onOpenProviderPicker={() => setShowProviderPicker(true)}
+          onProviderAdded={() => setProviderCount((c) => c + 1)}
+          onHistoryChanged={() => {
+            setProviderCount((c) => c + 1);
+            refresh();
+          }}
+          onExport={exportChat}
+          onClear={clearMessages}
+          onClose={() => setShowSettings(false)}
+        />
       )}
 
-      {active && (
-        <button
-          onClick={clearMessages}
-          className="mx-auto mt-3 flex items-center gap-1 text-[11px] text-muted transition-colors hover:text-text"
-        >
-          <Eraser size={12} />
-          Chat clear karo
-        </button>
+      {active && showProviderPicker && (
+        <ProviderPickerSheet
+          prefs={active.prefs}
+          providers={providers}
+          onSelect={(pid) => {
+            updatePrefs({ providerId: pid });
+            setShowProviderPicker(false);
+          }}
+          onProviderAdded={() => setProviderCount((c) => c + 1)}
+          onClose={() => setShowProviderPicker(false)}
+        />
+      )}
+
+      {showHistory && (
+        <HistorySheet
+          sessions={sessions}
+          activeId={activeId}
+          onOpen={openSession}
+          onNew={newChat}
+          onDelete={removeSession}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
+
+      {showAttach && <AttachmentSheet onPick={attachTool} onClose={() => setShowAttach(false)} />}
+
+      {menu && (
+        <MessageMenu
+          message={menu.message}
+          position={{ x: menu.x, y: menu.y }}
+          isLast={menu.message.id === active?.messages[active.messages.length - 1]?.id}
+          onClose={() => setMenu(null)}
+          onCopy={(m) => void copyMessage(m)}
+          onEdit={editMessage}
+          onRegenerate={regenerate}
+          onDelete={deleteMessage}
+          onDownload={downloadMessage}
+          onShare={(m) => shareMessage(m)}
+        />
       )}
     </div>
   );
 }
 
+/* =====================================================================
+   Empty chat — logo, greeting, prompt suggestions
+   ===================================================================== */
 
-function QuickAction({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+function EmptyChat({ onPick }: { onPick: (prompt: string) => void }) {
+  return (
+    <div className="flex min-h-full flex-col items-center justify-center px-4 pb-12 text-center">
+      <span
+        className="flex h-16 w-16 items-center justify-center rounded-3xl"
+        style={{
+          background: 'linear-gradient(145deg, rgba(79,209,197,0.24), rgba(96,165,250,0.14))',
+          border: '1px solid rgba(79,209,197,0.35)',
+          boxShadow: '0 0 42px -8px rgba(79,209,197,0.4)',
+        }}
+      >
+        <Sparkles size={30} color="var(--color-l)" />
+      </span>
+      <h2 className="mt-5 font-display text-xl font-bold tracking-tight">{greeting()}</h2>
+      <p className="mt-1 text-sm text-muted">What would you like to work on today?</p>
+      <div className="no-scrollbar mt-6 flex w-full gap-2 overflow-x-auto pb-1">
+        {SUGGESTIONS.map((s) => (
+          <button
+            key={s.label}
+            type="button"
+            onClick={() => {
+              haptic();
+              onPick(s.prompt);
+            }}
+            className="filter-chip shrink-0"
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+/* =====================================================================
+   Messages
+   ===================================================================== */
+
+interface MessageActions {
+  onMenu: (pos: { clientX: number; clientY: number }, m: ChatMessage) => void;
+  onCopy: (m: ChatMessage) => void;
+  onEdit: (m: ChatMessage) => void;
+  onRegenerate: () => void;
+  onDelete: (m: ChatMessage) => void;
+  onDownload: (m: ChatMessage) => void;
+  onShare: (m: ChatMessage) => void;
+}
+
+function MessageBubble({ message, isLast, ...actions }: MessageActions & { message: ChatMessage; isLast: boolean }) {
+  const isUser = message.role === 'user';
+  const holdTimer = useRef<number | null>(null);
+  const firedRef = useRef(false);
+
+  function triggerMenu(clientX: number, clientY: number) {
+    haptic(20);
+    actions.onMenu({ clientX, clientY }, message);
+  }
+
+  return (
+    <motion.div
+      className={`mb-2.5 flex items-end gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}
+      initial={{ opacity: 0, y: 12, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.9 }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        if (!firedRef.current) triggerMenu(e.clientX, e.clientY);
+      }}
+      onPointerDown={(e) => {
+        if (e.pointerType !== 'touch') return;
+        firedRef.current = false;
+        holdTimer.current = window.setTimeout(() => {
+          firedRef.current = true;
+          triggerMenu(e.clientX, e.clientY);
+        }, 450);
+      }}
+      onPointerUp={() => {
+        if (holdTimer.current) {
+          window.clearTimeout(holdTimer.current);
+          holdTimer.current = null;
+        }
+      }}
+      onPointerMove={() => {
+        if (holdTimer.current) {
+          window.clearTimeout(holdTimer.current);
+          holdTimer.current = null;
+        }
+      }}
+      onPointerLeave={() => {
+        if (holdTimer.current) {
+          window.clearTimeout(holdTimer.current);
+          holdTimer.current = null;
+        }
+      }}
+    >
+      <div
+        className={`relative max-w-[92%] rounded-2xl px-4 py-3 text-[13px] leading-relaxed shadow-card ${
+          isUser
+            ? 'bubble-user rounded-br-md'
+            : 'bubble-ai rounded-bl-md'
+        }`}
+      >
+        {message.reasoning && <ThinkingBlock text={message.reasoning} />}
+        {message.tool && <ToolBadge tool={message.tool} />}
+        {isUser ? (
+          <UserMessageContent content={message.content} />
+        ) : (
+          <div className="markdown-body">
+            <ChatMarkdown text={message.content} />
+          </div>
+        )}
+
+        <div className={`mt-2 flex items-center gap-0.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
+          {message.model && (
+            <span className={`mr-1 font-mono text-[9px] ${isUser ? 'opacity-60' : 'text-muted'}`}>{message.model}</span>
+          )}
+          {message.stopped && (
+            <span className={`rounded px-1.5 py-0.5 text-[9px] ${isUser ? 'bg-black/20' : 'bg-surface-3 text-muted'}`}>
+              stopped
+            </span>
+          )}
+          {message.role === 'assistant' && <Check size={11} color="var(--color-success)" />}
+          {isUser ? (
+            <>
+              <BubbleAction label="Edit" onClick={() => actions.onEdit(message)}>
+                <PenLine size={13} />
+              </BubbleAction>
+              <BubbleAction label="Copy" onClick={() => actions.onCopy(message)}>
+                <Copy size={13} />
+              </BubbleAction>
+              <BubbleAction label="Delete" onClick={() => actions.onDelete(message)}>
+                <Trash2 size={13} />
+              </BubbleAction>
+            </>
+          ) : (
+            <>
+              <BubbleAction label="Copy" onClick={() => actions.onCopy(message)}>
+                <Copy size={13} />
+              </BubbleAction>
+              {isLast && (
+                <BubbleAction label="Regenerate" onClick={actions.onRegenerate}>
+                  <RefreshCw size={13} />
+                </BubbleAction>
+              )}
+              <BubbleAction label="Download .md" onClick={() => actions.onDownload(message)}>
+                <Download size={13} />
+              </BubbleAction>
+            </>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function BubbleAction({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
       type="button"
-      onClick={onClick}
-      className="flex items-center justify-center gap-1 rounded-lg border border-border bg-bg/70 px-2 py-1.5 font-semibold text-text transition-colors hover:border-l"
+      onClick={(e) => {
+        e.stopPropagation();
+        haptic();
+        onClick();
+      }}
+      className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-black/15 hover:text-text"
+      aria-label={label}
+      title={label}
     >
-      {icon}
-      {label}
+      {children}
     </button>
   );
 }
 
-function AttachmentChip({ attachment, onRemove }: { attachment: DraftAttachment; onRemove: () => void }) {
-  const isImage = attachment.kind === 'image';
+function StreamBubble({ reasoning, text }: { reasoning: string; text: string }) {
   return (
-    <div className="flex min-w-0 shrink-0 items-center gap-2 rounded-xl border border-border bg-bg px-2 py-1.5 text-[10px]">
-      {isImage && attachment.previewUrl ? (
-        <img src={attachment.previewUrl} alt="" className="h-7 w-7 rounded-lg object-cover" />
-      ) : isImage ? (
-        <Image size={15} color="var(--color-light)" />
-      ) : (
-        <FileText size={15} color="var(--color-l)" />
-      )}
-      <div className="max-w-32 min-w-0">
-        <p className="truncate font-semibold text-text">{attachment.name}</p>
-        <p className="text-muted">{formatBytes(attachment.size)} · {attachment.kind}</p>
+    <motion.div
+      className="mb-2.5 flex items-end gap-2"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.9 }}
+    >
+      <div className="bubble-ai max-w-[92%] rounded-2xl rounded-bl-md px-4 py-3 text-[13px] leading-relaxed">
+        {reasoning && <ThinkingBlock text={reasoning} />}
+        <div className="markdown-body">
+          <ChatMarkdown text={text} />
+          <span className="caret-blink" aria-hidden="true" />
+        </div>
       </div>
-      <button type="button" onClick={onRemove} className="rounded-full p-0.5 text-muted hover:bg-danger/10 hover:text-danger" aria-label="Remove attachment">
-        <X size={11} />
-      </button>
-    </div>
+    </motion.div>
   );
 }
 
-function Avatar({ role }: { role: ChatMessage['role'] }) {
-  const isUser = role === 'user';
+function TypingBubble({ status }: { status: string }) {
   return (
-    <span
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-      style={{
-        backgroundColor: isUser ? 'rgba(242,166,90,0.15)' : 'rgba(178,146,242,0.15)',
-        border: `1px solid ${isUser ? 'var(--color-light-dim)' : 'var(--color-peak)'}`,
-      }}
+    <motion.div
+      className="mb-2.5 flex items-end gap-2"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.9 }}
     >
-      {isUser ? <User size={13} color="var(--color-light)" /> : <Bot size={13} color="var(--color-peak)" />}
-    </span>
+      <div className="bubble-ai flex items-center gap-2.5 rounded-2xl rounded-bl-md px-4 py-3">
+        <span className="typing-dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
+        {status && <span className="text-[11px] text-muted">{status}</span>}
+      </div>
+    </motion.div>
   );
 }
 
@@ -443,7 +1009,11 @@ function ThinkingBlock({ text }: { text: string }) {
   return (
     <div className="mb-2 overflow-hidden rounded-lg border border-peak/20 bg-peak/5">
       <button
-        onClick={() => setOpen((v) => !v)}
+        type="button"
+        onClick={() => {
+          haptic();
+          setOpen((v) => !v);
+        }}
         className="flex w-full items-center justify-between px-2.5 py-1.5 text-[10px] font-semibold text-muted transition-colors hover:text-text"
       >
         <span>AI soch raha hai ({text.length} chars)</span>
@@ -458,66 +1028,608 @@ function ThinkingBlock({ text }: { text: string }) {
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
-  const isUser = message.role === 'user';
+function ToolBadge({ tool }: { tool: string }) {
   return (
-    <div className={`mb-2 flex items-end gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
-      {!isUser && <Avatar role="assistant" />}
-      <div
-        className={`max-w-[90%] rounded-2xl px-3 py-2.5 text-sm shadow-sm ${
-          isUser
-            ? 'border border-light/40 bg-panel text-text'
-            : 'border border-border bg-bg text-text'
-        }`}
-      >
-        {message.reasoning && <ThinkingBlock text={message.reasoning} />}
-        {message.tool && (
-          <span
-            className="mb-1.5 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] font-semibold"
-            style={{ borderColor: 'rgba(79,209,197,0.35)', backgroundColor: 'rgba(79,209,197,0.1)', color: 'var(--color-l)' }}
-          >
-            <Wrench size={10} />
-            tool: {message.tool}
-          </span>
-        )}
-        <div className={isUser ? '' : 'markdown-body'}>
-          <ChatMarkdown text={message.content} />
-        </div>
-        <div className="mt-1 flex items-center gap-2">
-          {message.model && <span className="font-mono text-[9px] text-muted">{message.model}</span>}
-          {message.stopped && (
-            <span className="rounded bg-panel px-1.5 py-0.5 text-[9px] text-muted">stopped</span>
-          )}
-          {message.role === 'assistant' && (
-            <>
-              <Check size={10} color="var(--color-success)" />
-              <button onClick={() => downloadMessage(message)} className="ml-auto inline-flex items-center gap-1 rounded bg-panel px-1.5 py-0.5 text-[9px] text-muted hover:text-text">
-                <Download size={9} /> save .md
-              </button>
-            </>
-          )}
-        </div>
+    <span className="mb-1.5 inline-flex items-center gap-1 rounded-md border border-l/40 bg-l/10 px-1.5 py-0.5 text-[9px] font-semibold text-l">
+      <Wrench size={10} />
+      tool: {tool}
+    </span>
+  );
+}
+
+/* =====================================================================
+   Attachments
+   ===================================================================== */
+
+function AttachmentChip({ attachment, onRemove }: { attachment: DraftAttachment; onRemove: () => void }) {
+  const isImage = attachment.kind === 'image';
+  return (
+    <div className="flex min-w-0 shrink-0 items-center gap-2 rounded-xl border border-border bg-bg px-2 py-1.5 text-[10px]">
+      {isImage && attachment.previewUrl ? (
+        <img src={attachment.previewUrl} alt="" className="h-7 w-7 rounded-lg object-cover" />
+      ) : isImage ? (
+        <Image size={15} color="var(--color-light)" />
+      ) : (
+        <FileText size={15} color="var(--color-l)" />
+      )}
+      <div className="max-w-32 min-w-0">
+        <p className="truncate font-semibold text-text">{attachment.name}</p>
+        <p className="text-muted">
+          {formatBytes(attachment.size)} · {attachment.kind}
+        </p>
       </div>
-      {isUser && <Avatar role="user" />}
+      <button type="button" onClick={onRemove} className="rounded-full p-0.5 text-muted hover:bg-danger/10 hover:text-danger" aria-label="Remove attachment">
+        <X size={11} />
+      </button>
     </div>
   );
 }
 
+/* =====================================================================
+   Sheets
+   ===================================================================== */
+
+function Sheet({
+  open,
+  onClose,
+  title,
+  icon,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  if (!open) return null;
+  return (
+    <>
+      <div className="sheet-backdrop" onClick={onClose} aria-hidden="true" />
+      <div role="dialog" aria-modal="true" aria-label={title} className="sheet">
+        <div className="sheet-handle" aria-hidden="true" />
+        <div className="flex items-center justify-between px-5 pb-2 pt-1">
+          <h2 className="flex items-center gap-2 font-display text-base font-bold">
+            <span className="text-l">{icon}</span>
+            {title}
+          </h2>
+          <button type="button" onClick={onClose} className="icon-btn" aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="sheet-scroll px-5 pb-[calc(1.5rem_+_env(safe-area-inset-bottom,0px))]">
+          {children}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function SettingsSheet({
+  prefs,
+  providers,
+  catalog,
+  onChange,
+  onReset,
+  onLoadCatalog,
+  onOpenProviderPicker,
+  onProviderAdded,
+  onHistoryChanged,
+  onExport,
+  onClear,
+  onClose,
+}: {
+  prefs: ChatPreferences;
+  providers: Array<{ id: string; label: string; enabled?: boolean }>;
+  catalog: ModelInfo[];
+  onChange: (patch: Partial<ChatPreferences>) => void;
+  onReset: () => void;
+  onLoadCatalog: () => void;
+  onOpenProviderPicker: () => void;
+  onProviderAdded: () => void;
+  onHistoryChanged: () => void;
+  onExport: () => void;
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  const providerLabel = providers.find((p) => p.id === prefs.providerId)?.label ?? 'App default';
+  return (
+    <Sheet open onClose={onClose} title="Chat settings" icon={<Settings2 size={16} />}>
+      <div className="space-y-6 pb-2">
+        {/* Model */}
+        <section>
+          <p className="section-label mb-2">Model</p>
+          <div className="overflow-hidden rounded-2xl border border-border bg-panel">
+            <button
+              type="button"
+              onClick={onOpenProviderPicker}
+              className="group flex w-full items-center justify-between px-4 py-3.5 text-sm transition-colors hover:bg-panel-raised active:bg-panel-raised"
+            >
+              <span className="text-muted">Provider</span>
+              <span className="flex items-center gap-1 font-semibold text-text">
+                {providerLabel}
+                <ChevronRight size={14} className="text-muted transition-transform group-active:translate-x-0.5" />
+              </span>
+            </button>
+            <div className="border-t border-border/70 px-4 py-3.5">
+              <label className="field-label flex items-center justify-between">
+                <span>Model override</span>
+                <button type="button" onClick={onLoadCatalog} className="font-normal text-muted underline-offset-2 hover:text-text hover:underline">
+                  catalog dikhao
+                </button>
+              </label>
+              <input
+                list="chat-model-catalog"
+                value={prefs.model ?? ''}
+                onChange={(e) => onChange({ model: e.target.value || null })}
+                placeholder="Khaali = provider default"
+                className="field"
+              />
+              <datalist id="chat-model-catalog">
+                {catalog.map((m) => (
+                  <option key={m.id} value={m.id} />
+                ))}
+              </datalist>
+            </div>
+          </div>
+          <div className="mt-2">
+            <AddProviderForm
+              onAdd={(config) => {
+                container.providerSettings.upsertProvider(config);
+                onProviderAdded();
+              }}
+            />
+          </div>
+        </section>
+
+        {/* Generation */}
+        <section>
+          <p className="section-label mb-2">Generation</p>
+          <div className="divide-y divide-border/70 overflow-hidden rounded-2xl border border-border bg-panel">
+            <div className="px-4 py-3.5">
+              <label className="field-label flex items-center justify-between">
+                <span>Temperature</span>
+                <span className="font-mono text-light">{prefs.temperature.toFixed(2)}</span>
+              </label>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={prefs.temperature}
+                onChange={(e) => onChange({ temperature: Number(e.target.value) })}
+                className="w-full accent-[var(--color-light)]"
+              />
+              <p className="mt-0.5 text-[10px] text-muted">Kam = precise, zyada = creative</p>
+            </div>
+            <div className="px-4 py-3.5">
+              <label className="field-label flex items-center justify-between">
+                <span>Max tokens</span>
+                <span className="font-mono text-light">{prefs.maxTokens ?? 4096}</span>
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={8192}
+                step={128}
+                value={prefs.maxTokens ?? 4096}
+                onChange={(e) => onChange({ maxTokens: clampTokens(Number(e.target.value)) })}
+                className="field"
+              />
+              <p className="mt-0.5 text-[10px] text-muted">Response budget; 1 se 8192 tokens tak.</p>
+            </div>
+            <div className="px-4 py-3.5">
+              <label className="field-label">Thinking / reasoning</label>
+              <select
+                className="field"
+                value={prefs.thinking ?? ''}
+                onChange={(e) => onChange({ thinking: (e.target.value || undefined) as ThinkingLevel | undefined })}
+              >
+                <option value="">Provider default</option>
+                <option value="off">Off</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        {/* Context */}
+        <section>
+          <p className="section-label mb-2">Context</p>
+          <div className="rounded-2xl border border-border bg-panel">
+            <label className="flex items-center justify-between gap-2 px-4 py-3.5">
+              <div>
+                <p className="text-sm font-medium text-text">Aaj ka plan context</p>
+                <p className="mt-0.5 text-[10px] leading-relaxed text-muted">
+                  AI ko aaj ke tasks, streak aur progress (REFERENCE ONLY).
+                </p>
+              </div>
+              <span className="toggle">
+                <input
+                  type="checkbox"
+                  checked={prefs.includeContext}
+                  onChange={(e) => onChange({ includeContext: e.target.checked })}
+                  aria-label="Include today's context"
+                />
+                <span className="track">
+                  <span className="thumb" />
+                </span>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        {/* System */}
+        <section>
+          <p className="section-label mb-2">System</p>
+          <div className="overflow-hidden rounded-2xl border border-border bg-panel">
+            <div className="px-4 py-3.5">
+              <label className="field-label">Custom instructions / Persona</label>
+              <textarea
+                rows={4}
+                value={prefs.systemPrompt}
+                onChange={(e) => onChange({ systemPrompt: e.target.value })}
+                placeholder="e.g. Mujhe JEE maths step-by-step Hinglish mein samjhao; formulas LaTeX mein do."
+                className="field resize-none"
+              />
+              <button
+                type="button"
+                onClick={() => onChange({ systemPrompt: DEFAULT_USER_PERSONA })}
+                className="mt-1.5 text-xs text-muted underline-offset-2 hover:text-text hover:underline"
+              >
+                Default persona reset
+              </button>
+            </div>
+            <details className="border-t border-border/70 px-4 py-3 text-xs">
+              <summary className="cursor-pointer select-none font-semibold text-muted hover:text-text">Advanced</summary>
+              <div className="mt-2.5 rounded-xl border border-border bg-bg p-3">
+                <p className="mb-1 text-[11px] font-semibold text-muted">Internal system prompt</p>
+                <p className="line-clamp-3 text-[11px] leading-relaxed text-muted">{INTERNAL_SYSTEM_PROMPT}</p>
+                <p className="mt-1 text-[10px] text-light">
+                  Locked — app safety, tools, context aur attachment rules yahan se aate hain.
+                </p>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        {/* AI activity */}
+        <AiActivityPanel onHistoryChanged={onHistoryChanged} />
+
+        {/* Actions */}
+        <section>
+          <p className="section-label mb-2">Actions</p>
+          <div className="divide-y divide-border/70 overflow-hidden rounded-2xl border border-border bg-panel">
+            <ActionRow icon={<Download size={15} />} label="Export chat (.md)" onClick={onExport} />
+            <ActionRow icon={<Eraser size={15} />} label="Chat clear karo" onClick={onClear} />
+            <ActionRow icon={<Settings2 size={15} />} label="Settings reset karo" onClick={onReset} />
+          </div>
+        </section>
+      </div>
+    </Sheet>
+  );
+}
+
+function ActionRow({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        haptic();
+        onClick();
+      }}
+      className="flex w-full items-center gap-2.5 px-4 py-3 text-sm font-medium text-text transition-colors hover:bg-panel-raised active:bg-panel-raised"
+    >
+      <span className="text-muted">{icon}</span>
+      {label}
+    </button>
+  );
+}
+
+function ProviderPickerSheet({
+  prefs,
+  providers,
+  onSelect,
+  onProviderAdded,
+  onClose,
+}: {
+  prefs: ChatPreferences;
+  providers: Array<{ id: string; label: string; enabled?: boolean }>;
+  onSelect: (pid: string | null) => void;
+  onProviderAdded: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet open onClose={onClose} title="Provider" icon={<Settings2 size={16} />}>
+      <div className="space-y-1.5 pb-2">
+        <button
+          type="button"
+          onClick={() => onSelect(null)}
+          className={`flex w-full items-center justify-between rounded-xl border px-3.5 py-3 text-sm transition-colors ${
+            !prefs.providerId ? 'border-l/50 bg-l/10 text-text' : 'border-border bg-panel text-muted'
+          }`}
+        >
+          <span>App default (active provider)</span>
+          {!prefs.providerId && <Check size={15} color="var(--color-l)" />}
+        </button>
+        {providers.map((p) => {
+          const isActive = prefs.providerId === p.id;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => onSelect(p.id)}
+              className={`flex w-full items-center justify-between rounded-xl border px-3.5 py-3 text-sm transition-colors ${
+                isActive ? 'border-l/50 bg-l/10 text-text' : 'border-border bg-panel text-muted'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                {p.label}
+                {p.enabled === false && <span className="text-[10px] text-muted">(off)</span>}
+              </span>
+              {isActive && <Check size={15} color="var(--color-l)" />}
+            </button>
+          );
+        })}
+        <div className="pt-1">
+          <AddProviderForm
+            onAdd={(config) => {
+              container.providerSettings.upsertProvider(config);
+              onProviderAdded();
+            }}
+          />
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+function HistorySheet({
+  sessions,
+  activeId,
+  onOpen,
+  onNew,
+  onDelete,
+  onClose,
+}: {
+  sessions: ChatSession[];
+  activeId: string | null;
+  onOpen: (id: string) => void;
+  onNew: () => void;
+  onDelete: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet open onClose={onClose} title="Chats" icon={<MessageSquareText size={16} />}>
+      <div className="space-y-1.5 pb-2">
+        <button
+          type="button"
+          onClick={onNew}
+          className="mb-1 flex w-full items-center gap-2.5 rounded-xl border border-dashed border-l/40 bg-l/10 px-3.5 py-3 text-sm font-semibold text-l transition-colors hover:bg-l/15"
+        >
+          <MessageSquarePlus size={15} />
+          Naya chat
+        </button>
+        {sessions.length === 0 && <p className="px-1 py-4 text-center text-sm text-muted">Abhi koi chat nahi hai.</p>}
+        {sessions.map((s) => {
+          const isActive = s.id === activeId;
+          return (
+            <div
+              key={s.id}
+              className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 transition-colors ${
+                isActive ? 'border-l/50 bg-l/10' : 'border-border bg-panel'
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  onOpen(s.id);
+                  onClose();
+                }}
+                className="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-left"
+              >
+                <span className="w-full truncate text-sm font-semibold text-text">{s.title || 'Naya chat'}</span>
+                <span className="text-[10px] text-muted">
+                  {s.messages.length} messages · {timeAgo(s.updatedAt)}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  haptic();
+                  onDelete(s.id);
+                }}
+                className="icon-btn shrink-0 !min-w-8 !min-h-8 rounded-lg text-muted hover:bg-danger/10 hover:text-danger"
+                aria-label="Delete chat"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </Sheet>
+  );
+}
+
+function AttachmentSheet({ onPick, onClose }: { onPick: (id: string) => void; onClose: () => void }) {
+  return (
+    <Sheet open onClose={onClose} title="Attach" icon={<Paperclip size={16} />}>
+      <div className="grid grid-cols-3 gap-2.5 pb-2">
+        {ATTACH_TOOLS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onPick(t.id)}
+            className="flex flex-col items-center gap-1.5 rounded-2xl border border-border bg-panel px-2 py-4 text-center transition-all hover:border-l/50 active:scale-[0.96]"
+          >
+            <span
+              className="flex h-11 w-11 items-center justify-center rounded-xl"
+              style={{ background: 'rgba(79,209,197,0.12)', color: 'var(--color-l)' }}
+            >
+              {t.icon}
+            </span>
+            <span className="text-[11px] font-semibold leading-tight text-text">{t.label}</span>
+            <span className="text-[9px] leading-tight text-muted-dim">{t.hint}</span>
+          </button>
+        ))}
+      </div>
+    </Sheet>
+  );
+}
+
+function AiActivityPanel({ onHistoryChanged }: { onHistoryChanged: () => void }) {
+  const history = container.store.get().aiActionHistory;
+  const latest = history.versions.at(-1);
+  const undone = history.undone.length;
+
+  function undo() {
+    container.store.save(undoLastAiAction(container.store.get()));
+    onHistoryChanged();
+  }
+
+  function redo() {
+    container.store.save(redoLastAiAction(container.store.get()));
+    onHistoryChanged();
+  }
+
+  return (
+    <section>
+      <p className="section-label mb-2">AI Activity</p>
+      <div className="rounded-xl border border-border bg-panel px-3.5 py-3">
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold text-muted">AI Activity & Undo</p>
+          <span className="font-mono text-[10px] text-light">{history.versions.length} versions</span>
+        </div>
+        {latest ? (
+          <p className="mb-2 line-clamp-2 text-[11px] text-muted">
+            Latest: {latest.summary} · {latest.status}
+          </p>
+        ) : (
+          <p className="mb-2 text-[11px] text-muted">AI edits will appear here with 90-day version history.</p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <button type="button" disabled={!latest} onClick={undo} className="btn btn-ghost min-h-8 px-2.5 py-1 text-xs disabled:opacity-40">
+            Undo last AI change
+          </button>
+          <button type="button" disabled={undone === 0} onClick={redo} className="btn btn-ghost min-h-8 px-2.5 py-1 text-xs disabled:opacity-40">
+            Redo ({undone})
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =====================================================================
+   Message context menu
+   ===================================================================== */
+
+function MessageMenu({
+  message,
+  position,
+  isLast,
+  onClose,
+  onCopy,
+  onEdit,
+  onRegenerate,
+  onDelete,
+  onDownload,
+  onShare,
+}: {
+  message: ChatMessage;
+  position: { x: number; y: number };
+  isLast: boolean;
+  onClose: () => void;
+  onCopy: (m: ChatMessage) => void;
+  onEdit: (m: ChatMessage) => void;
+  onRegenerate: () => void;
+  onDelete: (m: ChatMessage) => void;
+  onDownload: (m: ChatMessage) => void;
+  onShare: (m: ChatMessage) => void;
+}) {
+  const isUser = message.role === 'user';
+  const items: { label: string; icon: React.ReactNode; danger?: boolean; run: () => void }[] = [
+    { label: 'Copy', icon: <Copy size={15} />, run: () => onCopy(message) },
+    ...(isUser
+      ? [{ label: 'Edit', icon: <PenLine size={15} />, run: () => onEdit(message) }]
+      : [
+          ...(isLast ? [{ label: 'Regenerate', icon: <RefreshCw size={15} />, run: onRegenerate }] : []),
+          { label: 'Download .md', icon: <Download size={15} />, run: () => onDownload(message) },
+        ]),
+    ...('share' in navigator ? [{ label: 'Share', icon: <Share size={15} />, run: () => onShare(message) }] : []),
+    { label: 'Delete', icon: <Trash2 size={15} />, danger: true, run: () => onDelete(message) },
+  ];
+
+  return (
+    <>
+      <div className="fixed inset-0 z-[59]" onClick={onClose} aria-hidden="true" />
+      <div role="menu" className="ctx-menu" style={{ left: position.x, top: position.y }}>
+        {items.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              haptic();
+              item.run();
+              onClose();
+            }}
+            className={`ctx-item ${item.danger ? 'danger' : ''}`}
+          >
+            {item.icon}
+            {item.label}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/* =====================================================================
+   Helpers
+   ===================================================================== */
 
 async function readAttachment(file: File): Promise<DraftAttachment> {
   const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
   const isText = file.type.startsWith('text/') || TEXT_EXTENSIONS.has(extension);
+
+  if (file.type === 'application/pdf' || extension === 'pdf') {
+    try {
+      const raw = await extractPdfText(file);
+      const content = raw
+        ? `--- Extracted text from PDF: ${file.name} (${file.type}, ${formatBytes(file.size)}) ---\n\n${raw}`
+        : '';
+      return {
+        id: uid('att'),
+        name: file.name,
+        type: file.type || 'application/pdf',
+        size: file.size,
+        kind: content ? 'text' : 'binary',
+        content: content || undefined,
+      };
+    } catch {
+      return { id: uid('att'), name: file.name, type: file.type || 'application/pdf', size: file.size, kind: 'binary' };
+    }
+  }
+
   if (isText) {
-    const raw = await file.text();
-    const truncated = raw.length > MAX_TEXT_ATTACHMENT_CHARS;
-    return {
-      id: uid('att'),
-      name: file.name,
-      type: file.type || extension || 'text',
-      size: file.size,
-      kind: 'text',
-      content: truncated ? `${raw.slice(0, MAX_TEXT_ATTACHMENT_CHARS)}\n\n[Attachment truncated after ${MAX_TEXT_ATTACHMENT_CHARS} characters]` : raw,
-    };
+    try {
+      const raw = await file.text();
+      const truncated = raw.length > MAX_TEXT_ATTACHMENT_CHARS;
+      return {
+        id: uid('att'),
+        name: file.name,
+        type: file.type || extension || 'text',
+        size: file.size,
+        kind: 'text',
+        content: truncated ? `${raw.slice(0, MAX_TEXT_ATTACHMENT_CHARS)}\n\n[Attachment truncated after ${MAX_TEXT_ATTACHMENT_CHARS} characters]` : raw,
+      };
+    } catch {
+      return { id: uid('att'), name: file.name, type: file.type || extension || 'text', size: file.size, kind: 'binary' };
+    }
   }
   if (file.type.startsWith('image/')) {
     return { id: uid('att'), name: file.name, type: file.type, size: file.size, kind: 'image', previewUrl: URL.createObjectURL(file) };
@@ -525,23 +1637,81 @@ async function readAttachment(file: File): Promise<DraftAttachment> {
   return { id: uid('att'), name: file.name, type: file.type || extension || 'binary', size: file.size, kind: 'binary' };
 }
 
+function revokeAttachmentUrls(attachments: DraftAttachment[]): void {
+  for (const attachment of attachments) {
+    if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+  }
+}
+
 function buildPromptWithAttachments(draft: string, attachments: DraftAttachment[]): string {
   if (attachments.length === 0) return draft;
   const blocks = attachments.map((a, idx) => {
     const header = `Attachment ${idx + 1}: ${a.name} (${a.type || 'unknown'}, ${formatBytes(a.size)})`;
     if (a.kind === 'text') return `<attached_file>\n${header}\n\n${a.content ?? ''}\n</attached_file>`;
-    if (a.kind === 'image') return `<attached_image>\n${header}\nImage preview attached in UI. If your model cannot view images here, ask the user for text/OCR or describe what is needed.\n</attached_image>`;
-    return `<attached_file>\n${header}\nBinary document uploaded. Ask for text export if exact contents are required.\n</attached_file>`;
+    if (a.kind === 'image') return `<attached_image>\n${header}\nUser ne ek image attach ki hai (preview UI mein visible hai). Agar tum image dekh sakte ho toh analyze karo; warna user ko text/OCR dekar likhne ko bolo.\n</attached_image>`;
+    return `<attached_file>\n${header}\nYeh file type in-browser extract nahi ho sakti. "System limitation" mat bolo — bas user se puchho ki content ko .txt/.md me export kare ya copy-paste kare.\n</attached_file>`;
   });
   return [draft || 'In uploaded attachments ko analyze karo.', ...blocks].join('\n\n');
 }
 
-function downloadMessage(message: ChatMessage) {
-  const blob = new Blob([message.content], { type: 'text/markdown;charset=utf-8' });
+function stripAttachmentBlocks(text: string): string {
+  return text
+    .replace(/<attached_file>[\s\S]*?<\/attached_file>/g, '')
+    .replace(/<attached_image>[\s\S]*?<\/attached_image>/g, '')
+    .trim();
+}
+
+/**
+ * Parses a sent user message into its typed text plus one descriptor per
+ * attached file, so attachments render as chips instead of raw block text.
+ */
+function parseUserMessageContent(content: string): { text: string; files: { name: string; meta: string }[] } {
+  const files: { name: string; meta: string }[] = [];
+  const text = content
+    .replace(/<attached_(?:file|image)>([\s\S]*?)<\/attached_(?:file|image)>/g, (_whole, inner: string) => {
+      const header = (inner.trim().split('\n')[0] ?? '').replace(/^Attachment\s+\d+:\s*/i, '');
+      if (header) {
+        const match = header.match(/^(.+?)\s*\((.*)\)\s*$/);
+        files.push({
+          name: (match ? match[1] : header).trim(),
+          meta: (match ? match[2] : '').trim(),
+        });
+      }
+      return '';
+    })
+    .trim();
+  return { text, files };
+}
+
+function UserMessageContent({ content }: { content: string }) {
+  const { text, files } = parseUserMessageContent(content);
+  return (
+    <div className="whitespace-pre-wrap break-words font-medium">
+      {text || '—'}
+      {files.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {files.map((f, i) => (
+            <span
+              key={i}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-black/15 bg-black/10 px-2 py-1 text-[10px] font-semibold"
+            >
+              <Paperclip size={10} className="shrink-0" />
+              <span className="truncate">{f.name}</span>
+              {f.meta && <span className="shrink-0 font-normal opacity-60">({f.meta})</span>}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function downloadText(content: string, filename: string) {
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `human-os-ai-${new Date(message.createdAt).toISOString().slice(0, 10)}.md`;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -554,123 +1724,23 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return 'abhi';
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+}
+
 function uid(prefix: string): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function OptionsPanel({
-  prefs,
-  providers,
-  catalog,
-  onChange,
-  onLoadCatalog,
-  onProviderAdded,
-}: {
-  prefs: ChatPreferences;
-  providers: Array<{ id: string; label: string; enabled?: boolean }>;
-  catalog: ModelInfo[];
-  onChange: (patch: Partial<ChatPreferences>) => void;
-  onLoadCatalog: () => void;
-  onProviderAdded: () => void;
-}) {
-  return (
-    <div className="mb-3 space-y-3 rounded-xl border border-border bg-panel p-3.5 text-xs fade-up">
-      <div>
-        <label className="mb-1 block font-semibold text-muted">Provider</label>
-        <select
-          className="field"
-          value={prefs.providerId ?? ''}
-          onChange={(e) => onChange({ providerId: e.target.value || null })}
-        >
-          <option value="">App default (active provider)</option>
-          {providers.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-              {p.enabled === false ? ' (off)' : ''}
-            </option>
-          ))}
-        </select>
-        <AddProviderForm
-          onAdd={() => {
-            onProviderAdded();
-          }}
-        />
-      </div>
-
-      <div>
-        <label className="mb-1 flex items-center justify-between font-semibold text-muted">
-          <span>Model</span>
-          <button onClick={onLoadCatalog} className="text-muted underline-offset-2 hover:text-text hover:underline">
-            catalog dikhao
-          </button>
-        </label>
-        <input
-          list="chat-model-catalog"
-          value={prefs.model ?? ''}
-          onChange={(e) => onChange({ model: e.target.value || null })}
-          placeholder="Khaali chhodo to provider default"
-          className="field"
-        />
-        <datalist id="chat-model-catalog">
-          {catalog.map((m) => (
-            <option key={m.id} value={m.id} />
-          ))}
-        </datalist>
-      </div>
-
-      <div>
-        <label className="mb-1 flex items-center justify-between font-semibold text-muted">
-          <span>Temperature</span>
-          <span className="font-mono text-light">{prefs.temperature.toFixed(2)}</span>
-        </label>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.05}
-          value={prefs.temperature}
-          onChange={(e) => onChange({ temperature: Number(e.target.value) })}
-          className="w-full accent-[var(--color-light)]"
-        />
-        <p className="mt-0.5 text-[10px] text-muted">Kam = precise, zyada = creative</p>
-      </div>
-
-      <div>
-        <div className="mb-2 rounded-lg border border-border bg-bg px-2.5 py-2">
-          <p className="mb-1 font-semibold text-muted">Internal system prompt</p>
-          <p className="line-clamp-3 text-[10px] leading-relaxed text-muted">{INTERNAL_SYSTEM_PROMPT}</p>
-          <p className="mt-1 text-[10px] text-light">Locked — app safety, tools, context aur attachment rules yahan se aate hain.</p>
-        </div>
-        <label className="mb-1 block font-semibold text-muted">Your persona / Custom instructions</label>
-        <textarea
-          rows={4}
-          value={prefs.systemPrompt}
-          onChange={(e) => onChange({ systemPrompt: e.target.value })}
-          placeholder="e.g. Mujhe JEE maths step-by-step Hinglish mein samjhao; formulas LaTeX mein do."
-          className="field resize-none"
-        />
-        <button
-          onClick={() => onChange({ systemPrompt: DEFAULT_USER_PERSONA })}
-          className="mt-1 text-muted underline-offset-2 hover:text-text hover:underline"
-        >
-          Default user persona reset
-        </button>
-      </div>
-
-      <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-bg px-2.5 py-2">
-        <span className="font-semibold text-muted">Aaj ka context include karein</span>
-        <label className="relative inline-flex cursor-pointer">
-          <input
-            type="checkbox"
-            className="peer sr-only"
-            checked={prefs.includeContext}
-            onChange={(e) => onChange({ includeContext: e.target.checked })}
-          />
-          <span className="h-5 w-9 rounded-full bg-grid transition-colors peer-checked:bg-[rgba(79,209,197,0.5)]" />
-          <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-muted transition-transform peer-checked:translate-x-4 peer-checked:bg-l" />
-        </label>
-      </label>
-    </div>
-  );
+function clampTokens(value: number): number {
+  if (!Number.isFinite(value)) return 2048;
+  return Math.max(1, Math.min(Math.round(value), 8192));
 }

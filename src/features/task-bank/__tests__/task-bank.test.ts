@@ -19,6 +19,7 @@ const snapshot: UnlockSnapshot = {
   unlockedHabitIds: [],
   examWindowActive: false,
   mockSunday: false,
+  weekday: 4,
   recoveryMode: false,
   backlogDays: 0,
   revisionDueHabitIds: [],
@@ -42,7 +43,7 @@ describe('task bank search', () => {
   it('unlocks mock-sunday tasks only on mock Sundays', () => {
     const bank = makeRepo();
     const mockTasks = bank.getAll().filter((t) => t.unlockConditions.some((c) => c.type === 'mock-sunday'));
-    const onSunday = { ...snapshot, dayNumber: 7, mockSunday: true };
+    const onSunday = { ...snapshot, dayNumber: 7, mockSunday: true, weekday: 0 };
     const unlocked = mockTasks.filter((t) => isUnlockMet(t, onSunday));
     expect(unlocked.length).toBeGreaterThan(0);
     expect(unlocked.every((t) => t.taskType === 'Challenge')).toBe(true);

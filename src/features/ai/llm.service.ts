@@ -30,6 +30,7 @@ export class LLMService {
     if (!this.settings.isAiEnabled()) {
       throw new ProviderError('none', 'bad-request', 'AI is disabled or no provider is configured');
     }
+    if (request.providerId) return this.tryChain(request, this.buildProviderChain(request.providerId, request.model));
     if (request.model) return this.tryChain(request, [{ config: this.requireActive(), model: request.model }]);
     return this.tryChain(request, this.buildChain());
   }
@@ -39,6 +40,7 @@ export class LLMService {
       throw new ProviderError('none', 'bad-request', 'AI is disabled or no provider is configured');
     }
     const streamed = { ...request, stream: true };
+    if (request.providerId) return this.tryChain(streamed, this.buildProviderChain(request.providerId, request.model));
     if (request.model) return this.tryChain(streamed, [{ config: this.requireActive(), model: request.model }]);
     return this.tryChain(streamed, this.buildChain());
   }
@@ -56,6 +58,19 @@ export class LLMService {
       }
     }
     throw lastError;
+  }
+
+  private buildProviderChain(providerId: string, requestedModel?: string): ChainEntry[] {
+    const config = this.settings.getProviderById(providerId);
+    if (!config || !this.settings.isUsable(config)) {
+      throw new ProviderError(providerId, 'bad-request', 'selected provider is disabled or not configured');
+    }
+    const model = requestedModel ?? config.model;
+    if (!model) throw new ProviderError(providerId, 'bad-request', 'selected provider has no model configured');
+    const chain: ChainEntry[] = [];
+    const fallback = !requestedModel && config.fallbackModel && config.fallbackModel !== model ? config.fallbackModel : null;
+    for (const m of fallback ? [fallback, model] : [model]) chain.push({ config, model: m });
+    return chain;
   }
 
   private buildChain(): ChainEntry[] {

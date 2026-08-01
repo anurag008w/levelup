@@ -89,12 +89,13 @@ export class GeminiProvider implements LLMProvider {
     let thinkingBudget: number | undefined;
     if (request.thinking && request.thinking !== 'off') {
       const requested = THINKING_BUDGETS[request.thinking];
-      // Gemini requires thinkingBudget < maxOutputTokens. Clamp when a small
-      // window is set so thinking never breaks the request; skip it entirely
-      // when the window is too small to leave any room for visible output.
+      // Gemini requires thinkingBudget < maxOutputTokens. Reserve a guaranteed
+      // output window so a reasoning model never burns its whole budget
+      // thinking (which surfaces as a blank reply). When there isn't enough
+      // room to leave that window, skip thinking entirely.
       if (maxTokens !== undefined) {
-        const room = maxTokens - 256;
-        if (room >= 1) thinkingBudget = Math.min(requested, room);
+        const room = maxTokens - 512;
+        thinkingBudget = room >= 256 ? Math.min(requested, room) : undefined;
       } else {
         thinkingBudget = requested;
       }

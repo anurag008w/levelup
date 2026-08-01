@@ -43,7 +43,7 @@ export class TaskGenerationService {
     const tokens = tokenize(intent);
     if (tokens.length === 0) return null;
     const matches: Array<{ entry: TaskBankEntry; score: number }> = [];
-    for (const entry of this.taskBank.search({ unlock: { dayNumber, phase: 'jee-core', unlockedHabitIds: [], examWindowActive: false, mockSunday: false, recoveryMode: false, backlogDays: 0, revisionDueHabitIds: [] }, activeOnly: true })) {
+    for (const entry of this.taskBank.search({ unlock: { dayNumber, phase: 'jee-core', unlockedHabitIds: [], examWindowActive: false, mockSunday: false, weekday: 0, recoveryMode: false, backlogDays: 0, revisionDueHabitIds: [] }, activeOnly: true })) {
       const hay = tokenize(`${entry.title} ${entry.description} ${entry.tags.join(' ')}`);
       let score = 0;
       for (const t of tokens) if (hay.includes(t)) score++;
@@ -60,7 +60,13 @@ export class TaskGenerationService {
     const bankMatch = this.findBankMatch(input.intent, dayNumber);
     if (bankMatch) return { entry: bankMatch, source: 'bank' };
 
-    const aiCount = state.dynamicTaskBank.filter((t) => t.id.startsWith('ai-') && t.unlockConditions.some((c) => c.type === 'day' && c.fromDay <= dayNumber)).length;
+    const aiCount = state.dynamicTaskBank.filter(
+      (t) =>
+        t.id.startsWith('ai-') &&
+        t.unlockConditions.some(
+          (c) => (c.type === 'day' && c.fromDay <= dayNumber) || (c.type === 'day-exact' && c.day === dayNumber),
+        ),
+    ).length;
     if (aiCount >= MAX_AI_TASKS_PER_DAY) {
       throw new TaskBankValidationError(`Already ${MAX_AI_TASKS_PER_DAY} AI tasks planned for day ${dayNumber}`);
     }

@@ -8,13 +8,18 @@ import {
 import type { LLMMessage, LLMRequest, ThinkingLevel } from '../../core/domain/llm';
 import { isAbortError } from '../../core/domain/llm';
 import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY } from '../../core/domain/chat-tools';
+import { createStreamSanitizer, sanitizeTimestampLeaks } from './leak-sanitizer';
 import type { Clock } from '../../core/ports/clock';
-import type { ChatRepository } from '../../core/ports/repositories';
+import type { ChatRepository, StateStore } from '../../core/ports/repositories';
 import type { LLMService } from '../ai/llm.service';
 import type { ProviderSettingsService } from '../ai/provider-settings.service';
+import type { MemoryService } from '../ai/memory.service';
 import type { ChatToolsService } from './chat-tools.service';
 
 const HISTORY_FOR_PROMPT = 30;
+const MEMORY_FOR_PROMPT = 8;
+const MEMORY_USER_MAX_CHARS = 500;
+const MEMORY_AI_MAX_CHARS = 400;
 
 /**
  * Chat feature service: session persistence + LLM streaming. Chat data lives in
@@ -27,6 +32,8 @@ export class ChatService {
   private readonly contextProvider: () => string;
   private readonly clock: Clock;
   private readonly tools: ChatToolsService | null;
+  private readonly memory: MemoryService | null;
+  private readonly store: StateStore | null;
   /** In-memory snapshot so mutations survive across persist() calls. */
   private cache: ChatStoreState | null = null;
 
@@ -37,6 +44,8 @@ export class ChatService {
     contextProvider: () => string,
     clock: Clock,
     tools: ChatToolsService | null = null,
+    memory: MemoryService | null = null,
+    store: StateStore | null = null,
   ) {
     this.repo = repo;
     this.llm = llm;
@@ -44,6 +53,8 @@ export class ChatService {
     this.contextProvider = contextProvider;
     this.clock = clock;
     this.tools = tools;
+    this.memory = memory;
+    this.store = store;
   }
 
   private state(): ChatStoreState {
@@ -52,7 +63,7 @@ export class ChatService {
   }
 
   listSessions(): ChatSession[] {
-    return this.state().sessions;
+    return this.state().sessions.map(cloneSession);
   }
 
   getSession(id: string): ChatSession | null {
@@ -86,6 +97,28 @@ export class ChatService {
     const session = this.getSession(id);
     if (!session) return;
     session.messages = [];
+    session.updatedAt = this.clock.now().toISOString();
+    this.persist();
+  }
+
+  /** Removes a single message (used by the message context menu). */
+  deleteMessage(sessionId: string, messageId: string): void {
+    const session = this.getSession(sessionId);
+    if (!session) return;
+    const idx = session.messages.findIndex((m) => m.id === messageId);
+    if (idx === -1) return;
+    session.messages.splice(idx, 1);
+    session.updatedAt = this.clock.now().toISOString();
+    this.persist();
+  }
+
+  /** Deletes a message and everything after it (edit-from-here / regenerate). */
+  deleteMessagesFrom(sessionId: string, messageId: string): void {
+    const session = this.getSession(sessionId);
+    if (!session) return;
+    const idx = session.messages.findIndex((m) => m.id === messageId);
+    if (idx === -1) return;
+    session.messages = session.messages.slice(0, idx);
     session.updatedAt = this.clock.now().toISOString();
     this.persist();
   }
@@ -127,6 +160,7 @@ export class ChatService {
     if (titleWasEmpty) session.title = deriveTitle(text);
     session.updatedAt = now;
     this.persist();
+    this.remember(text, 'user', sessionId);
 
     let partial = '';
 
@@ -135,22 +169,22 @@ export class ChatService {
       if (this.tools && this.tools.isTaskQuery(text)) {
         onStatus?.('AI soch raha hai…');
         const decision = await this.llm.complete(this.buildDecisionRequest(session, signal));
-        let action = this.tools.parseTool(decision.text);
+        let actions = this.tools.parseTools(decision.text);
         let answer = decision.text;
-        if (!action && answer) {
+        if (actions.length === 0 && answer) {
           // The model talked instead of emitting an action — retry once with a
           // strict correction so plan tools work even on weaker models.
           onStatus?.('Tool decision retry kar raha hai…');
           const retry = await this.llm.complete(this.buildRetryRequest(session, decision.text, signal));
-          action = this.tools.parseTool(retry.text);
+          actions = this.tools.parseTools(retry.text);
           if (retry.text) answer = retry.text;
         }
-        if (!action) {
+        if (actions.length === 0) {
           if (answer) {
             const assistant: ChatMessage = {
               id: uid(),
               role: 'assistant',
-              content: answer,
+              content: sanitizeTimestampLeaks(answer),
               createdAt: this.clock.now().toISOString(),
               model: decision.model,
             };
@@ -159,26 +193,37 @@ export class ChatService {
           }
           throw new Error('AI khaali reply diya');
         }
-        onStatus?.(`Tool chala raha hai: ${action.action}`);
-        const toolResult = await this.tools.run(action);
+        onStatus?.(
+          actions.length > 1
+            ? `${actions.length} tools chala raha hai…`
+            : `Tool chala raha hai: ${actions[0].action}`,
+        );
+        const toolResult = await this.tools.runMany(actions);
         onStatus?.('Jawab likh raha hai…');
         let reasoning = '';
+        const streamSani = createStreamSanitizer();
         const summaryRequest = this.buildSummaryRequest(session, toolResult.summary, (delta) => {
-          partial += delta;
-          onDelta?.(delta);
+          const clean = streamSani.push(delta);
+          if (clean) {
+            partial += clean;
+            onDelta?.(clean);
+          }
         }, signal, (delta) => {
           reasoning += delta;
           onReasoningDelta?.(delta);
         });
         const summary = await this.llm.stream(summaryRequest);
+        if (!summary.text && !summary.reasoning) {
+          throw new Error('AI ka reply khaali aaya — max tokens barhao ya thinking off karo.');
+        }
         const assistant: ChatMessage = {
           id: uid(),
           role: 'assistant',
-          content: summary.text,
+          content: sanitizeTimestampLeaks(summary.text),
           createdAt: this.clock.now().toISOString(),
           model: summary.model,
           reasoning: (summary.reasoning ?? reasoning) || undefined,
-          tool: action.action,
+          tool: actions.map((a) => a.action).join(','),
         };
         this.appendAssistant(session, assistant);
         return assistant;
@@ -186,18 +231,25 @@ export class ChatService {
 
       // Default streaming path.
       let reasoning = '';
+      const streamSani = createStreamSanitizer();
       const request = this.buildRequest(session, (delta) => {
-        partial += delta;
-        onDelta?.(delta);
+        const clean = streamSani.push(delta);
+        if (clean) {
+          partial += clean;
+          onDelta?.(clean);
+        }
       }, signal, (delta) => {
         reasoning += delta;
         onReasoningDelta?.(delta);
       });
       const resp = await this.llm.stream(request);
+      if (!resp.text && !resp.reasoning) {
+        throw new Error('AI ka reply khaali aaya — max tokens barhao ya thinking off karo.');
+      }
       const assistant: ChatMessage = {
         id: uid(),
         role: 'assistant',
-        content: resp.text,
+        content: sanitizeTimestampLeaks(resp.text),
         createdAt: this.clock.now().toISOString(),
         model: resp.model,
         reasoning: (resp.reasoning ?? reasoning) || undefined,
@@ -231,28 +283,36 @@ export class ChatService {
   }
 
   private buildDecisionRequest(session: ChatSession, signal?: AbortSignal): LLMRequest {
-    return {
+    const request: LLMRequest = {
       messages: this.buildMessages(session, CHAT_TOOL_INSTRUCTIONS),
       temperature: session.prefs.temperature,
       maxTokens: 500,
+      providerId: session.prefs.providerId,
       signal,
       // Decision hops must be fast, deterministic JSON — thinking only risks
       // a budget clash and prose contamination.
       thinking: 'off',
     };
+    const model = this.resolveModel(session);
+    if (model) request.model = model;
+    return request;
   }
 
   private buildRetryRequest(session: ChatSession, previousReply: string, signal?: AbortSignal): LLMRequest {
     const system =
       `${CHAT_TOOL_INSTRUCTIONS}\n\n${CHAT_TOOL_RETRY}\n\n` +
       `Your previous reply was:\n${previousReply}\n\nReplace it with exactly one JSON object now.`;
-    return {
+    const request: LLMRequest = {
       messages: this.buildMessages(session, system),
       temperature: session.prefs.temperature,
       maxTokens: 500,
+      providerId: session.prefs.providerId,
       signal,
       thinking: 'off',
     };
+    const model = this.resolveModel(session);
+    if (model) request.model = model;
+    return request;
   }
 
   private buildSummaryRequest(
@@ -268,7 +328,8 @@ export class ChatService {
     const request: LLMRequest = {
       messages: this.buildMessages(session, system),
       temperature: session.prefs.temperature,
-      maxTokens: 1024,
+      maxTokens: Math.max(1, Math.min(session.prefs.maxTokens ?? 4096, 8192)),
+      providerId: session.prefs.providerId,
       onDelta,
       onReasoningDelta,
       signal,
@@ -286,7 +347,12 @@ export class ChatService {
       const ctx = this.contextProvider();
       if (ctx) messages.push({ role: 'system', content: `Today's Human OS context: ${ctx}` });
     }
-    const history = session.messages.slice(-HISTORY_FOR_PROMPT).map((m): LLMMessage => ({ role: m.role, content: m.content }));
+    const mem = this.recall(session.id);
+    if (mem) messages.push({ role: 'system', content: `Earlier conversations yaad hain (bas reference lo, repeat mat karo):\n${mem}` });
+    const history = session.messages.slice(-HISTORY_FOR_PROMPT).map((m): LLMMessage => ({
+      role: m.role,
+      content: `${formatMsgTime(m.createdAt)} ${m.content}`,
+    }));
     messages.push(...history);
     return messages;
   }
@@ -317,7 +383,8 @@ export class ChatService {
     const request: LLMRequest = {
       messages: this.buildMessages(session),
       temperature: session.prefs.temperature,
-      maxTokens: 2048,
+      maxTokens: Math.max(1, Math.min(session.prefs.maxTokens ?? 4096, 8192)),
+      providerId: session.prefs.providerId,
       onDelta,
       onReasoningDelta,
       signal,
@@ -335,11 +402,48 @@ export class ChatService {
     if (overflow > 0) session.messages.splice(0, overflow);
     session.updatedAt = this.clock.now().toISOString();
     this.persist();
+    this.remember(assistant.content, 'ai', session.id);
+  }
+
+  /** Persists a chat exchange into AI memory so later conversations recall it. */
+  private remember(content: string, source: 'user' | 'ai', sessionId: string): void {
+    if (!this.memory || !this.store) return;
+    const cleaned = stripAttachmentBlocks(content).trim();
+    if (!cleaned) return;
+    const state = this.store.get();
+    const next = this.memory.add(state, {
+      type: 'conversation',
+      source,
+      content: cleaned.slice(0, source === 'user' ? MEMORY_USER_MAX_CHARS : MEMORY_AI_MAX_CHARS),
+      importance: source === 'user' ? 0.5 : 0.4,
+      tags: ['chat', sessionId],
+    });
+    this.store.save(next);
+  }
+
+  /** Recent memories from OTHER sessions, so history stays in the transcript. */
+  private recall(sessionId: string): string {
+    if (!this.memory || !this.store) return '';
+    const state = this.store.get();
+    const recent = this.memory.relevant(state, { max: 12 });
+    const lines = recent
+      .filter((e) => e.context.tags.includes('chat') && !e.context.tags.includes(sessionId))
+      .slice(0, MEMORY_FOR_PROMPT)
+      .map((e) => `- ${e.source === 'user' ? '[user] ' : '[ai] '}${truncateMemory(e.content)}`);
+    return lines.join('\n');
   }
 
   private persist(): void {
     this.repo.save(this.state());
   }
+}
+
+function cloneSession(session: ChatSession): ChatSession {
+  return {
+    ...session,
+    prefs: { ...defaultChatPrefs(), ...session.prefs },
+    messages: session.messages.map((message) => ({ ...message })),
+  };
 }
 
 function uid(): string {
@@ -352,6 +456,17 @@ function deriveTitle(text: string): string {
   return t.length > 40 ? `${t.slice(0, 40)}…` : t;
 }
 
+/** Local clock time of a message, e.g. "[05:42 PM]". Lets the model know when each message was sent. */
+function formatMsgTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '[time unknown]';
+    return `[${d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}]`;
+  } catch {
+    return '[time unknown]';
+  }
+}
+
 function composeSystemPrompt(userPersona: string, extraSystemPrompt = ''): string {
   const blocks = [INTERNAL_SYSTEM_PROMPT];
   const persona = userPersona.trim();
@@ -359,4 +474,15 @@ function composeSystemPrompt(userPersona: string, extraSystemPrompt = ''): strin
   const extra = extraSystemPrompt.trim();
   if (extra) blocks.push(extra);
   return blocks.join('\n\n');
+}
+
+function stripAttachmentBlocks(text: string): string {
+  return text
+    .replace(/<attached_file>[\s\S]*?<\/attached_file>/g, '')
+    .replace(/<attached_image>[\s\S]*?<\/attached_image>/g, '')
+    .trim();
+}
+
+function truncateMemory(s: string, max = 300): string {
+  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }

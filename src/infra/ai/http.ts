@@ -30,7 +30,7 @@ export class FetchHttpClient implements HttpClient {
   private readonly defaultTimeoutMs: number;
   private readonly defaultRetries: number;
 
-  constructor(fetchFn: typeof fetch = fetch, defaultTimeoutMs = 30_000, defaultRetries = 1) {
+  constructor(fetchFn: typeof fetch = fetch, defaultTimeoutMs = 120_000, defaultRetries = 1) {
     // Binding keeps `this` = globalThis so the browser's `window.fetch` can be
     // invoked detached; otherwise Chrome throws "Illegal invocation".
     this.fetchFn = fetchFn.bind(globalThis) as typeof fetch;

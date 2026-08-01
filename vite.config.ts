@@ -8,4 +8,18 @@ export default defineConfig({
   server: {
     allowedHosts: ['.monkeycode-ai.live'],
   },
+  optimizeDeps: {
+    include: [
+      'react',
+      'react-dom',
+      'react-markdown',
+      'remark-gfm',
+      'remark-math',
+      'rehype-katex',
+      'katex',
+      'lucide-react',
+      'zod',
+      'pdfjs-dist',
+    ],
+  },
 })

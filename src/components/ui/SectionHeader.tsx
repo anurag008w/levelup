@@ -10,12 +10,12 @@ export default function SectionHeader({
   meta?: string;
 }) {
   return (
-    <div className="mb-2 flex items-center gap-2">
+    <div className="mb-2.5 flex items-center gap-2">
       {icon && <span className="shrink-0">{icon}</span>}
-      <p className="font-mono text-[11px] font-semibold tracking-[0.14em] uppercase" style={{ color: accent }}>
+      <p className="section-label" style={{ color: accent }}>
         {title}
       </p>
-      {meta && <span className="ml-auto text-[11px] text-muted">{meta}</span>}
+      {meta && <span className="ml-auto text-xs font-medium text-muted">{meta}</span>}
     </div>
   );
 }
