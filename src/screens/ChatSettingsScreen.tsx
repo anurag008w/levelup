@@ -4,6 +4,7 @@ import type { ChatSettings } from '../core/domain/state';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
 import { haptic } from '../lib/haptics';
+import { INTERNAL_SYSTEM_PROMPT } from '../core/domain/chat';
 
 interface ChatSettingsScreenProps {
   state: AppState;
@@ -188,7 +189,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
         <SectionHeader
           icon={<Bot size={14} color="var(--color-text)" />}
           accent="var(--color-text)"
-          title="System Prompt"
+          title="Editable System Persona"
         />
 
         <div className="gradient-border rounded-[1.25rem] p-px">
@@ -197,16 +198,16 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
               className="field min-h-[120px] resize-none"
               value={chat.systemPrompt}
               onChange={(e) => updateChat({ systemPrompt: e.target.value })}
-              placeholder="You are a helpful JEE preparation assistant..."
+              placeholder="Divya coach persona, tone aur LaTeX rules..."
             />
             <div className="mt-2 flex items-center justify-between">
               <span className="text-[10px] text-muted">{chat.systemPrompt.length} characters</span>
               <button
                 className="btn btn-ghost text-xs"
-                onClick={() => updateChat({ systemPrompt: 'You are a helpful JEE preparation assistant. Be concise and focused.' })}
+                onClick={() => updateChat({ systemPrompt: INTERNAL_SYSTEM_PROMPT })}
               >
                 <Trash2 size={12} className="mr-1" />
-                Reset
+                Reset Divya
               </button>
             </div>
           </div>

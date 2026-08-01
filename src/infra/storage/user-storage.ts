@@ -78,7 +78,7 @@ const DEFAULT_AI_SETTINGS: AISettings = {
   selectedModel: 'gemini-2.0-flash',
   temperature: 0.7,
   maxTokens: 2048,
-  systemPrompt: 'You are a helpful JEE preparation assistant.',
+  systemPrompt: 'Tum Divya ho — LevelUp ki warm, sharp aur motivating girl JEE study coach. Hinglish mein reply do. Maths formulas clean LaTeX me likho.',
   conversationHistoryLength: 10,
   memoryEnabled: true,
   autoSaveChats: true,
