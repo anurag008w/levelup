@@ -48,7 +48,13 @@ export function normalizeState(raw: unknown): AppState {
     summaries: Array.isArray(r.summaries) ? r.summaries : [],
     aiSettings:
       isRecord(r.aiSettings) && isRecord((r.aiSettings as { providers?: unknown }).providers)
-        ? (r.aiSettings as unknown as AppState['aiSettings'])
+        ? {
+            ...base.aiSettings,
+            ...(r.aiSettings as Partial<AppState['aiSettings']>),
+            chat: isRecord((r.aiSettings as { chat?: unknown }).chat)
+              ? { ...base.aiSettings.chat, ...((r.aiSettings as { chat: unknown }).chat as Partial<AppState['aiSettings']['chat']>) }
+              : base.aiSettings.chat,
+          }
         : base.aiSettings,
     dynamicTaskBank: Array.isArray(r.dynamicTaskBank) ? r.dynamicTaskBank : [],
     restDays: Array.isArray(r.restDays) ? r.restDays : [],

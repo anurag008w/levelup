@@ -17,6 +17,41 @@ export interface AiSettings {
   modelCache: Record<string, ModelInfo[]>;
   /** Whether the AI layer participates in planning (master switch). */
   aiEnabled: boolean;
+  /** Chat-specific settings */
+  chat: ChatSettings;
+}
+
+/** Global AI chat settings */
+export interface ChatSettings {
+  /** Response creativity (0-1) */
+  temperature: number;
+  /** Max response length */
+  maxTokens: number;
+  /** Custom system prompt */
+  systemPrompt: string;
+  /** Remember conversation context */
+  memoryEnabled: boolean;
+  /** Save chats to history */
+  autoSaveChats: boolean;
+  /** Number of past messages to remember */
+  conversationHistoryLength: number;
+  /** Include journey context in prompts */
+  includeJourneyContext: boolean;
+  /** Show thinking process */
+  showThinking: boolean;
+}
+
+export function defaultChatSettings(): ChatSettings {
+  return {
+    temperature: 0.7,
+    maxTokens: 2048,
+    systemPrompt: 'You are a helpful JEE preparation assistant. Be concise and focused.',
+    memoryEnabled: true,
+    autoSaveChats: true,
+    conversationHistoryLength: 10,
+    includeJourneyContext: true,
+    showThinking: false,
+  };
 }
 
 export interface AppState {
@@ -50,7 +85,13 @@ export interface AppState {
 }
 
 export function defaultAiSettings(): AiSettings {
-  return { providers: {}, activeProviderId: null, modelCache: {}, aiEnabled: true };
+  return { 
+    providers: {}, 
+    activeProviderId: null, 
+    modelCache: {}, 
+    aiEnabled: true,
+    chat: defaultChatSettings(),
+  };
 }
 
 export function emptyAppState(): AppState {
