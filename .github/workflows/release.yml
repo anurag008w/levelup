@@ -1,17 +1,16 @@
 name: Release
 
-# ONLY MANUAL TRIGGER - No automatic releases
+# Manual trigger OR tag push (format: vYYYY.MM.DD)
 on:
   workflow_dispatch:
     inputs:
       version:
         description: "Version tag (e.g., v2026.08.01)"
-        required: true
-        default: ""
-      message:
-        description: "Release message (optional)"
         required: false
         default: ""
+  push:
+    tags:
+      - "v[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]"
 
 permissions:
   contents: write
@@ -34,16 +33,19 @@ jobs:
       - name: Validate version
         id: version
         run: |
-          VERSION="${{ github.event.inputs.version }}"
-          
-          # Auto-generate if empty
-          if [[ -z "$VERSION" ]]; then
-            VERSION="v$(date +%Y.%m.%d)"
-          fi
-          
-          # Ensure it starts with 'v'
-          if [[ ! "$VERSION" =~ ^v ]]; then
-            VERSION="v$VERSION"
+          # Get version from tag push or manual input
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+            # Auto-generate if empty
+            if [[ -z "$VERSION" ]]; then
+              VERSION="v$(date +%Y.%m.%d)"
+            fi
+            # Ensure it starts with 'v'
+            if [[ ! "$VERSION" =~ ^v ]]; then
+              VERSION="v$VERSION"
+            fi
           fi
           
           echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
