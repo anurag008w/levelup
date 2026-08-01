@@ -288,6 +288,16 @@ export default function ChatScreen() {
     setStatus('');
     const controller = new AbortController();
     abortRef.current = controller;
+
+    // Convert DraftAttachment to ChatAttachment for LLM
+    const chatAttachments: { id: string; name: string; kind: 'text' | 'image' | 'binary'; previewUrl?: string }[] = 
+      pendingAttachments.map(a => ({
+        id: a.id,
+        name: a.name,
+        kind: a.kind,
+        previewUrl: a.previewUrl,
+      }));
+
     const pending = container.chat.send(
       sessionId,
       text,
@@ -295,6 +305,7 @@ export default function ChatScreen() {
       controller.signal,
       (s) => setStatus(s),
       (reasoning) => setStreamReasoning((prev) => prev + reasoning),
+      chatAttachments,
     );
     // chat.send() pushes the user message synchronously before its first await,
     // so re-read sessions now — the user's own message appears immediately

@@ -5,6 +5,13 @@ import type { ThinkingLevel } from './llm';
 
 export type ChatRole = 'user' | 'assistant';
 
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  kind: 'text' | 'image' | 'binary';
+  previewUrl?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
@@ -18,6 +25,8 @@ export interface ChatMessage {
   tool?: string;
   /** True when generation was stopped by the user mid-stream. */
   stopped?: boolean;
+  /** Attachments for this message (images, PDFs, etc.) */
+  attachments?: ChatAttachment[];
 }
 
 export interface ChatPreferences {

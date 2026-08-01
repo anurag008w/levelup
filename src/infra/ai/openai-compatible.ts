@@ -106,9 +106,22 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
+    // Convert ContentPart arrays to OpenAI format
+    const messages = request.messages.map(msg => {
+      if (typeof msg.content === 'string') return msg;
+      return {
+        ...msg,
+        content: msg.content.map(part => {
+          if (part.type === 'text') return { type: 'text', text: part.text };
+          if (part.type === 'image') return { type: 'image_url', image_url: { url: part.image, alt: part.alt } };
+          return part;
+        })
+      };
+    });
+
     const body = {
       model: request.model ?? this.config.model,
-      messages: request.messages,
+      messages,
       temperature: request.temperature ?? this.config.temperature,
       max_tokens: request.maxTokens ?? this.config.maxTokens,
       stream: false,
@@ -144,9 +157,22 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   async stream(request: LLMRequest): Promise<LLMResponse> {
+    // Convert ContentPart arrays to OpenAI format
+    const messages = request.messages.map(msg => {
+      if (typeof msg.content === 'string') return msg;
+      return {
+        ...msg,
+        content: msg.content.map(part => {
+          if (part.type === 'text') return { type: 'text', text: part.text };
+          if (part.type === 'image') return { type: 'image_url', image_url: { url: part.image, alt: part.alt } };
+          return part;
+        })
+      };
+    });
+
     const body = {
       model: request.model ?? this.config.model,
-      messages: request.messages,
+      messages,
       temperature: request.temperature ?? this.config.temperature,
       max_tokens: request.maxTokens ?? this.config.maxTokens,
       stream: true,

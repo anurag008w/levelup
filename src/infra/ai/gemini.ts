@@ -80,9 +80,21 @@ export class GeminiProvider implements LLMProvider {
     for (const msg of request.messages) {
       if (msg.role === 'system') {
         if (!systemInstruction) systemInstruction = { parts: [] };
-        systemInstruction.parts.push({ text: msg.content });
+        const text = typeof msg.content === 'string' ? msg.content : msg.content.map(p => p.type === 'text' ? p.text : '').join('\n');
+        systemInstruction.parts.push({ text });
       } else if (msg.content) {
-        contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
+        const parts: { text?: string; inlineData?: { mimeType: string; data: string } }[] = [];
+        if (typeof msg.content === 'string') {
+          parts.push({ text: msg.content });
+        } else {
+          for (const part of msg.content) {
+            if (part.type === 'text') parts.push({ text: part.text });
+            if (part.type === 'image') parts.push({ inlineData: { mimeType: 'image/jpeg', data: part.image.split(',')[1] } });
+          }
+        }
+        if (parts.length > 0) {
+          contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts });
+        }
       }
     }
     const maxTokens = request.maxTokens ?? this.config.maxTokens;

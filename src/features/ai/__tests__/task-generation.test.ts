@@ -148,7 +148,11 @@ describe('TaskGenerationService', () => {
     const svc = new TaskGenerationService(llm, makeBank([]), makeHabits());
     const result = await svc.generate(makeState(), { intent: 'electrostatics revision' });
     expect(calls).toHaveLength(2);
-    expect(calls[1].messages.some((m) => m.content.includes('ONLY the JSON object now'))).toBe(true);
+    const secondCall = calls[1];
+    expect(secondCall.messages.some((m) => {
+      const content = typeof m.content === 'string' ? m.content : '';
+      return content.includes('ONLY the JSON object now');
+    })).toBe(true);
     expect(calls.every((r) => r.thinking === 'off')).toBe(true);
     expect(result.source).toBe('ai');
     expect(result.entry.title).toBe('Electrostatics revision');
