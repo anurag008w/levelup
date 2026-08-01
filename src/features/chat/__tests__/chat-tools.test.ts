@@ -193,6 +193,95 @@ describe('ChatToolsService', () => {
     expect((await planDay6).summary).not.toContain('Chat se add hua task');
   });
 
+  it('addTask applies provided full metadata and exposes it in the plan', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    await tools.run({
+      action: 'addTask',
+      day: 5,
+      intent: 'chat se task',
+      durationMin: 45,
+      description: 'Custom thermodynamics practice',
+      difficulty: 4,
+      energyLevel: 'high',
+      tags: ['physics', 'thermo'],
+      taskType: 'Advanced',
+      revisionSuitability: 0.7,
+      backlogSuitability: 0.3,
+      thinkingSkills: ['analysis', 'verification'],
+      jeeRelevance: { subject: 'physics', score: 0.9 },
+    });
+    const entry = store.get().dynamicTaskBank.find((e) => e.id === 'ai-chat-test');
+    expect(entry?.description).toBe('Custom thermodynamics practice');
+    expect(entry?.difficulty).toBe(4);
+    expect(entry?.energyLevel).toBe('high');
+    expect(entry?.tags).toEqual(['physics', 'thermo']);
+    expect(entry?.taskType).toBe('Advanced');
+    expect(entry?.thinkingSkills).toEqual(['analysis', 'verification']);
+    const plan = await tools.run({ action: 'getPlan', day: 5 });
+    expect(plan.summary).toContain('difficulty:4/5');
+    expect(plan.summary).toContain('subject:physics');
+  });
+
+  it('editTask fails without any concrete edit field so the AI can retry with full info', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const result = await tools.run({ action: 'editTask', day: 1, taskId: 'd1_t1' });
+    expect(result.ok).toBe(false);
+    expect(result.summary).toContain('edit ke liye');
+    expect(result.missingTaskIdDays).toEqual([1]);
+  });
+
+  it('creates and activates blocks while updating post-journey extension days', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const result = await tools.run({
+      action: 'createBlock',
+      name: 'Physics Mastery',
+      description: 'Thermo and mechanics focus',
+      days: 12,
+      focusAreas: ['physics'],
+      difficulty: 'hard',
+    });
+    expect(result.ok).toBe(true);
+    const block = store.get().postJourney.customPhases[0];
+    expect(block.name).toBe('Physics Mastery');
+    expect(block.description).toBe('Thermo and mechanics focus');
+    expect(block.dayStart).toBe(91);
+    expect(block.dayEnd).toBe(102);
+    expect(store.get().postJourney.activeCustomPhaseId).toBe(block.id);
+    expect(store.get().postJourney.extensionDays).toBe(12);
+    expect(store.get().postJourney.journeyComplete).toBe(true);
+  });
+
+  it('edits, extends, lists, and deletes active blocks safely', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    await tools.run({ action: 'createBlock', name: 'Physics Block', days: 7, focusAreas: ['physics'], difficulty: 'medium' });
+    const blockId = store.get().postJourney.customPhases[0].id;
+
+    const edit = await tools.run({ action: 'editBlock', blockId, name: 'Hard Physics Block', days: 10, habits: ['HCV drills'], goals: ['Finish mechanics'], difficulty: 'hard' });
+    expect(edit.ok).toBe(true);
+    expect(store.get().postJourney.customPhases[0]).toMatchObject({ name: 'Hard Physics Block', dayStart: 91, dayEnd: 100, difficulty: 'hard' });
+
+    const extend = await tools.run({ action: 'extendBlock', blockId, days: 5 });
+    expect(extend.ok).toBe(true);
+    expect(store.get().postJourney.customPhases[0].dayEnd).toBe(105);
+    expect(store.get().postJourney.extensionDays).toBe(15);
+
+    const list = await tools.run({ action: 'listBlocks' });
+    expect(list.summary).toContain(blockId);
+    expect(list.summary).toContain('Hard Physics Block');
+
+    const preview = await tools.run({ action: 'deleteBlock', blockId });
+    expect(preview.requiresConfirmation).toBe(true);
+    const deleted = await tools.run({ action: 'deleteBlock', blockId, confirmed: true });
+    expect(deleted.ok).toBe(true);
+    expect(store.get().postJourney.customPhases).toHaveLength(0);
+    expect(store.get().postJourney.activeCustomPhaseId).toBeNull();
+    expect(store.get().postJourney.extensionDays).toBe(0);
+  });
+
   it('removeTask hides a built-in task for one day only; the bank entry is untouched', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
@@ -333,7 +422,7 @@ describe('ChatToolsService', () => {
         source: 'ai',
       };
     };
-    const result = await tools.run({ action: 'bulkAddTasks', day: 3, intents: ['pehla', 'bogus', 'dusra'] });
+    const result = await tools.run({ action: 'bulkAddTasks', day: 3, intents: ['pehla', 'bogus', 'dusra'], durationMin: 20 });
     expect(result.ok).toBe(true);
     expect(result.summary).toContain('Added 2 task(s)');
     expect(result.summary).toContain('generate nahi ho paye');
@@ -349,7 +438,7 @@ describe('ChatToolsService', () => {
     taskGeneration.generate = async () => {
       throw new Error('generate failed');
     };
-    const result = await tools.run({ action: 'bulkAddTasks', day: 3, intents: ['a', 'b'] });
+    const result = await tools.run({ action: 'bulkAddTasks', day: 3, intents: ['a', 'b'], durationMin: 20 });
     expect(result.ok).toBe(false);
     expect(result.summary).toContain('koi task add nahi ho saka');
   });
@@ -459,7 +548,7 @@ describe('ChatService tool retry + reasoning', () => {
       isConfigured: () => true,
       complete: async (): Promise<LLMResponse> => {
         calls += 1;
-        if (calls === 1) return { text: '{"actions":[{"action":"addTask","day":3,"intent":"pehla"},{"action":"editTask","day":3,"taskId":"bad","durationMin":25}]}', model: 'a' };
+        if (calls === 1) return { text: '{"actions":[{"action":"addTask","day":3,"intent":"pehla","durationMin":20},{"action":"editTask","day":3,"taskId":"bad","durationMin":25}]}', model: 'a' };
         return { text: 'koi tool nahi, bas prose', model: 'a' };
       },
       stream: async (req: LLMRequest): Promise<LLMResponse> => {
@@ -549,10 +638,10 @@ describe('ChatService tool retry + reasoning', () => {
     const { tools } = makeTools(store);
     expect(
       tools.parseTools(
-        '{"actions":[{"action":"addTask","day":5,"intent":"maths"},{"action":"removeTask","day":5,"taskId":"d1_t1","confirmed":true}]}',
+        '{"actions":[{"action":"addTask","day":5,"intent":"maths","durationMin":30},{"action":"removeTask","day":5,"taskId":"d1_t1","confirmed":true}]}',
       ),
     ).toEqual([
-      { action: 'addTask', day: 5, intent: 'maths' },
+      { action: 'addTask', day: 5, intent: 'maths', durationMin: 30 },
       { action: 'removeTask', day: 5, taskId: 'd1_t1', confirmed: true },
     ]);
     expect(tools.parseTools('[{"action":"markDone","day":3,"taskId":"d1_t2"}]')).toEqual([
@@ -561,6 +650,7 @@ describe('ChatService tool retry + reasoning', () => {
     expect(tools.parseTools('ok so {"actions":[{"action":"getPlan","day":9}]} done')).toEqual([
       { action: 'getPlan', day: 9 },
     ]);
+    expect(tools.parseTools('{"actions":[{"action":"addTask","day":5,"intent":"maths"},{"action":"removeTask","day":5,"taskId":"d1_t1","confirmed":true}]}')).toEqual([]);
     expect(tools.parseTools('koi json nahi')).toEqual([]);
   });
 
