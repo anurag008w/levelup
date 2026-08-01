@@ -21,6 +21,19 @@ export function useAppState() {
   const [adminUnlocked, setAdminUnlockedState] = useState<boolean>(() => isAdminUnlocked());
   const [adminDay, setAdminDayState] = useState<number | null>(null);
 
+  // Listen for external store updates (e.g., from chat tools) and sync state
+  useEffect(() => {
+    let lastState = container.store.get();
+    const checkInterval = setInterval(() => {
+      const currentState = container.store.get();
+      if (currentState !== lastState) {
+        lastState = currentState;
+        setState(currentState);
+      }
+    }, 100); // Check every 100ms for external changes
+    return () => clearInterval(checkInterval);
+  }, []);
+
   // Keep "today" fresh if the app is left open across midnight
   useEffect(() => {
     const id = setInterval(() => setRealToday(todayISO()), 60 * 1000);
