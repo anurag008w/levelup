@@ -1,5 +1,5 @@
 import { Suspense, useState, lazy } from 'react';
-import { Bot, Check, ChevronRight, Plug, RefreshCw, Settings2, ShieldCheck, Trash2, Wifi, WifiOff } from 'lucide-react';
+import { Check, ChevronRight, KeyRound, Plug, RefreshCw, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Wifi, WifiOff } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ProviderConfig, ModelInfo } from '../core/domain/llm';
 import { container } from '../di/container';
@@ -59,31 +59,34 @@ export default function AISettingsScreen({ state, update }: { state: AppState; u
   return (
     <div className="screen fade-up">
       <ScreenHeader
-        eyebrow="AI ENGINE"
-        title="AI Settings"
-        subtitle="Plan recommendations, memory aur daily summaries ke liye provider."
+        eyebrow="CONTROL CENTER"
+        title="Settings"
+        subtitle="AI planning, chat memory aur provider connections ek premium command center mein."
       />
 
-      {/* Master AI switch */}
-      <div className="gradient-border mb-4 rounded-[1.25rem] p-px">
-        <div className="flex items-center justify-between gap-3 rounded-[calc(1.25rem-1px)] bg-panel p-4">
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(245,179,103,0.12)' }}>
-              <Bot size={18} color="var(--color-light)" />
+      <section className="relative mb-4 overflow-hidden rounded-[1.7rem] border border-border bg-panel p-4 shadow-raised">
+        <div className="absolute -right-16 -top-20 h-44 w-44 rounded-full bg-l/10 blur-3xl" aria-hidden="true" />
+        <div className="relative flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <span className="badge mb-3" style={{ backgroundColor: aiEnabled ? 'rgba(52,211,153,0.13)' : 'rgba(97,112,143,0.18)', color: aiEnabled ? 'var(--color-success)' : 'var(--color-muted)' }}>
+              <Sparkles size={11} /> {aiEnabled ? 'AI online' : 'Manual mode'}
             </span>
-            <div>
-              <p className="font-display text-[15px] font-bold">AI Planning</p>
-              <p className="text-xs leading-snug text-muted">Band karo to deterministic plans chalti hain.</p>
-            </div>
+            <h2 className="font-display text-2xl font-bold leading-tight">Personalization that stays in your control.</h2>
+            <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted">Provider, model, memory aur chat behavior ko tune karo. Disable karne par app stable deterministic planning use karega.</p>
           </div>
-          <label className="toggle">
+          <label className="toggle mt-1" title="Toggle AI planning">
             <input type="checkbox" checked={aiEnabled} onChange={(e) => setAiEnabled(e.target.checked)} aria-label="Toggle AI planning" />
             <span className="track">
               <span className="thumb" />
             </span>
           </label>
         </div>
-      </div>
+        <div className="relative mt-4 grid grid-cols-3 gap-2">
+          <MiniStat label="Providers" value={String(providers.length)} />
+          <MiniStat label="Enabled" value={String(providers.filter((p) => p.enabled).length)} />
+          <MiniStat label="Active" value={effectiveActive ? 'Set' : 'None'} />
+        </div>
+      </section>
 
       {hiddenEnabled && (
         <div className="card mb-4 flex items-start gap-2.5 p-3.5 text-sm text-muted">
@@ -94,24 +97,17 @@ export default function AISettingsScreen({ state, update }: { state: AppState; u
         </div>
       )}
 
-      {/* Chat Settings Link */}
-      <button
-        type="button"
-        onClick={() => setShowChatSettings(true)}
-        className="gradient-border mb-4 w-full rounded-[1.25rem] p-px text-left"
-      >
-        <div className="flex items-center justify-between rounded-[calc(1.25rem-1px)] bg-panel p-4">
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(79,209,197,0.12)' }}>
-              <Settings2 size={18} color="var(--color-l)" />
-            </span>
-            <div>
-              <p className="font-display text-[15px] font-bold">Chat Settings</p>
-              <p className="text-xs leading-snug text-muted">Memory, temperature, system prompt</p>
-            </div>
+      <button type="button" onClick={() => setShowChatSettings(true)} className="card card-press mb-4 flex w-full items-center justify-between gap-3 p-4 text-left">
+        <div className="flex items-center gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
+            <SlidersHorizontal size={19} />
+          </span>
+          <div>
+            <p className="font-display text-[15px] font-bold">Chat Experience</p>
+            <p className="text-xs leading-snug text-muted">Memory, temperature, system prompt aur coaching tone.</p>
           </div>
-          <ChevronRight size={18} className="text-muted" />
         </div>
+        <ChevronRight size={18} className="text-muted" />
       </button>
 
       <div className="mb-2.5">
@@ -151,6 +147,15 @@ export default function AISettingsScreen({ state, update }: { state: AppState; u
       ))}
 
       <AddProviderForm onAdd={(config) => upsert(config)} />
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-bg/50 p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-dim">{label}</p>
+      <p className="mt-1 font-display text-lg font-bold">{value}</p>
     </div>
   );
 }
@@ -200,15 +205,15 @@ function ProviderCard({
   const zenCorsHint = isZenId(config.id) && (!!modelsError || healthMsg !== null);
 
   return (
-    <div className="card mb-3 p-4" style={{ borderColor: active ? 'rgba(79,209,197,0.5)' : 'var(--color-border)' }}>
-      {/* header */}
+    <div className="gradient-border mb-3 rounded-[1.35rem] p-px" style={{ background: active ? undefined : 'var(--color-border)' }}>
+      <div className="rounded-[calc(1.35rem-1px)] bg-panel p-4">
       <div className="mb-4 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2.5">
           <span
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
             style={{ backgroundColor: active ? 'rgba(79,209,197,0.14)' : 'var(--color-panel-raised)' }}
           >
-            <Bot size={16} color={active ? 'var(--color-l)' : 'var(--color-muted)'} />
+            {active ? <Sparkles size={16} color="var(--color-l)" /> : <KeyRound size={16} color="var(--color-muted)" />}
           </span>
           <div className="min-w-0">
             <p className="truncate font-display text-[15px] font-bold">{config.label}</p>
@@ -344,6 +349,7 @@ function ProviderCard({
         )}
         {modelsError && <p className="break-words text-xs text-danger">models: {modelsError}</p>}
         {healthMsg && <p className="break-words text-xs text-danger">test: {healthMsg}</p>}
+      </div>
       </div>
     </div>
   );
