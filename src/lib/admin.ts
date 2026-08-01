@@ -1,6 +1,6 @@
 const ADMIN_USERNAME = 'anurag008_w';
 const ADMIN_PASSWORD = 'admin2008';
-const ADMIN_STORAGE_KEY = 'humanos.admin.unlocked';
+const ADMIN_STORAGE_KEY = 'levelup.admin.unlocked';
 
 /** Verifies the admin credentials. Local, personal gate — not a security boundary. */
 export function verifyAdmin(username: string, password: string): boolean {

@@ -400,7 +400,7 @@ export class ChatService {
     const messages: LLMMessage[] = [{ role: 'system', content: composeSystemPrompt(session.prefs.systemPrompt, extraSystemPrompt) }];
     if (session.prefs.includeContext) {
       const ctx = this.contextProvider();
-      if (ctx) messages.push({ role: 'system', content: `Today's Human OS context: ${ctx}` });
+      if (ctx) messages.push({ role: 'system', content: `Today's LevelUp context: ${ctx}` });
     }
     const mem = this.recall(session.id);
     if (mem) messages.push({ role: 'system', content: `Earlier conversations yaad hain (bas reference lo, repeat mat karo):\n${mem}` });
