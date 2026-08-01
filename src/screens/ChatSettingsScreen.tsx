@@ -4,7 +4,7 @@ import type { ChatSettings } from '../core/domain/state';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
 import { haptic } from '../lib/haptics';
-import { INTERNAL_SYSTEM_PROMPT } from '../core/domain/chat';
+import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT } from '../core/domain/chat';
 
 interface ChatSettingsScreenProps {
   state: AppState;
@@ -124,7 +124,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
             <Toggle
               icon={<Sparkles size={16} />}
               label="Journey Context"
-              description="AI plans mein journey context include karega"
+              description="AI prompts mein journey context include karega"
               checked={chat.includeJourneyContext}
               onChange={(v) => updateChat({ includeJourneyContext: v })}
             />
@@ -184,37 +184,57 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
         </div>
       </div>
 
-      {/* Advanced system persona */}
+      {/* Persona */}
       <div className="mb-6">
         <SectionHeader
           icon={<span className="font-mono text-xs text-text">L</span>}
           accent="var(--color-text)"
-          title="Advanced settings"
+          title="Persona"
         />
 
         <div className="gradient-border rounded-[1.25rem] p-px">
-          <details className="rounded-[calc(1.25rem-1px)] bg-panel p-4">
-            <summary className="cursor-pointer select-none text-sm font-medium text-muted marker:text-muted-dim">
-              System persona (hidden)
-            </summary>
-            <div className="mt-3">
+          <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-4">
+            <div>
+              <label className="field-label">User persona / custom instructions</label>
               <textarea
-                className="field min-h-[120px] resize-none"
-                value={chat.systemPrompt}
-                onChange={(e) => updateChat({ systemPrompt: e.target.value })}
-                placeholder="Divya coach persona, tone aur LaTeX rules..."
+                className="field min-h-[96px] resize-none"
+                value={chat.userPersona}
+                onChange={(e) => updateChat({ userPersona: e.target.value })}
+                placeholder="Blank by default — optional personal instructions yahan likho."
               />
-              <div className="mt-2 flex items-center justify-between">
-                <span className="text-[10px] text-muted">{chat.systemPrompt.length} characters</span>
-                <button
-                  className="btn btn-ghost text-xs"
-                  onClick={() => updateChat({ systemPrompt: INTERNAL_SYSTEM_PROMPT })}
-                >
-                  Reset Divya
-                </button>
-              </div>
+              <button
+                type="button"
+                className="mt-1.5 text-xs text-muted underline-offset-2 hover:text-text hover:underline"
+                onClick={() => updateChat({ userPersona: DEFAULT_USER_PERSONA })}
+              >
+                Clear user persona
+              </button>
             </div>
-          </details>
+
+            <details className="border-t border-border/70 pt-4">
+              <summary className="cursor-pointer select-none text-sm font-medium text-muted marker:text-muted-dim">
+                Advanced settings · system persona
+              </summary>
+              <div className="mt-3">
+                <label className="field-label">System persona (hidden)</label>
+                <textarea
+                  className="field min-h-[120px] resize-none"
+                  value={chat.systemPrompt}
+                  onChange={(e) => updateChat({ systemPrompt: e.target.value })}
+                  placeholder="Divya coach persona, tone, Markdown/LaTeX rules..."
+                />
+                <div className="mt-2 flex items-center justify-between">
+                  <span className="text-[10px] text-muted">{chat.systemPrompt.length} characters</span>
+                  <button
+                    className="btn btn-ghost text-xs"
+                    onClick={() => updateChat({ systemPrompt: INTERNAL_SYSTEM_PROMPT })}
+                  >
+                    Reset Divya persona
+                  </button>
+                </div>
+              </div>
+            </details>
+          </div>
         </div>
       </div>
     </div>

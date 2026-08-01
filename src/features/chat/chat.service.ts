@@ -9,7 +9,7 @@ import type { LLMMessage, LLMRequest, ThinkingLevel, ContentPart } from '../../c
 import { isAbortError } from '../../core/domain/llm';
 import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY } from '../../core/domain/chat-tools';
 import type { ChatToolResult } from '../../core/domain/chat-tools';
-import { createStreamSanitizer, sanitizeTimestampLeaks } from './leak-sanitizer';
+import { createStreamSanitizer, sanitizeAssistantLeaks } from './leak-sanitizer';
 import type { Clock } from '../../core/ports/clock';
 import type { ChatRepository, StateStore } from '../../core/ports/repositories';
 import type { LLMService } from '../ai/llm.service';
@@ -73,13 +73,13 @@ export class ChatService {
     return this.state().sessions.find((s) => s.id === id) ?? null;
   }
 
-  createSession(title = ''): ChatSession {
+  createSession(title = '', prefs: ChatPreferences = defaultChatPrefs()): ChatSession {
     const now = this.clock.now().toISOString();
     const session: ChatSession = {
       id: uid(),
       title,
       messages: [],
-      prefs: defaultChatPrefs(),
+      prefs: normalizePrefs(prefs),
       createdAt: now,
       updatedAt: now,
     };
@@ -188,7 +188,7 @@ export class ChatService {
             const assistant: ChatMessage = {
               id: uid(),
               role: 'assistant',
-              content: sanitizeTimestampLeaks(answer),
+              content: sanitizeAssistantLeaks(answer),
               createdAt: this.clock.now().toISOString(),
               model: decision.model,
             };
@@ -249,7 +249,7 @@ export class ChatService {
         const assistant: ChatMessage = {
           id: uid(),
           role: 'assistant',
-          content: sanitizeTimestampLeaks(summary.text),
+          content: sanitizeAssistantLeaks(summary.text),
           createdAt: this.clock.now().toISOString(),
           model: summary.model,
           reasoning: (summary.reasoning ?? reasoning) || undefined,
@@ -279,7 +279,7 @@ export class ChatService {
       const assistant: ChatMessage = {
         id: uid(),
         role: 'assistant',
-        content: sanitizeTimestampLeaks(resp.text),
+        content: sanitizeAssistantLeaks(resp.text),
         createdAt: this.clock.now().toISOString(),
         model: resp.model,
         reasoning: (resp.reasoning ?? reasoning) || undefined,
@@ -292,7 +292,7 @@ export class ChatService {
           const assistant: ChatMessage = {
             id: uid(),
             role: 'assistant',
-            content: partial,
+            content: sanitizeAssistantLeaks(partial),
             createdAt: this.clock.now().toISOString(),
             model: undefined,
             stopped: true,

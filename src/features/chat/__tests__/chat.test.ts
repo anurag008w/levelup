@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { AppState } from '../../../core/domain/state';
 import { emptyAppState } from '../../../core/domain/state';
 import type { ChatRepository } from '../../../core/ports/repositories';
-import type { ChatStoreState } from '../../../core/domain/chat';
+import { defaultChatPrefs, type ChatStoreState } from '../../../core/domain/chat';
 import type { LLMProvider, ProviderError, LLMResponse, HealthCheckResult, ModelInfo, LLMRequest, ProviderId } from '../../../core/domain/llm';
 import type { StateStore } from '../../../core/ports/repositories';
 import type { ProviderFactory } from '../../../infra/ai/provider-factory';
@@ -105,6 +105,25 @@ describe('ChatService', () => {
     expect(chat.listSessions().map((s) => s.id)).toEqual([s2.id, s1.id]);
     chat.deleteSession(s1.id);
     expect(chat.listSessions().map((s) => s.id)).toEqual([s2.id]);
+  });
+
+
+  it('creates sessions with supplied global chat defaults', () => {
+    const { chat } = buildService({});
+    const session = chat.createSession('', {
+      ...defaultChatPrefs(),
+      temperature: 0.2,
+      maxTokens: 1024,
+      systemPrompt: 'system-real',
+      userPersona: 'user-real',
+      includeContext: false,
+    });
+
+    expect(session.prefs.temperature).toBe(0.2);
+    expect(session.prefs.maxTokens).toBe(1024);
+    expect(session.prefs.systemPrompt).toBe('system-real');
+    expect(session.prefs.userPersona).toBe('user-real');
+    expect(session.prefs.includeContext).toBe(false);
   });
 
   it('derives a title from the first message and persists messages', async () => {
