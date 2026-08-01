@@ -52,7 +52,7 @@ export class ChatService {
   }
 
   listSessions(): ChatSession[] {
-    return this.state().sessions;
+    return this.state().sessions.map(cloneSession);
   }
 
   getSession(id: string): ChatSession | null {
@@ -235,6 +235,7 @@ export class ChatService {
       messages: this.buildMessages(session, CHAT_TOOL_INSTRUCTIONS),
       temperature: session.prefs.temperature,
       maxTokens: 500,
+      providerId: session.prefs.providerId,
       signal,
       // Decision hops must be fast, deterministic JSON — thinking only risks
       // a budget clash and prose contamination.
@@ -250,6 +251,7 @@ export class ChatService {
       messages: this.buildMessages(session, system),
       temperature: session.prefs.temperature,
       maxTokens: 500,
+      providerId: session.prefs.providerId,
       signal,
       thinking: 'off',
     };
@@ -268,7 +270,8 @@ export class ChatService {
     const request: LLMRequest = {
       messages: this.buildMessages(session, system),
       temperature: session.prefs.temperature,
-      maxTokens: 1024,
+      maxTokens: Math.max(1, Math.min(session.prefs.maxTokens ?? 2048, 8192)),
+      providerId: session.prefs.providerId,
       onDelta,
       onReasoningDelta,
       signal,
@@ -317,7 +320,8 @@ export class ChatService {
     const request: LLMRequest = {
       messages: this.buildMessages(session),
       temperature: session.prefs.temperature,
-      maxTokens: 2048,
+      maxTokens: Math.max(1, Math.min(session.prefs.maxTokens ?? 2048, 8192)),
+      providerId: session.prefs.providerId,
       onDelta,
       onReasoningDelta,
       signal,
@@ -340,6 +344,14 @@ export class ChatService {
   private persist(): void {
     this.repo.save(this.state());
   }
+}
+
+function cloneSession(session: ChatSession): ChatSession {
+  return {
+    ...session,
+    prefs: { ...defaultChatPrefs(), ...session.prefs },
+    messages: session.messages.map((message) => ({ ...message })),
+  };
 }
 
 function uid(): string {

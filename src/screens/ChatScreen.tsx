@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, Check, ChevronDown, Download, Eraser, FileText, Image, MessageSquarePlus, Paperclip, Pause, Send, Settings2, Sigma, Sparkles, User, Wrench, X } from 'lucide-react';
 import type { ChatMessage, ChatPreferences, ChatSession } from '../core/domain/chat';
+import type { ThinkingLevel } from '../core/domain/llm';
 import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT } from '../core/domain/chat';
 import type { ModelInfo } from '../core/domain/llm';
 import { container } from '../di/container';
@@ -559,6 +560,11 @@ function uid(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function clampTokens(value: number): number {
+  if (!Number.isFinite(value)) return 2048;
+  return Math.max(1, Math.min(Math.round(value), 8192));
+}
+
 function OptionsPanel({
   prefs,
   providers,
@@ -592,7 +598,8 @@ function OptionsPanel({
           ))}
         </select>
         <AddProviderForm
-          onAdd={() => {
+          onAdd={(config) => {
+            container.providerSettings.upsertProvider(config);
             onProviderAdded();
           }}
         />
@@ -634,6 +641,38 @@ function OptionsPanel({
           className="w-full accent-[var(--color-light)]"
         />
         <p className="mt-0.5 text-[10px] text-muted">Kam = precise, zyada = creative</p>
+      </div>
+
+      <div>
+        <label className="mb-1 flex items-center justify-between font-semibold text-muted">
+          <span>Max tokens</span>
+          <span className="font-mono text-light">{prefs.maxTokens ?? 2048}</span>
+        </label>
+        <input
+          type="number"
+          min={1}
+          max={8192}
+          step={128}
+          value={prefs.maxTokens ?? 2048}
+          onChange={(e) => onChange({ maxTokens: clampTokens(Number(e.target.value)) })}
+          className="field"
+        />
+        <p className="mt-0.5 text-[10px] text-muted">Response budget; 1 se 8192 tokens tak.</p>
+      </div>
+
+      <div>
+        <label className="mb-1 block font-semibold text-muted">Thinking / reasoning</label>
+        <select
+          className="field"
+          value={prefs.thinking ?? ''}
+          onChange={(e) => onChange({ thinking: (e.target.value || undefined) as ThinkingLevel | undefined })}
+        >
+          <option value="">Provider default</option>
+          <option value="off">Off</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
       </div>
 
       <div>

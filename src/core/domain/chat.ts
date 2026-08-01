@@ -26,6 +26,8 @@ export interface ChatPreferences {
   /** Model override; null = provider default. */
   model: string | null;
   temperature: number;
+  /** Maximum response tokens for normal chat replies. */
+  maxTokens: number;
   /** User-editable persona / custom instructions. Internal system prompt is not editable. */
   systemPrompt: string;
   /** Include today's plan + progress context in the request. */
@@ -73,6 +75,7 @@ export function defaultChatPrefs(): ChatPreferences {
     providerId: null,
     model: null,
     temperature: 0.7,
+    maxTokens: 2048,
     systemPrompt: DEFAULT_USER_PERSONA,
     includeContext: true,
   };
