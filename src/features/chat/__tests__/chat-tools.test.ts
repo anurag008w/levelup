@@ -424,23 +424,92 @@ describe('ChatToolsService', () => {
     };
     const result = await tools.run({ action: 'bulkAddTasks', day: 3, intents: ['pehla', 'bogus', 'dusra'], durationMin: 20 });
     expect(result.ok).toBe(true);
-    expect(result.summary).toContain('Added 2 task(s)');
-    expect(result.summary).toContain('generate nahi ho paye');
+    expect(result.summary).toContain('Added 3 task(s)');
+    expect(result.summary).toContain('local fallback se add kar diye');
     const ids = store.get().dynamicTaskBank.map((e) => e.id);
     expect(ids).toContain('ai-pehla');
     expect(ids).toContain('ai-dusra');
-    expect(ids).not.toContain('ai-bogus');
+    expect(store.get().dynamicTaskBank.map((e) => e.title)).toContain('bogus');
   });
 
-  it('bulkAddTasks fails cleanly when every intent fails to generate', async () => {
+  it('bulkAddTasks falls back to local tasks when every AI intent fails', async () => {
     const store = makeStore();
     const { tools, taskGeneration } = makeTools(store);
     taskGeneration.generate = async () => {
       throw new Error('generate failed');
     };
     const result = await tools.run({ action: 'bulkAddTasks', day: 3, intents: ['a', 'b'], durationMin: 20 });
-    expect(result.ok).toBe(false);
-    expect(result.summary).toContain('koi task add nahi ho saka');
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('Added 2 task(s)');
+    expect(store.get().dynamicTaskBank.map((t) => t.title)).toEqual(['a', 'b']);
+  });
+
+  it('accepts and runs up to 100 tool actions in one batch', async () => {
+    const store = makeStore();
+    const { tools, taskGeneration } = makeTools(store);
+    taskGeneration.generate = async (_state, input) => ({
+      entry: parseTaskBankEntry({
+        id: `ai-${input.intent}`,
+        habitId: 'h1',
+        title: input.intent,
+        description: 'added via chat tool',
+        phase: 'jee-core',
+        difficulty: 2,
+        estimatedDurationMin: input.durationMin ?? 20,
+        energyLevel: 'low',
+        tags: [],
+        prerequisites: [],
+        taskType: 'Beginner',
+        revisionSuitability: 0.2,
+        backlogSuitability: 0.2,
+        thinkingSkills: ['recall'],
+        jeeRelevance: { subject: 'physics', score: 0.5 },
+        unlockConditions: [{ type: 'day-exact', day: input.dayNumber ?? 1 }],
+        active: true,
+      }),
+      source: 'ai',
+    });
+    const actions = Array.from({ length: 100 }, (_, i) => ({ action: 'addTask' as const, day: 3, intent: `task-${i}`, durationMin: 20 }));
+    const result = await tools.runMany(actions);
+    expect(result.ok).toBe(true);
+    expect(store.get().dynamicTaskBank).toHaveLength(100);
+  });
+
+  it('parses 100-action wrappers without dropping valid actions', () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const actions = Array.from({ length: 100 }, (_, i) => ({ action: 'addTask', day: 3, intent: `task-${i}`, durationMin: 20 }));
+    expect(tools.parseTools(JSON.stringify({ actions }))).toHaveLength(100);
+    expect(tools.parseTools(JSON.stringify(actions))).toHaveLength(100);
+  });
+
+  it('smoke-tests task bank view/edit/delete tools end-to-end', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+
+    const add = await tools.run({ action: 'addTask', day: 4, intent: 'chemistry revision dummy', durationMin: 25, tags: ['chemistry'] });
+    expect(add.ok).toBe(true);
+    const taskId = store.get().dynamicTaskBank[0].id;
+
+    const allTasks = await tools.run({ action: 'getAllTasks', day: 4 });
+    expect(allTasks.ok).toBe(true);
+    expect(allTasks.summary).toContain(taskId);
+
+    const bank = await tools.run({ action: 'getTaskBank', category: 'chemistry' });
+    expect(bank.ok).toBe(true);
+    expect(bank.summary).toContain(taskId);
+
+    const edit = await tools.run({ action: 'editAnyTask', taskId, title: 'Updated chemistry revision', durationMin: 35, category: 'revision' });
+    expect(edit.ok).toBe(true);
+    expect(store.get().dynamicTaskBank[0]).toMatchObject({ title: 'Updated chemistry revision', estimatedDurationMin: 35 });
+
+    const preview = await tools.run({ action: 'deleteAnyTask', taskId });
+    expect(preview.requiresConfirmation).toBe(true);
+    expect(store.get().dynamicTaskBank).toHaveLength(1);
+
+    const deleted = await tools.run({ action: 'deleteAnyTask', taskId, confirmed: true });
+    expect(deleted.ok).toBe(true);
+    expect(store.get().dynamicTaskBank).toHaveLength(0);
   });
 });
 

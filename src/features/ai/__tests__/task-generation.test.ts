@@ -114,10 +114,13 @@ describe('TaskGenerationService', () => {
     expect(result.entry.title).toBe('Trigonometry identities');
   });
 
-  it('surfaces a validation error when AI output is not usable', async () => {
+  it('falls back locally when AI output is not usable', async () => {
     const llm = makeLLM('sorry, no JSON here');
     const svc = new TaskGenerationService(llm, makeBank([]), makeHabits());
-    await expect(svc.generate(makeState(), { intent: 'some task' })).rejects.toThrow(/no JSON/);
+    const result = await svc.generate(makeState(), { intent: 'some task', durationMin: 30 });
+    expect(result.source).toBe('ai');
+    expect(result.entry.title).toBe('some task');
+    expect(result.entry.tags).toContain('ai-fallback');
   });
 
   it('retries once with a strict correction when the first reply is prose', async () => {
@@ -158,12 +161,14 @@ describe('TaskGenerationService', () => {
     expect(result.entry.title).toBe('Electrostatics revision');
   });
 
-  it('enforces the per-day AI task cap', async () => {
+  it('uses a local fallback instead of hard-failing at the per-day AI task cap', async () => {
     const state = makeState();
-    state.dynamicTaskBank = [bankEntry({ id: 'ai-1' }), bankEntry({ id: 'ai-2' }), bankEntry({ id: 'ai-3' }), bankEntry({ id: 'ai-4' }), bankEntry({ id: 'ai-5' })];
+    state.dynamicTaskBank = Array.from({ length: 100 }, (_, i) => bankEntry({ id: `ai-${i}`, unlockConditions: [{ type: 'day-exact', day: 32 }] }));
     const llm = makeLLM('{}');
     const svc = new TaskGenerationService(llm, makeBank([]), makeHabits());
-    await expect(svc.generate(state, { intent: 'one more task' })).rejects.toThrow(/5 AI tasks/);
+    const result = await svc.generate(state, { intent: 'one more task', dayNumber: 32 });
+    expect(result.entry.title).toBe('one more task');
+    expect(result.entry.tags).toContain('ai-fallback');
   });
 
   it('passes dayNumber through to the unlock condition', async () => {
