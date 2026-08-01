@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, Lock, RotateCcw } from 'lucide-react';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Lock, RotateCcw } from 'lucide-react';
 
 /**
  * Admin-only day navigator. Lets the unlocked user preview any day of the
@@ -35,15 +35,25 @@ export default function DaySwitcher({
     onJump(Math.min(Math.max(n, 1), totalDays));
   }
 
+  const clampedDraft = () => {
+    const n = parseInt(draft, 10);
+    if (Number.isNaN(n)) return dayNumber;
+    return Math.min(Math.max(n, 1), totalDays);
+  };
+
   return (
-    <div className="card mb-4 p-3.5" style={{ borderColor: 'rgba(107,138,253,0.35)' }}>
-      <div className="mb-2 flex items-center justify-between">
+    <div className="card mb-4 overflow-hidden p-0" style={{ borderColor: 'rgba(107,138,253,0.35)' }}>
+      <div className="bg-[rgba(107,138,253,0.12)] px-3.5 py-3">
+        <div className="mb-1.5 flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--color-peak)' }}>
           <CalendarDays size={13} /> Admin view
         </span>
         <span className="font-mono text-[11px] text-muted">{dateLabel}</span>
+        </div>
+        <p className="text-[11px] leading-relaxed text-muted">Day number type karo, phir Confirm dabao — exact selected day open hoga.</p>
       </div>
 
+      <div className="p-3.5">
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -64,7 +74,6 @@ export default function DaySwitcher({
             min={1}
             max={totalDays}
             onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
             onKeyDown={(e) => {
               if (e.key === 'Enter') commit();
             }}
@@ -84,13 +93,17 @@ export default function DaySwitcher({
         </button>
       </div>
 
-      <div className="mt-2.5 flex gap-2">
-        <button type="button" className="btn btn-ghost min-h-8 flex-1 px-2 py-1 text-xs" onClick={onToday}>
+      <div className="mt-2.5 grid grid-cols-[1fr_1fr_auto] gap-2">
+        <button type="button" className="btn btn-primary min-h-8 px-2 py-1 text-xs font-bold" onClick={() => onJump(clampedDraft())}>
+          <Check size={13} /> Confirm
+        </button>
+        <button type="button" className="btn btn-ghost min-h-8 px-2 py-1 text-xs" onClick={onToday}>
           <RotateCcw size={13} /> Aaj (real date)
         </button>
         <button type="button" className="btn btn-ghost min-h-8 px-2.5 py-1 text-xs" style={{ color: 'var(--color-danger)' }} onClick={onLock}>
           <Lock size={13} /> Lock
         </button>
+      </div>
       </div>
     </div>
   );

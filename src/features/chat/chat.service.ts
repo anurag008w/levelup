@@ -1,4 +1,4 @@
-import { INTERNAL_SYSTEM_PROMPT } from '../../core/domain/chat';
+import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT } from '../../core/domain/chat';
 import type { ChatMessage, ChatSession, ChatPreferences, ChatStoreState, ChatAttachment } from '../../core/domain/chat';
 import {
   MAX_MESSAGES_PER_SESSION,
@@ -398,7 +398,8 @@ export class ChatService {
   }
 
   private async buildMessages(session: ChatSession, extraSystemPrompt = ''): Promise<LLMMessage[]> {
-    const messages: LLMMessage[] = [{ role: 'system', content: composeSystemPrompt(session.prefs.systemPrompt, extraSystemPrompt) }];
+    const prefs = normalizePrefs(session.prefs);
+    const messages: LLMMessage[] = [{ role: 'system', content: composeSystemPrompt(prefs.systemPrompt, prefs.userPersona, extraSystemPrompt) }];
     if (session.prefs.includeContext) {
       const ctx = this.contextProvider();
       if (ctx) messages.push({ role: 'system', content: `Today's LevelUp context: ${ctx}` });
@@ -534,7 +535,7 @@ export class ChatService {
 function cloneSession(session: ChatSession): ChatSession {
   return {
     ...session,
-    prefs: { ...defaultChatPrefs(), ...session.prefs },
+    prefs: normalizePrefs(session.prefs),
     messages: session.messages.map((message) => ({ ...message })),
   };
 }
@@ -560,10 +561,28 @@ function formatMsgTime(iso: string): string {
   }
 }
 
-function composeSystemPrompt(userPersona: string, extraSystemPrompt = ''): string {
-  const blocks = [INTERNAL_SYSTEM_PROMPT];
+function normalizePrefs(prefs: Partial<ChatPreferences>): ChatPreferences {
+  const defaults = defaultChatPrefs();
+  const merged = { ...defaults, ...prefs };
+
+  // Sessions created before editable system persona used `systemPrompt` as the
+  // user persona. Keep non-default custom text as user instructions, while new
+  // sessions get Divya as the editable system persona and a blank user persona.
+  const legacyDefault = 'Mere JEE coach bano. Hinglish mein concise, direct aur step-by-step samjhao. Maths ke answers LaTeX + short explanation ke saath do.';
+  const legacySystemPrompt = prefs.systemPrompt;
+  const hasLegacyUserPersona = prefs.userPersona === undefined && !!legacySystemPrompt && legacySystemPrompt !== INTERNAL_SYSTEM_PROMPT;
+  if (hasLegacyUserPersona) {
+    merged.systemPrompt = INTERNAL_SYSTEM_PROMPT;
+    merged.userPersona = legacySystemPrompt === legacyDefault ? DEFAULT_USER_PERSONA : legacySystemPrompt;
+  }
+
+  return merged;
+}
+
+function composeSystemPrompt(systemPersona: string, userPersona = '', extraSystemPrompt = ''): string {
+  const blocks = [systemPersona.trim() || INTERNAL_SYSTEM_PROMPT];
   const persona = userPersona.trim();
-  if (persona) blocks.push(`User-editable persona / custom instructions:\n${persona}`);
+  if (persona) blocks.push(`User persona / custom instructions:\n${persona}`);
   const extra = extraSystemPrompt.trim();
   if (extra) blocks.push(extra);
   return blocks.join('\n\n');
