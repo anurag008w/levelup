@@ -86,18 +86,19 @@ jobs:
         run: npx cap sync android
 
       - name: Setup signing
+        id: setup_signing
         env:
           KEYSTORE: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           if [[ -n "$KEYSTORE" ]]; then
             echo "$KEYSTORE" | base64 -d > android/app/release-keystore.jks
-            cat > android/keystore.properties << EOF
-storeFile=release-keystore.jks
-storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-keyAlias=levelup
-keyPassword=${{ secrets.KEY_PASSWORD }}
-storeType=pkcs12
-EOF
+            echo "storeFile=release-keystore.jks" > android/keystore.properties
+            echo "storePassword=$KEYSTORE_PASSWORD" >> android/keystore.properties
+            echo "keyAlias=levelup" >> android/keystore.properties
+            echo "keyPassword=$KEY_PASSWORD" >> android/keystore.properties
+            echo "storeType=pkcs12" >> android/keystore.properties
             echo "SIGNED=true" >> $GITHUB_OUTPUT
           else
             echo "SIGNED=false" >> $GITHUB_OUTPUT
