@@ -244,10 +244,10 @@ describe('GeminiProvider', () => {
     });
     const provider = new GeminiProvider({ id: 'gemini', label: 'Gemini', apiKey: 'gk', model: 'gemini-2.5-flash', enabled: true }, http);
     await provider.complete({ messages: [], thinking: 'off' });
-    const config = (captured!.body as { generationConfig: { thinkingConfig: { thinkingBudget: number } } }).generationConfig;
-    // Gemini 2.5 models default to dynamic thinking when thinkingConfig is
-    // absent; a zero budget is the only way to actually turn it off.
-    expect(config.thinkingConfig).toEqual({ thinkingBudget: 0 });
+    const config = (captured!.body as { generationConfig: { thinkingConfig?: { thinkingBudget: number } } }).generationConfig;
+    // When thinking is off, we don't send thinkingConfig to avoid errors on
+    // older models that don't support it.
+    expect(config.thinkingConfig).toBeUndefined();
   });
 
   it('clamps thinkingBudget below a small maxTokens window', async () => {

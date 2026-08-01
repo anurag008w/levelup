@@ -99,13 +99,7 @@ export class GeminiProvider implements LLMProvider {
     }
     const maxTokens = request.maxTokens ?? this.config.maxTokens;
     let thinkingConfig: { thinkingBudget: number } | undefined;
-    if (request.thinking === 'off') {
-      // Gemini 2.5-series models default to DYNAMIC thinking whenever
-      // thinkingConfig is absent — so an "off" request would silently burn the
-      // maxTokens window reasoning (tiny decision hops run on 500 tokens and
-      // came back blank/truncated). An explicit zero budget disables thinking.
-      thinkingConfig = { thinkingBudget: 0 };
-    } else if (request.thinking) {
+    if (request.thinking && request.thinking !== 'off') {
       const requested = THINKING_BUDGETS[request.thinking];
       // Gemini requires thinkingBudget < maxOutputTokens. Reserve a guaranteed
       // output window so a reasoning model never burns its whole budget
