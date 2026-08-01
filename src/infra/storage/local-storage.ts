@@ -1,21 +1,51 @@
 import type { KeyValueRepository, ModelCacheRepository } from '../../core/ports/repositories';
 import type { ModelInfo } from '../../core/domain/llm';
+import persistentStorage from './persistent-storage';
 
-export class BrowserStorage implements KeyValueRepository {
-  getItem(key: string): string | null {
-    try {
-      return window.localStorage.getItem(key);
-    } catch {
-      return null;
+// Sync wrapper for KeyValueRepository interface
+class PersistentKeyValueStore implements KeyValueRepository {
+  private cache: Map<string, string> = new Map();
+  private initialized = false;
+
+  async init() {
+    if (this.initialized) return;
+    const keys = await persistentStorage.keys();
+    for (const key of keys) {
+      const value = await persistentStorage.get<string>(key);
+      if (value !== null) {
+        this.cache.set(key, value);
+      }
     }
+    this.initialized = true;
+  }
+
+  getItem(key: string): string | null {
+    return this.cache.get(key) ?? null;
   }
 
   setItem(key: string, value: string): void {
-    try {
-      window.localStorage.setItem(key, value);
-    } catch {
-      // Storage full / unavailable — the app keeps working in-memory.
-    }
+    this.cache.set(key, value);
+    // Save async but don't wait
+    persistentStorage.set(key, value).catch(console.error);
+  }
+}
+
+export const persistentStore = new PersistentKeyValueStore();
+
+// Initialize on load
+if (typeof window !== 'undefined') {
+  persistentStore.init();
+}
+
+export class BrowserStorage implements KeyValueRepository {
+  private asyncStore: PersistentKeyValueStore = persistentStore;
+
+  getItem(key: string): string | null {
+    return this.asyncStore.getItem(key);
+  }
+
+  setItem(key: string, value: string): void {
+    this.asyncStore.setItem(key, value);
   }
 }
 
