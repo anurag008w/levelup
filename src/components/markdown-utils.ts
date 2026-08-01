@@ -32,7 +32,7 @@ export function looksLikeMarkdown(text: string): boolean {
  */
 export function unwrapMarkdownFence(text: string): string {
   const normalized = text.replace(/\r\n/g, '\n').trim();
-  const m = /^```(?:markdown|md|mdx|text|txt)?\s*\n?([\s\S]*?)\n?```\s*$/.exec(normalized);
+  const m = /^```(?:markdown|md|mdx)\s*\n([\s\S]*?)\n```\s*$/.exec(normalized);
   return m && m[1] ? m[1] : normalized;
 }
 

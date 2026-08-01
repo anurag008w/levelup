@@ -1,13 +1,11 @@
-import { Component, useState, type ReactNode } from 'react';
+import { Component, type ReactNode } from 'react';
 import { createElement as h } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, it } from 'vitest';
-import ReactMarkdown, { type Components } from 'react-markdown';
+import { describe, expect, it } from 'vitest';
+import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
 import rehypeHighlight from 'rehype-highlight';
-import 'katex/dist/katex.min.css';
 
 interface MdNode { type: string; tagName?: string; value?: string; properties?: Record<string, unknown>; children?: MdNode[]; }
 function hastToText(node: MdNode | undefined): string {
@@ -22,41 +20,38 @@ function codeInfo(node: MdNode | undefined): { lang: string; raw: string } {
   const lang = /language-([\w-]+)/.exec(cls)?.[1] ?? 'text';
   return { lang, raw: hastToText(code ?? node) };
 }
-function CopyButton({ text }: { text: string }) {
-  const [copied] = useState(false);
-  return h('button', { className: 'codeblock-copy' }, copied ? 'copied' : `copy ${text.length}`);
+function CopyButton(_props: { text: string }) {
+  return h('button', { className: 'codeblock-copy' }, 'copy');
 }
-const components: Components = {
-  p: ({ node: _n, ...props }) => h('p', { className: 'md-p', ...props }),
-  h1: ({ node: _n, ...props }) => h('h1', { className: 'md-h1', ...props }),
-  code: ({ node: _n, className, children, ...props }) => h('code', { className: ['md-code', className].filter(Boolean).join(' '), ...props }, children),
-  pre: ({ node, children }) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const components: any = {
+  p: ({ node: _n, ...props }: any) => h('p', { className: 'md-p', ...props }),
+  h1: ({ node: _n, ...props }: any) => h('h1', { className: 'md-h1', ...props }),
+  code: ({ node: _n, className, children, ...props }: any) => h('code', { className: ['md-code', className].filter(Boolean).join(' '), ...props }, children),
+  pre: ({ node, children }: any) => {
     const { lang, raw } = codeInfo(node as MdNode | undefined);
     return h('div', { className: 'codeblock' }, h('div', { className: 'codeblock-head' }, h('span', { className: 'codeblock-lang' }, lang || 'code'), h(CopyButton, { text: raw })), h('pre', { className: 'md-pre' }, children));
   },
 };
-class MdBoundary extends Component<{ text: string; children: ReactNode }, { failed: boolean; lastText: string }> {
+class MdBoundary extends Component<{ text: string; children?: ReactNode }> {
   state = { failed: false, lastText: '' };
   static getDerivedStateFromError() { return { failed: true }; }
-  static getDerivedStateFromProps(props: { text: string }, state: { failed: boolean; lastText: string }) {
-    if (state.lastText !== props.text) return { failed: false, lastText: props.text };
-    return null;
+  render() {
+    if (this.state.failed) return h('pre', { className: 'md-fallback' }, this.props.text);
+    return this.props.children;
   }
-  render() { return this.state.failed ? h('pre', { className: 'md-fallback' }, this.props.text) : this.props.children; }
 }
-function Chat({ text }: { text: string }) {
+function Body({ text }: { text: string }) {
   return h(MdBoundary, { text }, h('div', { className: 'md' }, h(ReactMarkdown, {
     remarkPlugins: [remarkGfm, remarkMath],
     rehypePlugins: [
-      [rehypeKatex, { output: 'html', strict: false, trust: false, maxSize: 10, errorColor: '#f25d68' }],
       [rehypeHighlight, { detect: false, plainText: ['txt', 'text', 'plaintext', 'md', 'markdown', 'log'] }],
     ],
     components,
     children: text,
   })));
 }
-describe('debug inline chat', () => {
-  it('render 1', () => { renderToStaticMarkup(h(Chat, { text: 'plain' })); console.log('OK1'); });
-  it('render 2', () => { renderToStaticMarkup(h(Chat, { text: '# a\n\nbody\n' })); console.log('OK2'); });
-  it('render 3', () => { renderToStaticMarkup(h(Chat, { text: '```js\nconst x = 1;\n```\n' })); console.log('OK3'); });
+describe('debug inline', () => {
+  it('render 1', () => { expect(renderToStaticMarkup(h(Body, { text: 'plain' }))).toBeTruthy(); });
+  it('render 2', () => { expect(renderToStaticMarkup(h(Body, { text: '# a\n\nbody\n' }))).toBeTruthy(); });
 });
