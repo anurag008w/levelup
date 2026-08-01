@@ -185,7 +185,7 @@ export default function ReviewScreen({
 
       {!weekDue && !monthDue && (
         <div className="card mb-4 flex items-center gap-3 p-4">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: 'rgba(52,211,153,0.14)' }}>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: 'rgba(138,154,91,0.14)' }}>
             <Check size={16} color="var(--color-success)" />
           </span>
           <p className="text-sm leading-relaxed text-muted">
@@ -248,7 +248,7 @@ export default function ReviewScreen({
               <span className="absolute left-0 top-5 h-4 w-4 rounded-full border-2 border-light bg-bg" style={{ borderColor: 'var(--color-light)' }} aria-hidden="true" />
               <div className="card p-3.5">
                 <div className="mb-1.5 flex items-center gap-2">
-                  <span className="badge" style={{ backgroundColor: 'rgba(245,179,103,0.14)', color: 'var(--color-light)' }}>
+                  <span className="badge" style={{ backgroundColor: 'rgba(201,162,39,0.14)', color: 'var(--color-light)' }}>
                     Month {r.monthNumber}
                   </span>
                   <span className="text-[10px] text-muted-dim">{r.dateISO}</span>
@@ -278,7 +278,7 @@ export default function ReviewScreen({
           >
             <div className="flex items-center justify-between rounded-[calc(1.25rem-1px)] bg-panel p-4">
               <div className="flex items-center gap-3">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(245,179,103,0.15)' }}>
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(201,162,39,0.15)' }}>
                   <Medal size={18} color="var(--color-light)" />
                 </span>
                 <div>

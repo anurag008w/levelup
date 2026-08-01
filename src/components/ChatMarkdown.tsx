@@ -202,7 +202,7 @@ export default function ChatMarkdown({ text }: { text: string }) {
   ];
   
   if (rehypeKatex) {
-    plugins.unshift([rehypeKatex, { output: 'html', strict: false, trust: false, maxSize: 100, errorColor: '#f25d68' }]);
+    plugins.unshift([rehypeKatex, { output: 'html', strict: false, trust: false, maxSize: 100, errorColor: '#7a1e1e' }]);
   }
 
   return (
