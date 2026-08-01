@@ -28,7 +28,7 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('bulkAddTasks'),
     day: z.number().int(),
-    intents: z.array(z.string().min(1)).min(1).max(6),
+    intents: z.array(z.string().min(1)).min(1).max(100),
     durationMin: z.number().int().min(1).max(600),
     tags: taskMetadataSchema.tags,
     taskType: taskMetadataSchema.taskType,
@@ -77,7 +77,7 @@ export type ChatToolAction = z.infer<typeof chatToolActionSchema>;
 
 /** Wrapper the model may emit to request several actions in one reply. */
 export const chatToolBatchSchema = z.object({
-  actions: z.array(chatToolActionSchema).min(1).max(6),
+  actions: z.array(chatToolActionSchema).min(1).max(100),
 });
 
 export type ChatToolBatch = z.infer<typeof chatToolBatchSchema>;
@@ -160,7 +160,7 @@ emit EVERY change together in an actions array, e.g.
 {"actions":[{"action":"addTask","day":5,"intent":"maths 10 questions","durationMin":30},{"action":"addTask","day":5,"intent":"thermo revision","durationMin":40},{"action":"removeTask","day":5,"taskId":"d1_t1","confirmed":true},{"action":"markDone","day":5,"taskId":"d1_t2"}]}
 Multi-action rules:
 - Do EVERYTHING the user asked for in the same reply — never execute only one of several requested changes.
-- Max 6 actions per reply. Actions run top-to-bottom and all results come back combined with task ids.
+- Max 100 actions per reply. Actions run top-to-bottom and all results come back combined with task ids.
 - Destructive/bulk actions (removeTask, bulkRemoveTasks, setDayMode, bulkMarkDone, deleteBlock, deleteAnyTask) still need "confirmed":true once the user has explicitly agreed; without it the WHOLE batch is only previewed and NOTHING is applied.
 - For a range longer than 10 days, auto-splits into multiple calls.
 
