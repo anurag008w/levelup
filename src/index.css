@@ -1596,3 +1596,86 @@ label.field-label {
     display: none;
   }
 }
+
+/* Settings popups (ChatGPT/Claude-style centered sheet) */
+.side-nav-settings-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.65rem;
+  border-radius: var(--radius-md);
+  padding: 0.55rem;
+  color: var(--color-muted);
+  transition: background-color 0.16s var(--ease-standard), color 0.16s var(--ease-standard), transform 0.14s var(--ease-standard);
+}
+.side-nav-settings-row:hover {
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--color-text);
+}
+.side-nav-settings-row:active {
+  transform: scale(0.985);
+}
+.side-nav-icon.compact {
+  height: 2rem;
+  width: 2rem;
+}
+.settings-modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: calc(1rem + env(safe-area-inset-top, 0px)) 1rem calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+.settings-modal-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 3, 3, 0.66);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+}
+.settings-modal {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: min(38rem, 100%);
+  max-height: min(42rem, calc(100svh - 2rem));
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 1.25rem;
+  background: var(--color-panel);
+  box-shadow: 0 26px 80px -28px rgba(0, 0, 0, 0.95);
+}
+.settings-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--color-border);
+  padding: 1rem 1rem 0.9rem;
+}
+.settings-modal-body {
+  overflow-y: auto;
+  padding: 1rem;
+}
+.settings-modal-hero {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-panel-raised);
+  padding: 0.85rem;
+}
+.settings-modal-avatar {
+  display: inline-flex;
+  height: 2.75rem;
+  width: 2.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(138, 154, 91, 0.14);
+  color: var(--color-l);
+}
