@@ -13,7 +13,6 @@ import {
   ImagePlus,
   MessageSquarePlus,
   MessageSquareText,
-  Mic,
   MoreHorizontal,
   NotebookPen,
   Paperclip,
@@ -58,17 +57,6 @@ interface MenuState {
   y: number;
 }
 
-interface SpeechRecognitionLike {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  start(): void;
-  stop(): void;
-  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript?: string }>> }) => void) | null;
-  onend: (() => void) | null;
-  onerror: (() => void) | null;
-}
-
 const TEXT_EXTENSIONS = new Set([
   'txt', 'md', 'markdown', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'htm', 'css', 'scss', 'less',
   'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'cs', 'go', 'rs', 'rb', 'php', 'swift', 'kt',
@@ -101,7 +89,6 @@ const ATTACH_TOOLS: { id: string; label: string; hint: string; icon: React.React
   { id: 'markdown', label: 'Markdown', hint: 'Notes → MD', icon: <NotebookPen size={20} /> },
   { id: 'camera', label: 'Camera', hint: 'Live photo', icon: <Camera size={20} /> },
   { id: 'gallery', label: 'Gallery', hint: 'Pick photo', icon: <ImagePlus size={20} /> },
-  { id: 'voice', label: 'Voice', hint: 'Bol ke bhejo', icon: <Mic size={20} /> },
   { id: 'notes', label: 'Notes', hint: 'Text files', icon: <StickyNote size={20} /> },
 ];
 
@@ -123,13 +110,11 @@ export default function ChatScreen() {
   const [showProviderPicker, setShowProviderPicker] = useState(false);
   const [catalog, setCatalog] = useState<ModelInfo[]>([]);
   const [providerCount, setProviderCount] = useState(container.providerSettings.listStoredProviders().length);
-  const [listening, setListening] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const recognitionRef = useRef<{ stop(): void } | null>(null);
 
   const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? null, [sessions, activeId]);
   const providers = useMemo(
@@ -464,9 +449,6 @@ export default function ChatScreen() {
       case 'notes':
         pickFiles('.txt,.md,.markdown,.csv,.json,.yaml,.yml,.xml,.html,.htm,.css,.scss,.less,.js,.jsx,.ts,.tsx,.py,.java,.cpp,.c,.h,.cs,.go,.rs,.rb,.php,.swift,.kt,.sh,.bash,.bat,.ps1,.sql,.toml,.ini,.cfg,.log,.tex,.env,.properties');
         break;
-      case 'voice':
-        toggleVoice();
-        break;
     }
     focusComposer();
   }
@@ -482,40 +464,6 @@ export default function ChatScreen() {
     }
   }
 
-  function toggleVoice() {
-    const w = window as unknown as Record<string, unknown>;
-    const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
-    if (typeof Ctor !== 'function') {
-      hapticError();
-      setNotice('Voice is browser me supported nahi hai');
-      return;
-    }
-    if (listening) {
-      recognitionRef.current?.stop();
-      return;
-    }
-    const rec = new (Ctor as new () => SpeechRecognitionLike)();
-    rec.lang = 'en-IN';
-    rec.interimResults = true;
-    rec.continuous = true;
-    rec.onresult = (e) => {
-      const last = e.results[e.results.length - 1];
-      const t = last[0]?.transcript ?? '';
-      if (t) setDraft((prev) => (prev.trim() ? `${prev.trim()} ${t}` : t));
-    };
-    rec.onend = () => setListening(false);
-    rec.onerror = () => setListening(false);
-    recognitionRef.current = rec;
-    try {
-      rec.start();
-      setListening(true);
-      haptic();
-      setNotice('Bolna shuru karo…');
-    } catch {
-      setListening(false);
-    }
-  }
-
   const [visibleFrom, setVisibleFrom] = useState(0);
   const windowedMessages = messages.length <= VISIBLE_MESSAGES ? messages : messages.slice(-visibleFrom || -VISIBLE_MESSAGES);
   const showEarlier = messages.length > VISIBLE_MESSAGES;
@@ -527,9 +475,6 @@ export default function ChatScreen() {
       y: Math.max(8, Math.min(e.clientY, window.innerHeight - 280)),
     });
   }
-
-  const composerText = draft.trim();
-  const showSend = composerText.length > 0 || attachments.length > 0;
 
   return (
     <div
@@ -690,7 +635,7 @@ export default function ChatScreen() {
               >
                 <Pause size={17} color="var(--color-danger)" />
               </button>
-            ) : showSend ? (
+            ) : (
               <button
                 type="button"
                 onClick={() => void send()}
@@ -698,19 +643,6 @@ export default function ChatScreen() {
                 aria-label="Send message"
               >
                 <Send size={17} color="#06201e" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={toggleVoice}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-transform active:scale-90"
-                style={{
-                  background: listening ? 'rgba(242,93,104,0.16)' : 'transparent',
-                  border: listening ? '1px solid rgba(242,93,104,0.5)' : '1px solid var(--color-border)',
-                }}
-                aria-label={listening ? 'Stop voice input' : 'Voice input'}
-              >
-                <Mic size={17} color={listening ? 'var(--color-danger)' : 'var(--color-muted)'} />
               </button>
             )}
           </div>
