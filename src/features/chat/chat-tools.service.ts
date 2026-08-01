@@ -213,6 +213,12 @@ export class ChatToolsService {
           return this.deleteBlock(state, action.blockId, action.confirmed === true);
         case 'activateBlock':
           return this.activateBlock(state, action.blockId);
+        case 'editBlock':
+          return this.editBlock(state, action);
+        case 'listBlocks':
+          return this.listBlocks(state);
+        case 'extendBlock':
+          return this.extendBlock(state, action.blockId, action.days);
       }
     } catch (err) {
       if (isAbortError(err)) throw err;
@@ -321,6 +327,106 @@ export class ChatToolsService {
     return {
       ok: true,
       summary: `✅ Activated "${block.name}"!\n\nThis block will guide your daily study sessions.\n\n📋 Today's Focus:\n${block.habits.map(h => `• ${h}`).join('\n')}\n\n🎯 Goals:\n${block.goals.map(g => `• ${g}`).join('\n')}`,
+    };
+  }
+
+  private listBlocks(state: AppState): ChatToolResult {
+    const blocks = state.postJourney?.customPhases ?? [];
+    const activeId = state.postJourney?.activeCustomPhaseId;
+
+    if (blocks.length === 0) {
+      return {
+        ok: true,
+        summary: `📋 No custom blocks yet.\n\nSay "create a 15 day physics block" to make your first block!`,
+      };
+    }
+
+    const list = blocks.map((b, i) => {
+      const isActive = b.id === activeId;
+      const status = isActive ? '🟢 ACTIVE' : '⚪';
+      const habits = b.habits.slice(0, 2).join(', ');
+      return `${i + 1}. ${status} **${b.name}** (Days ${b.dayStart}-${b.dayEnd}) [${b.difficulty}]\n   ID: ${b.id}\n   ${habits}`;
+    }).join('\n\n');
+
+    return {
+      ok: true,
+      summary: `📋 Your Custom Blocks (${blocks.length}):\n\n${list}\n\nUse block IDs above for edit/delete/activate commands.`,
+    };
+  }
+
+  private editBlock(state: AppState, action: Extract<ChatToolAction, { action: 'editBlock' }>): ChatToolResult {
+    const { blockId, name, difficulty, goals, habits } = action;
+    const blocks = state.postJourney?.customPhases ?? [];
+    const block = blocks.find(b => b.id === blockId);
+
+    if (!block) {
+      return { ok: false, summary: `Block "${blockId}" not found.` };
+    }
+
+    const updated: typeof block = {
+      ...block,
+      name: name ?? block.name,
+      difficulty: (difficulty as typeof block.difficulty) ?? block.difficulty,
+      goals: goals ?? block.goals,
+      habits: habits ?? block.habits,
+    };
+
+    const nextBlocks = blocks.map(b => b.id === blockId ? updated : b);
+
+    const next = {
+      ...state,
+      postJourney: {
+        ...state.postJourney,
+        customPhases: nextBlocks,
+      },
+    };
+
+    this.store.save(next);
+
+    const changes: string[] = [];
+    if (name) changes.push(`name → "${name}"`);
+    if (difficulty) changes.push(`difficulty → ${difficulty}`);
+    if (goals) changes.push(`${goals.length} goals`);
+    if (habits) changes.push(`${habits.length} habits`);
+
+    return {
+      ok: true,
+      summary: `✅ Updated "${updated.name}"!\n\nChanges: ${changes.join(', ')}\n\n📋 New Habits:\n${updated.habits.map(h => `• ${h}`).join('\n')}\n\n🎯 New Goals:\n${updated.goals.map(g => `• ${g}`).join('\n')}`,
+    };
+  }
+
+  private extendBlock(state: AppState, blockId: string, daysToAdd: number): ChatToolResult {
+    const blocks = state.postJourney?.customPhases ?? [];
+    const block = blocks.find(b => b.id === blockId);
+
+    if (!block) {
+      return { ok: false, summary: `Block "${blockId}" not found.` };
+    }
+
+    // Shift all subsequent blocks
+    const updatedBlocks = blocks.map(b => {
+      if (b.id === blockId) {
+        return { ...b, dayEnd: b.dayEnd + daysToAdd };
+      }
+      if (b.dayStart > block.dayEnd) {
+        return { ...b, dayStart: b.dayStart + daysToAdd, dayEnd: b.dayEnd + daysToAdd };
+      }
+      return b;
+    });
+
+    const next = {
+      ...state,
+      postJourney: {
+        ...state.postJourney,
+        customPhases: updatedBlocks,
+      },
+    };
+
+    this.store.save(next);
+
+    return {
+      ok: true,
+      summary: `✅ Extended "${block.name}"!\n\nAdded ${daysToAdd} days → now Days ${block.dayStart}-${block.dayEnd + daysToAdd}`,
     };
   }
 
