@@ -1059,6 +1059,66 @@ label.field-label {
   display: none;
 }
 
+
+/* =====================================================================
+   AI Coach / chat shell
+   ===================================================================== */
+
+.chat-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100svh;
+  width: 100%;
+  max-width: min(56rem, 100vw);
+  margin-inline: auto;
+  overflow: hidden;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.chat-topbar {
+  display: flex;
+  min-height: 3.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.35rem;
+  border-bottom: 1px solid rgba(36, 51, 78, 0.72);
+  background: linear-gradient(180deg, rgba(10, 17, 32, 0.92), rgba(10, 17, 32, 0.72));
+  padding: 0.45rem 0.75rem;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.chat-thread {
+  min-height: 0;
+  flex: 1 1 0%;
+  overflow-y: auto;
+  padding-inline: clamp(0.75rem, 3vw, 1.25rem);
+  scroll-padding-bottom: 7rem;
+}
+.chat-composer-wrap {
+  flex-shrink: 0;
+  padding: 0.5rem clamp(0.75rem, 3vw, 1.25rem) 0;
+  background: linear-gradient(180deg, rgba(10, 17, 32, 0), rgba(10, 17, 32, 0.94) 22%);
+}
+.chat-composer {
+  max-width: 48rem;
+  margin-inline: auto;
+  border-radius: 1.65rem;
+  box-shadow: 0 18px 42px -26px rgba(2, 6, 16, 0.95), 0 0 0 1px rgba(255,255,255,0.025) inset;
+}
+.message-card {
+  max-width: min(92%, 42rem);
+  box-shadow: var(--shadow-card);
+}
+
+@media (min-width: 768px) {
+  .chat-shell {
+    max-width: min(72rem, calc(100vw - 4rem));
+  }
+  .message-card {
+    max-width: min(82%, 46rem);
+  }
+}
+
 /* =====================================================================
    Markdown rendering (chat bubbles) — GFM, KaTeX, code blocks
    ===================================================================== */
@@ -1370,7 +1430,22 @@ label.field-label {
   background: rgba(255, 255, 255, 0.015);
 }
 .md .katex {
+  max-width: 100%;
   font-size: 1.02em;
+  line-height: 1.35;
+  white-space: normal;
+}
+.md .katex-html {
+  overflow-wrap: normal;
+}
+.md .katex-mathml {
+  position: absolute;
+  clip: rect(1px, 1px, 1px, 1px);
+  padding: 0;
+  border: 0;
+  height: 1px;
+  width: 1px;
+  overflow: hidden;
 }
 .md-fallback {
   margin: 0;

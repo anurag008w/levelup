@@ -476,12 +476,9 @@ export default function ChatScreen() {
   }
 
   return (
-    <div
-      className="fade-up mx-auto flex h-dvh w-full max-w-[27.5rem] flex-col overflow-hidden"
-      style={{ paddingTop: 'env(safe-area-inset-top, 0px)', paddingBottom: 'calc(4.5rem + env(safe-area-inset-bottom, 0px))' }}
-    >
+    <div className="chat-shell fade-up">
       {/* Top bar */}
-      <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border/60 px-3">
+      <header className="chat-topbar">
         <button
           type="button"
           onClick={newChat}
@@ -494,10 +491,14 @@ export default function ChatScreen() {
         <button
           type="button"
           onClick={() => setShowHistory(true)}
-          className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-1 text-left"
+          className="flex h-full min-w-0 flex-1 items-center gap-2 px-1 text-left"
           aria-label="Open chat history"
         >
-          <span className="truncate font-display text-[15px] font-bold leading-none">{active?.title || 'Naya chat'}</span>
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-l/10 text-l"><Sparkles size={16} /></span>
+          <span className="min-w-0">
+            <span className="block truncate font-display text-[15px] font-bold leading-none">{active?.title || 'AI Coach'}</span>
+            <span className="mt-0.5 block truncate text-[10px] font-medium text-muted">ChatGPT-style maths, notes & files</span>
+          </span>
           <ChevronDown size={13} className="shrink-0 text-muted" />
         </button>
         <button
@@ -527,11 +528,11 @@ export default function ChatScreen() {
       </header>
 
       {/* Conversation */}
-      <main ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3" aria-label="Messages">
+      <main ref={scrollRef} className="chat-thread" aria-label="Messages">
         {!hasMessages && !streaming ? (
           <EmptyChat onPick={(t) => setDraft(t)} />
         ) : (
-          <div className="mx-auto max-w-[34rem] py-4">
+          <div className="mx-auto max-w-[48rem] py-4">
             {showEarlier && (
               <div className="mb-4 flex justify-center">
                 <button
@@ -575,7 +576,7 @@ export default function ChatScreen() {
       </main>
 
       {/* Composer */}
-      <div className="shrink-0 px-3 pt-2">
+      <div className="chat-composer-wrap">
         {(error || notice) && (
           <div
             className={`mb-2 flex justify-center text-center ${error ? 'text-danger' : 'text-muted'}`}
@@ -586,7 +587,7 @@ export default function ChatScreen() {
             </span>
           </div>
         )}
-        <div className="chat-input rounded-[1.5rem] p-1.5">
+        <div className="chat-input chat-composer rounded-[1.5rem] p-1.5">
           {(processing.length > 0 || attachments.length > 0) && (
             <div className="no-scrollbar mb-1.5 flex gap-2 overflow-x-auto px-1 pt-1">
               {processing.map((name) => (
@@ -646,7 +647,7 @@ export default function ChatScreen() {
           </div>
         </div>
         <p className="pb-1 pt-1 text-center text-[9px] tracking-wide text-muted-dim">
-          Hinglish · LaTeX maths · files · 100% local
+          AI Coach · LaTeX maths · files · 100% local
         </p>
       </div>
 
@@ -741,8 +742,8 @@ function EmptyChat({ onPick }: { onPick: (prompt: string) => void }) {
       >
         <Sparkles size={30} color="var(--color-l)" />
       </span>
-      <h2 className="mt-5 font-display text-xl font-bold tracking-tight">{greeting()}</h2>
-      <p className="mt-1 text-sm text-muted">What would you like to work on today?</p>
+      <h2 className="mt-5 font-display text-2xl font-bold tracking-tight">{greeting()}, I’m your AI Coach</h2>
+      <p className="mt-1 max-w-sm text-sm leading-relaxed text-muted">Ask doubts, solve JEE math with clean LaTeX, summarize notes, or turn files into revision material.</p>
       <div className="no-scrollbar mt-6 flex w-full gap-2 overflow-x-auto pb-1">
         {SUGGESTIONS.map((s) => (
           <button
@@ -797,7 +798,7 @@ function MessageBubble({ message, isLast, ...actions }: MessageActions & { messa
 
   return (
     <motion.div
-      className={`mb-2.5 flex items-end gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}
+      className={`mb-4 flex items-end gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}
       initial={{ opacity: 0, y: 12, scale: 0.99 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.9 }}
@@ -833,10 +834,10 @@ function MessageBubble({ message, isLast, ...actions }: MessageActions & { messa
       }}
     >
       <div
-        className={`relative max-w-[92%] rounded-2xl px-4 py-3 text-[13px] leading-relaxed shadow-card ${
+        className={`message-card relative rounded-3xl px-4 py-3 text-[13.5px] leading-relaxed ${
           isUser
-            ? 'bubble-user rounded-br-md'
-            : 'bubble-ai rounded-bl-md'
+            ? 'bubble-user rounded-br-lg'
+            : 'bubble-ai rounded-bl-lg'
         }`}
       >
         {message.reasoning && <ThinkingBlock text={message.reasoning} />}
@@ -927,7 +928,7 @@ function StreamBubble({ reasoning, text }: { reasoning: string; text: string }) 
       animate={{ opacity: 1, y: 0 }}
       transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.9 }}
     >
-      <div className="bubble-ai max-w-[92%] rounded-2xl rounded-bl-md px-4 py-3 text-[13px] leading-relaxed">
+      <div className="message-card bubble-ai rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed">
         {reasoning && <ThinkingBlock text={reasoning} />}
         <div className="markdown-body">
           <ChatMarkdown text={text} />
