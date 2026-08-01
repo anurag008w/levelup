@@ -47,7 +47,7 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('deleteBlock'), blockId: z.string().min(1), confirmed: z.boolean().optional() }),
   z.object({ action: z.literal('activateBlock'), blockId: z.string().min(1) }),
   z.object({ action: z.literal('editBlock'), blockId: z.string().min(1), name: z.string().min(1).max(100).optional(), difficulty: z.enum(['easy', 'medium', 'hard', 'extreme']).optional(), goals: z.array(z.string()).optional(), habits: z.array(z.string()).optional() }),
-  z.object({ action: z.literal('listBlocks'), }),
+  z.object({ action: z.literal('listBlocks') }),
   z.object({ action: z.literal('extendBlock'), blockId: z.string().min(1), days: z.number().int().min(1).max(30) }),
 ]);
 
