@@ -54,14 +54,21 @@ jobs:
           echo "📌 Release Version: $VERSION"
 
       - name: Create tag
+        env:
+          EVENT_TYPE: ${{ github.event_name }}
         run: |
-          if git tag | grep -q "^${{ steps.version.outputs.VERSION }}$"; then
-            echo "⚠️  Tag ${{ steps.version.outputs.VERSION }} already exists"
-            echo "   Deleting and recreating..."
-            git tag -d "${{ steps.version.outputs.VERSION }}"
+          if [[ "$EVENT_TYPE" == "push" ]]; then
+            echo "ℹ️  Tag pushed externally, skipping tag creation"
+          else
+            if git tag | grep -q "^${{ steps.version.outputs.VERSION }}$"; then
+              echo "⚠️  Tag ${{ steps.version.outputs.VERSION }} already exists"
+              echo "   Deleting and recreating..."
+              git tag -d "${{ steps.version.outputs.VERSION }}"
+            fi
+            echo "✅ Creating tag: ${{ steps.version.outputs.VERSION }}"
+            git tag -a "${{ steps.version.outputs.VERSION }}" -m "Release ${{ steps.version.outputs.VERSION }}"
+            git push origin "${{ steps.version.outputs.VERSION }}"
           fi
-          echo "✅ Creating tag: ${{ steps.version.outputs.VERSION }}"
-          git tag -a "${{ steps.version.outputs.VERSION }}" -m "Release ${{ steps.version.outputs.VERSION }}"
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
