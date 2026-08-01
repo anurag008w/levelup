@@ -226,6 +226,15 @@ body {
   backdrop-filter: blur(18px) saturate(1.35);
   -webkit-backdrop-filter: blur(18px) saturate(1.35);
   touch-action: manipulation;
+  transform: translateY(0);
+  opacity: 1;
+  transition: opacity 0.18s var(--ease-standard), transform 0.22s var(--ease-emphasized), visibility 0.18s var(--ease-standard);
+}
+.nav-handle[data-visible='false'] {
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(calc(-125% - env(safe-area-inset-top, 0px)));
+  pointer-events: none;
 }
 .nav-handle-label {
   max-width: 8rem;

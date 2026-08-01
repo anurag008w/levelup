@@ -20,6 +20,7 @@ const SWIPE_DISTANCE_PX = 64;
 
 export default function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void }) {
   const [open, setOpen] = useState(false);
+  const [handleVisible, setHandleVisible] = useState(true);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -29,6 +30,26 @@ export default function TabBar({ active, onChange }: { active: Tab; onChange: (t
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    let frame = 0;
+
+    function updateHandleVisibility() {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        const scrollTop = window.scrollY || document.documentElement.scrollTop;
+        setHandleVisible(scrollTop < 72);
+        frame = 0;
+      });
+    }
+
+    updateHandleVisibility();
+    window.addEventListener('scroll', updateHandleVisibility, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', updateHandleVisibility);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, []);
 
   useEffect(() => {
@@ -74,6 +95,7 @@ export default function TabBar({ active, onChange }: { active: Tab; onChange: (t
         className="nav-handle"
         aria-label="Open navigation menu"
         aria-expanded={open}
+        data-visible={open || handleVisible}
       >
         <Menu size={20} />
         <span className="nav-handle-label">{activeTab.label}</span>
