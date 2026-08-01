@@ -257,9 +257,9 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
       {!postJourney.journeyComplete && (
         <div className="gradient-border mb-6 rounded-[1.25rem] p-px">
           <div className="rounded-[calc(1.25rem-1px)] bg-panel p-5 text-center">
-            <Trophy size={40} className="mx-auto mb-3 text-yellow-400" />
-            <h2 className="mb-2 font-display text-xl font-bold">90 Days Complete!</h2>
-            <p className="mb-4 text-sm text-muted">Claim your journey and unlock post-journey mode</p>
+            <div className="mx-auto mb-3 inline-flex rotate-[-7deg] border-2 border-light px-3 py-2 font-mono text-xs font-semibold uppercase tracking-[0.22em] text-light">Complete</div>
+            <h2 className="mb-2 font-display text-xl font-bold">90 days complete</h2>
+            <p className="mb-4 text-sm text-muted">Claim your journey and unlock post-journey mode.</p>
             <button
               type="button"
               onClick={completeJourney}
@@ -276,9 +276,9 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
       {postJourney.journeyComplete && postJourney.finalStats && (
         <div className="mb-6">
           <SectionHeader
-            icon={<Trophy size={14} color="var(--color-l)" />}
-            accent="var(--color-l)"
-            title="Journey Complete!"
+            icon={<Trophy size={14} color="var(--color-light)" />}
+            accent="var(--color-light)"
+            title="Journey complete"
           />
           <div className="gradient-border rounded-[1.25rem] p-px">
             <div className="grid grid-cols-3 gap-3 rounded-[calc(1.25rem-1px)] bg-panel p-4">

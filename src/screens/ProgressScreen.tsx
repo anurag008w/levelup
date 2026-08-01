@@ -180,9 +180,9 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
               key={a.label}
               className="badge"
               style={{
-                backgroundColor: a.ok ? 'rgba(52,211,153,0.14)' : 'var(--color-panel-raised)',
+                backgroundColor: a.ok ? 'rgba(138,154,91,0.14)' : 'var(--color-panel-raised)',
                 color: a.ok ? 'var(--color-success)' : 'var(--color-muted-dim)',
-                border: `1px solid ${a.ok ? 'rgba(52,211,153,0.35)' : 'var(--color-border)'}`,
+                border: `1px solid ${a.ok ? 'rgba(138,154,91,0.35)' : 'var(--color-border)'}`,
               }}
             >
               {a.ok ? '✓' : '•'} {a.label}
@@ -228,7 +228,7 @@ function StreakPill({ streak }: { streak: number }) {
   return (
     <div
       className="flex items-center gap-1.5 rounded-full border px-3 py-1.5"
-      style={{ borderColor: active ? 'rgba(245,179,103,0.45)' : 'var(--color-border)', backgroundColor: active ? 'rgba(245,179,103,0.08)' : 'var(--color-panel)' }}
+      style={{ borderColor: active ? 'rgba(201,162,39,0.45)' : 'var(--color-border)', backgroundColor: active ? 'rgba(201,162,39,0.08)' : 'var(--color-panel)' }}
     >
       <Flame size={15} color={active ? 'var(--color-light)' : 'var(--color-muted-dim)'} className={active ? 'pulse-dot' : ''} />
       <span className="font-mono text-sm font-bold" style={{ color: active ? 'var(--color-light)' : 'var(--color-muted)' }}>{streak}</span>

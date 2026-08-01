@@ -12,7 +12,7 @@ const TaskBankScreen = lazy(() => import('./screens/TaskBankScreen'));
 const AISettingsScreen = lazy(() => import('./screens/AISettingsScreen'));
 const ChatScreen = lazy(() => import('./screens/ChatScreen'));
 
-const pageSpring = { type: 'spring', stiffness: 320, damping: 30, mass: 0.9 } as const;
+const pageSpring = { type: 'tween', duration: 0.32, ease: [0.2, 0, 0, 1] } as const;
 
 export default function App() {
   const { state, today, update, refresh, resetAll, adminUnlocked, unlockAdmin, lockAdmin, setAdminDay } = useAppState();
