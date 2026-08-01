@@ -189,6 +189,20 @@ describe('ChatToolsService', () => {
     expect(store.get().dynamicTaskBank.some((e) => e.id === 'ai-xyz')).toBe(false);
   });
 
+  it('bulkMarkDone previews and then marks all visible day tasks together', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const preview = await tools.run({ action: 'bulkMarkDone', day: 1 });
+    expect(preview.ok).toBe(false);
+    expect(preview.requiresConfirmation).toBe(true);
+    expect(store.get().taskLogs['2026-07-01']).toBeUndefined();
+
+    const result = await tools.run({ action: 'bulkMarkDone', day: 1, confirmed: true });
+    expect(result.ok).toBe(true);
+    expect(result.versionId).toBeTruthy();
+    expect(Object.values(store.get().taskLogs['2026-07-01'] ?? {}).every(Boolean)).toBe(true);
+  });
+
   it('editTask can override a built-in seed entry', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);

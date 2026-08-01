@@ -19,6 +19,7 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
     dayTo: z.number().int().min(1).max(90).optional(),
   }),
   z.object({ action: z.literal('markDone'), day: z.number().int(), taskId: z.string().min(1), confirmed: z.boolean().optional() }),
+  z.object({ action: z.literal('bulkMarkDone'), day: z.number().int(), taskIds: z.array(z.string().min(1)).min(1).optional(), confirmed: z.boolean().optional() }),
 ]);
 
 export type ChatToolAction = z.infer<typeof chatToolActionSchema>;
@@ -44,6 +45,7 @@ your ENTIRE reply must be exactly one JSON object, no extra text:
 - Edit a task (built-in or user/AI-added; change title/duration/day): {"action":"editTask","day":N,"taskId":"<id from plan>","durationMin":20,"dayTo":5}
 - Remove a task (built-in or user/AI-added): {"action":"removeTask","day":N,"taskId":"<id from plan>"}. This is destructive: first call without confirmed to get a preview; only call with "confirmed":true after the user explicitly confirms.
 - Mark a task done: {"action":"markDone","day":N,"taskId":"<id from plan>"}
+- Mark multiple/all tasks done for one day: {"action":"bulkMarkDone","day":N,"taskIds":["id1","id2"],"confirmed":true}. If the user says all/saare tasks, omit taskIds to target all visible plan tasks. This is bulk edit: first call without confirmed to preview; only call with "confirmed":true after explicit confirmation.
 
 For ANYTHING else (concepts, motivation, general questions) reply normally in Hinglish.`;
 

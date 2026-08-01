@@ -49,6 +49,115 @@ export interface AiActionPreview {
 
 export const AI_ACTION_HISTORY_RETENTION_DAYS = 90;
 
+export interface AiPermissionPolicy {
+  allowed: AiActionPermission[];
+}
+
+export interface AiPermissionDecision {
+  allowed: boolean;
+  missing: AiActionPermission[];
+  message?: string;
+}
+
+export interface AiRegisteredAction {
+  id: string;
+  label: string;
+  description: string;
+  entityType: string;
+  permissions: AiActionPermission[];
+  confirmationRequired?: boolean;
+  supportsBulk?: boolean;
+}
+
+export class AiActionRegistry {
+  private readonly actions = new Map<string, AiRegisteredAction>();
+
+  register(action: AiRegisteredAction): void {
+    this.actions.set(action.id, action);
+  }
+
+  require(id: string): AiRegisteredAction {
+    const action = this.actions.get(id);
+    if (!action) throw new Error(`AI action not registered: ${id}`);
+    return action;
+  }
+
+  list(): AiRegisteredAction[] {
+    return [...this.actions.values()];
+  }
+}
+
+export class AiPermissionEngine {
+  private readonly policy: AiPermissionPolicy;
+
+  constructor(policy: AiPermissionPolicy = { allowed: ['read', 'create', 'edit', 'delete', 'bulk-edit'] }) {
+    this.policy = policy;
+  }
+
+  can(permissions: AiActionPermission[]): AiPermissionDecision {
+    const missing = permissions.filter((permission) => !this.policy.allowed.includes(permission));
+    return {
+      allowed: missing.length === 0,
+      missing,
+      message: missing.length > 0 ? `Missing AI permission(s): ${missing.join(', ')}` : undefined,
+    };
+  }
+}
+
+export interface AiActionExecutionInput {
+  state: AppState;
+  action: AiRegisteredAction;
+  entityId: string;
+  summary: string;
+  beforeState: unknown;
+  afterState: unknown;
+  confirmed?: boolean;
+  permissionEngine?: AiPermissionEngine;
+  now?: Date;
+}
+
+export interface AiActionExecutionResult {
+  state: AppState;
+  ok: boolean;
+  summary: string;
+  requiresConfirmation?: boolean;
+  versionId?: string;
+}
+
+export function executeAiAction(input: AiActionExecutionInput): AiActionExecutionResult {
+  const permission = (input.permissionEngine ?? new AiPermissionEngine()).can(input.action.permissions);
+  if (!permission.allowed) return { state: input.state, ok: false, summary: permission.message ?? 'AI permission denied' };
+
+  const context: AiActionContext = {
+    action: input.action.id,
+    entityType: input.action.entityType,
+    entityId: input.entityId,
+    summary: input.summary,
+    permissions: input.action.permissions,
+    confirmationRequired: input.action.confirmationRequired ?? requiresConfirmation(input.action.permissions),
+    confirmed: input.confirmed ?? false,
+  };
+  if (context.confirmationRequired && !context.confirmed) {
+    const preview = createAiActionPreview(context, input.beforeState, input.afterState);
+    return {
+      state: input.state,
+      ok: false,
+      requiresConfirmation: true,
+      summary: `${preview.summary}. Changed fields: ${preview.changedFields.join(', ')}. Reply with explicit confirmation to apply.`,
+    };
+  }
+
+  const entityState = applySnapshot(input.state, input.action.entityType, input.afterState);
+  const saved = recordAiActionVersion(entityState, context, input.beforeState, input.afterState, input.now);
+  return {
+    state: saved,
+    ok: true,
+    versionId: saved.aiActionHistory.versions.at(-1)?.id,
+    summary: `${input.summary}. Version:${saved.aiActionHistory.versions.at(-1)?.id ?? 'n/a'}.`,
+  };
+}
+
+
 const DESTRUCTIVE_PERMISSIONS = new Set<AiActionPermission>(['delete', 'bulk-edit', 'admin']);
 
 export function emptyAiActionHistory(): AiActionHistoryState {

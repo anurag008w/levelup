@@ -4,8 +4,7 @@ import type { TaskBankEntry } from '../../core/domain/task-bank';
 import type { DailyPlan, ProgressionConfig } from '../../core/domain/progress';
 import { DEFAULT_PROGRESSION_CONFIG } from '../../core/domain/progress';
 import type { ChatToolAction, ChatToolResult } from '../../core/domain/chat-tools';
-import type { AiActionContext } from '../../core/domain/ai-actions';
-import { createAiActionPreview, recordAiActionVersion } from '../../core/domain/ai-actions';
+import { AiActionRegistry, executeAiAction } from '../../core/domain/ai-actions';
 import { chatToolActionSchema } from '../../core/domain/chat-tools';
 import type { HabitProgressionService } from '../habit-engine/planner';
 import type { TaskBankService } from '../task-bank/task-bank.service';
@@ -17,10 +16,17 @@ const MIN_DAY = 1;
 const MAX_DAY = 90;
 const MAX_RANGE_DAYS = 7;
 
+const ACTIONS = new AiActionRegistry();
+ACTIONS.register({ id: 'addTask', label: 'Add task', description: 'Create an editable task for a plan day.', entityType: 'dynamicTaskBank', permissions: ['create'] });
+ACTIONS.register({ id: 'editTask', label: 'Edit task', description: 'Override a built-in or dynamic task.', entityType: 'dynamicTaskBank', permissions: ['edit'] });
+ACTIONS.register({ id: 'removeTask', label: 'Remove task', description: 'Remove or disable a task.', entityType: 'dynamicTaskBank', permissions: ['delete'], confirmationRequired: true });
+ACTIONS.register({ id: 'markDone', label: 'Mark task done', description: 'Update completion log for one task.', entityType: 'taskLogs', permissions: ['edit'] });
+ACTIONS.register({ id: 'bulkMarkDone', label: 'Bulk mark done', description: 'Update completion logs for multiple tasks.', entityType: 'taskLogs', permissions: ['bulk-edit'], confirmationRequired: true, supportsBulk: true });
+
 const TASK_QUERY_WORDS = [
   'task', 'plan', 'din', 'day', 'aaj', 'kal', 'parso', 'week', 'hafta', 'month', 'mahina',
   'mark', 'done', 'complete', 'delete', 'remove', 'hata', 'add', 'badlo', 'badal', 'schedule',
-  'goal', 'target', 'revision', 'padhai', 'tasks',
+  'goal', 'target', 'revision', 'padhai', 'tasks', 'saare', 'all', 'bulk',
 ];
 
 /**
@@ -85,6 +91,8 @@ export class ChatToolsService {
           return this.editTask(state, action);
         case 'markDone':
           return this.markDone(state, action.day, action.taskId);
+        case 'bulkMarkDone':
+          return this.bulkMarkDone(state, action.day, action.taskIds, action.confirmed === true);
       }
     } catch (err) {
       if (isAbortError(err)) throw err;
@@ -131,20 +139,20 @@ export class ChatToolsService {
     const next = state.dynamicTaskBank.some((e) => e.id === entry.id)
       ? state.dynamicTaskBank.map((e) => (e.id === entry.id ? entry : e))
       : [...state.dynamicTaskBank, entry];
-    const before = state.dynamicTaskBank;
-    const after = next;
-    const saved = recordAiActionVersion(
-      { ...state, dynamicTaskBank: after },
-      { action: 'addTask', entityType: 'dynamicTaskBank', entityId: entry.id, summary: `add task ${entry.title} to Day ${d}`, permissions: ['create'], confirmed: true },
-      before,
-      after,
-    );
-    this.store.save(saved);
-    const versionId = saved.aiActionHistory.versions.at(-1)?.id;
+    const resultAction = executeAiAction({
+      state,
+      action: ACTIONS.require('addTask'),
+      entityId: entry.id,
+      summary: `Added for Day ${d}: ${entry.title} (id:${entry.id}, ${entry.estimatedDurationMin}min)`,
+      beforeState: state.dynamicTaskBank,
+      afterState: next,
+      confirmed: true,
+    });
+    this.store.save(resultAction.state);
     return {
       ok: true,
-      versionId,
-      summary: `Added for Day ${d}: ${entry.title} (id:${entry.id}, ${entry.estimatedDurationMin}min). Version:${versionId ?? 'n/a'}. Tell the user it will appear in that day's plan and can be undone from AI Activity.`,
+      versionId: resultAction.versionId,
+      summary: `${resultAction.summary} Tell the user it will appear in that day's plan and can be undone from AI Activity.`,
     };
   }
 
@@ -157,15 +165,18 @@ export class ChatToolsService {
     const next = dynamic
       ? state.dynamicTaskBank.filter((e) => e.id !== taskId)
       : [...state.dynamicTaskBank, { ...entry, active: false }];
-    const context: AiActionContext = { action: 'removeTask', entityType: 'dynamicTaskBank', entityId: taskId, summary: `remove task ${entry.title} from Day ${d}`, permissions: ['delete'], confirmationRequired: true, confirmed };
-    if (!confirmed) {
-      const preview = createAiActionPreview(context, state.dynamicTaskBank, next);
-      return { ok: false, requiresConfirmation: true, summary: `${preview.summary}. Changed fields: ${preview.changedFields.join(', ')}. Reply with explicit confirmation to apply.` };
-    }
-    const saved = recordAiActionVersion({ ...state, dynamicTaskBank: next }, context, state.dynamicTaskBank, next);
-    this.store.save(saved);
-    const versionId = saved.aiActionHistory.versions.at(-1)?.id;
-    return { ok: true, versionId, summary: `Removed from Day ${d}: ${entry.title} (id:${taskId}). Version:${versionId ?? 'n/a'}. Undo available in AI Activity.` };
+    const resultAction = executeAiAction({
+      state,
+      action: ACTIONS.require('removeTask'),
+      entityId: taskId,
+      summary: `remove task ${entry.title} from Day ${d}`,
+      beforeState: state.dynamicTaskBank,
+      afterState: next,
+      confirmed,
+    });
+    if (!resultAction.ok) return { ok: false, requiresConfirmation: resultAction.requiresConfirmation, summary: resultAction.summary };
+    this.store.save(resultAction.state);
+    return { ok: true, versionId: resultAction.versionId, summary: `Removed from Day ${d}: ${entry.title} (id:${taskId}). Version:${resultAction.versionId ?? 'n/a'}. Undo available in AI Activity.` };
   }
 
   private editTask(state: AppState, action: Extract<ChatToolAction, { action: 'editTask' }>): ChatToolResult {
@@ -182,16 +193,18 @@ export class ChatToolsService {
     const next = dynamic
       ? state.dynamicTaskBank.map((e) => (e.id === edited.id ? edited : e))
       : [...state.dynamicTaskBank, edited];
-    const saved = recordAiActionVersion(
-      { ...state, dynamicTaskBank: next },
-      { action: 'editTask', entityType: 'dynamicTaskBank', entityId: edited.id, summary: `edit task ${edited.title} on Day ${d}`, permissions: ['edit'], confirmed: true },
-      state.dynamicTaskBank,
-      next,
-    );
-    this.store.save(saved);
-    const versionId = saved.aiActionHistory.versions.at(-1)?.id;
+    const resultAction = executeAiAction({
+      state,
+      action: ACTIONS.require('editTask'),
+      entityId: edited.id,
+      summary: `Edited Day ${d}: ${edited.title} (${edited.estimatedDurationMin}min)`,
+      beforeState: state.dynamicTaskBank,
+      afterState: next,
+      confirmed: true,
+    });
+    this.store.save(resultAction.state);
     const moved = action.dayTo !== undefined ? ` and moved to Day ${clamp(action.dayTo)}` : '';
-    return { ok: true, versionId, summary: `Edited Day ${d}: ${edited.title} (${edited.estimatedDurationMin}min)${moved}. Version:${versionId ?? 'n/a'}.` };
+    return { ok: true, versionId: resultAction.versionId, summary: `${resultAction.summary}${moved}.` };
   }
 
   private markDone(state: AppState, day: number, taskId: string): ChatToolResult {
@@ -203,15 +216,45 @@ export class ChatToolsService {
     }
     log[taskId] = true;
     const nextLogs = { ...state.taskLogs, [dateISO]: log };
-    const saved = recordAiActionVersion(
-      { ...state, taskLogs: nextLogs },
-      { action: 'markDone', entityType: 'taskLogs', entityId: `${dateISO}:${taskId}`, summary: `mark task ${taskId} done for Day ${d}`, permissions: ['edit'], confirmed: true },
-      state.taskLogs,
-      nextLogs,
-    );
-    this.store.save(saved);
-    const versionId = saved.aiActionHistory.versions.at(-1)?.id;
-    return { ok: true, versionId, summary: `Marked done for Day ${d} (${dateISO}): ${this.taskBank.getById(taskId)?.title ?? taskId}. Version:${versionId ?? 'n/a'}.` };
+    const resultAction = executeAiAction({
+      state,
+      action: ACTIONS.require('markDone'),
+      entityId: `${dateISO}:${taskId}`,
+      summary: `Marked done for Day ${d} (${dateISO}): ${this.taskBank.getById(taskId)?.title ?? taskId}`,
+      beforeState: state.taskLogs,
+      afterState: nextLogs,
+      confirmed: true,
+    });
+    this.store.save(resultAction.state);
+    return { ok: true, versionId: resultAction.versionId, summary: resultAction.summary };
+  }
+
+
+  private bulkMarkDone(state: AppState, day: number, taskIds: string[] | undefined, confirmed = false): ChatToolResult {
+    const d = clamp(day);
+    const dateISO = this.dateForDay(state, d);
+    const plan = this.planForDay(state, d);
+    const visibleIds = new Set(plan.tasks.map((item) => item.entry.id));
+    const ids = taskIds && taskIds.length > 0 ? taskIds : [...visibleIds];
+    const invalid = ids.filter((id) => !visibleIds.has(id) && !this.taskBank.getById(id));
+    if (ids.length === 0) return { ok: false, summary: `Day ${d}: koi tasks planned nahi hain.` };
+    if (invalid.length > 0) return { ok: false, summary: `Day ${d}: task id(s) nahi mile: ${invalid.join(', ')}.` };
+
+    const log = { ...(state.taskLogs[dateISO] ?? {}) };
+    for (const id of ids) log[id] = true;
+    const nextLogs = { ...state.taskLogs, [dateISO]: log };
+    const resultAction = executeAiAction({
+      state,
+      action: ACTIONS.require('bulkMarkDone'),
+      entityId: `${dateISO}:bulk:${ids.join(',')}`,
+      summary: `mark ${ids.length} task(s) done for Day ${d} (${dateISO})`,
+      beforeState: state.taskLogs,
+      afterState: nextLogs,
+      confirmed,
+    });
+    if (!resultAction.ok) return { ok: false, requiresConfirmation: resultAction.requiresConfirmation, summary: resultAction.summary };
+    this.store.save(resultAction.state);
+    return { ok: true, versionId: resultAction.versionId, summary: `Marked ${ids.length} task(s) done for Day ${d} (${dateISO}). Version:${resultAction.versionId ?? 'n/a'}. Undo available in AI Activity.` };
   }
 
   private planForDay(state: AppState, day: number): DailyPlan {
