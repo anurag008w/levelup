@@ -1,11 +1,11 @@
 import { INTERNAL_SYSTEM_PROMPT } from '../../core/domain/chat';
-import type { ChatMessage, ChatSession, ChatPreferences, ChatStoreState } from '../../core/domain/chat';
+import type { ChatMessage, ChatSession, ChatPreferences, ChatStoreState, ChatAttachment } from '../../core/domain/chat';
 import {
   MAX_MESSAGES_PER_SESSION,
   MAX_SESSIONS,
   defaultChatPrefs,
 } from '../../core/domain/chat';
-import type { LLMMessage, LLMRequest, ThinkingLevel } from '../../core/domain/llm';
+import type { LLMMessage, LLMRequest, ThinkingLevel, ContentPart } from '../../core/domain/llm';
 import { isAbortError } from '../../core/domain/llm';
 import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY } from '../../core/domain/chat-tools';
 import type { ChatToolResult } from '../../core/domain/chat-tools';
@@ -152,12 +152,13 @@ export class ChatService {
     signal?: AbortSignal,
     onStatus?: (status: string) => void,
     onReasoningDelta?: (delta: string) => void,
+    attachments?: ChatAttachment[],
   ): Promise<ChatMessage> {
     const session = this.getSession(sessionId);
     if (!session) throw new Error('Chat session not found');
 
     const now = this.clock.now().toISOString();
-    const userMsg: ChatMessage = { id: uid(), role: 'user', content: text, createdAt: now };
+    const userMsg: ChatMessage = { id: uid(), role: 'user', content: text, createdAt: now, attachments };
     session.messages.push(userMsg);
     const titleWasEmpty = session.title.length === 0;
     if (titleWasEmpty) session.title = deriveTitle(text);
@@ -171,14 +172,14 @@ export class ChatService {
       // Tool decision hop for plan/task queries.
       if (this.tools && this.tools.isTaskQuery(text)) {
         onStatus?.('AI soch raha hai…');
-        const decision = await this.llm.complete(this.buildDecisionRequest(session, signal));
+        const decision = await this.llm.complete(await this.buildDecisionRequest(session, signal));
         let actions = this.tools.parseTools(decision.text);
         let answer = decision.text;
         if (actions.length === 0 && answer) {
           // The model talked instead of emitting an action — retry once with a
           // strict correction so plan tools work even on weaker models.
           onStatus?.('Tool decision retry kar raha hai…');
-          const retry = await this.llm.complete(this.buildRetryRequest(session, decision.text, signal));
+          const retry = await this.llm.complete(await this.buildRetryRequest(session, decision.text, signal));
           actions = this.tools.parseTools(retry.text);
           if (retry.text) answer = retry.text;
         }
@@ -218,7 +219,7 @@ export class ChatService {
           if (!canReplan) break;
           onStatus?.('Pehle plan fetch kar raha hai…');
           const plans = this.tools.renderPlans(missing);
-          const replan = await this.llm.complete(this.buildReplanRequest(session, plans, toolResult.summary, signal));
+          const replan = await this.llm.complete(await this.buildReplanRequest(session, plans, toolResult.summary, signal));
           const next = this.tools.parseTools(replan.text);
           if (next.length === 0) {
             this.store!.save(postRun);
@@ -231,7 +232,7 @@ export class ChatService {
         onStatus?.('Jawab likh raha hai…');
         let reasoning = '';
         const streamSani = createStreamSanitizer();
-        const summaryRequest = this.buildSummaryRequest(session, toolResult.summary, (delta) => {
+        const summaryRequest = await this.buildSummaryRequest(session, toolResult.summary, (delta) => {
           const clean = streamSani.push(delta);
           if (clean) {
             partial += clean;
@@ -261,7 +262,7 @@ export class ChatService {
       // Default streaming path.
       let reasoning = '';
       const streamSani = createStreamSanitizer();
-      const request = this.buildRequest(session, (delta) => {
+      const request = await this.buildRequest(session, (delta) => {
         const clean = streamSani.push(delta);
         if (clean) {
           partial += clean;
@@ -311,9 +312,9 @@ export class ChatService {
     }
   }
 
-  private buildDecisionRequest(session: ChatSession, signal?: AbortSignal): LLMRequest {
+  private async buildDecisionRequest(session: ChatSession, signal?: AbortSignal): Promise<LLMRequest> {
     const request: LLMRequest = {
-      messages: this.buildMessages(session, CHAT_TOOL_INSTRUCTIONS),
+      messages: await this.buildMessages(session, CHAT_TOOL_INSTRUCTIONS),
       temperature: session.prefs.temperature,
       maxTokens: 1024,
       providerId: session.prefs.providerId,
@@ -327,12 +328,12 @@ export class ChatService {
     return request;
   }
 
-  private buildRetryRequest(session: ChatSession, previousReply: string, signal?: AbortSignal): LLMRequest {
+  private async buildRetryRequest(session: ChatSession, previousReply: string, signal?: AbortSignal): Promise<LLMRequest> {
     const system =
       `${CHAT_TOOL_INSTRUCTIONS}\n\n${CHAT_TOOL_RETRY}\n\n` +
       `Your previous reply was:\n${previousReply}\n\nReplace it with exactly one JSON object now.`;
     const request: LLMRequest = {
-      messages: this.buildMessages(session, system),
+      messages: await this.buildMessages(session, system),
       temperature: session.prefs.temperature,
       maxTokens: 1024,
       providerId: session.prefs.providerId,
@@ -348,14 +349,14 @@ export class ChatService {
    * Decision-hop follow-up after a task-id action failed: shows the day's real
    * plan (with task ids) and asks the model to re-emit the corrected JSON.
    */
-  private buildReplanRequest(session: ChatSession, plans: string, failure: string, signal?: AbortSignal): LLMRequest {
+  private async buildReplanRequest(session: ChatSession, plans: string, failure: string, signal?: AbortSignal): Promise<LLMRequest> {
     const system =
       `${CHAT_TOOL_INSTRUCTIONS}\n\n` +
       `Your previous tool call failed because the task id was NOT in that day's plan.\n` +
       `Below is the affected day's exact plan with REAL task ids (format "id:<taskId>").\n` +
       `Re-emit your ENTIRE reply as exactly one JSON object (or an actions array) using a VALID task id from the plan. ` +
       `Do NOT explain, refuse or apologize — just the corrected JSON.`;
-    const messages = this.buildMessages(session, system);
+    const messages = await this.buildMessages(session, system);
     messages.push({ role: 'user', content: `Previous tool result:\n${failure}\n\nPlan with task ids:\n${plans}` });
     const request: LLMRequest = {
       messages,
@@ -370,18 +371,18 @@ export class ChatService {
     return request;
   }
 
-  private buildSummaryRequest(
+  private async buildSummaryRequest(
     session: ChatSession,
     toolSummary: string,
     onDelta: ((d: string) => void) | undefined,
     signal?: AbortSignal,
     onReasoningDelta?: (d: string) => void,
-  ): LLMRequest {
+  ): Promise<LLMRequest> {
     const system =
       `A plan tool executed and returned:\n${toolSummary}\n\n` +
       `Reply to the user's request in concise Hinglish. Tell them what was done (or why it failed).`;
     const request: LLMRequest = {
-      messages: this.buildMessages(session, system),
+      messages: await this.buildMessages(session, system),
       temperature: session.prefs.temperature,
       maxTokens: Math.max(1, Math.min(session.prefs.maxTokens ?? 4096, 8192)),
       providerId: session.prefs.providerId,
@@ -396,7 +397,7 @@ export class ChatService {
     return request;
   }
 
-  private buildMessages(session: ChatSession, extraSystemPrompt = ''): LLMMessage[] {
+  private async buildMessages(session: ChatSession, extraSystemPrompt = ''): Promise<LLMMessage[]> {
     const messages: LLMMessage[] = [{ role: 'system', content: composeSystemPrompt(session.prefs.systemPrompt, extraSystemPrompt) }];
     if (session.prefs.includeContext) {
       const ctx = this.contextProvider();
@@ -404,12 +405,49 @@ export class ChatService {
     }
     const mem = this.recall(session.id);
     if (mem) messages.push({ role: 'system', content: `Earlier conversations yaad hain (bas reference lo, repeat mat karo):\n${mem}` });
-    const history = session.messages.slice(-HISTORY_FOR_PROMPT).map((m): LLMMessage => ({
-      role: m.role,
-      content: `${formatMsgTime(m.createdAt)} ${m.content}`,
-    }));
+    
+    const history: LLMMessage[] = [];
+    for (const m of session.messages.slice(-HISTORY_FOR_PROMPT)) {
+      // If message has attachments, convert to ContentPart array
+      if (m.attachments && m.attachments.length > 0) {
+        const parts: ContentPart[] = [];
+        if (m.content) parts.push({ type: 'text', text: `${formatMsgTime(m.createdAt)} ${m.content}` });
+        for (const att of m.attachments) {
+          if (att.kind === 'image' && att.previewUrl) {
+            // Convert blob URL to data URL for LLM
+            const dataUrl = await this.blobToDataUrl(att.previewUrl);
+            if (dataUrl) {
+              parts.push({ type: 'image', image: dataUrl });
+            }
+          } else if (att.kind === 'text') {
+            parts.push({ type: 'text', text: `\n[Attached file: ${att.name}]\n` });
+          }
+        }
+        history.push({ role: m.role, content: parts });
+      } else {
+        history.push({
+          role: m.role,
+          content: `${formatMsgTime(m.createdAt)} ${m.content}`,
+        });
+      }
+    }
     messages.push(...history);
     return messages;
+  }
+
+  private async blobToDataUrl(blobUrl: string): Promise<string | null> {
+    try {
+      const response = await fetch(blobUrl);
+      const blob = await response.blob();
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
   }
 
   private resolveModel(session: ChatSession): string | undefined {
@@ -429,14 +467,14 @@ export class ChatService {
     return provider?.thinking;
   }
 
-  private buildRequest(
+  private async buildRequest(
     session: ChatSession,
     onDelta: ((d: string) => void) | undefined,
     signal?: AbortSignal,
     onReasoningDelta?: (d: string) => void,
-  ): LLMRequest {
+  ): Promise<LLMRequest> {
     const request: LLMRequest = {
-      messages: this.buildMessages(session),
+      messages: await this.buildMessages(session),
       temperature: session.prefs.temperature,
       maxTokens: Math.max(1, Math.min(session.prefs.maxTokens ?? 4096, 8192)),
       providerId: session.prefs.providerId,

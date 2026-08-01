@@ -32,9 +32,13 @@ export interface ProviderConfig {
   thinking?: ThinkingLevel;
 }
 
+export type ContentPart = 
+  | { type: 'text'; text: string }
+  | { type: 'image'; image: string; alt?: string };
+
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ContentPart[];
 }
 
 export interface LLMRequest {
