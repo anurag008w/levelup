@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Brain, CalendarCheck, ChevronRight, LayoutList, LineChart, ListTodo, MessageCircle, NotebookPen, PanelLeft, Settings, User, X } from 'lucide-react';
+import { Brain, CalendarCheck, ChevronRight, LayoutList, LineChart, ListTodo, Menu, MessageCircle, NotebookPen, Settings, User, X } from 'lucide-react';
 import type { AppState, UserProfile } from '../types';
 
 export type Tab = 'today' | 'levels' | 'progress' | 'review' | 'task-bank' | 'ai' | 'chat';
@@ -100,7 +100,7 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
         aria-expanded={open}
         data-visible
       >
-        <PanelLeft size={19} strokeWidth={2.15} />
+        <Menu size={19} strokeWidth={2} />
       </button>
 
       <div className="swipe-edge" aria-hidden="true" />
