@@ -153,7 +153,7 @@ body {
   max-width: 27.5rem;
   padding-inline: 1.5rem;
   padding-top: calc(1.375rem + env(safe-area-inset-top, 0px));
-  padding-bottom: calc(7rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(2rem + env(safe-area-inset-bottom, 0px));
 }
 
 .screen-tight {
@@ -194,6 +194,140 @@ body {
   background: rgba(16, 27, 49, 0.72);
   backdrop-filter: blur(18px) saturate(1.4);
   -webkit-backdrop-filter: blur(18px) saturate(1.4);
+}
+
+
+/* =====================================================================
+   Auto-hidden sidebar navigation
+   ===================================================================== */
+
+.nav-handle {
+  position: fixed;
+  left: max(0.875rem, env(safe-area-inset-left, 0px));
+  top: calc(0.875rem + env(safe-area-inset-top, 0px));
+  z-index: 45;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.75rem;
+  max-width: calc(100vw - 1.75rem);
+  border: 1px solid rgba(79, 209, 197, 0.26);
+  border-radius: 999px;
+  background: rgba(16, 27, 49, 0.78);
+  color: var(--color-text);
+  padding: 0 0.9rem;
+  box-shadow: 0 14px 36px -18px rgba(2, 6, 16, 0.9), 0 0 0 1px rgba(255,255,255,0.025) inset;
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  touch-action: manipulation;
+}
+.nav-handle-label {
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-display);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+.swipe-edge {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 35;
+  width: 1.35rem;
+  pointer-events: none;
+}
+.nav-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(2, 6, 16, 0.58);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.side-nav {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 60;
+  display: flex;
+  width: min(21.5rem, calc(100vw - 2.5rem));
+  flex-direction: column;
+  border-right: 1px solid rgba(79, 209, 197, 0.2);
+  background:
+    radial-gradient(420px 280px at 20% 0%, rgba(79, 209, 197, 0.13), transparent 65%),
+    linear-gradient(180deg, rgba(16, 27, 49, 0.96), rgba(10, 17, 32, 0.98));
+  box-shadow: 30px 0 70px -36px rgba(2, 6, 16, 0.95);
+  padding: calc(1rem + env(safe-area-inset-top, 0px)) 1rem calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+.side-nav-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0.25rem 1rem;
+}
+.side-nav-list {
+  display: grid;
+  gap: 0.55rem;
+}
+.side-nav-item {
+  position: relative;
+  display: flex;
+  min-height: 4rem;
+  align-items: center;
+  gap: 0.85rem;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 1.15rem;
+  padding: 0.7rem 0.85rem;
+  color: var(--color-text);
+  transition: border-color 0.18s var(--ease-standard), background 0.18s var(--ease-standard), transform 0.14s var(--ease-pop);
+}
+.side-nav-item:hover,
+.side-nav-item[aria-current='page'] {
+  border-color: rgba(79, 209, 197, 0.28);
+  background: rgba(79, 209, 197, 0.1);
+}
+.side-nav-item:active {
+  transform: scale(0.985);
+}
+.side-nav-icon {
+  display: inline-flex;
+  height: 2.55rem;
+  width: 2.55rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.95rem;
+  background: var(--color-panel-raised);
+  color: var(--color-muted);
+}
+.side-nav-icon[data-active='true'] {
+  background: linear-gradient(135deg, rgba(79, 209, 197, 0.22), rgba(96, 165, 250, 0.14));
+  color: var(--color-l);
+}
+.side-nav-dot {
+  margin-left: auto;
+  height: 0.55rem;
+  width: 0.55rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--color-l);
+  box-shadow: 0 0 18px rgba(79, 209, 197, 0.8);
+}
+.side-nav-foot {
+  margin-top: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 0.85rem;
+}
+
+@media (min-width: 768px) {
+  .screen,
+  .screen-tight {
+    max-width: 42rem;
+  }
 }
 
 /* =====================================================================
