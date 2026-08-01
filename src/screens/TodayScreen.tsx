@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { Calendar, Check, Flame, Pencil, Plus, ShieldAlert, ShieldCheck, Siren, Sunrise, Sunset, Target, Timer, Trash2, X, Zap } from 'lucide-react';
 import type { AppState } from '../types';
 import type { EnergyLevel, TaskBankEntry, TaskType } from '../core/domain/task-bank';
-import { PHASES, TOTAL_DAYS } from '../data/curriculum';
+import { PHASES } from '../data/curriculum';
 import { DEFAULT_PROGRESSION_CONFIG, type DailyPlan, type PlannedTask } from '../core/domain/progress';
 import { TASK_TYPES } from '../core/domain/task-bank';
 import { getCurrentDayNumber, getJourneyDayLimit, getLevelForDay, isExamMonthActive, daysUntilExam } from '../lib/engine';
@@ -181,9 +181,9 @@ export default function TodayScreen({
       <Confetti trigger={confettiKey} />
 
       <ScreenHeader
-        eyebrow={`DAY ${dayNumber} / ${TOTAL_DAYS}`}
-        title={greeting()}
-        subtitle={`${dateLabel} · ${level?.title ?? ''}`}
+        eyebrow={`CASE — DAY ${String(dayNumber).padStart(3, '0')} / ${phase?.title ?? 'PHASE'}`}
+        title={level?.title ?? greeting()}
+        subtitle={`${dateLabel} · Level ${level?.id ?? 0}`}
         right={
           <div className="flex items-center gap-2">
             <StreakPill streak={streak} />
@@ -420,7 +420,7 @@ function StreakPill({ streak }: { streak: number }) {
         backgroundColor: active ? 'rgba(245,179,103,0.08)' : 'var(--color-panel)',
       }}
     >
-      <Flame size={15} color={active ? 'var(--color-light)' : 'var(--color-muted-dim)'} className={active ? 'pulse-dot' : ''} />
+      <span className="font-mono text-[11px]" style={{ color: active ? 'var(--color-light)' : 'var(--color-muted-dim)' }}>■</span>
       <span className="font-mono text-sm font-bold" style={{ color: active ? 'var(--color-light)' : 'var(--color-muted)' }}>
         {streak}
       </span>
@@ -594,13 +594,13 @@ const TaskRow = memo(function TaskRow({
     <div
       className="card card-press flex items-center gap-3 p-3"
       style={{
-        borderColor: done ? 'rgba(52,211,153,0.5)' : 'var(--color-border)',
-        backgroundColor: done ? 'rgba(52,211,153,0.06)' : undefined,
+        borderColor: done ? 'rgba(138,154,91,0.55)' : 'var(--color-border)',
+        backgroundColor: done ? 'rgba(138,154,91,0.06)' : undefined,
         opacity: dim && !done ? 0.55 : 1,
       }}
     >
       <span
-        className="h-10 w-1 shrink-0 rounded-full transition-colors"
+        className="h-10 w-1 shrink-0 rounded-[1px] transition-colors"
         style={{ backgroundColor: done ? 'var(--color-success)' : accent, opacity: done ? 0.45 : 0.5 }}
       />
       <input

@@ -42,6 +42,24 @@ export interface ChatSettings {
   showThinking: boolean;
 }
 
+export interface UserProfile {
+  name: string;
+  classLevel: string;
+  examTarget: string;
+  studyStyle: string;
+  notes: string;
+}
+
+export function defaultUserProfile(): UserProfile {
+  return {
+    name: '',
+    classLevel: '',
+    examTarget: '',
+    studyStyle: '',
+    notes: '',
+  };
+}
+
 export function defaultChatSettings(): ChatSettings {
   return {
     temperature: 0.7,
@@ -164,6 +182,8 @@ export interface AppState {
   // --- v3: Post-Journey System ---
   /** Post-journey state for users who completed 90 days */
   postJourney: PostJourneyState;
+  /** User-owned profile used for AI personalization. */
+  userProfile: UserProfile;
 }
 
 export function defaultAiSettings(): AiSettings {
@@ -197,5 +217,6 @@ export function emptyAppState(): AppState {
     aiActionHistory: emptyAiActionHistory(),
     lastSummaryDate: null,
     postJourney: defaultPostJourney(),
+    userProfile: defaultUserProfile(),
   };
 }

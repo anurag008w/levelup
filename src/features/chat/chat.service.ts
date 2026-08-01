@@ -570,10 +570,14 @@ function normalizePrefs(prefs: Partial<ChatPreferences>): ChatPreferences {
   // sessions get Divya as the editable system persona and a blank user persona.
   const legacyDefault = 'Mere JEE coach bano. Hinglish mein concise, direct aur step-by-step samjhao. Maths ke answers LaTeX + short explanation ke saath do.';
   const legacySystemPrompt = prefs.systemPrompt;
+  const isOldDivyaDefault =
+    !!legacySystemPrompt &&
+    legacySystemPrompt.startsWith('Tum Divya ho — LevelUp ki warm, sharp aur motivating girl JEE study coach.') &&
+    legacySystemPrompt.includes('TIMESTAMP USER KO KABHI MAT DIKHAO');
   const hasLegacyUserPersona = prefs.userPersona === undefined && !!legacySystemPrompt && legacySystemPrompt !== INTERNAL_SYSTEM_PROMPT;
   if (hasLegacyUserPersona) {
     merged.systemPrompt = INTERNAL_SYSTEM_PROMPT;
-    merged.userPersona = legacySystemPrompt === legacyDefault ? DEFAULT_USER_PERSONA : legacySystemPrompt;
+    merged.userPersona = legacySystemPrompt === legacyDefault || isOldDivyaDefault ? DEFAULT_USER_PERSONA : legacySystemPrompt;
   }
 
   return merged;

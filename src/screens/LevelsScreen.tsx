@@ -83,8 +83,8 @@ export default function LevelsScreen({ state, today }: { state: AppState; today:
                 aria-expanded={isOpen}
                 className="card card-press w-full p-3.5 text-left transition-colors"
                 style={{
-                  borderColor: activeNow ? 'rgba(245,179,103,0.5)' : clearedLevel ? 'rgba(52,211,153,0.3)' : 'var(--color-border)',
-                  backgroundColor: activeNow ? 'rgba(245,179,103,0.05)' : clearedLevel ? 'rgba(52,211,153,0.04)' : undefined,
+                  borderColor: activeNow ? 'rgba(201,162,39,0.5)' : clearedLevel ? 'rgba(138,154,91,0.3)' : 'var(--color-border)',
+                  backgroundColor: activeNow ? 'rgba(201,162,39,0.05)' : clearedLevel ? 'rgba(138,154,91,0.04)' : undefined,
                   opacity: status === 'locked' ? 0.55 : 1,
                 }}
               >
@@ -108,7 +108,7 @@ export default function LevelsScreen({ state, today }: { state: AppState; today:
 
                 {clearedLevel && (
                   <div className="mt-2 flex items-center gap-1.5">
-                    <span className="badge" style={{ backgroundColor: 'rgba(52,211,153,0.14)', color: 'var(--color-success)' }}>
+                    <span className="badge" style={{ backgroundColor: 'rgba(138,154,91,0.14)', color: 'var(--color-success)' }}>
                       <Sparkles size={10} /> Level cleared
                     </span>
                   </div>
@@ -237,8 +237,8 @@ function CustomBlockCard({
         aria-expanded={isOpen}
         className="card card-press w-full p-3.5 text-left transition-colors"
         style={{
-          borderColor: isCurrentDay ? 'rgba(245,179,103,0.5)' : isActive ? 'rgba(79,209,197,0.5)' : 'var(--color-border)',
-          backgroundColor: isCurrentDay ? 'rgba(245,179,103,0.05)' : isActive ? 'rgba(79,209,197,0.05)' : undefined,
+          borderColor: isCurrentDay ? 'rgba(201,162,39,0.5)' : isActive ? 'rgba(79,209,197,0.5)' : 'var(--color-border)',
+          backgroundColor: isCurrentDay ? 'rgba(201,162,39,0.05)' : isActive ? 'rgba(79,209,197,0.05)' : undefined,
         }}
       >
         <div className="flex items-center justify-between gap-2">
