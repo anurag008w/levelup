@@ -16,7 +16,6 @@ import {
   MoreHorizontal,
   NotebookPen,
   Paperclip,
-  Pause,
   PenLine,
   RefreshCw,
   Send,
@@ -514,7 +513,6 @@ export default function ChatScreen() {
           />
           <span className="truncate">
             {modelChip.label}
-            {modelChip.model ? ` · ${modelChip.model}` : ''}
           </span>
         </button>
         <button
@@ -633,7 +631,7 @@ export default function ChatScreen() {
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-danger/40 bg-danger/10 transition-transform active:scale-90"
                 aria-label="Stop generating"
               >
-                <Pause size={17} color="var(--color-danger)" />
+                <X size={17} color="var(--color-danger)" />
               </button>
             ) : (
               <button
@@ -864,9 +862,6 @@ function MessageBubble({ message, isLast, ...actions }: MessageActions & { messa
         )}
 
         <div className={`mt-2 flex items-center gap-0.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
-          {message.model && (
-            <span className={`mr-1 font-mono text-[9px] ${isUser ? 'opacity-60' : 'text-muted'}`}>{message.model}</span>
-          )}
           {message.stopped && (
             <span className={`rounded px-1.5 py-0.5 text-[9px] ${isUser ? 'bg-black/20' : 'bg-surface-3 text-muted'}`}>
               stopped
