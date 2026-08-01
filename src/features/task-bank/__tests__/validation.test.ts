@@ -289,8 +289,8 @@ describe('Task Bank Entry Schema Validation', () => {
       expect(taskBankEntrySchema.safeParse(entry).success).toBe(false);
     });
 
-    it('rejects day-exact with day > 90', () => {
-      const entry = validTaskEntry({ unlockConditions: [{ type: 'day-exact', day: 100 }] });
+    it('rejects day-exact beyond supported planning window', () => {
+      const entry = validTaskEntry({ unlockConditions: [{ type: 'day-exact', day: 366 }] });
       expect(taskBankEntrySchema.safeParse(entry).success).toBe(false);
     });
 

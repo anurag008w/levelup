@@ -101,6 +101,7 @@ export default function ChatScreen() {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [editing, setEditing] = useState<{ sessionId: string; messageId: string; originalDraft: string } | null>(null);
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const [processing, setProcessing] = useState<string[]>([]);
   const [showSettings, setShowSettings] = useState(false);
@@ -148,6 +149,7 @@ export default function ChatScreen() {
 
   useEffect(() => {
     setDraft('');
+    setEditing(null);
     setAttachments([]);
     setError('');
     setVisibleFrom(0);
@@ -251,7 +253,13 @@ export default function ChatScreen() {
     const text = buildPromptWithAttachments(pendingDraft.trim(), pendingAttachments);
     if (!text || streaming) return;
     const s = ensureSession();
+    const editTarget = editing && editing.sessionId === s.id ? editing : null;
     setShowAttach(false);
+    if (editTarget) {
+      container.chat.deleteMessagesFrom(s.id, editTarget.messageId);
+      setEditing(null);
+      refresh();
+    }
     await doSend(s.id, text, pendingDraft, pendingAttachments);
   }
 
@@ -339,11 +347,24 @@ export default function ChatScreen() {
   }
 
   function editMessage(message: ChatMessage) {
-    if (!active) return;
-    container.chat.deleteMessagesFrom(active.id, message.id);
-    refresh();
-    setDraft(stripAttachmentBlocks(message.content));
+    if (!active || streaming) return;
+    const editDraft = stripAttachmentBlocks(message.content);
+    setEditing({ sessionId: active.id, messageId: message.id, originalDraft: draft });
+    setDraft(editDraft);
+    setAttachments([]);
+    setShowAttach(false);
     setError('');
+    setNotice('Editing mode — send karne par is message ke baad wali chat replace hogi.');
+    haptic();
+    focusComposer();
+  }
+
+  function cancelEdit() {
+    if (!editing) return;
+    setDraft(editing.originalDraft);
+    setEditing(null);
+    setError('');
+    setNotice('Edit cancel ho gaya — chat unchanged.');
     haptic();
     focusComposer();
   }
@@ -605,6 +626,17 @@ export default function ChatScreen() {
               ))}
             </div>
           )}
+          {editing && (
+            <div className="mb-1.5 flex items-center justify-between gap-2 rounded-2xl border border-light/25 bg-light/10 px-3 py-2 text-xs">
+              <div className="min-w-0">
+                <p className="font-semibold text-light">Editing message</p>
+                <p className="truncate text-[10px] text-muted">Cancel dabane se niche wali chat safe rahegi.</p>
+              </div>
+              <button type="button" className="btn btn-ghost min-h-8 px-2.5 py-1 text-xs" onClick={cancelEdit}>
+                <X size={13} /> Cancel
+              </button>
+            </div>
+          )}
           <div className="flex items-end gap-1">
             <button
               type="button"
@@ -639,7 +671,7 @@ export default function ChatScreen() {
                 type="button"
                 onClick={() => void send()}
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-l transition-transform active:scale-90"
-                aria-label="Send message"
+                aria-label={editing ? 'Send edited message' : 'Send message'}
               >
                 <Send size={17} color="#06201e" />
               </button>
@@ -1218,35 +1250,45 @@ function SettingsSheet({
 
         {/* System */}
         <section>
-          <p className="section-label mb-2">System</p>
+          <p className="section-label mb-2">Persona</p>
           <div className="overflow-hidden rounded-2xl border border-border bg-panel">
             <div className="px-4 py-3.5">
-              <label className="field-label">Custom instructions / Persona</label>
+              <label className="field-label">System persona (editable)</label>
               <textarea
-                rows={4}
+                rows={6}
                 value={prefs.systemPrompt}
                 onChange={(e) => onChange({ systemPrompt: e.target.value })}
-                placeholder="e.g. Mujhe JEE maths step-by-step Hinglish mein samjhao; formulas LaTeX mein do."
+                placeholder="Divya coach persona, tone, Markdown/LaTeX rules..."
+                className="field resize-none"
+              />
+              <div className="mt-1.5 flex items-center justify-between gap-2">
+                <span className="text-[10px] text-muted">{prefs.systemPrompt.length} characters</span>
+                <button
+                  type="button"
+                  onClick={() => onChange({ systemPrompt: INTERNAL_SYSTEM_PROMPT })}
+                  className="text-xs text-muted underline-offset-2 hover:text-text hover:underline"
+                >
+                  Reset Divya persona
+                </button>
+              </div>
+            </div>
+            <div className="border-t border-border/70 px-4 py-3.5">
+              <label className="field-label">User persona / custom instructions</label>
+              <textarea
+                rows={3}
+                value={prefs.userPersona ?? DEFAULT_USER_PERSONA}
+                onChange={(e) => onChange({ userPersona: e.target.value })}
+                placeholder="Blank by default — optional personal instructions yahan likho."
                 className="field resize-none"
               />
               <button
                 type="button"
-                onClick={() => onChange({ systemPrompt: DEFAULT_USER_PERSONA })}
+                onClick={() => onChange({ userPersona: DEFAULT_USER_PERSONA })}
                 className="mt-1.5 text-xs text-muted underline-offset-2 hover:text-text hover:underline"
               >
-                Default persona reset
+                Clear user persona
               </button>
             </div>
-            <details className="border-t border-border/70 px-4 py-3 text-xs">
-              <summary className="cursor-pointer select-none font-semibold text-muted hover:text-text">Advanced</summary>
-              <div className="mt-2.5 rounded-xl border border-border bg-bg p-3">
-                <p className="mb-1 text-[11px] font-semibold text-muted">Internal system prompt</p>
-                <p className="line-clamp-3 text-[11px] leading-relaxed text-muted">{INTERNAL_SYSTEM_PROMPT}</p>
-                <p className="mt-1 text-[10px] text-light">
-                  Locked — app safety, tools, context aur attachment rules yahan se aate hain.
-                </p>
-              </div>
-            </details>
           </div>
         </section>
 

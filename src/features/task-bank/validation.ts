@@ -20,18 +20,20 @@ const thinkingEnum = z.enum([
   'systems',
   'creativity',
 ]);
+export const MAX_PLANNING_DAY = 365;
+
 const difficultyEnum = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]);
 
 const unlockConditionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('day'), fromDay: z.number().int().min(1) }),
-  z.object({ type: z.literal('day-exact'), day: z.number().int().min(1).max(90) }),
-  z.object({ type: z.literal('not-day'), day: z.number().int().min(1).max(90) }),
+  z.object({ type: z.literal('day-exact'), day: z.number().int().min(1).max(MAX_PLANNING_DAY) }),
+  z.object({ type: z.literal('not-day'), day: z.number().int().min(1).max(MAX_PLANNING_DAY) }),
   z.object({ type: z.literal('phase'), phase: phaseEnum }),
   z.object({ type: z.literal('habit'), habitId: z.string().min(1) }),
   z.object({ type: z.literal('exam-window'), daysBeforeExam: z.number().int().min(0) }),
   z.object({ type: z.literal('mock-sunday') }),
   z.object({ type: z.literal('weekday'), days: z.array(z.number().int().min(0).max(6)) }),
-  z.object({ type: z.literal('day-in'), days: z.array(z.number().int().min(1).max(90)) }),
+  z.object({ type: z.literal('day-in'), days: z.array(z.number().int().min(1).max(MAX_PLANNING_DAY)) }),
   z.object({ type: z.literal('recovery') }),
   z.object({ type: z.literal('backlog'), thresholdDays: z.number().int().min(1) }),
   z.object({ type: z.literal('revision'), dueAfterDays: z.number().int().min(1) }),

@@ -9,6 +9,7 @@ import ScreenHeader from '../components/ui/ScreenHeader';
 import { haptic } from '../lib/haptics';
 
 const ENERGY_LEVELS: EnergyLevel[] = ['low', 'medium', 'high'];
+const MAX_CUSTOM_DAY = 365;
 const EMPTY_FORM = { title: '', description: '', day: 1, durationMin: 30, energyLevel: 'medium' as EnergyLevel, taskType: 'Beginner' as TaskType };
 
 type SourceFilter = 'all' | 'built-in' | 'user';
@@ -66,13 +67,17 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
       backlogSuitability: 0.3,
       thinkingSkills: ['focus'],
       jeeRelevance: { score: 0.5 },
-      unlockConditions: [{ type: 'day', fromDay: clampInt(form.day, 1, 90) }],
+      unlockConditions: [{ type: 'day-exact', day: clampInt(form.day, 1, MAX_CUSTOM_DAY) }],
       active: true,
     });
-    update((s) => ({ ...s, dynamicTaskBank: [...s.dynamicTaskBank, entry] }));
+    if (hasDuplicateTask(allTasks, entry.title, unlockDay(entry))) {
+      flash('Ye task is day ke liye pehle se hai. Duplicate add nahi hua.');
+      return;
+    }
+    update((s) => ({ ...s, dynamicTaskBank: upsertUniqueTask(s.dynamicTaskBank, entry) }));
     setForm(EMPTY_FORM);
     setShowForm(false);
-    flash(`Task add ho gaya — Day ${entry.unlockConditions[0].type === 'day' ? entry.unlockConditions[0].fromDay : 1} ke plan mein aa jayega.`);
+    flash(`Task add ho gaya — Day ${unlockDay(entry)} ke plan mein aa jayega.`);
   }
 
   function startEdit(entry: TaskBankEntry) {
@@ -86,6 +91,10 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
       flash('Title khaali nahi ho sakta.');
       return;
     }
+    if (hasDuplicateTask(allTasks, editDraft.title, clampInt(editDraft.day, 1, MAX_CUSTOM_DAY), editingId)) {
+      flash('Same day par same title ka task pehle se hai.');
+      return;
+    }
     update((s) => ({
       ...s,
       dynamicTaskBank: [
@@ -94,7 +103,7 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
           ...(container.taskBank.getById(editingId) ?? s.dynamicTaskBank.find((e) => e.id === editingId)!),
           title: editDraft.title.trim(),
           estimatedDurationMin: clampInt(editDraft.durationMin, 5, 180),
-          unlockConditions: [{ type: 'day', fromDay: clampInt(editDraft.day, 1, 90) }],
+          unlockConditions: [{ type: 'day-exact' as const, day: clampInt(editDraft.day, 1, MAX_CUSTOM_DAY) }],
           active: true,
         },
       ],
@@ -167,8 +176,8 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
             <input className="field" placeholder="Description (optional)" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
             <div className="grid grid-cols-2 gap-2.5">
               <label className="block">
-                <span className="field-label">Day (1-90)</span>
-                <input className="field" type="number" min={1} max={90} value={form.day} onChange={(e) => setForm({ ...form, day: Number(e.target.value) || 1 })} />
+                <span className="field-label">Day (1-{MAX_CUSTOM_DAY})</span>
+                <input className="field" type="number" min={1} max={MAX_CUSTOM_DAY} value={form.day} onChange={(e) => setForm({ ...form, day: Number(e.target.value) || 1 })} />
               </label>
               <label className="block">
                 <span className="field-label">Duration (min)</span>
@@ -253,7 +262,7 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
                   <div className="space-y-2.5">
                     <input className="field" aria-label="Task title" value={editDraft.title} onChange={(e) => setEditDraft({ ...editDraft, title: e.target.value })} />
                     <div className="grid grid-cols-2 gap-2.5">
-                      <input className="field" type="number" min={1} max={90} aria-label="Day" value={editDraft.day} onChange={(e) => setEditDraft({ ...editDraft, day: Number(e.target.value) || 1 })} />
+                      <input className="field" type="number" min={1} max={MAX_CUSTOM_DAY} aria-label="Day" value={editDraft.day} onChange={(e) => setEditDraft({ ...editDraft, day: Number(e.target.value) || 1 })} />
                       <input className="field" type="number" min={5} max={180} aria-label="Duration" value={editDraft.durationMin} onChange={(e) => setEditDraft({ ...editDraft, durationMin: Number(e.target.value) || 30 })} />
                     </div>
                     <div className="flex gap-2">
@@ -323,6 +332,8 @@ function EnergyBadge({ level }: { level: EnergyLevel }) {
 }
 
 function unlockDay(entry: TaskBankEntry): number {
+  const exact = entry.unlockConditions.find((c) => c.type === 'day-exact');
+  if (exact && exact.type === 'day-exact') return exact.day;
   const day = entry.unlockConditions.find((c) => c.type === 'day');
   return day && day.type === 'day' ? day.fromDay : 1;
 }
@@ -334,4 +345,22 @@ function clampInt(v: number, min: number, max: number): number {
 function uid(prefix: string): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function normalizeTaskTitle(title: string): string {
+  return title.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function hasDuplicateTask(entries: TaskBankEntry[], title: string, day: number, ignoreId?: string): boolean {
+  const normalized = normalizeTaskTitle(title);
+  return entries.some((entry) => entry.active && entry.id !== ignoreId && normalizeTaskTitle(entry.title) === normalized && unlockDay(entry) === day);
+}
+
+function upsertUniqueTask(entries: TaskBankEntry[], entry: TaskBankEntry): TaskBankEntry[] {
+  const normalized = normalizeTaskTitle(entry.title);
+  const day = unlockDay(entry);
+  return [
+    ...entries.filter((existing) => existing.id !== entry.id && (!existing.active || normalizeTaskTitle(existing.title) !== normalized || unlockDay(existing) !== day)),
+    entry,
+  ];
 }
