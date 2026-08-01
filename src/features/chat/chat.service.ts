@@ -194,7 +194,7 @@ export class ChatService {
             this.appendAssistant(session, assistant);
             return assistant;
           }
-          throw new Error('AI khaali reply diya');
+          throw new Error('AI ne JSON nahi diya — API key + model check karo, ya simple language mein pucho.');
         }
         onStatus?.(
           actions.length > 1
@@ -315,7 +315,7 @@ export class ChatService {
     const request: LLMRequest = {
       messages: this.buildMessages(session, CHAT_TOOL_INSTRUCTIONS),
       temperature: session.prefs.temperature,
-      maxTokens: 500,
+      maxTokens: 1024,
       providerId: session.prefs.providerId,
       signal,
       // Decision hops must be fast, deterministic JSON — thinking only risks
@@ -334,7 +334,7 @@ export class ChatService {
     const request: LLMRequest = {
       messages: this.buildMessages(session, system),
       temperature: session.prefs.temperature,
-      maxTokens: 500,
+      maxTokens: 1024,
       providerId: session.prefs.providerId,
       signal,
       thinking: 'off',
@@ -360,7 +360,7 @@ export class ChatService {
     const request: LLMRequest = {
       messages,
       temperature: session.prefs.temperature,
-      maxTokens: 500,
+      maxTokens: 1024,
       providerId: session.prefs.providerId,
       signal,
       thinking: 'off',
