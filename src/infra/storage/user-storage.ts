@@ -3,7 +3,7 @@
  * Persists user data across app updates
  */
 
-import persistentStorage from './persistent-storage';
+import { persistentStorage } from './persistent-storage';
 
 // Storage Keys
 export const STORAGE_KEYS = {
