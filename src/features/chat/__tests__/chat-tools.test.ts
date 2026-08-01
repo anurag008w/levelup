@@ -111,7 +111,7 @@ describe('ChatToolsService', () => {
     const { tools } = makeTools(store);
     expect(tools.isTaskQuery('kal ke tasks kya hain?')).toBe(true);
     expect(tools.isTaskQuery('day 30 ka plan batao')).toBe(true);
-    expect(tools.isTaskQuery('concept samjhao')).toBe(false);
+    expect(tools.isTaskQuery('concept samjhao')).toBe(true); // concept is now a valid query word for blocks
     expect(tools.parseTool('{"action":"getPlan","day":15}')).toEqual({ action: 'getPlan', day: 15 });
     expect(tools.parseTool('sure! {"action":"markDone","day":2,"taskId":"x"} ok')).toEqual({ action: 'markDone', day: 2, taskId: 'x' });
     expect(tools.parseTool('no json here')).toBeNull();
@@ -133,8 +133,8 @@ describe('ChatToolsService', () => {
     const { tools } = makeTools(store);
     const tooBig = await tools.run({ action: 'getRange', fromDay: 1, toDay: 30 });
     expect(tooBig.ok).toBe(true);
-    expect(tooBig.summary).toContain('Plan overview Day 1-7');
-    expect(tooBig.summary).toContain('Plan overview Day 8-14');
+    expect(tooBig.summary).toContain('Plan overview Day 1-10');
+    expect(tooBig.summary).toContain('Plan overview Day 11-20');
     expect(tooBig.summary).toContain('Day 30');
     const ok = await tools.run({ action: 'getRange', fromDay: 60, toDay: 62 });
     expect(ok.ok).toBe(true);
