@@ -29,6 +29,11 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
   }),
   z.object({ action: z.literal('markDone'), day: z.number().int(), taskId: z.string().min(1), confirmed: z.boolean().optional() }),
   z.object({ action: z.literal('bulkMarkDone'), day: z.number().int(), taskIds: z.array(z.string().min(1)).min(1).optional(), confirmed: z.boolean().optional() }),
+  // Task Bank Management (view, edit, delete any task)
+  z.object({ action: z.literal('getAllTasks'), day: z.number().int() }),
+  z.object({ action: z.literal('getTaskBank'), category: z.string().optional() }),
+  z.object({ action: z.literal('editAnyTask'), taskId: z.string().min(1), title: z.string().min(1).max(200).optional(), durationMin: z.number().int().min(1).max(600).optional(), category: z.string().optional() }),
+  z.object({ action: z.literal('deleteAnyTask'), taskId: z.string().min(1), confirmed: z.boolean().optional() }),
   // Block management actions
   z.object({
     action: z.literal('createBlock'),
@@ -75,9 +80,11 @@ export const CHAT_TOOL_INSTRUCTIONS = `You can VIEW or MODIFY the study plan for
 When the user asks about the plan for a day, or wants to add/remove/edit/complete tasks,
 your ENTIRE reply must be exactly one JSON object, no extra text.
 
-ONE action (single-object form):
+TASK MANAGEMENT:
 - Plan for a day: {"action":"getPlan","day":N}
-- Overview of a range: {"action":"getRange","fromDay":A,"toDay":B} (max 7 days per call; for a wider span send SEVERAL getRange actions, one 7-day window each, in the actions array — a single oversized range is auto-split too)
+- Overview of a range: {"action":"getRange","fromDay":A,"toDay":B} (max 10 days per call; auto-splits if larger)
+- View ALL tasks for a day (AI + user created): {"action":"getAllTasks","day":N}
+- View entire task bank: {"action":"getTaskBank"} or {"action":"getTaskBank","category":"physics"}
 - Add a task: {"action":"addTask","day":N,"intent":"<what task>","durationMin":30}. The task appears ONLY on Day N.
 - Add multiple tasks at once: {"action":"bulkAddTasks","day":N,"intents":["maths 10 questions","thermo revision"],"durationMin":30}. All appear ONLY on Day N.
 - Edit a task (title/duration, or move to another day): {"action":"editTask","day":N,"taskId":"<id from plan>","durationMin":20,"dayTo":5}. "dayTo" moves it so it only appears on that exact day.
@@ -86,6 +93,12 @@ ONE action (single-object form):
 - Mark a day as a REST/HOLIDAY day: {"action":"setDayMode","day":N,"mode":"rest"}. On a rest day no auto curriculum or AI tasks appear, only tasks the user explicitly scheduled. To make it a normal study day again use "mode":"study". If the user says Sunday/holiday/chhuti, this is the right tool. Changing a day is safe and undoable.
 - Mark a task done: {"action":"markDone","day":N,"taskId":"<id from plan>"}
 - Mark multiple/all tasks done for one day: {"action":"bulkMarkDone","day":N,"taskIds":["id1","id2"],"confirmed":true}. If the user says all/saare tasks, omit taskIds to target all visible plan tasks. This is bulk edit: first call without confirmed to preview; only call with "confirmed":true after explicit confirmation.
+
+TASK BANK MANAGEMENT (full control):
+- View all tasks: {"action":"getTaskBank"} - shows entire task bank with IDs
+- View by category: {"action":"getTaskBank","category":"physics"}
+- Edit any task in bank: {"action":"editAnyTask","taskId":"<taskId>","title":"New Title","durationMin":45,"category":"chemistry"}
+- Delete any task from bank: {"action":"deleteAnyTask","taskId":"<taskId>"} - DESTRUCTIVE, needs confirmation
 
 CUSTOM BLOCK MANAGEMENT (for post-journey study, after 90 days):
 - List all blocks: {"action":"listBlocks"} - shows all blocks with their status
@@ -103,6 +116,12 @@ CUSTOM BLOCK MANAGEMENT (for post-journey study, after 90 days):
 - Activate a block: {"action":"activateBlock","blockId":"<block-id>"}. Makes this block guide your daily study.
 
 Full control examples:
+- "saare tasks dikhao day 5 ke" → getAllTasks for day 5
+- "task bank mein kya kya hai" → getTaskBank
+- "physics wale tasks dekho" → getTaskBank with category
+- "task xyz ka naam badal do" → editAnyTask
+- "ye task delete karo" → deleteAnyTask (needs confirm)
+- "10 din ka plan dikhao" → getRange with 10 days
 - "edit block block-xxx make it harder" → editBlock with difficulty:hard
 - "add 5 more days to physics block" → extendBlock with days:5
 - "delete the chemistry block" → deleteBlock (needs confirm)
@@ -117,8 +136,8 @@ emit EVERY change together in an actions array, e.g.
 Multi-action rules:
 - Do EVERYTHING the user asked for in the same reply — never execute only one of several requested changes.
 - Max 6 actions per reply. Actions run top-to-bottom and all results come back combined with task ids.
-- Destructive/bulk actions (removeTask, bulkRemoveTasks, setDayMode, bulkMarkDone, deleteBlock) still need "confirmed":true once the user has explicitly agreed; without it the WHOLE batch is only previewed and NOTHING is applied.
-- For a range longer than 7 days, use multiple getRange actions (7 days each) in one batch instead of failing.
+- Destructive/bulk actions (removeTask, bulkRemoveTasks, setDayMode, bulkMarkDone, deleteBlock, deleteAnyTask) still need "confirmed":true once the user has explicitly agreed; without it the WHOLE batch is only previewed and NOTHING is applied.
+- For a range longer than 10 days, auto-splits into multiple calls.
 
 The tool result always returns the updated plan with task ids. Sundays (Day 7, 14, 21...) are MOCK test days, NOT automatically holidays: on a mock Sunday the mock protocol tasks appear AND you can still add tasks with addTask/bulkAddTasks. Only use setDayMode "rest" when the user actually wants a holiday/rest day.
 For ANYTHING else (concepts, motivation, general questions, block suggestions, study strategies) reply normally in Hinglish.`;
