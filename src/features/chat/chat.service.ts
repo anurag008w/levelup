@@ -183,6 +183,17 @@ export class ChatService {
           actions = this.tools.parseTools(retry.text);
           if (retry.text) answer = retry.text;
         }
+        if (actions.length === 0 && looksLikeToolRefusal(answer)) {
+          const recentUserText = session.messages
+            .filter((m) => m.role === 'user')
+            .slice(-4)
+            .map((m) => m.content)
+            .join('\n');
+          actions = this.tools.inferFallbackActions(recentUserText);
+          if (actions.length > 0) {
+            onStatus?.('Model refuse kar raha tha — local fallback tool chala raha hai…');
+          }
+        }
         if (actions.length === 0) {
           if (answer) {
             const assistant: ChatMessage = {
@@ -578,4 +589,10 @@ function stripAttachmentBlocks(text: string): string {
 
 function truncateMemory(s: string, max = 300): string {
   return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+}
+
+function looksLikeToolRefusal(text: string): boolean {
+  const t = text.toLowerCase();
+  return /tool|backend|system|database|permission|access|interface|automatically|automatic|direct/.test(t)
+    && /not|nahi|nahin|cannot|can't|fail|available|active|refus/.test(t);
 }

@@ -106,6 +106,18 @@ function providerWith(completeText: string, streamText: string): LLMProvider {
 }
 
 describe('ChatToolsService', () => {
+  it('infers safe fallback actions when a weak model refuses tools', () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+
+    expect(tools.inferFallbackActions('test hai dummy data daalo\nblock add kro abhi')).toEqual([
+      expect.objectContaining({ action: 'createBlock', name: 'Dummy Test Block', days: 7 }),
+    ]);
+    expect(tools.inferFallbackActions('test hai dummy data daalo\nab dalo tasks bhi')).toEqual([
+      expect.objectContaining({ action: 'bulkAddTasks', day: 1, durationMin: 30 }),
+    ]);
+  });
+
   it('detects task-related queries and parses valid tool actions', () => {
     const store = makeStore();
     const { tools } = makeTools(store);
@@ -454,6 +466,34 @@ describe('ChatService with tools', () => {
     const reply = await chat.send(session.id, 'day 1 ka pehla task mark karo');
     expect(reply.content).toBe('Ho gaya! Day 1 ka d1_t1 done mark.');
     expect(store.get().taskLogs['2026-07-01']?.['d1_t1']).toBe(true);
+  });
+
+  it('runs local fallback when the model falsely says tools are unavailable', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    let completeCalls = 0;
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => {
+        completeCalls += 1;
+        return { text: 'Mere paas backend tool access available nahi hai.', model: 'a' };
+      },
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        req.onDelta?.('Block add ho gaya.');
+        return { text: 'Block add ho gaya.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    await chat.send(session.id, 'test hai dummy data daalo');
+    const reply = await chat.send(session.id, 'block add kro abhi');
+    expect(completeCalls).toBe(2);
+    expect(reply.tool).toBe('createBlock');
+    expect(store.get().postJourney?.customPhases[0]?.name).toBe('Dummy Test Block');
   });
 
   it('delivers a normal answer directly when the model does not emit a tool action', async () => {

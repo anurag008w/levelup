@@ -113,6 +113,50 @@ export class ChatToolsService {
     return TASK_QUERY_WORDS.some((w) => t.includes(w));
   }
 
+
+  /**
+   * Deterministic safety net for weak/refusing models. If the decision hop
+   * answers with prose like "I cannot access tools", infer the obvious local
+   * tool action from the user's recent chat text instead of surfacing a false
+   * capability error. Kept intentionally conservative: only create/add/view
+   * commands with safe defaults are inferred.
+   */
+  inferFallbackActions(text: string): ChatToolAction[] {
+    const t = text.toLowerCase();
+    const day = inferDay(t);
+    const wantsAdd = /\b(add|create|banao|bana|daalo|dalo|dal|create karo|add kro|add karo)\b/.test(t);
+    const mentionsBlock = /\bblock|phase\b/.test(t);
+    const mentionsTask = /\btasks?|kaam|practice|pyq|flashcards?\b/.test(t);
+    const isDummy = /\bdummy|test|sample|practice\b/.test(t);
+
+    if ((wantsAdd || /block add|add block/.test(t)) && mentionsBlock) {
+      const days = inferDurationDays(t) ?? (isDummy ? 7 : 15);
+      const focusAreas = inferFocusAreasFromText(t);
+      const name = inferBlockName(focusAreas, isDummy);
+      return [{
+        action: 'createBlock',
+        name,
+        description: isDummy ? 'Dummy test block for checking chat tools' : `${name} study block`,
+        days,
+        focusAreas,
+        difficulty: 'medium',
+      }];
+    }
+
+    if ((wantsAdd || /tasks? bhi|tasks? dalo|tasks? daalo/.test(t)) && mentionsTask) {
+      const durationMin = inferDurationMin(t) ?? 30;
+      const intents = inferTaskIntents(t, isDummy);
+      if (intents.length > 1) return [{ action: 'bulkAddTasks', day, intents, durationMin }];
+      return [{ action: 'addTask', day, intent: intents[0] ?? 'Dummy practice task', durationMin }];
+    }
+
+    if (/\b(plan|tasks?|din|day|aaj|kal)\b/.test(t) && /\b(dikhao|bata|show|view|list)\b/.test(t)) {
+      return [{ action: 'getPlan', day }];
+    }
+
+    return [];
+  }
+
   /** Extracts and validates a single tool action from the model reply. */
   parseTool(text: string): ChatToolAction | null {
     const actions = this.parseTools(text);
@@ -1113,4 +1157,43 @@ function cloneBankTask(entry: TaskBankEntry, day: number): TaskBankEntry {
     id: `ai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
     legacy: undefined,
   };
+}
+
+function inferDay(text: string): number {
+  const dayMatch = text.match(/(?:day|din)\s*(\d{1,2})/);
+  if (dayMatch) return clamp(Number(dayMatch[1]));
+  if (/\bkal\b/.test(text)) return 2;
+  return 1;
+}
+
+function inferDurationMin(text: string): number | null {
+  const match = text.match(/(\d{1,3})\s*(?:min|minute|minutes)/);
+  return match ? Math.min(600, Math.max(1, Number(match[1]))) : null;
+}
+
+function inferDurationDays(text: string): number | null {
+  const match = text.match(/(\d{1,2})\s*(?:din|day|days)/);
+  return match ? clampBlockDays(Number(match[1])) : null;
+}
+
+function inferFocusAreasFromText(text: string): string[] {
+  const areas: string[] = [];
+  for (const [word, area] of Object.entries({ physics: 'physics', phys: 'physics', chemistry: 'chemistry', chem: 'chemistry', maths: 'maths', math: 'maths', revision: 'revision', mock: 'mock', test: 'mock', concept: 'concept', problem: 'problem', practice: 'problem' })) {
+    if (text.includes(word) && !areas.includes(area)) areas.push(area);
+  }
+  return areas;
+}
+
+function inferBlockName(focusAreas: string[], isDummy: boolean): string {
+  if (isDummy) return 'Dummy Test Block';
+  const primary = focusAreas[0];
+  return primary ? `${primary[0].toUpperCase()}${primary.slice(1)} Block` : 'Custom Study Block';
+}
+
+function inferTaskIntents(text: string, isDummy: boolean): string[] {
+  if (isDummy || /tasks? bhi|tasks? dalo|tasks? daalo/.test(text)) {
+    return ['Dummy concept revision', 'Dummy PYQ practice'];
+  }
+  const cleaned = text.replace(/(?:add|create|banao|bana|daalo|dalo|dal|task|tasks|karo|kro|abhi|day\s*\d+|din\s*\d+)/g, ' ').replace(/\s+/g, ' ').trim();
+  return [cleaned || 'Study practice task'];
 }
