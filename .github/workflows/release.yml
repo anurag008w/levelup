@@ -1,47 +1,63 @@
 name: Release
 
+# ONLY MANUAL TRIGGER - No automatic releases
 on:
-  # Trigger on version tags in format vYYYY.MM.DD (e.g., v2026.08.01)
-  push:
-    tags:
-      - "v[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]"
-  # Allow manual trigger with custom tag
   workflow_dispatch:
     inputs:
-      version_tag:
+      version:
         description: "Version tag (e.g., v2026.08.01)"
         required: true
-        default: "v2026.08.01"
+        default: ""
+      message:
+        description: "Release message (optional)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
-# Cancel in-progress runs on same tag
+# Cancel in-progress runs
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: true
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Checkout repo
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Get version tag
+      - name: Validate version
         id: version
         run: |
-          if [[ "${{ github.event.inputs.version_tag }}" != "" ]]; then
-            VERSION="${{ github.event.inputs.version_tag }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION="${{ github.event.inputs.version }}"
+          
+          # Auto-generate if empty
+          if [[ -z "$VERSION" ]]; then
+            VERSION="v$(date +%Y.%m.%d)"
           fi
+          
+          # Ensure it starts with 'v'
+          if [[ ! "$VERSION" =~ ^v ]]; then
+            VERSION="v$VERSION"
+          fi
+          
           echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "VERSION_NAME=${VERSION#v}" >> "$GITHUB_OUTPUT"
-          echo "DATE=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          
+          echo "📌 Release Version: $VERSION"
+
+      - name: Check if tag exists
+        run: |
+          if git tag | grep -q "^${{ steps.version.outputs.VERSION }}$"; then
+            echo "❌ Tag ${{ steps.version.outputs.VERSION }} already exists!"
+            exit 1
+          fi
+          echo "✅ Tag does not exist, proceeding with release"
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -72,60 +88,52 @@ jobs:
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon
 
-      - name: Prepare release APK
-        id: apk
+      - name: Prepare APK and changelog
+        id: prepare
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           mkdir -p release-out
           
-          # Get git info for release notes
-          git fetch --tags
-          TAGS=$(git tag --sort=-v:refname | head -5 | tr '\n' ' ')
-          
-          # Count commits since last release
+          # Get commits since last tag
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [[ -n "$LAST_TAG" ]]; then
             COMMITS_SINCE=$(git log $LAST_TAG..HEAD --oneline | wc -l | tr -d ' ')
+            echo "📝 Commits since $LAST_TAG: $COMMITS_SINCE"
           else
-            COMMITS_SINCE=$(git rev-list --count HEAD)
+            echo "📝 First release"
           fi
           
-          # Get last 5 commit messages
-          CHANGES=$(git log --oneline -5 | sed 's/^[a-f0-9]* /- /')
-          
-          NAME="human-os-{{ steps.version.outputs.VERSION_NAME }}.apk"
+          # Copy APK
+          NAME="human-os-${VERSION#v}.apk"
           cp android/app/build/outputs/apk/release/app-release.apk "release-out/${NAME}"
-          
           echo "apk_path=release-out/${NAME}" >> "$GITHUB_OUTPUT"
           echo "apk_name=${NAME}" >> "$GITHUB_OUTPUT"
-          echo "commits_since=${COMMITS_SINCE}" >> "$GITHUB_OUTPUT"
-          echo "changes<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$CHANGES" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog
         id: changelog
         run: |
-          # Get commit messages since last version tag
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           
-          if [[ -n "$LAST_TAG" ]]; then
-            echo "### Changes since $LAST_TAG" > changelog.md
-            echo '```' >> changelog.md
-            git log $LAST_TAG..HEAD --format="- %s" >> changelog.md
-            echo '```' >> changelog.md
-          else
-            echo "### Initial Release" > changelog.md
-            echo '```' >> changelog.md
-            git log --oneline -10 --format="- %s" >> changelog.md
-            echo '```' >> changelog.md
-          fi
+          cat > changelog.md << 'EOF'
+          # Release ${{ steps.version.outputs.VERSION }}
           
-          # Add APK download info
-          echo "" >> changelog.md
-          echo "### 📱 Install APK" >> changelog.md
-          echo "Download the APK below and install it on your Android phone." >> changelog.md
-          echo "" >> changelog.md
-          echo "**Note:** You may need to enable 'Install from unknown sources' in your phone settings." >> changelog.md
+          ## 📱 Download APK
+          Install the APK on your Android device.
+          
+          **Note:** Enable 'Install from unknown sources' in phone settings if needed.
+          
+          ## 📝 Changes
+          
+          EOF
+          
+          if [[ -n "$LAST_TAG" ]]; then
+            echo "### Changes since $LAST_TAG" >> changelog.md
+            git log $LAST_TAG..HEAD --format="- %s" >> changelog.md
+          else
+            echo "### All commits" >> changelog.md
+            git log --oneline -20 --format="- %s" >> changelog.md
+          fi
           
           cat changelog.md
 
@@ -133,7 +141,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: human-os-${{ steps.version.outputs.VERSION_NAME }}-apk
-          path: ${{ steps.apk.outputs.apk_path }}
+          path: ${{ steps.prepare.outputs.apk_path }}
           retention-days: 30
 
       - name: Create GitHub Release
@@ -144,10 +152,11 @@ jobs:
           body_path: changelog.md
           prerelease: false
           make_latest: true
-          files: ${{ steps.apk.outputs.apk_path }}
+          files: ${{ steps.prepare.outputs.apk_path }}
 
-      - name: Notify success
+      - name: Success
         run: |
+          echo ""
           echo "🎉 Release ${{ steps.version.outputs.VERSION }} created successfully!"
-          echo "📦 APK: ${{ steps.apk.outputs.apk_name }}"
-          echo "📝 Changes: ${{ steps.apk.outputs.commits_since }} commits since last release"
+          echo "📦 APK: ${{ steps.prepare.outputs.apk_name }}"
+          echo "🔗 Release: https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.VERSION }}"

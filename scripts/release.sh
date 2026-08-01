@@ -2,6 +2,9 @@
 # Release script for Human OS
 # Usage: ./scripts/release.sh [version]
 # If no version provided, uses today's date (vYYYY.MM.DD)
+#
+# IMPORTANT: Release is ONLY manual via GitHub Actions!
+# This script just checks prerequisites.
 
 set -e
 
@@ -17,26 +20,36 @@ if [[ ! "$VERSION" =~ ^v ]]; then
     VERSION="v$VERSION"
 fi
 
-echo "🚀 Creating release: $VERSION"
+echo "🚀 Release Version: $VERSION"
 echo ""
 
-# Check if tag already exists
-if git tag | grep -q "^${VERSION}$"; then
-    echo "❌ Tag $VERSION already exists!"
-    echo "   Use a different version or delete the existing tag:"
-    echo "   git tag -d $VERSION"
-    echo "   git push origin :refs/tags/$VERSION"
+# Check if on main branch
+BRANCH=$(git branch --show-current)
+if [[ "$BRANCH" != "main" ]]; then
+    echo "❌ You must be on 'main' branch to release!"
+    echo "   Current branch: $BRANCH"
     exit 1
 fi
+echo "✅ On main branch"
 
 # Check for uncommitted changes
 if ! git diff-index --quiet HEAD --; then
-    echo "⚠️  You have uncommitted changes. Please commit or stash them first."
-    git status
-    exit 1
+    echo "⚠️  You have uncommitted changes!"
+    git status --short
+    echo ""
+    read -p "Continue anyway? (y/n) " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
 fi
 
+# Pull latest
+echo "📥 Pulling latest changes..."
+git pull origin main
+
 # Run tests first
+echo ""
 echo "🧪 Running tests..."
 if ! npm run test -- --run; then
     echo "❌ Tests failed! Fix them before releasing."
@@ -45,24 +58,23 @@ fi
 
 echo ""
 echo "✅ All tests passed!"
-
-# Ask for confirmation
 echo ""
-read -p "Create and push tag $VERSION? (y/n) " -n 1 -r
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    echo "🏷️  Creating tag..."
-    git tag -a "$VERSION" -m "Release $VERSION"
-    
-    echo "📤 Pushing tag to origin..."
-    git push origin "$VERSION"
-    
-    echo ""
-    echo "🎉 Done! GitHub Actions will now:"
-    echo "   1. Build the APK"
-    echo "   2. Create release notes"
-    echo "   3. Publish the release at: https://github.com/anurag008w/jee-human-os/releases/tag/$VERSION"
-else
-    echo "❌ Cancelled."
-fi
+echo "📋 To create release:"
+echo ""
+echo "   1. Go to GitHub Actions:"
+echo "      https://github.com/anurag008w/jee-human-os/actions"
+echo ""
+echo "   2. Click 'Release' workflow"
+echo ""
+echo "   3. Click 'Run workflow'"
+echo ""
+echo "   4. Enter version: $VERSION"
+echo ""
+echo "   5. Click 'Run workflow'"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "💡 Or use GitHub CLI:"
+echo "   gh workflow run release.yml -f version=$VERSION"
