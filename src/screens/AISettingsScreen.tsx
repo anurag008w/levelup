@@ -68,7 +68,7 @@ export default function AISettingsScreen({ state, update }: { state: AppState; u
         <div className="absolute -right-16 -top-20 h-44 w-44 rounded-full bg-l/10 blur-3xl" aria-hidden="true" />
         <div className="relative flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <span className="badge mb-3" style={{ backgroundColor: aiEnabled ? 'rgba(52,211,153,0.13)' : 'rgba(97,112,143,0.18)', color: aiEnabled ? 'var(--color-success)' : 'var(--color-muted)' }}>
+            <span className="badge mb-3" style={{ backgroundColor: aiEnabled ? 'rgba(138,154,91,0.13)' : 'rgba(92,88,78,0.18)', color: aiEnabled ? 'var(--color-success)' : 'var(--color-muted)' }}>
               <Sparkles size={11} /> {aiEnabled ? 'AI online' : 'Manual mode'}
             </span>
             <h2 className="font-display text-2xl font-bold leading-tight">Personalization that stays in your control.</h2>

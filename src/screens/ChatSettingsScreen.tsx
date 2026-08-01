@@ -1,4 +1,4 @@
-import { Bot, Brain, ChevronLeft, MessageSquare, Save, Sparkles, Trash2 } from 'lucide-react';
+import { Brain, ChevronLeft, MessageSquare, Save, Sparkles, Trash2, Type } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ChatSettings } from '../core/domain/state';
 import ScreenHeader from '../components/ui/ScreenHeader';
@@ -172,10 +172,10 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
               onChange={(v) => updateChat({ autoSaveChats: v })}
             />
 
-            {/* Show Thinking */}
+            {/* Show thinking */}
             <Toggle
-              icon={<Bot size={16} />}
-              label="Show Thinking"
+              icon={<Type size={16} />}
+              label="Show thinking"
               description="AI ki thinking process dikhao (experimental)"
               checked={chat.showThinking}
               onChange={(v) => updateChat({ showThinking: v })}
@@ -187,9 +187,9 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
       {/* System Prompt */}
       <div className="mb-6">
         <SectionHeader
-          icon={<Bot size={14} color="var(--color-text)" />}
+          icon={<span className="font-mono text-xs text-text">L</span>}
           accent="var(--color-text)"
-          title="Editable System Persona"
+          title="Editable system persona"
         />
 
         <div className="gradient-border rounded-[1.25rem] p-px">

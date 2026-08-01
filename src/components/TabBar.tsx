@@ -14,7 +14,7 @@ const TABS: { id: Tab; label: string; hint: string; icon: typeof CalendarCheck }
   { id: 'ai', label: 'Settings', hint: 'App & AI', icon: Settings },
 ];
 
-const sidebarSpring = { type: 'spring', stiffness: 420, damping: 36, mass: 0.9 } as const;
+const sidebarSpring = { type: 'tween', duration: 0.32, ease: [0.2, 0, 0, 1] } as const;
 const SWIPE_EDGE_PX = 32;
 const SWIPE_DISTANCE_PX = 64;
 
