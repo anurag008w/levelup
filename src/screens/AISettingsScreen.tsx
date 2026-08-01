@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Bot, Check, Plug, RefreshCw, ShieldCheck, Trash2, Wifi, WifiOff } from 'lucide-react';
+import { Suspense, useState, lazy } from 'react';
+import { Bot, Check, ChevronRight, Plug, RefreshCw, Settings2, ShieldCheck, Trash2, Wifi, WifiOff } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ProviderConfig, ModelInfo } from '../core/domain/llm';
 import { container } from '../di/container';
@@ -9,12 +9,26 @@ import EmptyState from '../components/ui/EmptyState';
 import AddProviderForm from '../components/AddProviderForm';
 import { haptic } from '../lib/haptics';
 
+const ChatSettingsScreen = lazy(() => import('./ChatSettingsScreen'));
+
 export default function AISettingsScreen({ state, update }: { state: AppState; update: (fn: (s: AppState) => AppState) => void }) {
   const settings = state.aiSettings;
   const providers = Object.values(settings.providers);
   const hiddenEnabled = container.providerSettings.isHiddenEnabled();
   const effectiveActive = container.providerSettings.getActiveProvider()?.id ?? null;
   const aiEnabled = settings.aiEnabled;
+
+  // Navigation state for sub-screens
+  const [showChatSettings, setShowChatSettings] = useState(false);
+
+  // Chat Settings sub-screen
+  if (showChatSettings) {
+    return (
+      <Suspense fallback={<div className="screen"><ScreenHeader eyebrow="" title="Loading..." /></div>}>
+        <ChatSettingsScreen state={state} update={update} onBack={() => setShowChatSettings(false)} />
+      </Suspense>
+    );
+  }
 
   function setAiEnabled(enabled: boolean) {
     haptic();
@@ -79,6 +93,26 @@ export default function AISettingsScreen({ state, update }: { state: AppState; u
           </span>
         </div>
       )}
+
+      {/* Chat Settings Link */}
+      <button
+        type="button"
+        onClick={() => setShowChatSettings(true)}
+        className="gradient-border mb-4 w-full rounded-[1.25rem] p-px text-left"
+      >
+        <div className="flex items-center justify-between rounded-[calc(1.25rem-1px)] bg-panel p-4">
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(79,209,197,0.12)' }}>
+              <Settings2 size={18} color="var(--color-l)" />
+            </span>
+            <div>
+              <p className="font-display text-[15px] font-bold">Chat Settings</p>
+              <p className="text-xs leading-snug text-muted">Memory, temperature, system prompt</p>
+            </div>
+          </div>
+          <ChevronRight size={18} className="text-muted" />
+        </div>
+      </button>
 
       <div className="mb-2.5">
         <SectionHeader
