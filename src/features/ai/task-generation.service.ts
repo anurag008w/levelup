@@ -20,7 +20,7 @@ export interface GenerationResult {
 }
 
 const MIN_BANK_CONFIDENCE = 0.35;
-const MAX_AI_TASKS_PER_DAY = 5;
+const MAX_AI_TASKS_PER_DAY = 100;
 
 /**
  * AI Task Generation (M5). Bank-first: a confident match from the existing
@@ -68,7 +68,7 @@ export class TaskGenerationService {
         ),
     ).length;
     if (aiCount >= MAX_AI_TASKS_PER_DAY) {
-      throw new TaskBankValidationError(`Already ${MAX_AI_TASKS_PER_DAY} AI tasks planned for day ${dayNumber}`);
+      return { entry: createFallbackTask(input, dayNumber), source: 'ai' };
     }
 
     const entry = await this.askAi(input, dayNumber);
@@ -119,17 +119,61 @@ export class TaskGenerationService {
 
     try {
       return await attempt();
-    } catch (firstErr) {
+    } catch {
       // Weaker models answer with prose or drift out of schema — one strict retry
       // (mirroring the chat tool retry) before giving up.
       try {
         return await attempt('Your previous reply was not a single JSON object. Respond with ONLY the JSON object now, no markdown, no prose.');
       } catch {
-        if (firstErr instanceof TaskBankValidationError) throw firstErr;
-        throw new TaskBankValidationError('AI task generation failed');
+        return createFallbackTask(input, dayNumber);
       }
     }
   }
+}
+
+function createFallbackTask(input: GenerateTaskInput, dayNumber: number): TaskBankEntry {
+  const duration = Math.round(Math.min(600, Math.max(1, input.durationMin ?? 30)));
+  const title = sanitizeTitle(input.intent) || 'Focused study task';
+  return parseTaskBankEntry({
+    id: `ai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    habitId: input.habitId ?? 'h1',
+    title,
+    description: `Fallback task generated locally from request: ${title}`,
+    phase: phaseForDay(dayNumber),
+    difficulty: 2,
+    estimatedDurationMin: duration,
+    energyLevel: duration >= 90 ? 'high' : duration >= 45 ? 'medium' : 'low',
+    tags: inferTags(input.intent),
+    prerequisites: [],
+    taskType: 'Beginner',
+    revisionSuitability: 0.4,
+    backlogSuitability: 0.4,
+    thinkingSkills: ['planning', 'focus'],
+    jeeRelevance: { subject: inferSubject(input.intent), score: 0.5 },
+    unlockConditions: [{ type: 'day-exact', day: dayNumber }],
+    active: true,
+  });
+}
+
+function sanitizeTitle(intent: string): string {
+  return intent.replace(/\s+/g, ' ').trim().slice(0, 90);
+}
+
+function inferTags(intent: string): string[] {
+  const lower = intent.toLowerCase();
+  const tags = ['ai-fallback'];
+  for (const tag of ['physics', 'chemistry', 'maths', 'math', 'revision', 'mock', 'test']) {
+    if (lower.includes(tag)) tags.push(tag === 'math' ? 'maths' : tag);
+  }
+  return [...new Set(tags)];
+}
+
+function inferSubject(intent: string): string | undefined {
+  const lower = intent.toLowerCase();
+  if (lower.includes('physics')) return 'physics';
+  if (lower.includes('chemistry')) return 'chemistry';
+  if (lower.includes('maths') || lower.includes('math')) return 'maths';
+  return undefined;
 }
 
 function currentDayNumber(state: AppState, now: Date): number {

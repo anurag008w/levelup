@@ -153,7 +153,7 @@ export class ChatToolsService {
         if (Array.isArray(parsedArr)) {
           const parsedActions = parsedArr.map((a) => chatToolActionSchema.safeParse(a));
           if (parsedActions.every((r) => r.success)) {
-            return parsedActions.map((r) => (r as { success: true; data: ChatToolAction }).data).slice(0, 6);
+            return parsedActions.map((r) => (r as { success: true; data: ChatToolAction }).data).slice(0, 100);
           }
           return [];
         }
@@ -672,15 +672,20 @@ export class ChatToolsService {
   private async addTask(state: AppState, action: Extract<ChatToolAction, { action: 'addTask' }>): Promise<ChatToolResult> {
     const d = clamp(action.day);
     if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
-    const result = await this.taskGeneration.generate(state, {
-      intent: action.intent,
-      dayNumber: d,
-      durationMin: action.durationMin,
-    });
-    const entry = applyTaskMetadata(
-      result.source === 'bank' ? cloneBankTask(result.entry, d) : scheduleForDay(result.entry, d),
-      action,
-    );
+    let entry: TaskBankEntry;
+    try {
+      const result = await this.taskGeneration.generate(state, {
+        intent: action.intent,
+        dayNumber: d,
+        durationMin: action.durationMin,
+      });
+      entry = applyTaskMetadata(
+        result.source === 'bank' ? cloneBankTask(result.entry, d) : scheduleForDay(result.entry, d),
+        action,
+      );
+    } catch {
+      entry = createLocalTask(action.intent, d, action.durationMin, action);
+    }
     const next = state.dynamicTaskBank.some((e) => e.id === entry.id)
       ? state.dynamicTaskBank.map((e) => (e.id === entry.id ? entry : e))
       : [...state.dynamicTaskBank, entry];
@@ -706,7 +711,7 @@ export class ChatToolsService {
     if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
     const added: TaskBankEntry[] = [];
     const failed: string[] = [];
-    for (const intent of action.intents.slice(0, 6)) {
+    for (const intent of action.intents.slice(0, 100)) {
       try {
         const result = await this.taskGeneration.generate(state, {
           intent,
@@ -719,7 +724,9 @@ export class ChatToolsService {
         );
         added.push(entry);
       } catch {
-        // Partial success: one bad intent must not abort the whole batch.
+        // Provider/model failure must not make a user-visible add fail. Keep
+        // the batch moving with a deterministic local task.
+        added.push(createLocalTask(intent, d, action.durationMin, action));
         failed.push(intent);
       }
     }
@@ -740,7 +747,7 @@ export class ChatToolsService {
       confirmed: true,
     });
     this.store.save(resultAction.state);
-    const failedNote = failed.length > 0 ? `\n${failed.length} task(s) generate nahi ho paye: ${failed.join('; ')}.` : '';
+    const failedNote = failed.length > 0 ? `\n${failed.length} task(s) AI se generate nahi hue, local fallback se add kar diye: ${failed.join('; ')}.` : '';
     return {
       ok: true,
       versionId: resultAction.versionId,
@@ -1011,6 +1018,11 @@ function createBlockId(): string {
   return `block-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function createTaskId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `ai-${crypto.randomUUID().slice(0, 8)}`;
+  return `ai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
 function formatBlockDetails(block: CustomPhase): string {
   return [
     `**${block.name}** (id:${block.id})`,
@@ -1020,6 +1032,34 @@ function formatBlockDetails(block: CustomPhase): string {
     `🎯 Goals: ${block.goals.length > 0 ? block.goals.join(', ') : 'none'}`,
     `${block.createdBy === 'ai' ? '🤖 AI' : '👤 User'} · created:${block.createdAt}`,
   ].join('\n   ');
+}
+
+function createLocalTask(intent: string, day: number, durationMin: number, metadata: TaskMetadataPatch = {}): TaskBankEntry {
+  const title = intent.replace(/\s+/g, ' ').trim().slice(0, 90) || 'Focused study task';
+  const lower = title.toLowerCase();
+  const subject = lower.includes('physics') ? 'physics' : lower.includes('chemistry') ? 'chemistry' : lower.includes('math') ? 'maths' : undefined;
+  return applyTaskMetadata(
+    {
+      id: createTaskId(),
+      habitId: metadata.habitId ?? 'h1',
+      title,
+      description: metadata.description ?? `Local fallback task from chat request: ${title}`,
+      phase: metadata.phase ?? 'jee-core',
+      difficulty: clampDifficulty(metadata.difficulty ?? 2),
+      estimatedDurationMin: clamp(durationMin),
+      energyLevel: metadata.energyLevel ?? (durationMin >= 90 ? 'high' : durationMin >= 45 ? 'medium' : 'low'),
+      tags: metadata.tags ?? ['ai-fallback', ...(subject ? [subject] : [])],
+      prerequisites: metadata.prerequisites ?? [],
+      taskType: metadata.taskType ?? 'Beginner',
+      revisionSuitability: metadata.revisionSuitability ?? 0.4,
+      backlogSuitability: metadata.backlogSuitability ?? 0.4,
+      thinkingSkills: metadata.thinkingSkills ?? ['planning', 'focus'],
+      jeeRelevance: metadata.jeeRelevance ?? { subject, score: 0.5 },
+      unlockConditions: [{ type: 'day-exact', day }],
+      active: true,
+    },
+    metadata,
+  );
 }
 
 function hasTaskEdit(action: Record<string, unknown>): boolean {
