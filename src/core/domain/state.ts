@@ -28,8 +28,10 @@ export interface ChatSettings {
   temperature: number;
   /** Max response length */
   maxTokens: number;
-  /** Custom system prompt */
+  /** Hidden system persona / coach instructions */
   systemPrompt: string;
+  /** Optional user-side persona / personal custom instructions */
+  userPersona: string;
   /** Remember conversation context */
   memoryEnabled: boolean;
   /** Save chats to history */
@@ -65,6 +67,7 @@ export function defaultChatSettings(): ChatSettings {
     temperature: 0.7,
     maxTokens: 2048,
     systemPrompt: INTERNAL_SYSTEM_PROMPT,
+    userPersona: '',
     memoryEnabled: true,
     autoSaveChats: true,
     conversationHistoryLength: 10,

@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@import "@fontsource/spectral/500.css";
+@import "@fontsource/spectral/600.css";
 @import "@fontsource/zilla-slab/500.css";
 @import "@fontsource/zilla-slab/600.css";
 @import "@fontsource/zilla-slab/700.css";
@@ -29,30 +31,30 @@
   --color-surface-2: #1c1a16;
   --color-surface-3: #221f1a;
   --color-grid: #232019;
-  --color-border: #3a3a3a;
+  --color-border: #33312b;
   --color-border-strong: #4a463e;
 
   --color-text: #e8e4d8;
-  --color-muted: #8a8578;
-  --color-muted-dim: #5c584e;
+  --color-muted: #a39d8c;
+  --color-muted-dim: #6b6659;
 
   --color-l: #8a9a5b;
   --color-l-dim: #4a5230;
   --color-light: #c9a227;
   --color-light-dim: #6b5716;
   --color-success: #8a9a5b;
-  --color-danger: #7a1e1e;
-  --color-warning: #7a1e1e;
+  --color-danger: #c95757;
+  --color-warning: #c95757;
   --color-peak: #c9a227;
   --color-gold: #c9a227;
   --color-blue: #8a8578;
   --color-sky: #8a8578;
   --color-ink: #0d0d0d;
-  --color-user-bubble: #2a2f22;
+  --color-user-bubble: #262418;
   --color-user-bubble-text: #e8e4d8;
 
   /* ---- Typography (Apple-style scale: 24/20/18/17/15/13/12) ---- */
-  --font-display: "Zilla Slab", serif;
+  --font-display: "Spectral", "IBM Plex Sans", serif;
   --font-body: "IBM Plex Sans", sans-serif;
   --font-mono: "IBM Plex Mono", monospace;
 
@@ -66,12 +68,12 @@
   --text-4xl: 2rem;
 
   /* ---- Radius scale ---- */
-  --radius-sm: 0.25rem;
-  --radius-md: 0.45rem;
-  --radius-lg: 0.7rem;
-  --radius-xl: 0.85rem;
-  --radius-2xl: 1rem;
-  --radius-3xl: 1.15rem;
+  --radius-sm: 0.15rem;
+  --radius-md: 0.2rem;
+  --radius-lg: 0.25rem;
+  --radius-xl: 0.3rem;
+  --radius-2xl: 0.35rem;
+  --radius-3xl: 0.4rem;
 
   /* ---- Elevation ---- */
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5);
@@ -82,7 +84,7 @@
   /* ---- Motion ---- */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-pop: cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* =====================================================================
@@ -102,7 +104,7 @@ body {
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  background-image: radial-gradient(1000px 700px at 50% -10%, rgba(255, 255, 255, 0.02), transparent 60%);
+  background-image: radial-gradient(1000px 700px at 50% -10%, rgba(255, 255, 255, 0.025), transparent 60%);
   background-attachment: fixed;
 }
 
@@ -1595,4 +1597,87 @@ label.field-label {
   .confetti-piece {
     display: none;
   }
+}
+
+/* Settings popups (ChatGPT/Claude-style centered sheet) */
+.side-nav-settings-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.65rem;
+  border-radius: var(--radius-md);
+  padding: 0.55rem;
+  color: var(--color-muted);
+  transition: background-color 0.16s var(--ease-standard), color 0.16s var(--ease-standard), transform 0.14s var(--ease-standard);
+}
+.side-nav-settings-row:hover {
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--color-text);
+}
+.side-nav-settings-row:active {
+  transform: scale(0.985);
+}
+.side-nav-icon.compact {
+  height: 2rem;
+  width: 2rem;
+}
+.settings-modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: calc(1rem + env(safe-area-inset-top, 0px)) 1rem calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+.settings-modal-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 3, 3, 0.66);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+}
+.settings-modal {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: min(38rem, 100%);
+  max-height: min(42rem, calc(100svh - 2rem));
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 1.25rem;
+  background: var(--color-panel);
+  box-shadow: 0 26px 80px -28px rgba(0, 0, 0, 0.95);
+}
+.settings-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--color-border);
+  padding: 1rem 1rem 0.9rem;
+}
+.settings-modal-body {
+  overflow-y: auto;
+  padding: 1rem;
+}
+.settings-modal-hero {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-panel-raised);
+  padding: 0.85rem;
+}
+.settings-modal-avatar {
+  display: inline-flex;
+  height: 2.75rem;
+  width: 2.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(138, 154, 91, 0.14);
+  color: var(--color-l);
 }
