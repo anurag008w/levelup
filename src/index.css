@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@import "@fontsource/spectral/500.css";
+@import "@fontsource/spectral/600.css";
 @import "@fontsource/zilla-slab/500.css";
 @import "@fontsource/zilla-slab/600.css";
 @import "@fontsource/zilla-slab/700.css";
@@ -29,30 +31,30 @@
   --color-surface-2: #1c1a16;
   --color-surface-3: #221f1a;
   --color-grid: #232019;
-  --color-border: #3a3a3a;
+  --color-border: #33312b;
   --color-border-strong: #4a463e;
 
   --color-text: #e8e4d8;
-  --color-muted: #8a8578;
-  --color-muted-dim: #5c584e;
+  --color-muted: #a39d8c;
+  --color-muted-dim: #6b6659;
 
   --color-l: #8a9a5b;
   --color-l-dim: #4a5230;
   --color-light: #c9a227;
   --color-light-dim: #6b5716;
   --color-success: #8a9a5b;
-  --color-danger: #7a1e1e;
-  --color-warning: #7a1e1e;
+  --color-danger: #c95757;
+  --color-warning: #c95757;
   --color-peak: #c9a227;
   --color-gold: #c9a227;
   --color-blue: #8a8578;
   --color-sky: #8a8578;
   --color-ink: #0d0d0d;
-  --color-user-bubble: #2a2f22;
+  --color-user-bubble: #262418;
   --color-user-bubble-text: #e8e4d8;
 
   /* ---- Typography (Apple-style scale: 24/20/18/17/15/13/12) ---- */
-  --font-display: "Zilla Slab", serif;
+  --font-display: "Spectral", "IBM Plex Sans", serif;
   --font-body: "IBM Plex Sans", sans-serif;
   --font-mono: "IBM Plex Mono", monospace;
 
@@ -66,12 +68,12 @@
   --text-4xl: 2rem;
 
   /* ---- Radius scale ---- */
-  --radius-sm: 0.25rem;
-  --radius-md: 0.45rem;
-  --radius-lg: 0.7rem;
-  --radius-xl: 0.85rem;
-  --radius-2xl: 1rem;
-  --radius-3xl: 1.15rem;
+  --radius-sm: 0.15rem;
+  --radius-md: 0.2rem;
+  --radius-lg: 0.25rem;
+  --radius-xl: 0.3rem;
+  --radius-2xl: 0.35rem;
+  --radius-3xl: 0.4rem;
 
   /* ---- Elevation ---- */
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5);
@@ -82,7 +84,7 @@
   /* ---- Motion ---- */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-pop: cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* =====================================================================
@@ -102,7 +104,7 @@ body {
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  background-image: radial-gradient(1000px 700px at 50% -10%, rgba(255, 255, 255, 0.02), transparent 60%);
+  background-image: radial-gradient(1000px 700px at 50% -10%, rgba(255, 255, 255, 0.025), transparent 60%);
   background-attachment: fixed;
 }
 
