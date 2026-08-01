@@ -10,7 +10,7 @@ const TABS: { id: Tab; label: string; hint: string; icon: typeof CalendarCheck }
   { id: 'progress', label: 'Progress', hint: 'Analytics', icon: LineChart },
   { id: 'review', label: 'Review', hint: 'Reflect', icon: NotebookPen },
   { id: 'task-bank', label: 'Tasks', hint: 'Bank', icon: ListTodo },
-  { id: 'chat', label: 'Chat', hint: 'Coach', icon: MessageCircle },
+  { id: 'chat', label: 'AI Coach', hint: 'Doubts & maths', icon: MessageCircle },
   { id: 'ai', label: 'Settings', hint: 'App & AI', icon: Settings },
 ];
 
