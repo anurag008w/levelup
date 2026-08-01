@@ -6,15 +6,34 @@
 
 import { z } from 'zod';
 
+const taskMetadataSchema = {
+  description: z.string().min(1).max(500).optional(),
+  habitId: z.string().min(1).optional(),
+  phase: z.enum(['jee-core', 'l-mindset', 'light-execution', 'peak-performance']).optional(),
+  difficulty: z.number().int().min(1).max(5).optional(),
+  energyLevel: z.enum(['low', 'medium', 'high']).optional(),
+  tags: z.array(z.string().min(1)).max(12).optional(),
+  prerequisites: z.array(z.string().min(1)).max(12).optional(),
+  taskType: z.enum(['Beginner', 'Intermediate', 'Advanced', 'Review', 'Recovery', 'Reflection', 'Challenge']).optional(),
+  revisionSuitability: z.number().min(0).max(1).optional(),
+  backlogSuitability: z.number().min(0).max(1).optional(),
+  thinkingSkills: z.array(z.enum(['planning', 'focus', 'discipline', 'recall', 'analysis', 'reasoning', 'verification', 'reflection', 'systems', 'creativity'])).max(4).optional(),
+  jeeRelevance: z.object({ subject: z.string().min(1).optional(), examWindow: z.boolean().optional(), score: z.number().min(0).max(1) }).optional(),
+};
+
 export const chatToolActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('getPlan'), day: z.number().int() }),
   z.object({ action: z.literal('getRange'), fromDay: z.number().int(), toDay: z.number().int() }),
-  z.object({ action: z.literal('addTask'), day: z.number().int(), intent: z.string().min(1), durationMin: z.number().int().min(1).max(600).optional() }),
+  z.object({ action: z.literal('addTask'), day: z.number().int(), intent: z.string().min(1), durationMin: z.number().int().min(1).max(600), ...taskMetadataSchema }),
   z.object({
     action: z.literal('bulkAddTasks'),
     day: z.number().int(),
     intents: z.array(z.string().min(1)).min(1).max(6),
-    durationMin: z.number().int().min(1).max(600).optional(),
+    durationMin: z.number().int().min(1).max(600),
+    tags: taskMetadataSchema.tags,
+    taskType: taskMetadataSchema.taskType,
+    difficulty: taskMetadataSchema.difficulty,
+    energyLevel: taskMetadataSchema.energyLevel,
   }),
   z.object({ action: z.literal('removeTask'), day: z.number().int(), taskId: z.string().min(1), confirmed: z.boolean().optional() }),
   z.object({ action: z.literal('bulkRemoveTasks'), day: z.number().int(), taskIds: z.array(z.string().min(1)).min(1), confirmed: z.boolean().optional() }),
@@ -26,19 +45,22 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
     title: z.string().min(1).max(200).optional(),
     durationMin: z.number().int().min(1).max(600).optional(),
     dayTo: z.number().int().min(1).max(90).optional(),
+    ...taskMetadataSchema,
   }),
   z.object({ action: z.literal('markDone'), day: z.number().int(), taskId: z.string().min(1), confirmed: z.boolean().optional() }),
   z.object({ action: z.literal('bulkMarkDone'), day: z.number().int(), taskIds: z.array(z.string().min(1)).min(1).optional(), confirmed: z.boolean().optional() }),
   // Task Bank Management (view, edit, delete any task)
   z.object({ action: z.literal('getAllTasks'), day: z.number().int() }),
   z.object({ action: z.literal('getTaskBank'), category: z.string().optional() }),
-  z.object({ action: z.literal('editAnyTask'), taskId: z.string().min(1), title: z.string().min(1).max(200).optional(), durationMin: z.number().int().min(1).max(600).optional(), category: z.string().optional() }),
+  z.object({ action: z.literal('editAnyTask'), taskId: z.string().min(1), title: z.string().min(1).max(200).optional(), durationMin: z.number().int().min(1).max(600).optional(), category: z.string().optional(), ...taskMetadataSchema }),
   z.object({ action: z.literal('deleteAnyTask'), taskId: z.string().min(1), confirmed: z.boolean().optional() }),
   // Block management actions
   z.object({
     action: z.literal('createBlock'),
     name: z.string().min(1).max(100),
+    description: z.string().min(1).max(500).optional(),
     days: z.number().int().min(1).max(90).optional(),
+    dayStart: z.number().int().min(91).optional(),
     focusAreas: z.array(z.string()).optional(),
     difficulty: z.enum(['easy', 'medium', 'hard', 'extreme']).optional(),
     goals: z.array(z.string()).optional(),
@@ -46,7 +68,7 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
   }),
   z.object({ action: z.literal('deleteBlock'), blockId: z.string().min(1), confirmed: z.boolean().optional() }),
   z.object({ action: z.literal('activateBlock'), blockId: z.string().min(1) }),
-  z.object({ action: z.literal('editBlock'), blockId: z.string().min(1), name: z.string().min(1).max(100).optional(), difficulty: z.enum(['easy', 'medium', 'hard', 'extreme']).optional(), goals: z.array(z.string()).optional(), habits: z.array(z.string()).optional() }),
+  z.object({ action: z.literal('editBlock'), blockId: z.string().min(1), name: z.string().min(1).max(100).optional(), description: z.string().min(1).max(500).optional(), dayStart: z.number().int().min(91).optional(), dayEnd: z.number().int().min(91).optional(), days: z.number().int().min(1).max(90).optional(), difficulty: z.enum(['easy', 'medium', 'hard', 'extreme']).optional(), goals: z.array(z.string()).optional(), habits: z.array(z.string()).optional() }),
   z.object({ action: z.literal('listBlocks') }),
   z.object({ action: z.literal('extendBlock'), blockId: z.string().min(1), days: z.number().int().min(1).max(30) }),
 ]);
@@ -85,9 +107,10 @@ TASK MANAGEMENT:
 - Overview of a range: {"action":"getRange","fromDay":A,"toDay":B} (max 10 days per call; auto-splits if larger)
 - View ALL tasks for a day (AI + user created): {"action":"getAllTasks","day":N}
 - View entire task bank: {"action":"getTaskBank"} or {"action":"getTaskBank","category":"physics"}
-- Add a task: {"action":"addTask","day":N,"intent":"<what task>","durationMin":30}. The task appears ONLY on Day N.
-- Add multiple tasks at once: {"action":"bulkAddTasks","day":N,"intents":["maths 10 questions","thermo revision"],"durationMin":30}. All appear ONLY on Day N.
-- Edit a task (title/duration, or move to another day): {"action":"editTask","day":N,"taskId":"<id from plan>","durationMin":20,"dayTo":5}. "dayTo" moves it so it only appears on that exact day.
+- Add a task: {"action":"addTask","day":N,"intent":"<what task>","durationMin":30}. durationMin is REQUIRED; infer a sensible value if the user did not say it. The task appears ONLY on Day N.
+  Optional full task info you SHOULD include when known: description, habitId, phase, difficulty (1-5), energyLevel (low/medium/high), tags, prerequisites, taskType, revisionSuitability (0-1), backlogSuitability (0-1), thinkingSkills, jeeRelevance:{subject,examWindow,score}.
+- Add multiple tasks at once: {"action":"bulkAddTasks","day":N,"intents":["maths 10 questions","thermo revision"],"durationMin":30}. durationMin is REQUIRED; infer if needed. All appear ONLY on Day N. Optional shared info: tags, taskType, difficulty, energyLevel.
+- Edit a task (title/duration, move day, or metadata): {"action":"editTask","day":N,"taskId":"<id from plan>","title":"New title","durationMin":20,"dayTo":5,"difficulty":3,"tags":["physics"]}. "dayTo" moves it so it only appears on that exact day. If you do not have enough info, first use getPlan/getAllTasks/getTaskBank, then retry with a real id and fields to change.
 - Remove a task from ONE day: {"action":"removeTask","day":N,"taskId":"<id from plan>"}. This ONLY hides it for Day N — the Task Bank is NEVER modified and the same task still appears on other days. Destructive: first call without confirmed to get a preview; only call with "confirmed":true after the user explicitly confirms.
 - Remove multiple tasks from one day: {"action":"bulkRemoveTasks","day":N,"taskIds":["id1","id2"]}. Same confirmation rule and bank-safe behavior.
 - Mark a day as a REST/HOLIDAY day: {"action":"setDayMode","day":N,"mode":"rest"}. On a rest day no auto curriculum or AI tasks appear, only tasks the user explicitly scheduled. To make it a normal study day again use "mode":"study". If the user says Sunday/holiday/chhuti, this is the right tool. Changing a day is safe and undoable.
@@ -97,22 +120,24 @@ TASK MANAGEMENT:
 TASK BANK MANAGEMENT (full control):
 - View all tasks: {"action":"getTaskBank"} - shows entire task bank with IDs
 - View by category: {"action":"getTaskBank","category":"physics"}
-- Edit any task in bank: {"action":"editAnyTask","taskId":"<taskId>","title":"New Title","durationMin":45,"category":"chemistry"}
+- Edit any dynamic task in bank: {"action":"editAnyTask","taskId":"<taskId>","title":"New Title","durationMin":45,"category":"chemistry","difficulty":3,"energyLevel":"medium","tags":["chemistry"]}. You can also update description, habitId, phase, prerequisites, taskType, revisionSuitability, backlogSuitability, thinkingSkills, jeeRelevance. Base/seed tasks cannot be edited directly; add/edit creates dynamic copies only.
 - Delete any task from bank: {"action":"deleteAnyTask","taskId":"<taskId>"} - DESTRUCTIVE, needs confirmation
 
 CUSTOM BLOCK MANAGEMENT (for post-journey study, after 90 days):
 - List all blocks: {"action":"listBlocks"} - shows all blocks with their status
-- Create a custom block: {"action":"createBlock","name":"Physics Mastery","days":15,"focusAreas":["physics"],"difficulty":"medium"}
+- Create a custom block: {"action":"createBlock","name":"Physics Mastery","description":"15-day physics focus","days":15,"focusAreas":["physics"],"difficulty":"medium"}
   - name: block name (required)
+  - description: block description (optional but include if user gave purpose)
   - days: duration in days (optional, default 15)
+  - dayStart: exact post-journey start day, >=91 (optional; otherwise app appends after last block)
   - focusAreas: array of "physics","chemistry","maths","revision","mock","concept","problem" (optional, auto-detected from name)
   - difficulty: "easy","medium","hard","extreme" (optional, default "medium")
   - habits/goals: custom arrays (optional)
   - Example: "create a 15 day physics block" → auto-detects physics focus
   - Example: "banao ek chemistry revision block 7 din ka" → auto-detects chemistry, revision
-- Edit a block: {"action":"editBlock","blockId":"<id>","name":"New Name","difficulty":"hard","goals":["goal1"],"habits":["habit1"]} - can update any field
-- Extend a block: {"action":"extendBlock","blockId":"<id>","days":5} - adds more days to the end
-- Delete a block: {"action":"deleteBlock","blockId":"<block-id>"}. Must activate another block first if deleting active block. Destructive: needs confirmation.
+- Edit a block: {"action":"editBlock","blockId":"<id>","name":"New Name","description":"New details","difficulty":"hard","days":20,"dayStart":91,"dayEnd":110,"goals":["goal1"],"habits":["habit1"]} - can update metadata and dates. If you do not know blockId, use listBlocks first.
+- Extend a block: {"action":"extendBlock","blockId":"<id>","days":5} - adds more days to the end and shifts later blocks forward.
+- Delete a block: {"action":"deleteBlock","blockId":"<block-id>"}. Destructive: needs confirmation. If deleting the active block, the app automatically activates the next available block or clears active block.
 - Activate a block: {"action":"activateBlock","blockId":"<block-id>"}. Makes this block guide your daily study.
 
 Full control examples:
@@ -139,7 +164,7 @@ Multi-action rules:
 - Destructive/bulk actions (removeTask, bulkRemoveTasks, setDayMode, bulkMarkDone, deleteBlock, deleteAnyTask) still need "confirmed":true once the user has explicitly agreed; without it the WHOLE batch is only previewed and NOTHING is applied.
 - For a range longer than 10 days, auto-splits into multiple calls.
 
-The tool result always returns the updated plan with task ids. Sundays (Day 7, 14, 21...) are MOCK test days, NOT automatically holidays: on a mock Sunday the mock protocol tasks appear AND you can still add tasks with addTask/bulkAddTasks. Only use setDayMode "rest" when the user actually wants a holiday/rest day.
+The tool result returns updated plans/task-bank rows with task ids and full task metadata when relevant. Sundays (Day 7, 14, 21...) are MOCK test days, NOT automatically holidays: on a mock Sunday the mock protocol tasks appear AND you can still add tasks with addTask/bulkAddTasks. Only use setDayMode "rest" when the user actually wants a holiday/rest day.
 For ANYTHING else (concepts, motivation, general questions, block suggestions, study strategies) reply normally in Hinglish.`;
 
 /** Correction prompt used when the model answered with prose instead of a tool action. */

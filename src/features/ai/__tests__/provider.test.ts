@@ -220,6 +220,41 @@ describe('GeminiProvider', () => {
     expect(body.contents[0].role).toBe('user');
   });
 
+  it('normalizes models/ prefixes saved from the native model catalog', async () => {
+    let captured: HttpRequestInit | null = null;
+    const http = fakeHttp((init) => {
+      captured = init;
+      return { candidates: [{ content: { parts: [{ text: 'ok' }] } }] };
+    });
+    const provider = new GeminiProvider({ id: 'gemini', label: 'Gemini', apiKey: 'gk', model: 'models/gemini-2.5-flash', enabled: true }, http);
+    await provider.complete({ messages: [{ role: 'user', content: 'q' }] });
+    expect(captured!.url).toContain('/v1beta/models/gemini-2.5-flash:generateContent');
+    expect(captured!.url).not.toContain('models%2F');
+  });
+
+  it('merges adjacent same-role contents for Gemini tool-loop requests', async () => {
+    let captured: HttpRequestInit | null = null;
+    const http = fakeHttp((init) => {
+      captured = init;
+      return { candidates: [{ content: { parts: [{ text: 'ok' }] } }] };
+    });
+    const provider = new GeminiProvider({ id: 'gemini', label: 'Gemini', apiKey: 'gk', model: 'gemini-2.5-flash', enabled: true }, http);
+    await provider.complete({
+      messages: [
+        { role: 'user', content: 'original request' },
+        { role: 'user', content: 'tool retry context' },
+        { role: 'assistant', content: 'draft' },
+        { role: 'assistant', content: 'more draft' },
+      ],
+    });
+    const body = captured!.body as { contents: Array<{ role: string; parts: Array<{ text: string }> }> };
+    expect(body.contents).toHaveLength(2);
+    expect(body.contents[0].role).toBe('user');
+    expect(body.contents[0].parts.map((p) => p.text)).toEqual(['original request', 'tool retry context']);
+    expect(body.contents[1].role).toBe('model');
+    expect(body.contents[1].parts.map((p) => p.text)).toEqual(['draft', 'more draft']);
+  });
+
   it('sends thinkingConfig budget and splits thought parts', async () => {
     let captured: HttpRequestInit | null = null;
     const http = fakeHttp((init) => {

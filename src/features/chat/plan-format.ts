@@ -1,5 +1,6 @@
 import type { AppState } from '../../core/domain/state';
 import type { DailyPlan, PlannedTask, TaskGroup } from '../../core/domain/progress';
+import type { TaskBankEntry } from '../../core/domain/task-bank';
 
 const SLOT_START_MINUTES: Record<TaskGroup, number> = {
   morning: 6 * 60,
@@ -40,7 +41,24 @@ function formatScheduledTask(task: PlannedTask, state: AppState, index: number, 
   const end = start + task.entry.estimatedDurationMin;
   const done = isTaskDone(state, task) ? 'done' : 'todo';
   const required = task.required ? 'required' : 'optional';
-  return `${index}. ${formatMinutes(start)}-${formatMinutes(end)} [${done}] [${required}] id:${task.entry.id} · ${task.entry.title} · ${task.entry.estimatedDurationMin}min · ${task.group} · ${task.entry.taskType}`;
+  return `${index}. ${formatMinutes(start)}-${formatMinutes(end)} [${done}] [${required}] id:${task.entry.id} · ${task.entry.title} · ${task.entry.estimatedDurationMin}min · ${task.group} · ${task.entry.taskType} · ${formatTaskMetadata(task.entry)}`;
+}
+
+function formatTaskMetadata(entry: TaskBankEntry): string {
+  const parts = [
+    `habit:${entry.habitId}`,
+    `phase:${entry.phase}`,
+    `difficulty:${entry.difficulty}/5`,
+    `energy:${entry.energyLevel}`,
+    `revision:${entry.revisionSuitability}`,
+    `backlog:${entry.backlogSuitability}`,
+    `jee:${entry.jeeRelevance.score}`,
+  ];
+  if (entry.jeeRelevance.subject) parts.push(`subject:${entry.jeeRelevance.subject}`);
+  if (entry.tags.length > 0) parts.push(`tags:${entry.tags.join(',')}`);
+  if (entry.thinkingSkills.length > 0) parts.push(`thinking:${entry.thinkingSkills.join(',')}`);
+  if (entry.description) parts.push(`desc:${entry.description}`);
+  return parts.join(' · ');
 }
 
 function isTaskDone(state: AppState, task: PlannedTask): boolean {
