@@ -51,13 +51,15 @@ jobs:
           
           echo "📌 Release Version: $VERSION"
 
-      - name: Check if tag exists
+      - name: Create tag
         run: |
           if git tag | grep -q "^${{ steps.version.outputs.VERSION }}$"; then
-            echo "❌ Tag ${{ steps.version.outputs.VERSION }} already exists!"
-            exit 1
+            echo "⚠️  Tag ${{ steps.version.outputs.VERSION }} already exists"
+            echo "   Deleting and recreating..."
+            git tag -d "${{ steps.version.outputs.VERSION }}"
           fi
-          echo "✅ Tag does not exist, proceeding with release"
+          echo "✅ Creating tag: ${{ steps.version.outputs.VERSION }}"
+          git tag -a "${{ steps.version.outputs.VERSION }}" -m "Release ${{ steps.version.outputs.VERSION }}"
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
