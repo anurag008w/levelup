@@ -178,22 +178,36 @@ export default function ChatMarkdown({ text }: { text: string }) {
   
   // Load KaTeX CSS and plugin on client side
   useEffect(() => {
-    // Load KaTeX CSS
-    if (typeof document !== 'undefined' && !document.querySelector('link[href*="katex"]')) {
+    if (typeof window === 'undefined') return; // SSR guard
+    
+    let mounted = true;
+    
+    // Load KaTeX CSS first
+    if (!document.querySelector('link[href*="katex"]')) {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
       link.href = 'https://cdn.jsdelivr.net/npm/katex@0.18.1/dist/katex.min.css';
+      link.onload = () => {
+        if (mounted) loadPlugin();
+      };
       document.head.appendChild(link);
+    } else {
+      loadPlugin();
     }
     
-    // Load rehype-katex plugin
-    import('rehype-katex')
-      .then((module) => {
-        setRehypeKatex(() => module.default);
-      })
-      .catch(() => {
-        console.warn('Failed to load KaTeX, math rendering disabled');
-      });
+    function loadPlugin() {
+      import('rehype-katex')
+        .then((module) => {
+          if (mounted) {
+            setRehypeKatex(() => module.default);
+          }
+        })
+        .catch(() => {
+          console.warn('Failed to load KaTeX, math rendering disabled');
+        });
+    }
+    
+    return () => { mounted = false; };
   }, []);
 
   const processed = unwrapMarkdownFence(text);
@@ -204,7 +218,7 @@ export default function ChatMarkdown({ text }: { text: string }) {
   ];
   
   if (rehypeKatex) {
-    plugins.unshift([rehypeKatex, { output: 'html', strict: false, trust: false, maxSize: 50, errorColor: '#f25d68' }]);
+    plugins.unshift([rehypeKatex, { output: 'html', strict: false, trust: false, maxSize: 100, errorColor: '#f25d68' }]);
   }
 
   return (
