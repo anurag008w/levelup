@@ -1253,26 +1253,6 @@ function SettingsSheet({
           <p className="section-label mb-2">Persona</p>
           <div className="overflow-hidden rounded-2xl border border-border bg-panel">
             <div className="px-4 py-3.5">
-              <label className="field-label">System persona (editable)</label>
-              <textarea
-                rows={6}
-                value={prefs.systemPrompt}
-                onChange={(e) => onChange({ systemPrompt: e.target.value })}
-                placeholder="Divya coach persona, tone, Markdown/LaTeX rules..."
-                className="field resize-none"
-              />
-              <div className="mt-1.5 flex items-center justify-between gap-2">
-                <span className="text-[10px] text-muted">{prefs.systemPrompt.length} characters</span>
-                <button
-                  type="button"
-                  onClick={() => onChange({ systemPrompt: INTERNAL_SYSTEM_PROMPT })}
-                  className="text-xs text-muted underline-offset-2 hover:text-text hover:underline"
-                >
-                  Reset Divya persona
-                </button>
-              </div>
-            </div>
-            <div className="border-t border-border/70 px-4 py-3.5">
               <label className="field-label">User persona / custom instructions</label>
               <textarea
                 rows={3}
@@ -1289,6 +1269,31 @@ function SettingsSheet({
                 Clear user persona
               </button>
             </div>
+            <details className="border-t border-border/70 px-4 py-3.5">
+              <summary className="cursor-pointer select-none text-xs font-semibold text-muted marker:text-muted-dim">
+                Advanced settings · system persona
+              </summary>
+              <div className="mt-3">
+                <label className="field-label">System persona (hidden)</label>
+                <textarea
+                  rows={5}
+                  value={prefs.systemPrompt}
+                  onChange={(e) => onChange({ systemPrompt: e.target.value })}
+                  placeholder="Divya coach persona, tone, Markdown/LaTeX rules..."
+                  className="field resize-none"
+                />
+                <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <span className="text-[10px] text-muted">{prefs.systemPrompt.length} characters</span>
+                  <button
+                    type="button"
+                    onClick={() => onChange({ systemPrompt: INTERNAL_SYSTEM_PROMPT })}
+                    className="text-xs text-muted underline-offset-2 hover:text-text hover:underline"
+                  >
+                    Reset Divya persona
+                  </button>
+                </div>
+              </div>
+            </details>
           </div>
         </section>
 
