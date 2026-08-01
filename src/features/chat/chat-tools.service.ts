@@ -1,6 +1,6 @@
 import type { StateStore } from '../../core/ports/repositories';
-import type { AppState } from '../../core/domain/state';
-import type { TaskBankEntry } from '../../core/domain/task-bank';
+import { defaultPostJourney, type AppState, type CustomPhase, type PostJourneyState } from '../../core/domain/state';
+import type { Difficulty, EnergyLevel, JeeRelevance, PhaseId, TaskBankEntry, TaskType, ThinkingSkill } from '../../core/domain/task-bank';
 import type { DailyPlan, ProgressionConfig } from '../../core/domain/progress';
 import { DEFAULT_PROGRESSION_CONFIG } from '../../core/domain/progress';
 import type { ChatToolAction, ChatToolResult } from '../../core/domain/chat-tools';
@@ -51,6 +51,36 @@ const BLOCK_TYPES: Record<string, { name: string; icon: string; habits: Record<s
   concept: { name: 'Concept Building', icon: '💡', habits: { easy: ['Theory Reading'], medium: ['Theory Reading', 'Example Problems'], hard: ['Theory Reading', 'Example Problems', 'Concept Map'] } },
   problem: { name: 'Problem Solving', icon: '🔬', habits: { easy: ['Problem Sets'], medium: ['Problem Sets', 'Time Trials'], hard: ['Problem Sets', 'Time Trials', 'Error Analysis'] } },
 };
+
+type TaskMetadataPatch = Partial<{
+  description: string;
+  habitId: string;
+  phase: PhaseId;
+  difficulty: number;
+  energyLevel: EnergyLevel;
+  tags: string[];
+  prerequisites: string[];
+  taskType: TaskType;
+  revisionSuitability: number;
+  backlogSuitability: number;
+  thinkingSkills: ThinkingSkill[];
+  jeeRelevance: JeeRelevance;
+}>;
+
+const METADATA_KEYS: Array<keyof TaskMetadataPatch> = [
+  'description',
+  'habitId',
+  'phase',
+  'difficulty',
+  'energyLevel',
+  'tags',
+  'prerequisites',
+  'taskType',
+  'revisionSuitability',
+  'backlogSuitability',
+  'thinkingSkills',
+  'jeeRelevance',
+];
 
 /**
  * Executes the deterministic chat tools against the app store. Mutations go
@@ -108,6 +138,11 @@ export class ChatToolsService {
         if (single.success) return [single.data as ChatToolAction];
         const batch = chatToolBatchSchema.safeParse(parsed);
         if (batch.success) return batch.data.actions;
+        // If the model emitted an actions wrapper but one action is incomplete
+        // (for example addTask without required durationMin), fail the whole
+        // decision so ChatService can issue the strict retry instead of silently
+        // executing only the valid subset.
+        if (typeof parsed === 'object' && parsed !== null && 'actions' in parsed) return [];
       }
     }
     const arrStart = text.indexOf('[');
@@ -116,11 +151,11 @@ export class ChatToolsService {
       try {
         const parsedArr: unknown = JSON.parse(text.slice(arrStart, arrEnd + 1));
         if (Array.isArray(parsedArr)) {
-          const actions = parsedArr
-            .map((a) => chatToolActionSchema.safeParse(a))
-            .filter((r): r is { success: true; data: ChatToolAction } => r.success)
-            .map((r) => r.data);
-          if (actions.length > 0) return actions.slice(0, 6);
+          const parsedActions = parsedArr.map((a) => chatToolActionSchema.safeParse(a));
+          if (parsedActions.every((r) => r.success)) {
+            return parsedActions.map((r) => (r as { success: true; data: ChatToolAction }).data).slice(0, 6);
+          }
+          return [];
         }
       } catch {
         // fall through
@@ -241,205 +276,155 @@ export class ChatToolsService {
   // ========== BLOCK MANAGEMENT ==========
 
   private createBlock(state: AppState, action: Extract<ChatToolAction, { action: 'createBlock' }>): ChatToolResult {
-    const { name, days = 15, focusAreas = [], difficulty = 'medium', goals = [], habits = [] } = action;
-    
-    // Determine focus areas from name if not provided
+    const { name, description, days = 15, dayStart, focusAreas = [], difficulty = 'medium', goals = [], habits = [] } = action;
+    const duration = clampBlockDays(days);
+    const existingBlocks = sortBlocks(state.postJourney?.customPhases ?? []);
+
     const effectiveFocus = focusAreas.length > 0 ? focusAreas : this.detectFocusAreas(name);
     const difficultyLevel = difficulty as 'easy' | 'medium' | 'hard' | 'extreme';
-    
-    // Generate habits based on focus areas
     const generatedHabits = habits.length > 0 ? habits : this.generateHabitsForFocus(effectiveFocus, difficultyLevel);
     const generatedGoals = goals.length > 0 ? goals : [`Master ${effectiveFocus.join(', ') || 'topics'}`, 'Complete daily practice', 'Track progress'];
-    
-    const existingBlocks = state.postJourney?.customPhases ?? [];
-    const lastBlock = existingBlocks[existingBlocks.length - 1];
-    const dayStart = lastBlock ? lastBlock.dayEnd + 1 : 91;
-    
+    const startDay = Math.max(91, dayStart ?? nextBlockStart(existingBlocks));
+
     const block = {
-      id: `block-${Date.now()}`,
-      name: name || `${effectiveFocus[0] || 'Custom'} Block`,
-      description: `Custom block focused on ${effectiveFocus.join(', ') || 'study'}`,
-      dayStart,
-      dayEnd: dayStart + (days || 15) - 1,
+      id: createBlockId(),
+      name,
+      description: description ?? `Custom block focused on ${effectiveFocus.join(', ') || 'study'} with ${difficultyLevel} difficulty`,
+      dayStart: startDay,
+      dayEnd: startDay + duration - 1,
       goals: generatedGoals,
       habits: generatedHabits,
       difficulty: difficultyLevel,
       createdBy: 'ai' as const,
       createdAt: new Date().toISOString().slice(0, 10),
     };
-    
-    const next = {
-      ...state,
-      postJourney: {
-        ...state.postJourney,
-        customPhases: [...(state.postJourney?.customPhases ?? []), block],
-        journeyComplete: true,
-      },
-    };
-    
-    this.store.save(next);
-    
-    const focusList = effectiveFocus.map(f => BLOCK_TYPES[f]?.icon + ' ' + BLOCK_TYPES[f]?.name || f).join(', ');
+
+    const customPhases = sortBlocks([...existingBlocks, block]);
+    this.store.save(withPostJourney(state, {
+      customPhases,
+      activeCustomPhaseId: block.id,
+      journeyComplete: true,
+      completedAt: state.postJourney?.completedAt ?? new Date().toISOString(),
+      extensionDays: extensionDaysFor(customPhases),
+    }));
+
+    const focusList = effectiveFocus.map(f => BLOCK_TYPES[f] ? `${BLOCK_TYPES[f].icon} ${BLOCK_TYPES[f].name}` : f).join(', ');
     return {
       ok: true,
-      summary: `✅ Created "${block.name}"!\n\n📅 Days ${block.dayStart}-${block.dayEnd} (${days} days)\n🎯 Focus: ${focusList || 'General'}\n⚡ Difficulty: ${difficultyLevel}\n\n📋 Habits:\n${generatedHabits.map(h => `• ${h}`).join('\n')}\n\n🎯 Goals:\n${generatedGoals.map(g => `• ${g}`).join('\n')}\n\nSay "activate ${block.id}" to make this your active block.`,
+      summary: `✅ Created and activated "${block.name}" (id:${block.id})!\n\n📅 Days ${block.dayStart}-${block.dayEnd} (${duration} days)\n📝 ${block.description}\n🎯 Focus: ${focusList || 'General'}\n⚡ Difficulty: ${difficultyLevel}\n\n📋 Habits:\n${generatedHabits.map(h => `• ${h}`).join('\n') || '• General study'}\n\n🎯 Goals:\n${generatedGoals.map(g => `• ${g}`).join('\n')}\n\nTotal post-journey extension: ${extensionDaysFor(customPhases)} days.`,
     };
   }
 
   private deleteBlock(state: AppState, blockId: string, confirmed: boolean): ChatToolResult {
-    const blocks = state.postJourney?.customPhases ?? [];
+    const blocks = sortBlocks(state.postJourney?.customPhases ?? []);
     const block = blocks.find(b => b.id === blockId);
-    
-    if (!block) {
-      return { ok: false, summary: `Block "${blockId}" not found.` };
-    }
-    
-    if (blockId === state.postJourney?.activeCustomPhaseId) {
-      return { ok: false, summary: `Cannot delete active block. First say "activate <another-block-id>" to switch.` };
-    }
-    
+
+    if (!block) return { ok: false, summary: `Block "${blockId}" not found. Use listBlocks to get valid block IDs.` };
+
     if (!confirmed) {
       return {
         ok: false,
         requiresConfirmation: true,
-        summary: `⚠️ Delete "${block.name}" (Days ${block.dayStart}-${block.dayEnd})?\n\nHabits: ${block.habits.join(', ')}\n\nSay the action again with "confirmed":true to confirm.`,
+        summary: `⚠️ Delete "${block.name}" (id:${blockId}, Days ${block.dayStart}-${block.dayEnd})?\n\nHabits: ${block.habits.join(', ') || 'none'}\nGoals: ${block.goals.join(', ') || 'none'}\n\nSay the action again with "confirmed":true to confirm.`,
       };
     }
-    
-    const next = {
-      ...state,
-      postJourney: {
-        ...state.postJourney,
-        customPhases: blocks.filter(b => b.id !== blockId),
-      },
-    };
-    
-    this.store.save(next);
-    return { ok: true, summary: `🗑️ Deleted "${block.name}".` };
+
+    const customPhases = blocks.filter(b => b.id !== blockId);
+    const currentActive = state.postJourney?.activeCustomPhaseId;
+    const activeCustomPhaseId = currentActive === blockId ? (customPhases[0]?.id ?? null) : (currentActive ?? null);
+    this.store.save(withPostJourney(state, {
+      customPhases,
+      activeCustomPhaseId,
+      extensionDays: extensionDaysFor(customPhases),
+    }));
+    return { ok: true, summary: `🗑️ Deleted "${block.name}". ${activeCustomPhaseId ? `Active block is now ${activeCustomPhaseId}.` : 'No active block now.'}` };
   }
 
   private activateBlock(state: AppState, blockId: string): ChatToolResult {
-    const blocks = state.postJourney?.customPhases ?? [];
+    const blocks = sortBlocks(state.postJourney?.customPhases ?? []);
     const block = blocks.find(b => b.id === blockId);
-    
-    if (!block) {
-      return { ok: false, summary: `Block "${blockId}" not found.` };
-    }
-    
-    const next = {
-      ...state,
-      postJourney: {
-        ...state.postJourney,
-        activeCustomPhaseId: blockId,
-      },
-    };
-    
-    this.store.save(next);
-    
+
+    if (!block) return { ok: false, summary: `Block "${blockId}" not found. Use listBlocks to get valid block IDs.` };
+
+    this.store.save(withPostJourney(state, { activeCustomPhaseId: blockId, journeyComplete: true }));
+
     return {
       ok: true,
-      summary: `✅ Activated "${block.name}"!\n\nThis block will guide your daily study sessions.\n\n📋 Today's Focus:\n${block.habits.map(h => `• ${h}`).join('\n')}\n\n🎯 Goals:\n${block.goals.map(g => `• ${g}`).join('\n')}`,
+      summary: `✅ Activated "${block.name}" (id:${block.id})!\n\n${formatBlockDetails(block)}`,
     };
   }
 
   private listBlocks(state: AppState): ChatToolResult {
-    const blocks = state.postJourney?.customPhases ?? [];
+    const blocks = sortBlocks(state.postJourney?.customPhases ?? []);
     const activeId = state.postJourney?.activeCustomPhaseId;
 
     if (blocks.length === 0) {
-      return {
-        ok: true,
-        summary: `📋 No custom blocks yet.\n\nSay "create a 15 day physics block" to make your first block!`,
-      };
+      return { ok: true, summary: `📋 No custom blocks yet.\n\nSay "create a 15 day physics block" to make your first block!` };
     }
 
-    const list = blocks.map((b, i) => {
-      const isActive = b.id === activeId;
-      const status = isActive ? '🟢 ACTIVE' : '⚪';
-      const habits = b.habits.slice(0, 2).join(', ');
-      return `${i + 1}. ${status} **${b.name}** (Days ${b.dayStart}-${b.dayEnd}) [${b.difficulty}]\n   ID: ${b.id}\n   ${habits}`;
-    }).join('\n\n');
+    const list = blocks.map((b, i) => `${i + 1}. ${b.id === activeId ? '🟢 ACTIVE' : '⚪'} ${formatBlockDetails(b)}`).join('\n\n');
 
     return {
       ok: true,
-      summary: `📋 Your Custom Blocks (${blocks.length}):\n\n${list}\n\nUse block IDs above for edit/delete/activate commands.`,
+      summary: `📋 Your Custom Blocks (${blocks.length}, extension ${extensionDaysFor(blocks)} days):\n\n${list}\n\nUse exact block IDs above for edit/delete/activate/extend commands.`,
     };
   }
 
   private editBlock(state: AppState, action: Extract<ChatToolAction, { action: 'editBlock' }>): ChatToolResult {
-    const { blockId, name, difficulty, goals, habits } = action;
-    const blocks = state.postJourney?.customPhases ?? [];
+    const { blockId, name, description, difficulty, goals, habits, dayStart, dayEnd, days } = action;
+    const blocks = sortBlocks(state.postJourney?.customPhases ?? []);
     const block = blocks.find(b => b.id === blockId);
 
-    if (!block) {
-      return { ok: false, summary: `Block "${blockId}" not found.` };
-    }
+    if (!block) return { ok: false, summary: `Block "${blockId}" not found. Use listBlocks first, then retry with the exact id.` };
+    if (!hasBlockEdit(action)) return { ok: false, summary: `Block "${blockId}": edit ke liye name, description, difficulty, days/dayStart/dayEnd, goals ya habits field chahiye. Use listBlocks first, then retry.` };
+
+    const nextStart = dayStart ?? block.dayStart;
+    const nextEnd = days !== undefined ? nextStart + clampBlockDays(days) - 1 : (dayEnd ?? block.dayEnd);
+    if (nextEnd < nextStart) return { ok: false, summary: `Block "${blockId}": dayEnd (${nextEnd}) dayStart (${nextStart}) se pehle nahi ho sakta.` };
 
     const updated: typeof block = {
       ...block,
       name: name ?? block.name,
+      description: description ?? block.description,
+      dayStart: nextStart,
+      dayEnd: nextEnd,
       difficulty: (difficulty as typeof block.difficulty) ?? block.difficulty,
       goals: goals ?? block.goals,
       habits: habits ?? block.habits,
     };
 
-    const nextBlocks = blocks.map(b => b.id === blockId ? updated : b);
-
-    const next = {
-      ...state,
-      postJourney: {
-        ...state.postJourney,
-        customPhases: nextBlocks,
-      },
-    };
-
-    this.store.save(next);
+    const customPhases = sortBlocks(blocks.map(b => b.id === blockId ? updated : b));
+    this.store.save(withPostJourney(state, { customPhases, extensionDays: extensionDaysFor(customPhases) }));
 
     const changes: string[] = [];
     if (name) changes.push(`name → "${name}"`);
+    if (description) changes.push('description updated');
     if (difficulty) changes.push(`difficulty → ${difficulty}`);
+    if (dayStart !== undefined || dayEnd !== undefined || days !== undefined) changes.push(`days → ${updated.dayStart}-${updated.dayEnd}`);
     if (goals) changes.push(`${goals.length} goals`);
     if (habits) changes.push(`${habits.length} habits`);
 
-    return {
-      ok: true,
-      summary: `✅ Updated "${updated.name}"!\n\nChanges: ${changes.join(', ')}\n\n📋 New Habits:\n${updated.habits.map(h => `• ${h}`).join('\n')}\n\n🎯 New Goals:\n${updated.goals.map(g => `• ${g}`).join('\n')}`,
-    };
+    return { ok: true, summary: `✅ Updated block. Changes: ${changes.join(', ')}\n\n${formatBlockDetails(updated)}` };
   }
 
   private extendBlock(state: AppState, blockId: string, daysToAdd: number): ChatToolResult {
-    const blocks = state.postJourney?.customPhases ?? [];
+    const blocks = sortBlocks(state.postJourney?.customPhases ?? []);
     const block = blocks.find(b => b.id === blockId);
 
-    if (!block) {
-      return { ok: false, summary: `Block "${blockId}" not found.` };
-    }
+    if (!block) return { ok: false, summary: `Block "${blockId}" not found. Use listBlocks to get valid block IDs.` };
 
-    // Shift all subsequent blocks
+    const extra = clampBlockDays(daysToAdd, 30);
     const updatedBlocks = blocks.map(b => {
-      if (b.id === blockId) {
-        return { ...b, dayEnd: b.dayEnd + daysToAdd };
-      }
-      if (b.dayStart > block.dayEnd) {
-        return { ...b, dayStart: b.dayStart + daysToAdd, dayEnd: b.dayEnd + daysToAdd };
-      }
+      if (b.id === blockId) return { ...b, dayEnd: b.dayEnd + extra };
+      if (b.dayStart > block.dayEnd) return { ...b, dayStart: b.dayStart + extra, dayEnd: b.dayEnd + extra };
       return b;
     });
+    const customPhases = sortBlocks(updatedBlocks);
 
-    const next = {
-      ...state,
-      postJourney: {
-        ...state.postJourney,
-        customPhases: updatedBlocks,
-      },
-    };
+    this.store.save(withPostJourney(state, { customPhases, extensionDays: extensionDaysFor(customPhases) }));
+    const updated = customPhases.find(b => b.id === blockId)!;
 
-    this.store.save(next);
-
-    return {
-      ok: true,
-      summary: `✅ Extended "${block.name}"!\n\nAdded ${daysToAdd} days → now Days ${block.dayStart}-${block.dayEnd + daysToAdd}`,
-    };
+    return { ok: true, summary: `✅ Extended "${block.name}" by ${extra} days.\n\n${formatBlockDetails(updated)}\n\nLater blocks shifted forward; total extension is ${extensionDaysFor(customPhases)} days.` };
   }
 
   // ========== TASK BANK MANAGEMENT ==========
@@ -467,7 +452,7 @@ export class ChatToolsService {
         const creator = isDynamic ? '🤖 AI' : '📚 Bank';
         lines.push(`\n• ${creator} **${entry.title}** (ID: ${entry.id})`);
         lines.push(`  ⏱️ ${entry.estimatedDurationMin} min`);
-        if (entry.tags.length > 0) lines.push(`  🏷️ ${entry.tags.join(', ')}`);
+        lines.push(...formatFullTaskInfo(entry, '  '));
       }
     }
     
@@ -516,6 +501,7 @@ export class ChatToolsService {
         const isDynamic = task.id.startsWith('ai-');
         const creator = isDynamic ? '🤖' : '📚';
         lines.push(`  ${creator} **${task.title}** (ID: ${task.id}, ${task.estimatedDurationMin}min)`);
+        lines.push(...formatFullTaskInfo(task, '    '));
       }
       if (tasks.length > 10) {
         lines.push(`  ... +${tasks.length - 10} more`);
@@ -546,12 +532,18 @@ export class ChatToolsService {
     }
     
     const task = state.dynamicTaskBank[dynamicIdx];
-    const updated = {
-      ...task,
-      title: title ?? task.title,
-      estimatedDurationMin: durationMin ?? task.estimatedDurationMin,
-      tags: category ? [category, ...task.tags.filter(t => t !== category)] : task.tags,
-    };
+    if (!hasTaskEdit(action) && !category) {
+      return { ok: false, summary: `Task "${taskId}": edit ke liye title, durationMin, category ya metadata field chahiye. Pehle getTaskBank/getAllTasks se full info dekho, phir retry karo.` };
+    }
+    const updated = applyTaskMetadata(
+      {
+        ...task,
+        title: title ?? task.title,
+        estimatedDurationMin: durationMin ?? task.estimatedDurationMin,
+        tags: category ? [category, ...task.tags.filter(t => t !== category)] : task.tags,
+      },
+      action,
+    );
     
     const next = state.dynamicTaskBank.map((t, i) => i === dynamicIdx ? updated : t);
     
@@ -685,7 +677,10 @@ export class ChatToolsService {
       dayNumber: d,
       durationMin: action.durationMin,
     });
-    const entry = result.source === 'bank' ? cloneBankTask(result.entry, d) : scheduleForDay(result.entry, d);
+    const entry = applyTaskMetadata(
+      result.source === 'bank' ? cloneBankTask(result.entry, d) : scheduleForDay(result.entry, d),
+      action,
+    );
     const next = state.dynamicTaskBank.some((e) => e.id === entry.id)
       ? state.dynamicTaskBank.map((e) => (e.id === entry.id ? entry : e))
       : [...state.dynamicTaskBank, entry];
@@ -718,7 +713,10 @@ export class ChatToolsService {
           dayNumber: d,
           durationMin: action.durationMin,
         });
-        const entry = result.source === 'bank' ? cloneBankTask(result.entry, d) : scheduleForDay(result.entry, d);
+        const entry = applyTaskMetadata(
+          result.source === 'bank' ? cloneBankTask(result.entry, d) : scheduleForDay(result.entry, d),
+          action,
+        );
         added.push(entry);
       } catch {
         // Partial success: one bad intent must not abort the whole batch.
@@ -843,13 +841,19 @@ export class ChatToolsService {
     const dynamic = state.dynamicTaskBank.find((e) => e.id === action.taskId);
     const entry = dynamic ?? this.taskBank.getById(action.taskId);
     if (!entry) return { ok: false, summary: `Day ${d}: task id "${action.taskId}" nahi mila.`, missingTaskIdDays: [d] };
-    const edited: typeof entry = {
-      ...entry,
-      title: action.title !== undefined ? action.title : entry.title,
-      estimatedDurationMin: action.durationMin !== undefined ? clamp(action.durationMin) : entry.estimatedDurationMin,
-      unlockConditions:
-        action.dayTo !== undefined ? [{ type: 'day-exact' as const, day: clamp(action.dayTo) }] : entry.unlockConditions,
-    };
+    if (!hasTaskEdit(action)) {
+      return { ok: false, summary: `Day ${d}: edit ke liye title, durationMin, dayTo ya metadata field chahiye. Pehle getPlan/getAllTasks se task info dekho, phir exact field ke saath retry karo.`, missingTaskIdDays: [d] };
+    }
+    const edited: typeof entry = applyTaskMetadata(
+      {
+        ...entry,
+        title: action.title !== undefined ? action.title : entry.title,
+        estimatedDurationMin: action.durationMin !== undefined ? clamp(action.durationMin) : entry.estimatedDurationMin,
+        unlockConditions:
+          action.dayTo !== undefined ? [{ type: 'day-exact' as const, day: clamp(action.dayTo) }] : entry.unlockConditions,
+      },
+      action,
+    );
     const next = dynamic
       ? state.dynamicTaskBank.map((e) => (e.id === edited.id ? edited : e))
       : [...state.dynamicTaskBank, edited];
@@ -954,6 +958,122 @@ export class ChatToolsService {
     const start = new Date(`${state.startDateISO}T00:00:00`);
     start.setDate(start.getDate() + day - 1);
     return start.toISOString().slice(0, 10);
+  }
+}
+
+
+
+function hasBlockEdit(action: Record<string, unknown>): boolean {
+  return Boolean(
+    action.name !== undefined ||
+    action.description !== undefined ||
+    action.difficulty !== undefined ||
+    action.goals !== undefined ||
+    action.habits !== undefined ||
+    action.dayStart !== undefined ||
+    action.dayEnd !== undefined ||
+    action.days !== undefined
+  );
+}
+
+function withPostJourney(state: AppState, patch: Partial<PostJourneyState>): AppState {
+  const current = state.postJourney ?? defaultPostJourney();
+  const nextPostJourney: PostJourneyState = {
+    ...current,
+    ...patch,
+    mastery: patch.mastery ?? current.mastery,
+    customPhases: patch.customPhases ?? current.customPhases,
+    pendingAISuggestions: patch.pendingAISuggestions ?? current.pendingAISuggestions,
+    finalStats: patch.finalStats ?? current.finalStats,
+  };
+  return { ...state, postJourney: nextPostJourney };
+}
+
+function sortBlocks(blocks: CustomPhase[]): CustomPhase[] {
+  return [...blocks].sort((a, b) => a.dayStart - b.dayStart || a.dayEnd - b.dayEnd || a.name.localeCompare(b.name));
+}
+
+function nextBlockStart(blocks: CustomPhase[]): number {
+  return Math.max(90, ...blocks.map((b) => b.dayEnd)) + 1;
+}
+
+function extensionDaysFor(blocks: CustomPhase[]): number {
+  return Math.max(0, ...blocks.map((b) => b.dayEnd - 90));
+}
+
+function clampBlockDays(days: number, max = 90): number {
+  if (!Number.isFinite(days)) return 1;
+  return Math.min(Math.max(Math.round(days), 1), max);
+}
+
+function createBlockId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `block-${crypto.randomUUID().slice(0, 8)}`;
+  return `block-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function formatBlockDetails(block: CustomPhase): string {
+  return [
+    `**${block.name}** (id:${block.id})`,
+    `Days ${block.dayStart}-${block.dayEnd} · ${block.dayEnd - block.dayStart + 1} days · ${block.difficulty}`,
+    `📝 ${block.description}`,
+    `📋 Habits: ${block.habits.length > 0 ? block.habits.join(', ') : 'none'}`,
+    `🎯 Goals: ${block.goals.length > 0 ? block.goals.join(', ') : 'none'}`,
+    `${block.createdBy === 'ai' ? '🤖 AI' : '👤 User'} · created:${block.createdAt}`,
+  ].join('\n   ');
+}
+
+function hasTaskEdit(action: Record<string, unknown>): boolean {
+  return Boolean(action.title !== undefined || action.durationMin !== undefined || action.dayTo !== undefined || METADATA_KEYS.some((key) => action[key] !== undefined));
+}
+
+function applyTaskMetadata<T extends TaskBankEntry>(entry: T, patch: TaskMetadataPatch): T {
+  const next: TaskBankEntry = { ...entry };
+  if (patch.description !== undefined) next.description = patch.description;
+  if (patch.habitId !== undefined) next.habitId = patch.habitId;
+  if (patch.phase !== undefined) next.phase = patch.phase;
+  if (patch.difficulty !== undefined) next.difficulty = clampDifficulty(patch.difficulty);
+  if (patch.energyLevel !== undefined) next.energyLevel = patch.energyLevel;
+  if (patch.tags !== undefined) next.tags = [...patch.tags];
+  if (patch.prerequisites !== undefined) next.prerequisites = [...patch.prerequisites];
+  if (patch.taskType !== undefined) next.taskType = patch.taskType;
+  if (patch.revisionSuitability !== undefined) next.revisionSuitability = patch.revisionSuitability;
+  if (patch.backlogSuitability !== undefined) next.backlogSuitability = patch.backlogSuitability;
+  if (patch.thinkingSkills !== undefined) next.thinkingSkills = [...patch.thinkingSkills];
+  if (patch.jeeRelevance !== undefined) next.jeeRelevance = { ...patch.jeeRelevance };
+  return next as T;
+}
+
+function clampDifficulty(value: number): Difficulty {
+  return Math.min(5, Math.max(1, Math.round(value))) as Difficulty;
+}
+
+function formatFullTaskInfo(entry: TaskBankEntry, prefix = ''): string[] {
+  const lines = [
+    `${prefix}📝 ${entry.description || 'No description'}`,
+    `${prefix}🔧 habit:${entry.habitId} phase:${entry.phase} difficulty:${entry.difficulty}/5 energy:${entry.energyLevel} type:${entry.taskType}`,
+    `${prefix}📈 revision:${entry.revisionSuitability} backlog:${entry.backlogSuitability} jee:${entry.jeeRelevance.score}${entry.jeeRelevance.subject ? ` subject:${entry.jeeRelevance.subject}` : ''}${entry.jeeRelevance.examWindow ? ' examWindow:true' : ''}`,
+  ];
+  if (entry.tags.length > 0) lines.push(`${prefix}🏷️ tags:${entry.tags.join(', ')}`);
+  if (entry.prerequisites.length > 0) lines.push(`${prefix}🧩 prerequisites:${entry.prerequisites.join(', ')}`);
+  if (entry.thinkingSkills.length > 0) lines.push(`${prefix}🧠 thinking:${entry.thinkingSkills.join(', ')}`);
+  lines.push(`${prefix}🔓 unlock:${entry.unlockConditions.map(formatUnlockCondition).join('; ')}`);
+  return lines;
+}
+
+function formatUnlockCondition(condition: TaskBankEntry['unlockConditions'][number]): string {
+  switch (condition.type) {
+    case 'day': return `day>=${condition.fromDay}`;
+    case 'day-exact': return `day=${condition.day}`;
+    case 'not-day': return `not-day=${condition.day}`;
+    case 'phase': return `phase=${condition.phase}`;
+    case 'habit': return `habit=${condition.habitId}`;
+    case 'exam-window': return `exam-window<=${condition.daysBeforeExam}`;
+    case 'mock-sunday': return 'mock-sunday';
+    case 'weekday': return `weekday=${condition.days.join(',')}`;
+    case 'day-in': return `day-in=${condition.days.join(',')}`;
+    case 'recovery': return 'recovery';
+    case 'backlog': return `backlog>=${condition.thresholdDays}`;
+    case 'revision': return `revision>${condition.dueAfterDays}`;
   }
 }
 

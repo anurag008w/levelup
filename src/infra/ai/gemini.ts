@@ -71,7 +71,11 @@ export class GeminiProvider implements LLMProvider {
   private resolveModel(request: LLMRequest): string {
     const model = request.model ?? this.config.model;
     if (!model) throw new ProviderError(this.id, 'bad-request', 'no model configured for Gemini provider');
-    return model;
+    // The Gemini models API returns ids as "models/gemini-*", while the
+    // generateContent path already includes /models/. If a saved config keeps
+    // the raw API name, using it verbatim creates /models/models%2F... and
+    // Gemini rejects the request as "Request contains an invalid argument".
+    return model.replace(/^models\//, '');
   }
 
   private buildBody(request: LLMRequest): GeminiGenerateRequest {
@@ -93,10 +97,19 @@ export class GeminiProvider implements LLMProvider {
           }
         }
         if (parts.length > 0) {
-          contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts });
+          const role = msg.role === 'assistant' ? 'model' : 'user';
+          const previous = contents[contents.length - 1];
+          // Gemini is stricter than OpenAI-style chat APIs: adjacent turns with
+          // the same role (common when the tool loop appends corrective user
+          // context) can be rejected as an invalid argument. Merge them into a
+          // single Content entry so every tool decision/retry/replan shape is
+          // accepted by the native API.
+          if (previous?.role === role) previous.parts.push(...parts);
+          else contents.push({ role, parts });
         }
       }
     }
+    if (contents.length === 0) contents.push({ role: 'user', parts: [{ text: 'Continue.' }] });
     const maxTokens = request.maxTokens ?? this.config.maxTokens;
     let thinkingConfig: { thinkingBudget: number } | undefined;
     if (request.thinking && request.thinking !== 'off') {
