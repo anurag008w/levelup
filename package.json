@@ -6,10 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc --noEmit",
     "lint": "oxlint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "release": "bash scripts/release.sh",
+    "release:date": "bash scripts/release.sh v$(date +%Y.%m.%d)",
+    "release:dry": "bash scripts/release.sh --dry-run"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",
