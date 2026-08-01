@@ -1,0 +1,173 @@
+name: Release
+
+# Manual trigger OR tag push (format: vYYYY.MM.DD)
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g., v2026.08.01)"
+        required: false
+        default: ""
+  push:
+    tags:
+      - "v[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]"
+
+permissions:
+  contents: write
+
+# Cancel in-progress runs
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate version
+        id: version
+        run: |
+          # Get version from tag push or manual input
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+            # Auto-generate if empty
+            if [[ -z "$VERSION" ]]; then
+              VERSION="v$(date +%Y.%m.%d)"
+            fi
+            # Ensure it starts with 'v'
+            if [[ ! "$VERSION" =~ ^v ]]; then
+              VERSION="v$VERSION"
+            fi
+          fi
+          
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "VERSION_NAME=${VERSION#v}" >> "$GITHUB_OUTPUT"
+          
+          echo "📌 Release Version: $VERSION"
+
+      - name: Create tag
+        env:
+          EVENT_TYPE: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_TYPE" == "push" ]]; then
+            echo "ℹ️  Tag pushed externally, skipping tag creation"
+          else
+            if git tag | grep -q "^${{ steps.version.outputs.VERSION }}$"; then
+              echo "⚠️  Tag ${{ steps.version.outputs.VERSION }} already exists"
+              echo "   Deleting and recreating..."
+              git tag -d "${{ steps.version.outputs.VERSION }}"
+            fi
+            echo "✅ Creating tag: ${{ steps.version.outputs.VERSION }}"
+            git tag -a "${{ steps.version.outputs.VERSION }}" -m "Release ${{ steps.version.outputs.VERSION }}"
+            git push origin "${{ steps.version.outputs.VERSION }}"
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: "npm"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: "temurin"
+          java-version: "21"
+          cache: "gradle"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Sync Capacitor Android project
+        run: npx cap sync android
+
+      - name: Build release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Prepare APK and changelog
+        id: prepare
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          mkdir -p release-out
+          
+          # Get commits since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [[ -n "$LAST_TAG" ]]; then
+            COMMITS_SINCE=$(git log $LAST_TAG..HEAD --oneline | wc -l | tr -d ' ')
+            echo "📝 Commits since $LAST_TAG: $COMMITS_SINCE"
+          else
+            echo "📝 First release"
+          fi
+          
+          # Copy APK
+          NAME="human-os-${VERSION#v}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "release-out/${NAME}"
+          echo "apk_path=release-out/${NAME}" >> "$GITHUB_OUTPUT"
+          echo "apk_name=${NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          
+          cat > changelog.md << 'EOF'
+          # Release ${{ steps.version.outputs.VERSION }}
+          
+          ## 📱 Download APK
+          Install the APK on your Android device.
+          
+          **Note:** Enable 'Install from unknown sources' in phone settings if needed.
+          
+          ## 📝 Changes
+          
+          EOF
+          
+          if [[ -n "$LAST_TAG" ]]; then
+            echo "### Changes since $LAST_TAG" >> changelog.md
+            git log $LAST_TAG..HEAD --format="- %s" >> changelog.md
+          else
+            echo "### All commits" >> changelog.md
+            git log --oneline -20 --format="- %s" >> changelog.md
+          fi
+          
+          cat changelog.md
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: human-os-${{ steps.version.outputs.VERSION_NAME }}-apk
+          path: ${{ steps.prepare.outputs.apk_path }}
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: "Human OS ${{ steps.version.outputs.VERSION }}"
+          body_path: changelog.md
+          prerelease: false
+          make_latest: true
+          files: ${{ steps.prepare.outputs.apk_path }}
+
+      - name: Success
+        run: |
+          echo ""
+          echo "🎉 Release ${{ steps.version.outputs.VERSION }} created successfully!"
+          echo "📦 APK: ${{ steps.prepare.outputs.apk_name }}"
+          echo "🔗 Release: https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.VERSION }}"
