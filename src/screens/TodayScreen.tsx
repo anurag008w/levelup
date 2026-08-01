@@ -393,7 +393,7 @@ export default function TodayScreen({
         type="button"
         onClick={() => setShowAdd((v) => !v)}
         className="fixed z-30 flex items-center gap-1.5 rounded-full border border-l/30 bg-panel-raised px-4 py-3 font-display text-sm font-bold text-l shadow-fab transition-transform active:scale-95"
-        style={{ bottom: 'calc(4.5rem + env(safe-area-inset-bottom, 0px))', right: 'max(1.25rem, calc(50vw - 13.75rem + 1.25rem))' }}
+        style={{ bottom: 'calc(1.25rem + env(safe-area-inset-bottom, 0px))', right: 'max(1rem, env(safe-area-inset-right, 0px))' }}
         aria-label={showAdd ? 'Close add task' : 'Add task'}
       >
         {showAdd ? <X size={17} /> : <Plus size={17} />}
@@ -642,7 +642,7 @@ function uid(prefix: string): string {
 
 function StartScreen({ onStart }: { onStart: () => void }) {
   return (
-    <div className="screen flex min-h-screen flex-col items-center justify-center text-center">
+    <div className="screen screen-start flex flex-col items-center justify-start text-center">
       <div className="fade-up">
         <div className="gradient-border mb-6 rounded-full p-px">
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-panel">
