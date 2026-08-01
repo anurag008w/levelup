@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
+import 'katex/dist/katex.min.css';
 import { Check, Copy } from 'lucide-react';
 import { unwrapMarkdownFence } from './markdown-utils';
 
@@ -176,37 +177,20 @@ class MdBoundary extends Component<{ text: string; children: ReactNode }, { fail
 export default function ChatMarkdown({ text }: { text: string }) {
   const [rehypeKatex, setRehypeKatex] = useState<((options?: object) => object) | null>(null);
   
-  // Load KaTeX CSS and plugin on client side
+  // Load KaTeX renderer on the client; CSS is bundled above so MathML/HTML
+  // layers never overlap while the CDN is still loading or unavailable.
   useEffect(() => {
-    if (typeof window === 'undefined') return; // SSR guard
-    
+    if (typeof window === 'undefined') return;
     let mounted = true;
-    
-    // Load KaTeX CSS first
-    if (!document.querySelector('link[href*="katex"]')) {
-      const link = document.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = 'https://cdn.jsdelivr.net/npm/katex@0.18.1/dist/katex.min.css';
-      link.onload = () => {
-        if (mounted) loadPlugin();
-      };
-      document.head.appendChild(link);
-    } else {
-      loadPlugin();
-    }
-    
-    function loadPlugin() {
-      import('rehype-katex')
-        .then((module) => {
-          if (mounted) {
-            setRehypeKatex(() => module.default);
-          }
-        })
-        .catch(() => {
-          console.warn('Failed to load KaTeX, math rendering disabled');
-        });
-    }
-    
+
+    import('rehype-katex')
+      .then((module) => {
+        if (mounted) setRehypeKatex(() => module.default);
+      })
+      .catch(() => {
+        console.warn('Failed to load KaTeX, math rendering disabled');
+      });
+
     return () => { mounted = false; };
   }, []);
 
