@@ -6,8 +6,8 @@ import { GeminiProvider } from './gemini';
 export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 export const OPENCODE_BASE_URL = 'https://opencode.ai/zen/v1';
 
-const OPENROUTER_TITLE = 'JEE Human OS';
-const OPENROUTER_REFERER = 'https://jee-human-os.local';
+const OPENROUTER_TITLE = 'JEE LevelUp';
+const OPENROUTER_REFERER = 'https://jee-levelup.local';
 
 /**
  * Hidden default provider configured only via environment variables

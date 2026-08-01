@@ -375,18 +375,18 @@ export default function ChatScreen() {
   }
 
   function downloadMessage(message: ChatMessage) {
-    downloadText(message.content, `human-os-ai-${new Date(message.createdAt).toISOString().slice(0, 10)}.md`);
+    downloadText(message.content, `levelup-ai-${new Date(message.createdAt).toISOString().slice(0, 10)}.md`);
   }
 
   function exportChat() {
     if (!active) return;
     const md = [
-      `# ${active.title || 'Human OS chat'}`,
+      `# ${active.title || 'LevelUp chat'}`,
       '',
       ...active.messages.map((m) => `**${m.role === 'user' ? 'User' : 'AI'}:**\n\n${m.content}`),
       '',
     ].join('\n\n');
-    downloadText(md, `human-os-chat-${(active.title || 'session').slice(0, 30).replace(/[^\w-]+/g, '_')}.md`);
+    downloadText(md, `levelup-chat-${(active.title || 'session').slice(0, 30).replace(/[^\w-]+/g, '_')}.md`);
     setNotice('Chat export ho gaya');
   }
 

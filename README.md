@@ -1,4 +1,4 @@
-# Human OS — L × Light × JEE
+# LevelUp — L × Light × JEE
 
 90-day, 30-level habit curriculum for JEE 2027 prep, packaged as a real Android app.
 Built with React + Vite + Capacitor. All data lives on your phone (no server, no login).
@@ -21,10 +21,10 @@ days (streaks, habit scores, recovery mode, mock-test protocol, exam-month mode)
 ### Push to your own GitHub repo
 
 ```bash
-cd jee-human-os
+cd jee-levelup
 git init
 git add .
-git commit -m "Human OS v1 - Phase 1 complete"
+git commit -m "LevelUp v1 - Phase 1 complete"
 git branch -M main
 git remote add origin https://github.com/<your-username>/<repo-name>.git
 git push -u origin main

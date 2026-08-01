@@ -3,8 +3,8 @@ import type { AppState } from '../../core/domain/state';
 import { emptyAppState, STATE_SCHEMA_VERSION } from '../../core/domain/state';
 import { migrateV1toV2 } from './migration';
 
-export const STATE_KEY_V1 = 'human-os-state-v1';
-export const STATE_KEY = 'human-os-state-v2';
+export const STATE_KEY_V1 = 'levelup-state-v1';
+export const STATE_KEY = 'levelup-state-v2';
 
 const REQUIRED_V2_KEYS = [
   'schemaVersion',

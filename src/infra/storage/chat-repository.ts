@@ -2,7 +2,7 @@ import type { ChatRepository } from '../../core/ports/repositories';
 import type { KeyValueRepository } from '../../core/ports/repositories';
 import type { ChatStoreState } from '../../core/domain/chat';
 
-export const CHAT_STORAGE_KEY = 'human-os-chat-v1';
+export const CHAT_STORAGE_KEY = 'levelup-chat-v1';
 
 /** localStorage-backed chat store with defensive normalization. */
 export class LocalChatRepository implements ChatRepository {

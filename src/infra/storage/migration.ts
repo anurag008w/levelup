@@ -1,7 +1,7 @@
 import type { AppState } from '../../core/domain/state';
 import { emptyAppState, STATE_SCHEMA_VERSION } from '../../core/domain/state';
 
-/** Legacy v1 state shape (as originally persisted under human-os-state-v1). */
+/** Legacy v1 state shape (as originally persisted under levelup-state-v1). */
 interface AppStateV1 {
   startDateISO: string | null;
   bonusDaysUsed: number;
