@@ -2,11 +2,43 @@ import { Component, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
 import rehypeHighlight from 'rehype-highlight';
 import { Check, Copy } from 'lucide-react';
-import 'katex/dist/katex.min.css';
 import { unwrapMarkdownFence } from './markdown-utils';
+
+// Lazy load KaTeX to avoid SSR issues - use a promise to ensure module is never imported at module level
+let katexPromise: Promise<((options?: object) => object) | null> | null = null;
+
+async function loadKatexPlugin(): Promise<((options?: object) => object) | null> {
+  // In SSR/test environment, skip KaTeX entirely
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+    return null;
+  }
+  try {
+    const katex = await import('rehype-katex');
+    // Load KaTeX CSS dynamically
+    if (!document.querySelector('link[href*="katex"]')) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'https://cdn.jsdelivr.net/npm/katex@0.18.1/dist/katex.min.css';
+      document.head.appendChild(link);
+    }
+    return katex.default || katex;
+  } catch {
+    return null;
+  }
+}
+
+function getKatexPlugin(): ((options?: object) => object) | null {
+  if (katexPromise === null) {
+    katexPromise = loadKatexPlugin();
+  }
+  // If promise is still pending, return null (synchronous SSR fallback)
+  if (katexPromise && 'then' in katexPromise) {
+    return null;
+  }
+  return (katexPromise as ((options?: object) => object) | null);
+}
 
 /* ------------------------------------------------------------------ *
    Production markdown renderer for chat bubbles.
@@ -177,15 +209,22 @@ class MdBoundary extends Component<{ text: string; children: ReactNode }, { fail
 
 export default function ChatMarkdown({ text }: { text: string }) {
   const processed = unwrapMarkdownFence(text);
+  const katexPlugin = getKatexPlugin();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const plugins: any[] = [
+    [rehypeHighlight, { detect: false, plainText: ['txt', 'text', 'plaintext', 'md', 'markdown', 'log'] }],
+  ];
+  if (katexPlugin) {
+    plugins.unshift([katexPlugin, { output: 'html', strict: false, trust: false, maxSize: 10, errorColor: '#f25d68' }]);
+  }
+
   return (
     <MdBoundary text={processed}>
       <div className="md">
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkMath]}
-          rehypePlugins={[
-            rehypeKatex({ output: 'html', strict: false, trust: false, maxSize: 10, errorColor: '#f25d68' }),
-            rehypeHighlight({ detect: false, plainText: ['txt', 'text', 'plaintext', 'md', 'markdown', 'log'] }),
-          ]}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          rehypePlugins={plugins as any}
           components={components}
         >
           {processed}
