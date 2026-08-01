@@ -28,7 +28,13 @@ export function buildPlanningContext(
     throw new Error('Cannot plan without a journey start date');
   }
 
-  const dayNumber = Math.min(Math.max(rawDayNumberForDate(dateISO, state.startDateISO), 1), totalDays);
+  const rawDayNumber = rawDayNumberForDate(dateISO, state.startDateISO);
+  const isPostJourney = state.postJourney?.journeyComplete && rawDayNumber > totalDays;
+  
+  // For post-journey, allow days beyond 90, but cap at reasonable number
+  const dayNumber = isPostJourney 
+    ? totalDays + state.postJourney.extensionDays 
+    : Math.min(Math.max(rawDayNumber, 1), totalDays);
 
   const unlockedHabitIds = habits
     .getAllHabits()

@@ -70,6 +70,14 @@ export function normalizeState(raw: unknown): AppState {
           }
         : base.aiActionHistory,
     lastSummaryDate: typeof r.lastSummaryDate === 'string' ? r.lastSummaryDate : null,
+    // Post-journey (v3) - handles migration from older versions
+    postJourney:
+      isRecord(r.postJourney)
+        ? {
+            ...base.postJourney,
+            ...(r.postJourney as Partial<AppState['postJourney']>),
+          }
+        : base.postJourney,
   };
 }
 
