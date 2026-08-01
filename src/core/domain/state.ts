@@ -5,6 +5,7 @@ import type { ProviderConfig, ModelInfo } from './llm';
 import type { TaskBankEntry } from './task-bank';
 import type { AiActionHistoryState } from './ai-actions';
 import { emptyAiActionHistory } from './ai-actions';
+import { INTERNAL_SYSTEM_PROMPT } from './chat';
 
 // Persisted application state (localStorage). Schema v2.
 
@@ -45,7 +46,7 @@ export function defaultChatSettings(): ChatSettings {
   return {
     temperature: 0.7,
     maxTokens: 2048,
-    systemPrompt: 'You are a helpful JEE preparation assistant. Be concise and focused.',
+    systemPrompt: INTERNAL_SYSTEM_PROMPT,
     memoryEnabled: true,
     autoSaveChats: true,
     conversationHistoryLength: 10,

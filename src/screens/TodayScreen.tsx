@@ -1,11 +1,11 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { Calendar, Check, Flame, Pencil, Plus, ShieldAlert, ShieldCheck, Siren, Sunrise, Sunset, Target, Timer, Trash2, X, Zap } from 'lucide-react';
 import type { AppState } from '../types';
-import type { EnergyLevel, TaskType } from '../core/domain/task-bank';
+import type { EnergyLevel, TaskBankEntry, TaskType } from '../core/domain/task-bank';
 import { PHASES, TOTAL_DAYS } from '../data/curriculum';
 import { DEFAULT_PROGRESSION_CONFIG, type DailyPlan, type PlannedTask } from '../core/domain/progress';
 import { TASK_TYPES } from '../core/domain/task-bank';
-import { getCurrentDayNumber, getLevelForDay, isExamMonthActive, daysUntilExam } from '../lib/engine';
+import { getCurrentDayNumber, getJourneyDayLimit, getLevelForDay, isExamMonthActive, daysUntilExam } from '../lib/engine';
 import { container } from '../di/container';
 import DayGauge from '../components/DayGauge';
 import Confetti from '../components/Confetti';
@@ -48,6 +48,7 @@ export default function TodayScreen({
   const celebratedRef = useRef(false);
 
   const dayNumber = getCurrentDayNumber(state, today);
+  const journeyDayLimit = getJourneyDayLimit(state);
   const level = getLevelForDay(dayNumber);
   const phase = PHASES.find((p) => p.id === level?.phase);
 
@@ -99,6 +100,10 @@ export default function TodayScreen({
       flash('Pehle task ka title bharo.');
       return;
     }
+    if (hasDuplicateTask(state.dynamicTaskBank, form.title.trim(), dayNumber)) {
+      flash('Ye task is day ke liye pehle se Task Bank mein hai. Duplicate add nahi hua.');
+      return;
+    }
     const entry = parseTaskBankEntry({
       id: uid('today'),
       habitId: 'daily_planning',
@@ -118,7 +123,7 @@ export default function TodayScreen({
       unlockConditions: [{ type: 'day-exact', day: dayNumber }],
       active: true,
     });
-    update((s) => ({ ...s, dynamicTaskBank: [...s.dynamicTaskBank, entry] }));
+    update((s) => ({ ...s, dynamicTaskBank: upsertUniqueTask(s.dynamicTaskBank, entry) }));
     setForm(EMPTY_FORM);
     setShowAdd(false);
     flash('Task aaj ke plan mein add ho gaya.');
@@ -198,7 +203,7 @@ export default function TodayScreen({
       {adminUnlocked && (
         <DaySwitcher
           dayNumber={dayNumber}
-          totalDays={TOTAL_DAYS}
+          totalDays={journeyDayLimit}
           dateLabel={dateLabel}
           onJump={(n) => onSetAdminDay(n)}
           onToday={() => onSetAdminDay(null)}
@@ -212,7 +217,7 @@ export default function TodayScreen({
           <div className="flex items-center justify-center">
             <DayGauge
               dayNumber={dayNumber}
-              totalDays={TOTAL_DAYS}
+              totalDays={journeyDayLimit}
               todayPct={pct}
               levelCode={`LVL-${String(level?.id ?? 0).padStart(2, '0')}`}
             />
@@ -679,4 +684,39 @@ function StartScreen({ onStart }: { onStart: () => void }) {
       </div>
     </div>
   );
+}
+
+function scheduledDays(entry: { unlockConditions: TaskBankEntry['unlockConditions'] }): number[] {
+  return entry.unlockConditions.flatMap((condition) => {
+    if (condition.type === 'day') return [condition.fromDay];
+    if (condition.type === 'day-exact') return [condition.day];
+    if (condition.type === 'day-in') return condition.days;
+    return [];
+  });
+}
+
+function normalizeTaskTitle(title: string): string {
+  return title.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function hasDuplicateTask(entries: TaskBankEntry[], title: string, day: number, ignoreId?: string): boolean {
+  const normalized = normalizeTaskTitle(title);
+  return entries.some((entry) =>
+    entry.active &&
+    entry.id !== ignoreId &&
+    normalizeTaskTitle(entry.title) === normalized &&
+    scheduledDays(entry).includes(day),
+  );
+}
+
+function upsertUniqueTask(entries: TaskBankEntry[], entry: TaskBankEntry): TaskBankEntry[] {
+  const days = scheduledDays(entry);
+  const normalized = normalizeTaskTitle(entry.title);
+  const withoutDuplicates = entries.filter((existing) =>
+    existing.id === entry.id ||
+    !existing.active ||
+    normalizeTaskTitle(existing.title) !== normalized ||
+    !scheduledDays(existing).some((day) => days.includes(day)),
+  );
+  return [...withoutDuplicates.filter((existing) => existing.id !== entry.id), entry];
 }

@@ -66,7 +66,23 @@ export { dateToISO, isoAddDays, rawDayNumberForDate };
 export function getCurrentDayNumber(state: AppState, todayISO: string): number {
   if (!state.startDateISO) return 0;
   const raw = rawDayNumberForDate(todayISO, state.startDateISO);
-  return Math.min(Math.max(raw, 1), TOTAL_DAYS);
+  return Math.min(Math.max(raw, 1), getJourneyDayLimit(state));
+}
+
+export function getJourneyDayLimit(state: AppState): number {
+  const dynamicMax = Math.max(
+    0,
+    ...state.dynamicTaskBank.flatMap((entry) =>
+      entry.unlockConditions.flatMap((condition) => {
+        if (condition.type === 'day') return [condition.fromDay];
+        if (condition.type === 'day-exact' || condition.type === 'not-day') return [condition.day];
+        if (condition.type === 'day-in') return condition.days;
+        return [];
+      }),
+    ),
+  );
+  const postJourneyMax = state.postJourney?.journeyComplete ? TOTAL_DAYS + state.postJourney.extensionDays : 0;
+  return Math.max(TOTAL_DAYS, dynamicMax, postJourneyMax);
 }
 
 export function getLevelForDay(dayNumber: number): Level | undefined {

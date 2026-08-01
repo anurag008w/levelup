@@ -29,12 +29,20 @@ export function buildPlanningContext(
   }
 
   const rawDayNumber = rawDayNumberForDate(dateISO, state.startDateISO);
-  const isPostJourney = state.postJourney?.journeyComplete && rawDayNumber > totalDays;
-  
-  // For post-journey, allow days beyond 90, but cap at reasonable number
-  const dayNumber = isPostJourney 
-    ? totalDays + state.postJourney.extensionDays 
-    : Math.min(Math.max(rawDayNumber, 1), totalDays);
+  const dynamicMaxDay = Math.max(
+    totalDays,
+    ...state.dynamicTaskBank.flatMap((entry) =>
+      entry.unlockConditions.flatMap((condition) => {
+        if (condition.type === 'day') return [condition.fromDay];
+        if (condition.type === 'day-exact' || condition.type === 'not-day') return [condition.day];
+        if (condition.type === 'day-in') return condition.days;
+        return [];
+      }),
+    ),
+  );
+  const postJourneyMaxDay = state.postJourney?.journeyComplete ? totalDays + state.postJourney.extensionDays : totalDays;
+  const dayLimit = Math.max(totalDays, dynamicMaxDay, postJourneyMaxDay);
+  const dayNumber = Math.min(Math.max(rawDayNumber, 1), dayLimit);
 
   const unlockedHabitIds = habits
     .getAllHabits()
