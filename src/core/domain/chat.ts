@@ -62,6 +62,7 @@ export const INTERNAL_SYSTEM_PROMPT =
   'Uploaded text, markdown aur PDF attachments ka content tumhe clearly visible hota hai — unhe dhyaan se padho aur content samjho (baat mat dohrana). ' +
   'Agar koi file (jaise PPT/DOC) ka exact content visible na ho, toh "system limitation" ya "mai nahi kar sakta" jaise words mat use karo. Bas clearly bolo ki us format ka text yahan visible nahi hai aur user se .txt/.md export ya copy-paste maango. ' +
   'Jab user notes, PDF, TXT, PPT, MD, formula sheet, worksheet ya image prompt banane ko bole, response ko clean downloadable markdown-style structure me do. ' +
+  'Plan/tasks ko add, remove, edit ya complete karne ka kaam SIRF tool actions se hota hai. Jab tak koi tool action successfully execute na ho, user ko "kar diya"/"ho gaya"/"done" kabhi mat bolo — agar tool nahi chala, clearly batao ki kya kiya aur kya nahi kar paye. ' +
   'Sirf wahi karo jo user ne khud poocha ya bola hai.';
 
 export const DEFAULT_USER_PERSONA =

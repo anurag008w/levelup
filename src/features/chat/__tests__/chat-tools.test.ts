@@ -87,7 +87,7 @@ function makeChat(store: StateStore, provider: LLMProvider, tools: ChatToolsServ
   const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
   const settings = new ProviderSettingsService(store, factory);
   const llm = new LLMService(factory, settings);
-  return new ChatService(new MemoryChatRepository(), llm, settings, () => 'ctx', new FakeClock(), tools);
+  return new ChatService(new MemoryChatRepository(), llm, settings, () => 'ctx', new FakeClock(), tools, null, store);
 }
 
 function providerWith(completeText: string, streamText: string): LLMProvider {
@@ -128,11 +128,14 @@ describe('ChatToolsService', () => {
     expect(result.summary).toContain('[todo]');
   });
 
-  it('getRange clamps to a bounded window', async () => {
+  it('getRange auto-chunks ranges wider than 7 days instead of failing', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
     const tooBig = await tools.run({ action: 'getRange', fromDay: 1, toDay: 30 });
-    expect(tooBig.ok).toBe(false);
+    expect(tooBig.ok).toBe(true);
+    expect(tooBig.summary).toContain('Plan overview Day 1-7');
+    expect(tooBig.summary).toContain('Plan overview Day 8-14');
+    expect(tooBig.summary).toContain('Day 30');
     const ok = await tools.run({ action: 'getRange', fromDay: 60, toDay: 62 });
     expect(ok.ok).toBe(true);
     expect(ok.summary).toContain('Day 60');
@@ -287,6 +290,69 @@ describe('ChatToolsService', () => {
     expect(override?.estimatedDurationMin).toBe(25);
     expect(override?.unlockConditions).toEqual([{ type: 'day-exact', day: 2 }]);
   });
+
+  it('reports missingTaskIdDays when an action targets an unknown task id', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const edit = await tools.run({ action: 'editTask', day: 1, taskId: 'nope', durationMin: 25 });
+    expect(edit.ok).toBe(false);
+    expect(edit.missingTaskIdDays).toEqual([1]);
+    const mark = await tools.run({ action: 'markDone', day: 2, taskId: 'nope' });
+    expect(mark.ok).toBe(false);
+    expect(mark.missingTaskIdDays).toEqual([2]);
+    const remove = await tools.run({ action: 'removeTask', day: 3, taskId: 'nope', confirmed: true });
+    expect(remove.ok).toBe(false);
+    expect(remove.missingTaskIdDays).toEqual([3]);
+  });
+
+  it('bulkAddTasks keeps the tasks that generated when one intent fails', async () => {
+    const store = makeStore();
+    const { tools, taskGeneration } = makeTools(store);
+    taskGeneration.generate = async (_state, input) => {
+      if (input.intent === 'bogus') throw new Error('generate failed');
+      return {
+        entry: parseTaskBankEntry({
+          id: `ai-${input.intent}`,
+          habitId: 'h1',
+          title: input.intent,
+          description: 'added via chat tool',
+          phase: 'jee-core',
+          difficulty: 2,
+          estimatedDurationMin: 20,
+          energyLevel: 'low',
+          tags: [],
+          prerequisites: [],
+          taskType: 'Beginner',
+          revisionSuitability: 0.2,
+          backlogSuitability: 0.2,
+          thinkingSkills: ['recall'],
+          jeeRelevance: { subject: 'physics', score: 0.5 },
+          unlockConditions: [{ type: 'day', fromDay: 1 }],
+          active: true,
+        }),
+        source: 'ai',
+      };
+    };
+    const result = await tools.run({ action: 'bulkAddTasks', day: 3, intents: ['pehla', 'bogus', 'dusra'] });
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('Added 2 task(s)');
+    expect(result.summary).toContain('generate nahi ho paye');
+    const ids = store.get().dynamicTaskBank.map((e) => e.id);
+    expect(ids).toContain('ai-pehla');
+    expect(ids).toContain('ai-dusra');
+    expect(ids).not.toContain('ai-bogus');
+  });
+
+  it('bulkAddTasks fails cleanly when every intent fails to generate', async () => {
+    const store = makeStore();
+    const { tools, taskGeneration } = makeTools(store);
+    taskGeneration.generate = async () => {
+      throw new Error('generate failed');
+    };
+    const result = await tools.run({ action: 'bulkAddTasks', day: 3, intents: ['a', 'b'] });
+    expect(result.ok).toBe(false);
+    expect(result.summary).toContain('koi task add nahi ho saka');
+  });
 });
 
 describe('ChatService with tools', () => {
@@ -352,6 +418,64 @@ describe('ChatService tool retry + reasoning', () => {
     expect(calls).toBe(2);
     expect(reply.content).toBe('Hata diya.');
     expect(reply.tool).toBe('removeTask');
+  });
+
+  it('auto-fetches the day plan and replans when the model guesses a wrong task id', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    let calls = 0;
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => {
+        calls += 1;
+        if (calls === 1) return { text: '{"action":"editTask","day":1,"taskId":"d1_bogus","durationMin":25}', model: 'a' };
+        return { text: '{"action":"editTask","day":1,"taskId":"d1_t1","durationMin":25}', model: 'a' };
+      },
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        req.onDelta?.('Edit kar diya.');
+        return { text: 'Edit kar diya.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    const reply = await chat.send(session.id, 'day 1 ka pehla task 25 min ka kar do');
+    expect(calls).toBe(2);
+    expect(reply.content).toBe('Edit kar diya.');
+    const override = store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1');
+    expect(override?.estimatedDurationMin).toBe(25);
+  });
+
+  it('keeps partial non-destructive mutations when the replan also fails', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    let calls = 0;
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => {
+        calls += 1;
+        if (calls === 1) return { text: '{"actions":[{"action":"addTask","day":3,"intent":"pehla"},{"action":"editTask","day":3,"taskId":"bad","durationMin":25}]}', model: 'a' };
+        return { text: 'koi tool nahi, bas prose', model: 'a' };
+      },
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        req.onDelta?.('Nahi ho paya.');
+        return { text: 'Nahi ho paya.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    const reply = await chat.send(session.id, 'day 3 mein task add karo aur edit karo');
+    expect(calls).toBe(2);
+    expect(reply.content).toBe('Nahi ho paya.');
+    // The addTask that succeeded before the guessed-id failure stays applied.
+    expect(store.get().dynamicTaskBank.some((e) => e.id === 'ai-chat-test')).toBe(true);
   });
 
   it('captures reasoning on the assistant message and forwards deltas', async () => {

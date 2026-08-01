@@ -129,7 +129,7 @@ export const container = createContainer();
 function buildRecentProgress(state: import('../core/domain/state').AppState, today: string, planner: HabitProgressionService): string[] {
   if (!state.startDateISO) return [];
   const todayDay = rawDayNumberForDate(today, state.startDateISO);
-  const fromDay = Math.max(1, todayDay - 6);
+  const fromDay = Math.max(1, todayDay - 13);
   const rows: string[] = [];
   for (let day = fromDay; day <= todayDay; day++) {
     const dateISO = isoAddDays(state.startDateISO, day - 1);
