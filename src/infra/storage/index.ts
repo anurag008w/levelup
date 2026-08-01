@@ -2,11 +2,11 @@
  * Storage Exports
  */
 
-export { persistentStorage, BrowserStorage, persistentStore, ModelCacheRepositoryImpl } from './local-storage';
+export { BrowserStorage, persistentStore, ModelCacheRepositoryImpl } from './local-storage';
 export { LocalChatRepository, CHAT_STORAGE_KEY } from './chat-repository';
+export { persistentStorage } from './persistent-storage';
 export {
   userStorage,
-  persistentStorage as storage,
   getUserProgress,
   saveUserProgress,
   getAISettings,

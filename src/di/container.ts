@@ -2,7 +2,7 @@ import { LEVELS, TOTAL_DAYS } from '../data/curriculum';
 import { DEFAULT_PROGRESSION_CONFIG } from '../core/domain/progress';
 import type { StateRepository, StateStore } from '../core/ports/repositories';
 import { SystemClock, type Clock, todayISO } from '../core/ports/clock';
-import { BrowserStorage } from '../infra/storage/local-storage';
+import { BrowserStorage, persistentStore } from '../infra/storage/local-storage';
 import { CachedStateStore, LocalStateRepository } from '../infra/storage/state-repository';
 import { FetchHttpClient, type HttpClient } from '../infra/ai/http';
 import { CapacitorHttpClient, isNativePlatform } from '../infra/ai/http-native';
@@ -48,7 +48,11 @@ export interface AppContainer {
  * browser views read from this container instead of building services.
  */
 export function createContainer(): AppContainer {
-  const storage = new BrowserStorage();
+  // Use persistent storage for native apps (survives updates)
+  // Falls back to BrowserStorage for web
+  const useNativeStorage = isNativePlatform();
+  const storage = useNativeStorage ? persistentStore : new BrowserStorage();
+  
   const stateRepository = new LocalStateRepository(storage);
   const store = new CachedStateStore(stateRepository);
   const http: HttpClient = isNativePlatform() ? new CapacitorHttpClient() : new FetchHttpClient();
