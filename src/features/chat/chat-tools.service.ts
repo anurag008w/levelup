@@ -178,14 +178,15 @@ export class ChatToolsService {
         parsed = undefined;
       }
       if (parsed !== undefined) {
-        const single = chatToolActionSchema.safeParse(parsed);
+        const normalizedSingle = normalizeToolCandidate(parsed);
+        const single = chatToolActionSchema.safeParse(normalizedSingle);
         if (single.success) return [single.data as ChatToolAction];
-        const batch = chatToolBatchSchema.safeParse(parsed);
+        const normalizedBatch = normalizeToolBatchCandidate(parsed);
+        const batch = chatToolBatchSchema.safeParse(normalizedBatch);
         if (batch.success) return batch.data.actions;
         // If the model emitted an actions wrapper but one action is incomplete
-        // (for example addTask without required durationMin), fail the whole
-        // decision so ChatService can issue the strict retry instead of silently
-        // executing only the valid subset.
+        // after normalization, fail the whole decision so ChatService can issue
+        // the strict retry instead of silently executing only the valid subset.
         if (typeof parsed === 'object' && parsed !== null && 'actions' in parsed) return [];
       }
     }
@@ -195,7 +196,7 @@ export class ChatToolsService {
       try {
         const parsedArr: unknown = JSON.parse(text.slice(arrStart, arrEnd + 1));
         if (Array.isArray(parsedArr)) {
-          const parsedActions = parsedArr.map((a) => chatToolActionSchema.safeParse(a));
+          const parsedActions = parsedArr.map((a) => chatToolActionSchema.safeParse(normalizeToolCandidate(a)));
           if (parsedActions.every((r) => r.success)) {
             return parsedActions.map((r) => (r as { success: true; data: ChatToolAction }).data).slice(0, 6);
           }
@@ -1196,4 +1197,54 @@ function inferTaskIntents(text: string, isDummy: boolean): string[] {
   }
   const cleaned = text.replace(/(?:add|create|banao|bana|daalo|dalo|dal|task|tasks|karo|kro|abhi|day\s*\d+|din\s*\d+)/g, ' ').replace(/\s+/g, ' ').trim();
   return [cleaned || 'Study practice task'];
+}
+
+function normalizeToolBatchCandidate(value: unknown): unknown {
+  if (!isRecord(value) || !Array.isArray(value.actions)) return value;
+  return { ...value, actions: value.actions.map(normalizeToolCandidate).slice(0, 6) };
+}
+
+function normalizeToolCandidate(value: unknown): unknown {
+  if (!isRecord(value) || typeof value.action !== 'string') return value;
+  const next: Record<string, unknown> = { ...value };
+  if ('day' in next) next.day = numberFromUnknown(next.day, next.day);
+  if ('fromDay' in next) next.fromDay = numberFromUnknown(next.fromDay, next.fromDay);
+  if ('toDay' in next) next.toDay = numberFromUnknown(next.toDay, next.toDay);
+  if ('days' in next) next.days = numberFromUnknown(next.days, next.days);
+  if ('dayStart' in next) next.dayStart = numberFromUnknown(next.dayStart, next.dayStart);
+  if ('dayEnd' in next) next.dayEnd = numberFromUnknown(next.dayEnd, next.dayEnd);
+  if ('durationMin' in next) next.durationMin = numberFromUnknown(next.durationMin, next.durationMin);
+
+  if (next.action === 'addTask') {
+    next.day = numberFromUnknown(next.day, 1);
+    next.durationMin = numberFromUnknown(next.durationMin, 30);
+    if (typeof next.intent !== 'string' || next.intent.trim().length === 0) next.intent = 'Study practice task';
+  }
+  if (next.action === 'bulkAddTasks') {
+    next.day = numberFromUnknown(next.day, 1);
+    next.durationMin = numberFromUnknown(next.durationMin, 30);
+    if (typeof next.intents === 'string') next.intents = splitList(next.intents);
+  }
+  if (next.action === 'createBlock') {
+    if (typeof next.name !== 'string' || next.name.trim().length === 0) next.name = 'Custom Study Block';
+    if (typeof next.focusAreas === 'string') next.focusAreas = splitList(next.focusAreas);
+    if (typeof next.goals === 'string') next.goals = splitList(next.goals);
+    if (typeof next.habits === 'string') next.habits = splitList(next.habits);
+  }
+  return next;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function numberFromUnknown(value: unknown, fallback: unknown): unknown {
+  if (typeof value === 'number') return value;
+  if (typeof value !== 'string') return fallback;
+  const match = value.match(/\d+/);
+  return match ? Number(match[0]) : fallback;
+}
+
+function splitList(value: string): string[] {
+  return value.split(/[,;\n]|\band\b|aur/).map((item) => item.trim()).filter(Boolean).slice(0, 6);
 }

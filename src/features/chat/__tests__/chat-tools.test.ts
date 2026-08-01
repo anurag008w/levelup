@@ -118,6 +118,21 @@ describe('ChatToolsService', () => {
     ]);
   });
 
+  it('normalizes slightly imperfect tool JSON from weaker models', () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+
+    expect(tools.parseTools('{"action":"addTask","day":"3","intent":"maths pyq"}')).toEqual([
+      { action: 'addTask', day: 3, intent: 'maths pyq', durationMin: 30 },
+    ]);
+    expect(tools.parseTools('{"action":"createBlock","days":"7 days","focusAreas":"physics, revision"}')).toEqual([
+      { action: 'createBlock', name: 'Custom Study Block', days: 7, focusAreas: ['physics', 'revision'] },
+    ]);
+    expect(tools.parseTools('{"actions":[{"action":"bulkAddTasks","day":"2","intents":"physics pyq aur chem ncert"}]}')).toEqual([
+      { action: 'bulkAddTasks', day: 2, intents: ['physics pyq', 'chem ncert'], durationMin: 30 },
+    ]);
+  });
+
   it('detects task-related queries and parses valid tool actions', () => {
     const store = makeStore();
     const { tools } = makeTools(store);
@@ -690,7 +705,10 @@ describe('ChatService tool retry + reasoning', () => {
     expect(tools.parseTools('ok so {"actions":[{"action":"getPlan","day":9}]} done')).toEqual([
       { action: 'getPlan', day: 9 },
     ]);
-    expect(tools.parseTools('{"actions":[{"action":"addTask","day":5,"intent":"maths"},{"action":"removeTask","day":5,"taskId":"d1_t1","confirmed":true}]}')).toEqual([]);
+    expect(tools.parseTools('{"actions":[{"action":"addTask","day":5,"intent":"maths"},{"action":"removeTask","day":5,"taskId":"d1_t1","confirmed":true}]}')).toEqual([
+      { action: 'addTask', day: 5, intent: 'maths', durationMin: 30 },
+      { action: 'removeTask', day: 5, taskId: 'd1_t1', confirmed: true },
+    ]);
     expect(tools.parseTools('koi json nahi')).toEqual([]);
   });
 

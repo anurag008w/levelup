@@ -101,6 +101,7 @@ export const CHAT_TOOL_INSTRUCTIONS = `You can VIEW or MODIFY the study plan for
 
 When the user asks about the plan for a day, or wants to add/remove/edit/complete tasks,
 your ENTIRE reply must be exactly one JSON object, no extra text.
+These are LOCAL APP TOOLS that the app will execute after your JSON; never say you lack backend/tool/database access.
 
 TASK MANAGEMENT:
 - Plan for a day: {"action":"getPlan","day":N}
@@ -170,7 +171,7 @@ For ANYTHING else (concepts, motivation, general questions, block suggestions, s
 /** Correction prompt used when the model answered with prose instead of a tool action. */
 export const CHAT_TOOL_RETRY =
   'You just answered with normal text, but this message was about the study plan and MUST be a tool action. ' +
-  'Do NOT refuse, do NOT explain your limitations, do NOT apologize. ' +
+  'Do NOT refuse, do NOT explain your limitations, do NOT apologize, and never claim tool/backend/database access is unavailable. ' +
   'If the user asks to add/remove/complete a task, that is fully supported and safe. ' +
   'Your ENTIRE reply must be exactly one JSON object chosen from the allowed actions above — ' +
   'either ONE action (e.g. {"action":"removeTask","day":10,"taskId":"d1_t1"}), ' +
