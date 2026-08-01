@@ -5,6 +5,7 @@ import type { ThinkingLevel } from '../core/domain/llm';
 import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT } from '../core/domain/chat';
 import type { ModelInfo } from '../core/domain/llm';
 import { container } from '../di/container';
+import { redoLastAiAction, undoLastAiAction } from '../core/domain/ai-actions';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import EmptyState from '../components/ui/EmptyState';
 import AddProviderForm from '../components/AddProviderForm';
@@ -262,6 +263,10 @@ ${template}` : template));
           onChange={updatePrefs}
           onLoadCatalog={() => void loadCatalog()}
           onProviderAdded={() => setProviderCount((c) => c + 1)}
+          onHistoryChanged={() => {
+            setProviderCount((c) => c + 1);
+            refresh();
+          }}
         />
       )}
 
@@ -572,6 +577,7 @@ function OptionsPanel({
   onChange,
   onLoadCatalog,
   onProviderAdded,
+  onHistoryChanged,
 }: {
   prefs: ChatPreferences;
   providers: Array<{ id: string; label: string; enabled?: boolean }>;
@@ -579,6 +585,7 @@ function OptionsPanel({
   onChange: (patch: Partial<ChatPreferences>) => void;
   onLoadCatalog: () => void;
   onProviderAdded: () => void;
+  onHistoryChanged: () => void;
 }) {
   return (
     <div className="mb-3 space-y-3 rounded-xl border border-border bg-panel p-3.5 text-xs fade-up">
@@ -697,6 +704,8 @@ function OptionsPanel({
         </button>
       </div>
 
+      <AiActivityPanel onHistoryChanged={onHistoryChanged} />
+
       <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-bg px-2.5 py-2">
         <span className="font-semibold text-muted">Aaj ka context include karein</span>
         <label className="relative inline-flex cursor-pointer">
@@ -710,6 +719,47 @@ function OptionsPanel({
           <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-muted transition-transform peer-checked:translate-x-4 peer-checked:bg-l" />
         </label>
       </label>
+    </div>
+  );
+}
+
+
+function AiActivityPanel({ onHistoryChanged }: { onHistoryChanged: () => void }) {
+  const history = container.store.get().aiActionHistory;
+  const latest = history.versions.at(-1);
+  const undone = history.undone.length;
+
+  function undo() {
+    container.store.save(undoLastAiAction(container.store.get()));
+    onHistoryChanged();
+  }
+
+  function redo() {
+    container.store.save(redoLastAiAction(container.store.get()));
+    onHistoryChanged();
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-bg px-2.5 py-2">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <p className="font-semibold text-muted">AI Activity & Undo</p>
+        <span className="font-mono text-[10px] text-light">{history.versions.length} versions</span>
+      </div>
+      {latest ? (
+        <p className="mb-2 line-clamp-2 text-[10px] text-muted">
+          Latest: {latest.summary} · {latest.status} · {new Date(latest.timestamp).toLocaleString()}
+        </p>
+      ) : (
+        <p className="mb-2 text-[10px] text-muted">AI edits will appear here with 90-day version history.</p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <button type="button" disabled={!latest} onClick={undo} className="btn btn-ghost px-2.5 py-1 text-[11px] disabled:opacity-40">
+          Undo last AI change
+        </button>
+        <button type="button" disabled={undone === 0} onClick={redo} className="btn btn-ghost px-2.5 py-1 text-[11px] disabled:opacity-40">
+          Redo ({undone})
+        </button>
+      </div>
     </div>
   );
 }

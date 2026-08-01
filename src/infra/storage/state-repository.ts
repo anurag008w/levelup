@@ -23,6 +23,7 @@ const REQUIRED_V2_KEYS = [
   'planCache',
   'studyTimeMinutes',
   'lastSummaryDate',
+  'aiActionHistory',
 ] as const;
 
 /** Defensively rebuilds a v2 state from whatever came out of storage. */
@@ -52,6 +53,15 @@ export function normalizeState(raw: unknown): AppState {
     dynamicTaskBank: Array.isArray(r.dynamicTaskBank) ? r.dynamicTaskBank : [],
     planCache: isRecord(r.planCache) ? (r.planCache as AppState['planCache']) : {},
     studyTimeMinutes: typeof r.studyTimeMinutes === 'number' && r.studyTimeMinutes > 0 ? r.studyTimeMinutes : 360,
+    aiActionHistory:
+      isRecord(r.aiActionHistory) && Array.isArray((r.aiActionHistory as { versions?: unknown }).versions)
+        ? {
+            versions: (r.aiActionHistory as { versions: AppState['aiActionHistory']['versions']; undone?: unknown }).versions,
+            undone: Array.isArray((r.aiActionHistory as { undone?: unknown }).undone)
+              ? ((r.aiActionHistory as { undone: AppState['aiActionHistory']['undone'] }).undone)
+              : [],
+          }
+        : base.aiActionHistory,
     lastSummaryDate: typeof r.lastSummaryDate === 'string' ? r.lastSummaryDate : null,
   };
 }

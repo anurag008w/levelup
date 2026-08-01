@@ -9,7 +9,7 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('getPlan'), day: z.number().int() }),
   z.object({ action: z.literal('getRange'), fromDay: z.number().int(), toDay: z.number().int() }),
   z.object({ action: z.literal('addTask'), day: z.number().int(), intent: z.string().min(1), durationMin: z.number().int().min(1).max(600).optional() }),
-  z.object({ action: z.literal('removeTask'), day: z.number().int(), taskId: z.string().min(1) }),
+  z.object({ action: z.literal('removeTask'), day: z.number().int(), taskId: z.string().min(1), confirmed: z.boolean().optional() }),
   z.object({
     action: z.literal('editTask'),
     day: z.number().int(),
@@ -18,7 +18,7 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
     durationMin: z.number().int().min(1).max(600).optional(),
     dayTo: z.number().int().min(1).max(90).optional(),
   }),
-  z.object({ action: z.literal('markDone'), day: z.number().int(), taskId: z.string().min(1) }),
+  z.object({ action: z.literal('markDone'), day: z.number().int(), taskId: z.string().min(1), confirmed: z.boolean().optional() }),
 ]);
 
 export type ChatToolAction = z.infer<typeof chatToolActionSchema>;
@@ -27,6 +27,10 @@ export interface ChatToolResult {
   ok: boolean;
   /** Human/machine-readable structured summary fed back to the LLM. */
   summary: string;
+  /** True when the action is a preview and must be retried with confirmed:true. */
+  requiresConfirmation?: boolean;
+  /** Version id recorded for an applied mutation. */
+  versionId?: string;
 }
 
 /** Description of the tool protocol embedded in the system prompt. */
@@ -38,7 +42,7 @@ your ENTIRE reply must be exactly one JSON object, no extra text:
 - Overview of a range (max 7 days): {"action":"getRange","fromDay":A,"toDay":B}
 - Add a task: {"action":"addTask","day":N,"intent":"<what task>","durationMin":30}
 - Edit a task (built-in or user/AI-added; change title/duration/day): {"action":"editTask","day":N,"taskId":"<id from plan>","durationMin":20,"dayTo":5}
-- Remove a task (built-in or user/AI-added): {"action":"removeTask","day":N,"taskId":"<id from plan>"}
+- Remove a task (built-in or user/AI-added): {"action":"removeTask","day":N,"taskId":"<id from plan>"}. This is destructive: first call without confirmed to get a preview; only call with "confirmed":true after the user explicitly confirms.
 - Mark a task done: {"action":"markDone","day":N,"taskId":"<id from plan>"}
 
 For ANYTHING else (concepts, motivation, general questions) reply normally in Hinglish.`;

@@ -4,6 +4,8 @@ import type { TaskBankEntry } from '../../core/domain/task-bank';
 import type { DailyPlan, ProgressionConfig } from '../../core/domain/progress';
 import { DEFAULT_PROGRESSION_CONFIG } from '../../core/domain/progress';
 import type { ChatToolAction, ChatToolResult } from '../../core/domain/chat-tools';
+import type { AiActionContext } from '../../core/domain/ai-actions';
+import { createAiActionPreview, recordAiActionVersion } from '../../core/domain/ai-actions';
 import { chatToolActionSchema } from '../../core/domain/chat-tools';
 import type { HabitProgressionService } from '../habit-engine/planner';
 import type { TaskBankService } from '../task-bank/task-bank.service';
@@ -78,7 +80,7 @@ export class ChatToolsService {
         case 'addTask':
           return await this.addTask(state, action);
         case 'removeTask':
-          return this.removeTask(state, action.day, action.taskId);
+          return this.removeTask(state, action.day, action.taskId, action.confirmed === true);
         case 'editTask':
           return this.editTask(state, action);
         case 'markDone':
@@ -129,14 +131,24 @@ export class ChatToolsService {
     const next = state.dynamicTaskBank.some((e) => e.id === entry.id)
       ? state.dynamicTaskBank.map((e) => (e.id === entry.id ? entry : e))
       : [...state.dynamicTaskBank, entry];
-    this.store.save({ ...state, dynamicTaskBank: next });
+    const before = state.dynamicTaskBank;
+    const after = next;
+    const saved = recordAiActionVersion(
+      { ...state, dynamicTaskBank: after },
+      { action: 'addTask', entityType: 'dynamicTaskBank', entityId: entry.id, summary: `add task ${entry.title} to Day ${d}`, permissions: ['create'], confirmed: true },
+      before,
+      after,
+    );
+    this.store.save(saved);
+    const versionId = saved.aiActionHistory.versions.at(-1)?.id;
     return {
       ok: true,
-      summary: `Added for Day ${d}: ${entry.title} (id:${entry.id}, ${entry.estimatedDurationMin}min). Tell the user it will appear in that day's plan and can be edited/deleted from Task Bank.`,
+      versionId,
+      summary: `Added for Day ${d}: ${entry.title} (id:${entry.id}, ${entry.estimatedDurationMin}min). Version:${versionId ?? 'n/a'}. Tell the user it will appear in that day's plan and can be undone from AI Activity.`,
     };
   }
 
-  private removeTask(state: AppState, day: number, taskId: string): ChatToolResult {
+  private removeTask(state: AppState, day: number, taskId: string, confirmed = false): ChatToolResult {
     const d = clamp(day);
     const dynamic = state.dynamicTaskBank.find((e) => e.id === taskId);
     const bank = this.taskBank.getById(taskId);
@@ -145,8 +157,15 @@ export class ChatToolsService {
     const next = dynamic
       ? state.dynamicTaskBank.filter((e) => e.id !== taskId)
       : [...state.dynamicTaskBank, { ...entry, active: false }];
-    this.store.save({ ...state, dynamicTaskBank: next });
-    return { ok: true, summary: `Removed from Day ${d}: ${entry.title} (id:${taskId}).` };
+    const context: AiActionContext = { action: 'removeTask', entityType: 'dynamicTaskBank', entityId: taskId, summary: `remove task ${entry.title} from Day ${d}`, permissions: ['delete'], confirmationRequired: true, confirmed };
+    if (!confirmed) {
+      const preview = createAiActionPreview(context, state.dynamicTaskBank, next);
+      return { ok: false, requiresConfirmation: true, summary: `${preview.summary}. Changed fields: ${preview.changedFields.join(', ')}. Reply with explicit confirmation to apply.` };
+    }
+    const saved = recordAiActionVersion({ ...state, dynamicTaskBank: next }, context, state.dynamicTaskBank, next);
+    this.store.save(saved);
+    const versionId = saved.aiActionHistory.versions.at(-1)?.id;
+    return { ok: true, versionId, summary: `Removed from Day ${d}: ${entry.title} (id:${taskId}). Version:${versionId ?? 'n/a'}. Undo available in AI Activity.` };
   }
 
   private editTask(state: AppState, action: Extract<ChatToolAction, { action: 'editTask' }>): ChatToolResult {
@@ -163,9 +182,16 @@ export class ChatToolsService {
     const next = dynamic
       ? state.dynamicTaskBank.map((e) => (e.id === edited.id ? edited : e))
       : [...state.dynamicTaskBank, edited];
-    this.store.save({ ...state, dynamicTaskBank: next });
+    const saved = recordAiActionVersion(
+      { ...state, dynamicTaskBank: next },
+      { action: 'editTask', entityType: 'dynamicTaskBank', entityId: edited.id, summary: `edit task ${edited.title} on Day ${d}`, permissions: ['edit'], confirmed: true },
+      state.dynamicTaskBank,
+      next,
+    );
+    this.store.save(saved);
+    const versionId = saved.aiActionHistory.versions.at(-1)?.id;
     const moved = action.dayTo !== undefined ? ` and moved to Day ${clamp(action.dayTo)}` : '';
-    return { ok: true, summary: `Edited Day ${d}: ${edited.title} (${edited.estimatedDurationMin}min)${moved}.` };
+    return { ok: true, versionId, summary: `Edited Day ${d}: ${edited.title} (${edited.estimatedDurationMin}min)${moved}. Version:${versionId ?? 'n/a'}.` };
   }
 
   private markDone(state: AppState, day: number, taskId: string): ChatToolResult {
@@ -176,8 +202,16 @@ export class ChatToolsService {
       return { ok: false, summary: `Day ${d}: task id "${taskId}" nahi mila.` };
     }
     log[taskId] = true;
-    this.store.save({ ...state, taskLogs: { ...state.taskLogs, [dateISO]: log } });
-    return { ok: true, summary: `Marked done for Day ${d} (${dateISO}): ${this.taskBank.getById(taskId)?.title ?? taskId}.` };
+    const nextLogs = { ...state.taskLogs, [dateISO]: log };
+    const saved = recordAiActionVersion(
+      { ...state, taskLogs: nextLogs },
+      { action: 'markDone', entityType: 'taskLogs', entityId: `${dateISO}:${taskId}`, summary: `mark task ${taskId} done for Day ${d}`, permissions: ['edit'], confirmed: true },
+      state.taskLogs,
+      nextLogs,
+    );
+    this.store.save(saved);
+    const versionId = saved.aiActionHistory.versions.at(-1)?.id;
+    return { ok: true, versionId, summary: `Marked done for Day ${d} (${dateISO}): ${this.taskBank.getById(taskId)?.title ?? taskId}. Version:${versionId ?? 'n/a'}.` };
   }
 
   private planForDay(state: AppState, day: number): DailyPlan {

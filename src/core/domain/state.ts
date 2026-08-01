@@ -3,6 +3,8 @@ import type { DailySummary } from './summary';
 import type { DailyPlan } from './progress';
 import type { ProviderConfig, ModelInfo } from './llm';
 import type { TaskBankEntry } from './task-bank';
+import type { AiActionHistoryState } from './ai-actions';
+import { emptyAiActionHistory } from './ai-actions';
 
 // Persisted application state (localStorage). Schema v2.
 
@@ -40,6 +42,8 @@ export interface AppState {
   planCache: Record<string, DailyPlan>;
   /** Daily available study time in minutes. */
   studyTimeMinutes: number;
+  /** Versioned, undoable audit trail for AI-generated application changes. */
+  aiActionHistory: AiActionHistoryState;
   lastSummaryDate: string | null;
 }
 
@@ -64,6 +68,7 @@ export function emptyAppState(): AppState {
     dynamicTaskBank: [],
     planCache: {},
     studyTimeMinutes: 360,
+    aiActionHistory: emptyAiActionHistory(),
     lastSummaryDate: null,
   };
 }

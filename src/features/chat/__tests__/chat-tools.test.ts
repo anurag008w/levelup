@@ -171,7 +171,11 @@ describe('ChatToolsService', () => {
   it('removeTask can disable built-in seed entries and remove dynamic entries', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    const seedResult = await tools.run({ action: 'removeTask', day: 1, taskId: 'd1_t1' });
+    const preview = await tools.run({ action: 'removeTask', day: 1, taskId: 'd1_t1' });
+    expect(preview.ok).toBe(false);
+    expect(preview.requiresConfirmation).toBe(true);
+    expect(store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1')).toBeUndefined();
+    const seedResult = await tools.run({ action: 'removeTask', day: 1, taskId: 'd1_t1', confirmed: true });
     expect(seedResult.ok).toBe(true);
     expect(store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1')?.active).toBe(false);
     store.save({ ...store.get(), dynamicTaskBank: [parseTaskBankEntry({
@@ -180,7 +184,7 @@ describe('ChatToolsService', () => {
       revisionSuitability: 0.1, backlogSuitability: 0.1, thinkingSkills: ['recall'],
       jeeRelevance: { score: 0.1 }, unlockConditions: [{ type: 'day', fromDay: 1 }], active: true,
     })] });
-    const result = await tools.run({ action: 'removeTask', day: 1, taskId: 'ai-xyz' });
+    const result = await tools.run({ action: 'removeTask', day: 1, taskId: 'ai-xyz', confirmed: true });
     expect(result.ok).toBe(true);
     expect(store.get().dynamicTaskBank.some((e) => e.id === 'ai-xyz')).toBe(false);
   });
@@ -245,7 +249,7 @@ describe('ChatService tool retry + reasoning', () => {
       complete: async (): Promise<LLMResponse> => {
         calls += 1;
         if (calls === 1) return { text: 'Main tasks delete nahi kar sakta. Skip karke chalo.', model: 'a' };
-        return { text: '{"action":"removeTask","day":1,"taskId":"d1_t1"}', model: 'a' };
+        return { text: '{"action":"removeTask","day":1,"taskId":"d1_t1","confirmed":true}', model: 'a' };
       },
       stream: async (req: LLMRequest): Promise<LLMResponse> => {
         req.onDelta?.('Hata diya.');
