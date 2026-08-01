@@ -41,6 +41,9 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
   }),
   z.object({ action: z.literal('deleteBlock'), blockId: z.string().min(1), confirmed: z.boolean().optional() }),
   z.object({ action: z.literal('activateBlock'), blockId: z.string().min(1) }),
+  z.object({ action: z.literal('editBlock'), blockId: z.string().min(1), name: z.string().min(1).max(100).optional(), difficulty: z.enum(['easy', 'medium', 'hard', 'extreme']).optional(), goals: z.array(z.string()).optional(), habits: z.array(z.string()).optional() }),
+  z.object({ action: z.literal('listBlocks'), }),
+  z.object({ action: z.literal('extendBlock'), blockId: z.string().min(1), days: z.number().int().min(1).max(30) }),
 ]);
 
 export type ChatToolAction = z.infer<typeof chatToolActionSchema>;
@@ -85,6 +88,7 @@ ONE action (single-object form):
 - Mark multiple/all tasks done for one day: {"action":"bulkMarkDone","day":N,"taskIds":["id1","id2"],"confirmed":true}. If the user says all/saare tasks, omit taskIds to target all visible plan tasks. This is bulk edit: first call without confirmed to preview; only call with "confirmed":true after explicit confirmation.
 
 CUSTOM BLOCK MANAGEMENT (for post-journey study, after 90 days):
+- List all blocks: {"action":"listBlocks"} - shows all blocks with their status
 - Create a custom block: {"action":"createBlock","name":"Physics Mastery","days":15,"focusAreas":["physics"],"difficulty":"medium"}
   - name: block name (required)
   - days: duration in days (optional, default 15)
@@ -93,8 +97,17 @@ CUSTOM BLOCK MANAGEMENT (for post-journey study, after 90 days):
   - habits/goals: custom arrays (optional)
   - Example: "create a 15 day physics block" → auto-detects physics focus
   - Example: "banao ek chemistry revision block 7 din ka" → auto-detects chemistry, revision
+- Edit a block: {"action":"editBlock","blockId":"<id>","name":"New Name","difficulty":"hard","goals":["goal1"],"habits":["habit1"]} - can update any field
+- Extend a block: {"action":"extendBlock","blockId":"<id>","days":5} - adds more days to the end
 - Delete a block: {"action":"deleteBlock","blockId":"<block-id>"}. Must activate another block first if deleting active block. Destructive: needs confirmation.
 - Activate a block: {"action":"activateBlock","blockId":"<block-id>"}. Makes this block guide your daily study.
+
+Full control examples:
+- "edit block block-xxx make it harder" → editBlock with difficulty:hard
+- "add 5 more days to physics block" → extendBlock with days:5
+- "delete the chemistry block" → deleteBlock (needs confirm)
+- "show all my blocks" → listBlocks
+- "activate revision block" → activateBlock (use exact block id from listBlocks)
 
 Task ids come from today's plan context or from a plan you saw in this chat (format "id:<taskId>", e.g. d1_t1, mock_1, ai-xxxxx). If a day's plan is NOT visible to you yet, DO NOT refuse — still emit the requested action with your best guess for the task id. The system will automatically fetch that day's plan (with the real ids) and let you retry with the correct id in the next step.
 
