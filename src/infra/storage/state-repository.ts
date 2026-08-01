@@ -1,6 +1,6 @@
 import type { KeyValueRepository, StateRepository, StateStore } from '../../core/ports/repositories';
 import type { AppState } from '../../core/domain/state';
-import { emptyAppState, STATE_SCHEMA_VERSION } from '../../core/domain/state';
+import { defaultUserProfile, emptyAppState, STATE_SCHEMA_VERSION } from '../../core/domain/state';
 import { migrateV1toV2 } from './migration';
 
 export const STATE_KEY_V1 = 'levelup-state-v1';
@@ -78,6 +78,12 @@ export function normalizeState(raw: unknown): AppState {
             ...(r.postJourney as Partial<AppState['postJourney']>),
           }
         : base.postJourney,
+    userProfile: isRecord(r.userProfile)
+      ? {
+          ...defaultUserProfile(),
+          ...(r.userProfile as Partial<AppState['userProfile']>),
+        }
+      : base.userProfile,
   };
 }
 
