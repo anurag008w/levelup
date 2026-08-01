@@ -23,13 +23,31 @@ ACTIONS.register({ id: 'removeTask', label: 'Remove task from a day', descriptio
 ACTIONS.register({ id: 'markDone', label: 'Mark task done', description: 'Update completion log for one task.', entityType: 'taskLogs', permissions: ['edit'] });
 ACTIONS.register({ id: 'bulkMarkDone', label: 'Bulk mark done', description: 'Update completion logs for multiple tasks.', entityType: 'taskLogs', permissions: ['bulk-edit'], confirmationRequired: true, supportsBulk: true });
 ACTIONS.register({ id: 'setDayMode', label: 'Mark rest/study day', description: 'Mark or unmark a journey day as a rest (holiday) day.', entityType: 'restDays', permissions: ['edit'] });
+// Block management actions
+ACTIONS.register({ id: 'createBlock', label: 'Create custom block', description: 'Create a custom study block for post-journey mode.', entityType: 'customBlocks', permissions: ['create'] });
+ACTIONS.register({ id: 'deleteBlock', label: 'Delete block', description: 'Delete a custom study block.', entityType: 'customBlocks', permissions: ['delete'], confirmationRequired: true });
+ACTIONS.register({ id: 'activateBlock', label: 'Activate block', description: 'Set a custom block as active.', entityType: 'customBlocks', permissions: ['edit'] });
 
 const TASK_QUERY_WORDS = [
   'task', 'plan', 'din', 'day', 'aaj', 'kal', 'parso', 'week', 'hafta', 'month', 'mahina',
   'mark', 'done', 'complete', 'delete', 'remove', 'hata', 'hatao', 'add', 'badlo', 'badal',
   'schedule', 'change', 'edit', 'update', 'replan', 'reschedule', 'shift', 'increase',
   'decrease', 'reduce', 'goal', 'target', 'revision', 'padhai', 'tasks', 'saare', 'all', 'bulk',
+  // Block-related words
+  'block', 'phase', 'physics', 'chemistry', 'maths', 'revision', 'mock', 'concept', 'problem',
+  'create', 'banao', 'bana', 'hatao', 'activate', 'shuru', 'custom',
 ];
+
+// Block type configurations
+const BLOCK_TYPES: Record<string, { name: string; icon: string; habits: Record<string, string[]> }> = {
+  physics: { name: 'Physics', icon: '⚛️', habits: { easy: ['Read HCV Concepts'], medium: ['Read HCV Concepts', 'Solve 10 Problems'], hard: ['Read HCV Concepts', 'Solve 20 Problems', 'Formula Revision'] } },
+  chemistry: { name: 'Chemistry', icon: '🧪', habits: { easy: ['NCERT Reading'], medium: ['NCERT Reading', 'Reaction Practice'], hard: ['NCERT Reading', 'Reaction Practice', 'JEE Patterns'] } },
+  maths: { name: 'Maths', icon: '🔢', habits: { easy: ['Daily Practice'], medium: ['Daily Practice', 'Previous Year Questions'], hard: ['Daily Practice', 'Previous Year Questions', 'Speed Calculation'] } },
+  revision: { name: 'Revision', icon: '📖', habits: { easy: ['Topic Recap'], medium: ['Topic Recap', 'Quick Revisions'], hard: ['Topic Recap', 'Quick Revisions', 'Flashcards'] } },
+  mock: { name: 'Mock Test', icon: '🧠', habits: { easy: ['Full Mock'], medium: ['Full Mock', 'Analysis'], hard: ['Full Mock', 'Analysis', 'Weak Topic Focus'] } },
+  concept: { name: 'Concept Building', icon: '💡', habits: { easy: ['Theory Reading'], medium: ['Theory Reading', 'Example Problems'], hard: ['Theory Reading', 'Example Problems', 'Concept Map'] } },
+  problem: { name: 'Problem Solving', icon: '🔬', habits: { easy: ['Problem Sets'], medium: ['Problem Sets', 'Time Trials'], hard: ['Problem Sets', 'Time Trials', 'Error Analysis'] } },
+};
 
 /**
  * Executes the deterministic chat tools against the app store. Mutations go
@@ -189,6 +207,12 @@ export class ChatToolsService {
           return this.markDone(state, action.day, action.taskId);
         case 'bulkMarkDone':
           return this.bulkMarkDone(state, action.day, action.taskIds, action.confirmed === true);
+        case 'createBlock':
+          return this.createBlock(state, action);
+        case 'deleteBlock':
+          return this.deleteBlock(state, action.blockId, action.confirmed === true);
+        case 'activateBlock':
+          return this.activateBlock(state, action.blockId);
       }
     } catch (err) {
       if (isAbortError(err)) throw err;
@@ -196,6 +220,148 @@ export class ChatToolsService {
     }
   }
 
+  // ========== BLOCK MANAGEMENT ==========
+
+  private createBlock(state: AppState, action: Extract<ChatToolAction, { action: 'createBlock' }>): ChatToolResult {
+    const { name, days = 15, focusAreas = [], difficulty = 'medium', goals = [], habits = [] } = action;
+    
+    // Determine focus areas from name if not provided
+    const effectiveFocus = focusAreas.length > 0 ? focusAreas : this.detectFocusAreas(name);
+    const difficultyLevel = difficulty as 'easy' | 'medium' | 'hard' | 'extreme';
+    
+    // Generate habits based on focus areas
+    const generatedHabits = habits.length > 0 ? habits : this.generateHabitsForFocus(effectiveFocus, difficultyLevel);
+    const generatedGoals = goals.length > 0 ? goals : [`Master ${effectiveFocus.join(', ') || 'topics'}`, 'Complete daily practice', 'Track progress'];
+    
+    const existingBlocks = state.postJourney?.customPhases ?? [];
+    const lastBlock = existingBlocks[existingBlocks.length - 1];
+    const dayStart = lastBlock ? lastBlock.dayEnd + 1 : 91;
+    
+    const block = {
+      id: `block-${Date.now()}`,
+      name: name || `${effectiveFocus[0] || 'Custom'} Block`,
+      description: `Custom block focused on ${effectiveFocus.join(', ') || 'study'}`,
+      dayStart,
+      dayEnd: dayStart + (days || 15) - 1,
+      goals: generatedGoals,
+      habits: generatedHabits,
+      difficulty: difficultyLevel,
+      createdBy: 'ai' as const,
+      createdAt: new Date().toISOString().slice(0, 10),
+    };
+    
+    const next = {
+      ...state,
+      postJourney: {
+        ...state.postJourney,
+        customPhases: [...(state.postJourney?.customPhases ?? []), block],
+        journeyComplete: true,
+      },
+    };
+    
+    this.store.save(next);
+    
+    const focusList = effectiveFocus.map(f => BLOCK_TYPES[f]?.icon + ' ' + BLOCK_TYPES[f]?.name || f).join(', ');
+    return {
+      ok: true,
+      summary: `✅ Created "${block.name}"!\n\n📅 Days ${block.dayStart}-${block.dayEnd} (${days} days)\n🎯 Focus: ${focusList || 'General'}\n⚡ Difficulty: ${difficultyLevel}\n\n📋 Habits:\n${generatedHabits.map(h => `• ${h}`).join('\n')}\n\n🎯 Goals:\n${generatedGoals.map(g => `• ${g}`).join('\n')}\n\nSay "activate ${block.id}" to make this your active block.`,
+    };
+  }
+
+  private deleteBlock(state: AppState, blockId: string, confirmed: boolean): ChatToolResult {
+    const blocks = state.postJourney?.customPhases ?? [];
+    const block = blocks.find(b => b.id === blockId);
+    
+    if (!block) {
+      return { ok: false, summary: `Block "${blockId}" not found.` };
+    }
+    
+    if (blockId === state.postJourney?.activeCustomPhaseId) {
+      return { ok: false, summary: `Cannot delete active block. First say "activate <another-block-id>" to switch.` };
+    }
+    
+    if (!confirmed) {
+      return {
+        ok: false,
+        requiresConfirmation: true,
+        summary: `⚠️ Delete "${block.name}" (Days ${block.dayStart}-${block.dayEnd})?\n\nHabits: ${block.habits.join(', ')}\n\nSay the action again with "confirmed":true to confirm.`,
+      };
+    }
+    
+    const next = {
+      ...state,
+      postJourney: {
+        ...state.postJourney,
+        customPhases: blocks.filter(b => b.id !== blockId),
+      },
+    };
+    
+    this.store.save(next);
+    return { ok: true, summary: `🗑️ Deleted "${block.name}".` };
+  }
+
+  private activateBlock(state: AppState, blockId: string): ChatToolResult {
+    const blocks = state.postJourney?.customPhases ?? [];
+    const block = blocks.find(b => b.id === blockId);
+    
+    if (!block) {
+      return { ok: false, summary: `Block "${blockId}" not found.` };
+    }
+    
+    const next = {
+      ...state,
+      postJourney: {
+        ...state.postJourney,
+        activeCustomPhaseId: blockId,
+      },
+    };
+    
+    this.store.save(next);
+    
+    return {
+      ok: true,
+      summary: `✅ Activated "${block.name}"!\n\nThis block will guide your daily study sessions.\n\n📋 Today's Focus:\n${block.habits.map(h => `• ${h}`).join('\n')}\n\n🎯 Goals:\n${block.goals.map(g => `• ${g}`).join('\n')}`,
+    };
+  }
+
+  private detectFocusAreas(text: string): string[] {
+    const lower = text.toLowerCase();
+    const detected: string[] = [];
+    
+    const keywords: Record<string, string> = {
+      'physics': 'physics', 'phys': 'physics', 'hcv': 'physics',
+      'chemistry': 'chemistry', 'chem': 'chemistry', 'ncert': 'chemistry',
+      'maths': 'maths', 'math': 'maths', 'mathematics': 'maths',
+      'revision': 'revision', 'revise': 'revision', 'review': 'revision',
+      'mock': 'mock', 'test': 'mock', 'exam': 'mock',
+      'concept': 'concept', 'theory': 'concept',
+      'problem': 'problem', 'solve': 'problem', 'practice': 'problem',
+    };
+    
+    for (const [keyword, focusId] of Object.entries(keywords)) {
+      if (lower.includes(keyword) && !detected.includes(focusId)) {
+        detected.push(focusId);
+      }
+    }
+    
+    return detected;
+  }
+
+  private generateHabitsForFocus(focusAreas: string[], difficulty: 'easy' | 'medium' | 'hard' | 'extreme'): string[] {
+    const habits: string[] = [];
+    const level = difficulty === 'extreme' ? 'hard' : difficulty;
+    
+    for (const area of focusAreas) {
+      const config = BLOCK_TYPES[area];
+      if (config?.habits[level]) {
+        habits.push(...config.habits[level]);
+      }
+    }
+    
+    return [...new Set(habits)].slice(0, 6);
+  }
+
+  // Helper to get blocks summary (can be called from AI prompts)
   private getPlan(state: AppState, day: number): ChatToolResult {
     if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
     const d = clamp(day);
