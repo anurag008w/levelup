@@ -1,4 +1,4 @@
-package com.anurag.humanos;
+package com.anurag.levelup;
 
 import com.getcapacitor.BridgeActivity;
 
