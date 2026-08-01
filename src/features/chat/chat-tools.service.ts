@@ -210,16 +210,15 @@ export class ChatToolsService {
   private markDone(state: AppState, day: number, taskId: string): ChatToolResult {
     const d = clamp(day);
     const dateISO = this.dateForDay(state, d);
-    const log = { ...(state.taskLogs[dateISO] ?? {}) };
-    if (!(taskId in log) && !this.taskBank.getById(taskId)) {
-      return { ok: false, summary: `Day ${d}: task id "${taskId}" nahi mila.` };
-    }
+    const logKey = this.logKeyForTask(state, d, taskId);
+    if (!logKey) return { ok: false, summary: `Day ${d}: task id "${taskId}" nahi mila.` };
+    const log = { ...(state.taskLogs[logKey] ?? {}) };
     log[taskId] = true;
-    const nextLogs = { ...state.taskLogs, [dateISO]: log };
+    const nextLogs = { ...state.taskLogs, [logKey]: log };
     const resultAction = executeAiAction({
       state,
       action: ACTIONS.require('markDone'),
-      entityId: `${dateISO}:${taskId}`,
+      entityId: `${logKey}:${taskId}`,
       summary: `Marked done for Day ${d} (${dateISO}): ${this.taskBank.getById(taskId)?.title ?? taskId}`,
       beforeState: state.taskLogs,
       afterState: nextLogs,
@@ -234,15 +233,17 @@ export class ChatToolsService {
     const d = clamp(day);
     const dateISO = this.dateForDay(state, d);
     const plan = this.planForDay(state, d);
-    const visibleIds = new Set(plan.tasks.map((item) => item.entry.id));
-    const ids = taskIds && taskIds.length > 0 ? taskIds : [...visibleIds];
-    const invalid = ids.filter((id) => !visibleIds.has(id) && !this.taskBank.getById(id));
+    const visible = new Map(plan.tasks.map((item) => [item.entry.id, item.logKey]));
+    const ids = taskIds && taskIds.length > 0 ? taskIds : [...visible.keys()];
+    const invalid = ids.filter((id) => !visible.has(id));
     if (ids.length === 0) return { ok: false, summary: `Day ${d}: koi tasks planned nahi hain.` };
-    if (invalid.length > 0) return { ok: false, summary: `Day ${d}: task id(s) nahi mile: ${invalid.join(', ')}.` };
+    if (invalid.length > 0) return { ok: false, summary: `Day ${d}: task id(s) planned list mein nahi mile: ${invalid.join(', ')}.` };
 
-    const log = { ...(state.taskLogs[dateISO] ?? {}) };
-    for (const id of ids) log[id] = true;
-    const nextLogs = { ...state.taskLogs, [dateISO]: log };
+    const nextLogs = { ...state.taskLogs };
+    for (const id of ids) {
+      const key = visible.get(id) ?? dateISO;
+      nextLogs[key] = { ...(nextLogs[key] ?? {}), [id]: true };
+    }
     const resultAction = executeAiAction({
       state,
       action: ACTIONS.require('bulkMarkDone'),
@@ -255,6 +256,13 @@ export class ChatToolsService {
     if (!resultAction.ok) return { ok: false, requiresConfirmation: resultAction.requiresConfirmation, summary: resultAction.summary };
     this.store.save(resultAction.state);
     return { ok: true, versionId: resultAction.versionId, summary: `Marked ${ids.length} task(s) done for Day ${d} (${dateISO}). Version:${resultAction.versionId ?? 'n/a'}. Undo available in AI Activity.` };
+  }
+
+
+  private logKeyForTask(state: AppState, day: number, taskId: string): string | null {
+    const planned = this.planForDay(state, day).tasks.find((task) => task.entry.id === taskId);
+    if (planned) return planned.logKey;
+    return this.taskBank.getById(taskId) ? this.dateForDay(state, day) : null;
   }
 
   private planForDay(state: AppState, day: number): DailyPlan {

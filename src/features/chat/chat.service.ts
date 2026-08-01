@@ -231,7 +231,7 @@ export class ChatService {
   }
 
   private buildDecisionRequest(session: ChatSession, signal?: AbortSignal): LLMRequest {
-    return {
+    const request: LLMRequest = {
       messages: this.buildMessages(session, CHAT_TOOL_INSTRUCTIONS),
       temperature: session.prefs.temperature,
       maxTokens: 500,
@@ -241,13 +241,16 @@ export class ChatService {
       // a budget clash and prose contamination.
       thinking: 'off',
     };
+    const model = this.resolveModel(session);
+    if (model) request.model = model;
+    return request;
   }
 
   private buildRetryRequest(session: ChatSession, previousReply: string, signal?: AbortSignal): LLMRequest {
     const system =
       `${CHAT_TOOL_INSTRUCTIONS}\n\n${CHAT_TOOL_RETRY}\n\n` +
       `Your previous reply was:\n${previousReply}\n\nReplace it with exactly one JSON object now.`;
-    return {
+    const request: LLMRequest = {
       messages: this.buildMessages(session, system),
       temperature: session.prefs.temperature,
       maxTokens: 500,
@@ -255,6 +258,9 @@ export class ChatService {
       signal,
       thinking: 'off',
     };
+    const model = this.resolveModel(session);
+    if (model) request.model = model;
+    return request;
   }
 
   private buildSummaryRequest(

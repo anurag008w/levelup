@@ -146,6 +146,15 @@ describe('ChatToolsService', () => {
     expect(store.get().taskLogs['2026-07-01']?.['d1_t1']).toBe(true);
   });
 
+  it('markDone uses special plan log keys such as mock days', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const result = await tools.run({ action: 'markDone', day: 7, taskId: 'mock_1' });
+    expect(result.ok).toBe(true);
+    expect(store.get().taskLogs['mock:2026-07-07']?.mock_1).toBe(true);
+    expect(store.get().taskLogs['2026-07-07']?.mock_1).toBeUndefined();
+  });
+
   it('addTask appends a dynamic entry through the store', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
@@ -333,7 +342,7 @@ describe('ChatService tool retry + reasoning', () => {
     };
     const chat = makeChat(store, provider, tools);
     const session = chat.createSession();
-    session.prefs = { ...session.prefs, thinking: 'high' };
+    session.prefs = { ...session.prefs, model: 'custom-tool-model', thinking: 'high' };
     const statuses: string[] = [];
     await chat.send(session.id, 'day 2 ka plan kya hai?', undefined, undefined, (s) => statuses.push(s));
     expect(statuses.join(' | ')).toContain('AI soch raha hai');
@@ -341,6 +350,7 @@ describe('ChatService tool retry + reasoning', () => {
     expect(statuses.join(' | ')).toContain('Jawab likh raha hai');
     // Decision hops stay deterministic JSON (thinking off); only the streamed
     // summary carries the chat's thinking level.
+    expect(requests[0].model).toBe('custom-tool-model');
     expect(requests[0].thinking).toBe('off');
     expect(requests[1].thinking).toBe('high');
   });

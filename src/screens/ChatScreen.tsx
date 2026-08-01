@@ -65,6 +65,7 @@ export default function ChatScreen() {
     refresh();
     setActiveId(session.id);
     setDraft('');
+    revokeAttachmentUrls(attachments);
     setAttachments([]);
     setError('');
   }
@@ -111,8 +112,11 @@ export default function ChatScreen() {
   }, [active?.prefs.providerId]);
 
   async function send() {
-    const text = buildPromptWithAttachments(draft.trim(), attachments);
+    const pendingDraft = draft;
+    const pendingAttachments = attachments;
+    const text = buildPromptWithAttachments(pendingDraft.trim(), pendingAttachments);
     if (!text || streaming || !active) return;
+    let sent = false;
     setError('');
     setDraft('');
     setAttachments([]);
@@ -131,9 +135,13 @@ export default function ChatScreen() {
         (s) => setStatus(s),
         (reasoning) => setStreamReasoning((prev) => prev + reasoning),
       );
+      sent = true;
     } catch (err) {
+      setDraft(pendingDraft);
+      setAttachments(pendingAttachments);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      if (sent) revokeAttachmentUrls(pendingAttachments);
       abortRef.current = null;
       setStreaming(false);
       setStreamText('');
@@ -529,6 +537,12 @@ async function readAttachment(file: File): Promise<DraftAttachment> {
     return { id: uid('att'), name: file.name, type: file.type, size: file.size, kind: 'image', previewUrl: URL.createObjectURL(file) };
   }
   return { id: uid('att'), name: file.name, type: file.type || extension || 'binary', size: file.size, kind: 'binary' };
+}
+
+function revokeAttachmentUrls(attachments: DraftAttachment[]): void {
+  for (const attachment of attachments) {
+    if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+  }
 }
 
 function buildPromptWithAttachments(draft: string, attachments: DraftAttachment[]): string {
