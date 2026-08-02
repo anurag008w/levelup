@@ -122,7 +122,7 @@ export function createContainer(): AppContainer {
       try {
         const response = await fetch(blobUrl);
         const blob = await response.blob();
-        const file = new File([blob], name);
+        const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
         return await extractFileText(file);
       } catch {
         return '';

@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { Brain, ChevronLeft, Clock, MessageSquare, Save, Sparkles, Type } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ChatSettings } from '../core/domain/state';
@@ -39,10 +40,17 @@ interface ChatSettingsScreenProps {
 
 export default function ChatSettingsScreen({ state, update, onBack }: ChatSettingsScreenProps) {
   const chat = state.aiSettings.chat;
+  // Heavy text-field changes (persona/system prompt) are propagated to every
+  // session with a short debounce so typing doesn't trigger a repo save per
+  // keystroke. Immediate fields (sliders, toggles, selects) stay instant.
+  const propagateTimer = useRef<number | null>(null);
 
   function updateChat(partial: Partial<ChatSettings>) {
     haptic();
-    const next = { ...chat, ...partial };
+    // Propagate from the LATEST store state, not the render-time `chat` prop:
+    // rapid keystrokes could otherwise race and push a stale persona snapshot
+    // into every session.
+    const latest = container.store.get().aiSettings.chat;
     update((s) => ({
       ...s,
       aiSettings: {
@@ -50,7 +58,15 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
         chat: { ...s.aiSettings.chat, ...partial },
       },
     }));
-    container.chat.applyGlobalPrefs(globalChatPrefsFromSettings(next));
+    const needsDebounce = typeof partial.userPersona === 'string' || typeof partial.systemPrompt === 'string';
+    if (needsDebounce) {
+      if (propagateTimer.current) window.clearTimeout(propagateTimer.current);
+      propagateTimer.current = window.setTimeout(() => {
+        container.chat.applyGlobalPrefs(globalChatPrefsFromSettings(container.store.get().aiSettings.chat));
+      }, 350);
+    } else {
+      container.chat.applyGlobalPrefs(globalChatPrefsFromSettings({ ...latest, ...partial }));
+    }
   }
 
   return (
@@ -127,8 +143,9 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
 
             {/* Thinking / reasoning */}
             <div>
-              <label className="mb-2 block text-sm font-medium">Thinking / reasoning</label>
+              <label htmlFor="chat-thinking-level" className="mb-2 block text-sm font-medium">Thinking / reasoning</label>
               <select
+                id="chat-thinking-level"
                 className="field"
                 value={chat.thinking ?? ''}
                 onChange={(e) =>

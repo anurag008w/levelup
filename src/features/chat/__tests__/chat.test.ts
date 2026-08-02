@@ -173,6 +173,7 @@ describe('ChatService', () => {
       systemPrompt: 'system-global',
       userPersona: 'user-global',
       includeContext: false,
+      thinking: 'medium',
     });
 
     const [first, second] = chat.listSessions();
@@ -183,12 +184,27 @@ describe('ChatService', () => {
       expect(s.prefs.userPersona).toBe('user-global');
       expect(s.prefs.includeContext).toBe(false);
     }
-    // Newest session is first; session-only fields survive the global sync.
+    // Newest session is first; session-only fields (providerId, model) survive
+    // the global sync while the shared thinking level follows the global.
     expect(first.id).toBe(s2.id);
     expect(first.prefs.providerId).toBe('openrouter');
     expect(first.prefs.model).toBe('special-model');
-    expect(first.prefs.thinking).toBe('high');
+    expect(first.prefs.thinking).toBe('medium');
     expect(second.id).toBe(s1.id);
+  });
+
+  it('clears session thinking when the global thinking is provider-default', () => {
+    const { chat } = buildService({});
+    const s = chat.createSession('', { ...defaultChatPrefs(), thinking: 'high' });
+    chat.applyGlobalPrefs({
+      temperature: 0.4,
+      maxTokens: 4096,
+      systemPrompt: 'sys',
+      userPersona: 'persona',
+      includeContext: false,
+      thinking: undefined,
+    });
+    expect(chat.getSession(s.id)?.prefs.thinking).toBeUndefined();
   });
 
   it('derives a title from the first message and persists messages', async () => {
@@ -891,7 +907,7 @@ describe('ChatService', () => {
     expect(saved?.type).toBe('observation');
   });
 
-  it('a declined deletion surfaces the model explanation, not the preview text', async () => {
+  it('destructive memory actions ask for explicit user confirmation before deleting', async () => {
     const store = makeStore({
       providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
       aiEnabled: true,
@@ -908,10 +924,7 @@ describe('ChatService', () => {
       isConfigured: () => true,
       complete: async (): Promise<LLMResponse> => {
         completeCalls += 1;
-        if (completeCalls === 1) return { text: `{"action":"deleteMemory","id":"${id}"}`, model: 'a' };
-        // Confirm hop: model realises the user did not explicitly ask to
-        // delete, so it replies with plain Hinglish instead of JSON.
-        return { text: 'Delete karne ki zaroorat nahi hai, aim important hai.' , model: 'a' };
+        return { text: `{"action":"deleteMemory","id":"${id}"}`, model: 'a' };
       },
       stream: async (): Promise<LLMResponse> => ({ text: '', model: 'a' }),
       fetchModels: async (): Promise<ModelInfo[]> => [],
@@ -924,14 +937,94 @@ describe('ChatService', () => {
     const chat = new ChatService(new MemoryChatRepository(), llm, settings, () => 'ctx', new FakeClock(), null, memory, store, undefined, memoryTools);
     const s1 = chat.createSession();
 
+    // Decision hop proposes a deletion. The preview is surfaced as a
+    // user-facing question and the entry is untouched — no second model call
+    // decides consent on the user's behalf.
     const result = await chat.send(s1.id, 'Wo memory check karo');
-
-    // The Hinglish explanation is the reply — the internal "preview" protocol
-    // text never leaks to the user, and the entry is untouched.
-    expect(result.content).toContain('zaroorat nahi');
-    expect(result.content).not.toContain('confirmed');
+    expect(result.content).toContain('delete kar doon');
+    expect(result.content).toContain('Aim: IIT Delhi');
     expect(store.get().memory.entries.some((e) => e.id === id)).toBe(true);
-    expect(completeCalls).toBe(2);
+    expect(completeCalls).toBe(1);
+
+    // An explicit follow-up "haan karo" executes the held deletion
+    // deterministically (no additional model round-trip).
+    const confirmed = await chat.send(s1.id, 'Haan karo');
+    expect(confirmed.content).toContain('Deleted');
+    expect(store.get().memory.entries.some((e) => e.id === id)).toBe(false);
+    expect(completeCalls).toBe(1);
+  });
+
+  it('a non-confirmation message dismisses a pending memory deletion', async () => {
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+    });
+    const memory = new MemoryService(new FakeClock());
+    const init = memory.add(store.get(), { type: 'goal', content: 'Aim: IIT Delhi', source: 'user', importance: 0.9 });
+    store.save(init);
+    const id = init.memory.entries[0].id;
+
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({ text: `{"action":"deleteMemory","id":"${id}"}`, model: 'a' }),
+      stream: async (): Promise<LLMResponse> => ({ text: 'normal reply', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const memoryTools = new MemoryToolsService(store, memory);
+    const chat = new ChatService(new MemoryChatRepository(), llm, settings, () => 'ctx', new FakeClock(), null, memory, store, undefined, memoryTools);
+    const s1 = chat.createSession();
+
+    await chat.send(s1.id, 'Wo memory check karo');
+    expect(store.get().memory.entries.some((e) => e.id === id)).toBe(true);
+
+    // The user moves on without confirming — the pending deletion is dropped.
+    await chat.send(s1.id, 'Nahi, koi baat nahi');
+    // A later "haan" must NOT resurrect the dropped deletion.
+    await chat.send(s1.id, 'Haan karo');
+    expect(store.get().memory.entries.some((e) => e.id === id)).toBe(true);
+  });
+
+  it('a question starting with an affirmative word does NOT confirm a deletion', async () => {
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+    });
+    const memory = new MemoryService(new FakeClock());
+    const init = memory.add(store.get(), { type: 'goal', content: 'Aim: IIT Delhi', source: 'user', importance: 0.9 });
+    store.save(init);
+    const id = init.memory.entries[0].id;
+
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({ text: `{"action":"deleteMemory","id":"${id}"}`, model: 'a' }),
+      stream: async (): Promise<LLMResponse> => ({ text: 'normal reply', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const memoryTools = new MemoryToolsService(store, memory);
+    const chat = new ChatService(new MemoryChatRepository(), llm, settings, () => 'ctx', new FakeClock(), null, memory, store, undefined, memoryTools);
+    const s1 = chat.createSession();
+
+    await chat.send(s1.id, 'Wo memory check karo');
+    expect(store.get().memory.entries.some((e) => e.id === id)).toBe(true);
+
+    // "haan batao kya delete hoga" is a QUESTION, not consent — the deletion
+    // must not fire, and the pending action is dismissed for good.
+    await chat.send(s1.id, 'Haan batao kya delete hoga?');
+    expect(store.get().memory.entries.some((e) => e.id === id)).toBe(true);
+    await chat.send(s1.id, 'Haan karo');
+    expect(store.get().memory.entries.some((e) => e.id === id)).toBe(true);
   });
 
   it('defaults new sessions to the Misa persona and migrates the Divya default', async () => {
@@ -1180,6 +1273,34 @@ describe('ChatService', () => {
     expect(chat.listSessions().map((x) => x.id)).toEqual([s.id]);
     // Nothing was written to the repository — a reload loses the session.
     expect(repo.load().sessions).toHaveLength(0);
+  });
+
+  it('lists ephemeral sessions newest first (insertion order reversed)', () => {
+    const repo = new MemoryChatRepository();
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+      chat: { ...emptyAppState().aiSettings.chat, autoSaveChats: false },
+    });
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({ text: '', model: 'a' }),
+      stream: async (): Promise<LLMResponse> => ({ text: 'hi', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), null, null, store);
+
+    const a = chat.createSession('pehla');
+    const b = chat.createSession('doosra');
+    const c = chat.createSession('teesra');
+    // Most recent ephemeral chat surfaces at the top, like persisted sessions.
+    expect(chat.listSessions().map((x) => x.id)).toEqual([c.id, b.id, a.id]);
   });
 
   it('applies global thinking to existing sessions', () => {

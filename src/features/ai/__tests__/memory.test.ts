@@ -56,6 +56,24 @@ describe('MemoryService', () => {
     expect(state.memory.entries.length).toBeLessThanOrEqual(200);
   });
 
+  it('never rolls up raw transcript archives or AI-condensed chat blocks', () => {
+    const memory = makeService();
+    let state = emptyAppState();
+    state = memory.add(state, { type: 'conversation', content: 'raw archive abc', source: 'system', importance: 0.2, createdAt: '2026-02-10', tags: ['chat', 'transcript', 'session:abc'] });
+    state = memory.add(state, { type: 'conversation', content: 'AI block abc', source: 'ai', importance: 0.3, createdAt: '2026-02-11', tags: ['chat', 'ai-summary', 'session:abc'], blockId: 'aiblk:1' });
+    // A genuinely condense-able journal entry still rolls up.
+    state = memory.add(state, { type: 'journal', content: 'old note', source: 'user', importance: 0.2, createdAt: '2026-02-12' });
+
+    const summarized = memory.summarize(state.memory);
+    const entryContents = summarized.entries.map((e) => e.content);
+    // Archives and AI blocks stay verbatim in entries — never rolled up.
+    expect(entryContents).toContain('raw archive abc');
+    expect(entryContents).toContain('AI block abc');
+    // The old journal note left the entries array (condensed into a rollup).
+    expect(entryContents).not.toContain('old note');
+    expect(summarized.summaries.some((s) => s.content.includes('Week of'))).toBe(true);
+  });
+
   it('returns relevant entries newest first', () => {
     const memory = makeService();
     let state = emptyAppState();

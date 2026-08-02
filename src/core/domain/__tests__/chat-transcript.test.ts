@@ -52,6 +52,70 @@ describe('chat-transcript encoding', () => {
     expect(parsed!.messages[1].model).toBe('gemini');
   });
 
+  it('buildChatTranscript archives attachments, reasoning, tool and stopped state', () => {
+    const session = makeSession({
+      messages: [
+        {
+          id: 'm1',
+          role: 'user',
+          content: 'Solve this',
+          createdAt: '2026-01-01T10:00:00.000Z',
+          attachments: [
+            { id: 'a1', name: 'photo.png', kind: 'image', previewUrl: 'blob:volatile', content: 'diagram text' },
+            { id: 'a2', name: 'notes.txt', kind: 'file', content: 'raw notes' },
+          ],
+        },
+        {
+          id: 'm2',
+          role: 'assistant',
+          content: 'Here you go',
+          createdAt: '2026-01-01T10:01:00.000Z',
+          reasoning: 'thinking…',
+          tool: 'getPlan',
+          stopped: true,
+          model: 'gemini',
+        },
+      ],
+    });
+
+    const parsed = parseChatTranscript(buildChatTranscript(session))!;
+    expect(parsed.messages[0].attachments).toHaveLength(2);
+    expect(parsed.messages[0].attachments![0]).toEqual({ id: 'a1', name: 'photo.png', kind: 'image', content: 'diagram text' });
+    // Volatile blob URLs must never be archived.
+    expect(parsed.messages[0].attachments![0].previewUrl).toBeUndefined();
+    expect(parsed.messages[1].reasoning).toBe('thinking…');
+    expect(parsed.messages[1].tool).toBe('getPlan');
+    expect(parsed.messages[1].stopped).toBe(true);
+  });
+
+  it('parseChatTranscript restores attachments defensively and skips invalid ones', () => {
+    const parsed = parseChatTranscript(
+      JSON.stringify({
+        version: CHAT_TRANSCRIPT_VERSION,
+        sessionId: 's1',
+        title: 'T',
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-02',
+        messages: [
+          {
+            role: 'user',
+            content: 'ok',
+            attachments: [
+              { id: 'a1', name: 'good.pdf', kind: 'binary', content: 'bytes' },
+              { id: '', name: '', kind: 'text' }, // invalid id/name → skipped
+              { name: 'missing-id', kind: 'file' }, // missing id → skipped
+              'garbage',
+              { id: 'a2', name: 'weird', kind: 'video', content: 'x' }, // unknown kind → 'file'
+            ],
+          },
+        ],
+      }),
+    );
+    expect(parsed!.messages[0].attachments).toHaveLength(2);
+    expect(parsed!.messages[0].attachments![0]).toEqual({ id: 'a1', name: 'good.pdf', kind: 'binary', content: 'bytes' });
+    expect(parsed!.messages[0].attachments![1]).toEqual({ id: 'a2', name: 'weird', kind: 'file', content: 'x' });
+  });
+
   it('parseChatTranscript returns null for malformed input', () => {
     expect(parseChatTranscript('')).toBeNull();
     expect(parseChatTranscript('   ')).toBeNull();

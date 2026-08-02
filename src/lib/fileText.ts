@@ -18,7 +18,25 @@ export const TEXT_FILE_EXTENSIONS = new Set([
 ]);
 
 /** Extensions with no client-side reader (legacy OLE or archives). */
-const UNREADABLE_EXTENSIONS = new Set(['doc', 'ppt', 'xls', 'zip', 'rar', '7z', 'gz', 'tar', 'exe', 'bin', 'so', 'dll', 'pdf']);
+const UNREADABLE_EXTENSIONS = new Set(['doc', 'ppt', 'xls', 'zip', 'rar', '7z', 'gz', 'tar', 'exe', 'bin', 'so', 'dll']);
+
+/**
+ * True when a pdfjs extraction contains actual document text beyond the
+ * "--- Page n/m ---" header boilerplate pdf.ts emits. Prevents header-only
+ * results from short-circuiting the lightweight fallback.
+ */
+function hasRealText(text: string): boolean {
+  const withoutHeaders = text.replace(/^--- Page \d+\/\d+ ---$/gm, '').replace(/^\s*$/gm, '');
+  return withoutHeaders.trim().length > 0;
+}
+
+/**
+ * Hard cap on extracted Office text. A giant workbook or deck can otherwise
+ * produce a multi-MB prompt that blows the model context; the tail is cut
+ * with an explicit marker so the AI knows content was truncated.
+ */
+export const MAX_OFFICE_CHARS = 60_000;
+const OFFICE_TRUNCATION_MARKER = '\n\n[Document truncated after 60000 characters]';
 
 /** Returns the extracted plain text, or '' when nothing could be read. */
 export async function extractFileText(file: File): Promise<string> {
@@ -27,7 +45,11 @@ export async function extractFileText(file: File): Promise<string> {
 
   if (file.type === 'application/pdf' || ext === 'pdf') {
     const primary = await extractPdfText(file).catch(() => '');
-    if (primary) return primary;
+    // pdfjs "succeeds" on some PDFs while producing nothing but whitespace or
+    // per-page header boilerplate (image-only scans, corrupt streams). Treat
+    // that as a failure and let the lightweight parser retry — it may still
+    // recover real text.
+    if (hasRealText(primary)) return primary;
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       return await extractPdfTextFallback(bytes);
@@ -59,14 +81,28 @@ export async function extractFileText(file: File): Promise<string> {
 
 async function extractOfficeText(data: ArrayBuffer, type: 'docx' | 'pptx' | 'xlsx'): Promise<string> {
   const zip = await JSZip.loadAsync(data);
+  let text = '';
   switch (type) {
     case 'docx':
-      return extractDocx(zip);
+      text = await extractDocx(zip);
+      break;
     case 'pptx':
-      return extractPptx(zip);
+      text = await extractPptx(zip);
+      break;
     case 'xlsx':
-      return extractXlsx(zip);
+      text = await extractXlsx(zip);
+      break;
   }
+  return truncateOffice(text);
+}
+
+/** Bounds any Office extraction that outgrew the cap (docx path). */
+function truncateOffice(text: string): string {
+  if (text.endsWith(OFFICE_TRUNCATION_MARKER)) return text;
+  if (text.length > MAX_OFFICE_CHARS) {
+    return `${text.slice(0, MAX_OFFICE_CHARS)}${OFFICE_TRUNCATION_MARKER}`;
+  }
+  return text;
 }
 
 async function extractDocx(zip: JSZip): Promise<string> {
@@ -81,11 +117,18 @@ async function extractPptx(zip: JSZip): Promise<string> {
     .filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
     .sort((a, b) => slideNumber(a) - slideNumber(b));
   const parts: string[] = [];
+  let total = 0;
   for (const name of slideNames) {
     const xml = await zip.files[name].async('string');
     const text = xmlToText(xml, /<\/a:p>/g, null);
     const num = slideNumber(name);
-    parts.push(`--- Slide ${num} ---\n${text}`);
+    const block = `--- Slide ${num} ---\n${text}`;
+    if (total + block.length > MAX_OFFICE_CHARS) {
+      parts.push(block.slice(0, Math.max(0, MAX_OFFICE_CHARS - total)) + OFFICE_TRUNCATION_MARKER);
+      break;
+    }
+    parts.push(block);
+    total += block.length;
   }
   return parts.join('\n\n');
 }
@@ -105,21 +148,39 @@ async function extractXlsx(zip: JSZip): Promise<string> {
     .filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))
     .sort((a, b) => sheetNumber(a) - sheetNumber(b));
   const parts: string[] = [];
+  let total = 0;
   for (const name of sheetNames) {
     const xml = await zip.files[name].async('string');
     const rows: string[] = [];
     for (const rowXml of xml.split('</row>')) {
       const cells: string[] = [];
       for (const cellXml of rowXml.split('</c>')) {
+        const cTag = /<c\b[^>]*>/.exec(cellXml);
+        const tAttr = cTag ? /t="([^"]*)"/.exec(cTag[0])?.[1] : undefined;
         const v = /<v>([\s\S]*?)<\/v>/.exec(cellXml);
-        if (!v) continue;
-        const isShared = /t="s"/.test(cellXml);
-        const raw = decodeEntities(v[1]);
-        cells.push(isShared ? shared[Number(raw)] ?? '' : raw);
+        let value: string | null = null;
+        if (v) {
+          const raw = decodeEntities(v[1]);
+          value = tAttr === 's' ? (shared[Number(raw)] ?? '') : raw;
+        } else {
+          // Inline (non-shared) strings live in an <is><t>…</t></is> block and
+          // have NO <v> element — previously these cells were silently dropped.
+          const is = /<is>([\s\S]*?)<\/is>/.exec(cellXml);
+          if (is) {
+            value = [...is[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((m) => decodeEntities(m[1])).join('');
+          }
+        }
+        if (value !== null) cells.push(value);
       }
       if (cells.some((c) => c.trim())) rows.push(cells.join('\t'));
     }
-    parts.push(rows.join('\n'));
+    const block = rows.join('\n');
+    if (total + block.length > MAX_OFFICE_CHARS) {
+      parts.push(block.slice(0, Math.max(0, MAX_OFFICE_CHARS - total)) + OFFICE_TRUNCATION_MARKER);
+      break;
+    }
+    parts.push(block);
+    total += block.length;
   }
   return parts.join('\n\n');
 }

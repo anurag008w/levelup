@@ -21,6 +21,7 @@ import {
   buildChatTranscript,
   extractBlockTitle,
   parseChatTranscript,
+  SESSION_TAG_PREFIX,
   sessionMemoryTag,
   stripBlockTitle,
   type ArchivedConversation,
@@ -75,6 +76,13 @@ export class ChatService {
   private pendingAiSummary: Promise<{ count: number; blocks: number; pinned: number }> | null = null;
   /** Session currently open in Misa — never summarized ("running chat stays internal"). */
   private activeSessionId: string | null = null;
+  /**
+   * Destructive memory actions awaiting the user's explicit confirmation.
+   * Keyed by session id; the preview is surfaced to the user and the action
+   * only executes after an explicit follow-up "haan karo" (never auto-confirmed
+   * by the model).
+   */
+  private pendingMemoryConfirms = new Map<string, MemoryToolAction[]>();
 
   constructor(
     repo: ChatRepository,
@@ -106,7 +114,10 @@ export class ChatService {
   }
 
   listSessions(): ChatSession[] {
-    return this.state().sessions.map(cloneSession).concat(Array.from(this.ephemeral.values()).map(cloneSession));
+    // Persisted sessions are unshifted on create (newest first); ephemeral
+    // sessions live in a Map whose iteration order is insertion (oldest
+    // first), so reverse them to keep the "most recent chat first" contract.
+    return [...Array.from(this.ephemeral.values()).reverse().map(cloneSession), ...this.state().sessions.map(cloneSession)];
   }
 
   getSession(id: string): ChatSession | null {
@@ -156,6 +167,7 @@ export class ChatService {
     state.sessions = state.sessions.filter((s) => s.id !== id);
     this.repo.save(state);
     this.ephemeral.delete(id);
+    this.pendingMemoryConfirms.delete(id);
   }
 
   clearSession(id: string): void {
@@ -163,6 +175,7 @@ export class ChatService {
     if (!session) return;
     session.messages = [];
     session.updatedAt = this.clock.now().toISOString();
+    this.pendingMemoryConfirms.delete(id);
     this.persist();
   }
 
@@ -198,25 +211,27 @@ export class ChatService {
 
   /**
    * Applies the global chat settings (temperature, max tokens, personas,
-   * journey-context flag) to every session's prefs. Session-only fields such
-   * as providerId, model and thinking are left untouched. Keeps the Settings
-   * tab and Misa in sync.
+   * journey-context flag, thinking) to every session's prefs. Session-only
+   * fields such as providerId and model are left untouched. Keeps the
+   * Settings tab and Misa in sync. Persists ONLY when something actually
+   * changed, so keystroke-driven calls don't hammer the repository with
+   * identical snapshots.
    */
   applyGlobalPrefs(global: GlobalChatPrefs): void {
     const state = this.state();
-    const applyTo = (session: ChatSession): ChatSession => {
-      session.prefs = applyGlobalChatPrefs(normalizePrefs(session.prefs), global);
+    const applyTo = (session: ChatSession): boolean => {
+      const next = applyGlobalChatPrefs(normalizePrefs(session.prefs), global);
+      if (arePrefsEqual(session.prefs, next)) return false;
+      session.prefs = next;
       session.updatedAt = this.clock.now().toISOString();
-      return session;
+      return true;
     };
     let touched = false;
     for (const session of state.sessions) {
-      applyTo(session);
-      touched = true;
+      if (applyTo(session)) touched = true;
     }
-    if (this.ephemeral.size > 0) {
-      for (const session of this.ephemeral.values()) applyTo(session);
-      touched = true;
+    for (const session of this.ephemeral.values()) {
+      if (applyTo(session)) touched = true;
     }
     if (touched) this.persist();
   }
@@ -246,10 +261,11 @@ export class ChatService {
 
     // When a fresh chat was just created, prior conversations are being
     // condensed into memory — let that finish so this reply can use it.
+    // Await the CURRENT handle so a concurrent summarizePriorChats() call can
+    // still dedup on it while we wait (clearing it here would let a second
+    // summary race in behind our back).
     if (this.pendingSummary) {
-      const pending = this.pendingSummary;
-      this.pendingSummary = null;
-      await pending;
+      await this.pendingSummary;
     }
 
     const now = this.clock.now().toISOString();
@@ -263,6 +279,30 @@ export class ChatService {
     let partial = '';
 
     try {
+      // A destructive memory action is waiting for the user's explicit "haan".
+      // Consent is decided DETERMINISTICALLY from the user's own words — no
+      // model round-trip, so a deletion can never happen on the model's guess.
+      const pendingConfirm = this.memoryTools ? this.pendingMemoryConfirms.get(session.id) : undefined;
+      if (pendingConfirm && pendingConfirm.length > 0 && isExplicitConfirmation(text)) {
+        this.pendingMemoryConfirms.delete(session.id);
+        onStatus?.('Delete kar raha hoon…');
+        const confirmed = await this.memoryTools!.runMany(pendingConfirm.map((a) => ({ ...a, confirmed: true })));
+        const confirmedAssistant: ChatMessage = {
+          id: uid(),
+          role: 'assistant',
+          content: sanitizeAssistantLeaks(confirmed.summary),
+          createdAt: this.clock.now().toISOString(),
+          model: undefined,
+          tool: 'memory-confirm',
+        };
+        this.appendAssistant(session, confirmedAssistant);
+        return confirmedAssistant;
+      }
+      // Any message that is NOT an explicit confirmation dismisses the stale
+      // pending action, so a later "haan" can never delete something the user
+      // has already moved on from.
+      this.pendingMemoryConfirms.delete(session.id);
+
       // Memory tool decision hop — the AI can read/edit/delete/pin its memory
       // on command ("memory mein kya hai", "ye delete karo", "yaad rakho").
       // Skipped entirely when AI memory is turned off in settings.
@@ -293,18 +333,24 @@ export class ChatService {
         }
         onStatus?.('Memory update kar raha hai…');
         const memoryResult: MemoryToolResult = await this.memoryTools.runMany(actions);
-        // Destructive actions need one explicit confirmation round.
+        // Destructive actions (deleteMemory) never auto-apply. The preview is
+        // surfaced as a user-facing question and the action is held until the
+        // user explicitly agrees in their next message — a model round-trip
+        // must not decide consent on the user's behalf (data-loss risk).
         if (memoryResult.requiresConfirmation) {
-          const confirm = await this.llm.complete(await this.buildMemoryConfirmRequest(session, memoryResult.summary, signal));
-          const confirmedActions = this.memoryTools.parseTools(confirm.text);
-          if (confirmedActions.length > 0) {
-            const confirmed = await this.memoryTools.runMany(confirmedActions);
-            memoryResult.summary = confirmed.summary || memoryResult.summary;
-          } else if (confirm.text) {
-            // The model declined the deletion — surface its Hinglish
-            // explanation instead of the internal "preview" protocol text.
-            memoryResult.summary = confirm.text;
-          }
+          this.pendingMemoryConfirms.set(
+            session.id,
+            actions.filter((a) => a.action === 'deleteMemory'),
+          );
+          const memoryAssistant: ChatMessage = {
+            id: uid(),
+            role: 'assistant',
+            content: sanitizeAssistantLeaks(memoryResult.summary),
+            createdAt: this.clock.now().toISOString(),
+            model: decision.model,
+          };
+          this.appendAssistant(session, memoryAssistant);
+          return memoryAssistant;
         }
         const memoryAssistant: ChatMessage = {
           id: uid(),
@@ -449,6 +495,12 @@ export class ChatService {
         const fellBack = await this.applyFileFallback(session);
         if (!fellBack) throw err;
         onStatus?.('File extract karke dobara try kar raha hoon…');
+        // The first attempt already streamed fragments into `partial`/`reasoning`
+        // (and to the caller's onDelta). Reset them so the retry starts clean —
+        // otherwise the final message or an abort-save would concatenate the
+        // failed attempt's text with the retry's.
+        partial = '';
+        reasoning = '';
         resp = await runStream();
       }
       if (!resp.text && !resp.reasoning) {
@@ -511,26 +563,6 @@ export class ChatService {
       ? `\n\nYour previous reply was:\n${previousReply}\n\nThat was not a valid action. Reply with exactly ONE JSON object from the list above now.`
       : '';
     const system = `${MEMORY_TOOL_INSTRUCTIONS}\n\nRead the student's question above and decide the single best action.${extra}`;
-    const request: LLMRequest = {
-      messages: await this.buildMessages(session, system),
-      temperature: session.prefs.temperature,
-      maxTokens: 1024,
-      providerId: session.prefs.providerId,
-      signal,
-      thinking: 'off',
-    };
-    const model = this.resolveModel(session);
-    if (model) request.model = model;
-    return request;
-  }
-
-  /** Confirmation follow-up after a destructive memory action preview. */
-  private async buildMemoryConfirmRequest(session: ChatSession, preview: string, signal?: AbortSignal): Promise<LLMRequest> {
-    const system =
-      `${MEMORY_TOOL_INSTRUCTIONS}\n\n` +
-      `The user is being asked to confirm a memory deletion.\n` +
-      `Tool preview:\n${preview}\n\n` +
-      `If the user agreed, re-emit the exact same action with "confirmed":true. Otherwise reply with no JSON and explain in Hinglish.`;
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),
       temperature: session.prefs.temperature,
@@ -979,9 +1011,9 @@ export class ChatService {
     // 1) Full structured transcript archives (source 'system', session-tagged).
     for (const entry of all) {
       if (entry.type !== 'conversation' || entry.source === 'ai') continue;
-      const sessionTag = entry.context.tags.find((t) => t.startsWith('session:'));
+      const sessionTag = entry.context.tags.find((t) => t.startsWith(SESSION_TAG_PREFIX));
       if (!sessionTag) continue;
-      const sessionId = sessionTag.slice('session:'.length);
+      const sessionId = sessionTag.slice(SESSION_TAG_PREFIX.length);
       if (liveIds.has(sessionId) || archivedSessionIds.has(sessionId)) continue;
       const parsed = parseChatTranscript(entry.content);
       if (!parsed) continue;
@@ -1002,8 +1034,8 @@ export class ChatService {
     for (const entry of all) {
       if (entry.type !== 'conversation' || !entry.context.tags.includes('ai-summary')) continue;
       for (const tag of entry.context.tags) {
-        if (!tag.startsWith('session:')) continue;
-        const sessionId = tag.slice('session:'.length);
+        if (!tag.startsWith(SESSION_TAG_PREFIX)) continue;
+        const sessionId = tag.slice(SESSION_TAG_PREFIX.length);
         if (liveIds.has(sessionId) || archivedSessionIds.has(sessionId)) continue;
         const list = aiBySession.get(sessionId) ?? [];
         list.push(entry);
@@ -1165,14 +1197,10 @@ export class ChatService {
 
   /** Both sides verbatim (Student / Misa lines), capped to a sane size. */
   private buildRawTranscript(session: ChatSession, maxChars = 6000): string {
-    try {
-      const body = session.messages
-        .map((m) => `${m.role === 'user' ? 'Student' : 'Misa'}: ${m.content}`)
-        .join('\n');
-      return body.length > maxChars ? `${body.slice(0, maxChars)}…` : body;
-    } catch {
-      return 'Empty conversation.';
-    }
+    const body = session.messages
+      .map((m) => `${m.role === 'user' ? 'Student' : 'Misa'}: ${m.content}`)
+      .join('\n');
+    return body.length > maxChars ? `${body.slice(0, maxChars)}…` : body;
   }
 
   /** Recent memories from OTHER sessions, so history stays in the transcript. */
@@ -1185,15 +1213,15 @@ export class ChatService {
     const aiSummarizedSessions = new Set(
       all
         .filter((e) => e.context.tags.includes('ai-summary'))
-        .flatMap((e) => e.context.tags.filter((t) => t.startsWith('session:')).map((t) => t.slice('session:'.length))),
+        .flatMap((e) => e.context.tags.filter((t) => t.startsWith(SESSION_TAG_PREFIX)).map((t) => t.slice(SESSION_TAG_PREFIX.length))),
     );
     const selected = all
       .filter((e) => {
         if (!e.context.tags.includes('chat')) return false;
         if (e.context.tags.includes(sessionMemoryTag(sessionId)) || e.context.tags.includes(sessionId)) return false;
         if (e.context.tags.includes('transcript')) {
-          const tag = e.context.tags.find((t) => t.startsWith('session:'));
-          if (tag && aiSummarizedSessions.has(tag.slice('session:'.length))) return false;
+          const tag = e.context.tags.find((t) => t.startsWith(SESSION_TAG_PREFIX));
+          if (tag && aiSummarizedSessions.has(tag.slice(SESSION_TAG_PREFIX.length))) return false;
         }
         return true;
       })
@@ -1277,4 +1305,42 @@ function composeSystemPrompt(systemPersona: string, userPersona = '', extraSyste
 
 function truncateMemory(s: string, max = 300): string {
   return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+}
+
+/** Compares the shared (global-driven) preference fields only. */
+function arePrefsEqual(a: ChatPreferences, b: ChatPreferences): boolean {
+  return (
+    a.temperature === b.temperature &&
+    a.maxTokens === b.maxTokens &&
+    a.systemPrompt === b.systemPrompt &&
+    a.userPersona === b.userPersona &&
+    a.includeContext === b.includeContext &&
+    a.thinking === b.thinking
+  );
+}
+
+/**
+ * Deterministic check for an explicit "haan karo" after a destructive memory
+ * action preview. Consent is never delegated to the model — the user's own
+ * words decide. Only SHORT, unambiguous affirmations count. A question or a
+ * request for more detail dismisses the pending action instead: it is always
+ * safer to keep the memory than to guess at consent.
+ */
+function isExplicitConfirmation(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[!.]+$/g, '');
+  if (!t || t.length > 60) return false;
+  // "haan batao kya delete hoga?" / "ok pehle dikhao" are NOT consent — the
+  // user is asking for more information before agreeing.
+  if (t.includes('?')) return false;
+  if (
+    /\bbatao\b/.test(t) ||
+    /\bdikhao\b/.test(t) ||
+    /\bpehle\b/.test(t) ||
+    /\bkya\b/.test(t) ||
+    /\bkaunsa\b|\bkaun sa\b|\bkonsa\b|\bkon sa\b/.test(t) ||
+    /\bkis\b|\bkiska\b|\bkiski\b/.test(t)
+  ) {
+    return false;
+  }
+  return /^(haan|han|yes|yep|yeah|ok|okay|karo|kar do|kar de|delete kar do|delete karo|hata do|hatao|confirm)\b/.test(t);
 }

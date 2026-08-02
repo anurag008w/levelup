@@ -93,7 +93,16 @@ export class GeminiProvider implements LLMProvider {
         } else {
           for (const part of msg.content) {
             if (part.type === 'text') parts.push({ text: part.text });
-            if (part.type === 'image') parts.push({ inlineData: { mimeType: 'image/jpeg', data: part.image.split(',')[1] } });
+            if (part.type === 'image') {
+              // Read the MIME type from the data URL header instead of
+              // assuming JPEG — a PNG/WebP labelled image/jpeg is rejected or
+              // corrupted by Gemini.
+              const comma = part.image.indexOf(',');
+              const header = comma > 0 ? part.image.slice(0, comma) : '';
+              const base64 = comma > 0 ? part.image.slice(comma + 1) : part.image;
+              const mimeType = /^data:([^;,]+)/.exec(header)?.[1] ?? 'image/jpeg';
+              parts.push({ inlineData: { mimeType, data: base64 } });
+            }
             if (part.type === 'file') {
               // Gemini has no "file_data" part — inline raw bytes as base64.
               // `fileData` would require an already-uploaded Files-API URI, so a

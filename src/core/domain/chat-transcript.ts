@@ -38,6 +38,22 @@ export function buildChatTranscript(session: Pick<ChatSession, 'id' | 'title' | 
       content: m.content,
       createdAt: m.createdAt,
       ...(m.model ? { model: m.model } : {}),
+      ...(m.reasoning ? { reasoning: m.reasoning } : {}),
+      ...(m.tool ? { tool: m.tool } : {}),
+      ...(m.stopped ? { stopped: true } : {}),
+      // Blob `previewUrl`s are volatile and useless after a reload, so only the
+      // durable fields are archived. Extracted text is kept as the renderable
+      // fallback for files the model couldn't ingest.
+      ...(m.attachments && m.attachments.length > 0
+        ? {
+            attachments: m.attachments.map((a) => ({
+              id: a.id,
+              name: a.name,
+              kind: a.kind,
+              ...(a.content ? { content: a.content } : {}),
+            })),
+          }
+        : {}),
     })),
   };
   return JSON.stringify(payload);
@@ -66,12 +82,33 @@ export function parseChatTranscript(content: string): ChatTranscript | null {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
     const m = raw as Record<string, unknown>;
     if ((m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') continue;
+
+    const attachments: ChatMessage['attachments'] = [];
+    if (Array.isArray(m.attachments)) {
+      for (const rawAtt of m.attachments) {
+        if (!rawAtt || typeof rawAtt !== 'object' || Array.isArray(rawAtt)) continue;
+        const a = rawAtt as Record<string, unknown>;
+        if (typeof a.id !== 'string' || !a.id || typeof a.name !== 'string' || !a.name) continue;
+        const kind = a.kind === 'text' || a.kind === 'image' || a.kind === 'file' || a.kind === 'binary' ? a.kind : 'file';
+        attachments.push({
+          id: a.id,
+          name: a.name,
+          kind,
+          ...(typeof a.content === 'string' ? { content: a.content } : {}),
+        });
+      }
+    }
+
     messages.push({
       id: typeof m.id === 'string' && m.id ? m.id : `archived-${messages.length}`,
       role: m.role,
       content: m.content,
       createdAt: typeof m.createdAt === 'string' && m.createdAt ? m.createdAt : new Date(0).toISOString(),
       ...(typeof m.model === 'string' ? { model: m.model } : {}),
+      ...(typeof m.reasoning === 'string' ? { reasoning: m.reasoning } : {}),
+      ...(typeof m.tool === 'string' ? { tool: m.tool } : {}),
+      ...(m.stopped === true ? { stopped: true } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
     });
   }
 
