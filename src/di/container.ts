@@ -15,6 +15,8 @@ import { DailySummaryService } from '../features/ai/summary.service';
 import { TaskGenerationService } from '../features/ai/task-generation.service';
 import { ChatService } from '../features/chat/chat.service';
 import { ChatToolsService } from '../features/chat/chat-tools.service';
+import { MemoryToolsService } from '../features/chat/memory-tools.service';
+import { extractFileText } from '../lib/fileText';
 import { LocalChatRepository } from '../infra/storage/chat-repository';
 import { TaskBankRepositoryImpl } from '../features/task-bank/task-bank.repository';
 import { TaskBankServiceImpl, type TaskBankService } from '../features/task-bank/task-bank.service';
@@ -81,6 +83,7 @@ export function createContainer(): AppContainer {
   });
   const taskGeneration = new TaskGenerationService(llm, taskBank, taskBankRepo);
   const chatTools = new ChatToolsService(store, planner, taskBank, taskGeneration);
+  const memoryTools = new MemoryToolsService(store, memory);
   const chat = new ChatService(
     new LocalChatRepository(storage),
     llm,
@@ -113,6 +116,19 @@ export function createContainer(): AppContainer {
     chatTools,
     memory,
     store,
+    async (blobUrl, name) => {
+      // Lazily converts an uploaded file (blob URL) into text when the direct
+      // file send to the model fails — pdfjs, Office (ZIP/XML) and text formats.
+      try {
+        const response = await fetch(blobUrl);
+        const blob = await response.blob();
+        const file = new File([blob], name);
+        return await extractFileText(file);
+      } catch {
+        return '';
+      }
+    },
+    memoryTools,
   );
   return {
     stateRepository,

@@ -12,8 +12,14 @@ export interface AddMemoryInput {
   dayNumber?: number;
   habitId?: string;
   tags?: string[];
+  /** Marks condensed/rollup entries produced by a summarizer. */
+  summarized?: boolean;
   /** Overrides the creation date (used when importing/backfilling). */
   createdAt?: string;
+  /** Block group this entry belongs to (e.g. one per chat session). */
+  blockId?: string;
+  /** Promote straight into long-term memory. */
+  longTerm?: boolean;
 }
 
 export const MEMORY_MAX_ENTRIES = 200;
@@ -40,8 +46,10 @@ export class MemoryService {
       createdAt: input.createdAt ?? isoDate(this.clock.now()),
       content: input.content,
       importance: clamp01(input.importance ?? 0.5),
-      summarized: false,
+      summarized: input.summarized ?? false,
       source: input.source,
+      blockId: input.blockId,
+      longTerm: input.longTerm ?? false,
       context: {
         ...(input.dayNumber !== undefined ? { dayNumber: input.dayNumber } : {}),
         ...(input.habitId !== undefined ? { habitId: input.habitId } : {}),
@@ -108,6 +116,101 @@ export class MemoryService {
     return all
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.importance - a.importance)
       .slice(0, max);
+  }
+
+  /** Edits a specific entry (in entries or summaries) — user-controlled memory. */
+  update(state: AppState, id: string, patch: Partial<Pick<MemoryEntry, 'content' | 'importance' | 'type'>>): AppState {
+    const mapEntry = (e: MemoryEntry): MemoryEntry => (e.id === id ? { ...e, ...patch } : e);
+    return {
+      ...state,
+      memory: {
+        ...state.memory,
+        entries: state.memory.entries.map(mapEntry),
+        summaries: state.memory.summaries.map(mapEntry),
+      },
+    };
+  }
+
+  /** Pin/unpin specific entries as long-term memory. */
+  setLongTerm(state: AppState, ids: string[], longTerm: boolean): AppState {
+    const target = new Set(ids);
+    const mapEntry = (e: MemoryEntry): MemoryEntry => (target.has(e.id) ? { ...e, longTerm } : e);
+    return {
+      ...state,
+      memory: {
+        ...state.memory,
+        entries: state.memory.entries.map(mapEntry),
+        summaries: state.memory.summaries.map(mapEntry),
+      },
+    };
+  }
+
+  /**
+   * Deterministic long-term curation: anything already pinned stays; goals,
+   * preferences, key observations and high-importance summaries are promoted.
+   * The AI (via memory tools) can override by editing/pinning entries directly.
+   */
+  curateLongTerm(state: AppState): AppState {
+    const shouldPin = (e: MemoryEntry): boolean =>
+      e.longTerm === true ||
+      e.type === 'goal' ||
+      e.type === 'preference' ||
+      (e.type === 'observation' && e.importance >= IMPORTANCE_KEEP_VERBATIM) ||
+      e.importance >= IMPORTANCE_KEEP_VERBATIM;
+    const mapEntry = (e: MemoryEntry): MemoryEntry => (shouldPin(e) ? { ...e, longTerm: true } : e);
+    return {
+      ...state,
+      memory: {
+        ...state.memory,
+        entries: state.memory.entries.map(mapEntry),
+        summaries: state.memory.summaries.map(mapEntry),
+      },
+    };
+  }
+
+  /** One summary block per chat: all points share the same blockId. */
+  listBlocks(state: AppState): Array<{ blockId: string; entries: MemoryEntry[]; updatedAt: string }> {
+    const byBlock = new Map<string, MemoryEntry[]>();
+    for (const entry of [...state.memory.summaries, ...state.memory.entries]) {
+      const id = entry.blockId;
+      if (!id) continue;
+      const list = byBlock.get(id) ?? [];
+      list.push(entry);
+      byBlock.set(id, list);
+    }
+    return [...byBlock.entries()]
+      .map(([blockId, entries]) => ({
+        blockId,
+        entries: entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+        updatedAt: entries.reduce((latest, e) => (e.createdAt > latest ? e.createdAt : latest), ''),
+      }))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  /** Deletes a specific entry (from entries or summaries) by id. */
+  remove(state: AppState, id: string): AppState {
+    return {
+      ...state,
+      memory: {
+        ...state.memory,
+        entries: state.memory.entries.filter((e) => e.id !== id),
+        summaries: state.memory.summaries.filter((e) => e.id !== id),
+      },
+    };
+  }
+
+  /**
+   * Deletes raw per-message conversation entries tagged with a session id.
+   * Used to clean legacy dumps before writing a condensed summary.
+   */
+  removeConversationByTag(state: AppState, tag: string): AppState {
+    return {
+      ...state,
+      memory: {
+        ...state.memory,
+        entries: state.memory.entries.filter((e) => !(e.type === 'conversation' && e.context.tags.includes(tag))),
+      },
+    };
   }
 
   clear(state: AppState): AppState {

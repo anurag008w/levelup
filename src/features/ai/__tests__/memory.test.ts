@@ -84,4 +84,99 @@ describe('MemoryService', () => {
     const rare = all.find((e: MemoryStore['entries'][number]) => e.content.includes('note 0'));
     expect(rare).toBeDefined();
   });
+
+  it('honours the summarized flag and session tags on add', () => {
+    const memory = makeService();
+    let state = emptyAppState();
+    state = memory.add(state, {
+      type: 'conversation',
+      content: 'Aim: IIT, weak in Physics.',
+      source: 'ai',
+      importance: 0.6,
+      summarized: true,
+      tags: ['chat', 'session-1'],
+    });
+    expect(state.memory.entries).toHaveLength(1);
+    expect(state.memory.entries[0].summarized).toBe(true);
+    expect(state.memory.entries[0].context.tags).toContain('session-1');
+  });
+
+  it('updates a specific entry by id (entries and summaries)', () => {
+    const memory = makeService();
+    let state = emptyAppState();
+    state = memory.add(state, { type: 'journal', content: 'old text', source: 'user' });
+    state = memory.add(state, { type: 'observation', content: 'other', source: 'ai' });
+    const target = state.memory.entries[0];
+    state = memory.update(state, target.id, { content: 'new text', importance: 0.9 });
+    const updated = state.memory.entries.find((e) => e.id === target.id);
+    expect(updated?.content).toBe('new text');
+    expect(updated?.importance).toBe(0.9);
+    expect(state.memory.entries.find((e) => e.id !== target.id)?.content).toBe('other');
+  });
+
+  it('deletes a specific entry by id', () => {
+    const memory = makeService();
+    let state = emptyAppState();
+    state = memory.add(state, { type: 'journal', content: 'keep me', source: 'user' });
+    state = memory.add(state, { type: 'observation', content: 'delete me', source: 'ai' });
+    const target = state.memory.entries.find((e) => e.content === 'delete me')!;
+    state = memory.remove(state, target.id);
+    expect(state.memory.entries.some((e) => e.id === target.id)).toBe(false);
+    expect(state.memory.entries).toHaveLength(1);
+  });
+
+  it('removes conversation entries by session tag only', () => {
+    const memory = makeService();
+    let state = emptyAppState();
+    state = memory.add(state, { type: 'conversation', content: 'old chat a', source: 'ai', summarized: true, tags: ['chat', 'session-1'] });
+    state = memory.add(state, { type: 'conversation', content: 'old chat b', source: 'ai', summarized: true, tags: ['chat', 'session-1'] });
+    state = memory.add(state, { type: 'conversation', content: 'keep me', source: 'ai', tags: ['chat', 'session-2'] });
+    state = memory.add(state, { type: 'journal', content: 'keep note', source: 'user', tags: ['session-1'] });
+    state = memory.removeConversationByTag(state, 'session-1');
+    const contents = state.memory.entries.map((e) => e.content);
+    expect(contents).not.toContain('old chat a');
+    expect(contents).not.toContain('old chat b');
+    expect(contents).toContain('keep me');
+    expect(contents).toContain('keep note');
+  });
+
+  it('groups conversation summaries into one block per chat', () => {
+    const memory = makeService();
+    let state = emptyAppState();
+    state = memory.add(state, { type: 'conversation', content: 'Aim IIT Delhi', source: 'ai', summarized: true, tags: ['chat', 's1'], blockId: 'chat:s1', longTerm: true });
+    state = memory.add(state, { type: 'conversation', content: 'Weak: Calculus', source: 'ai', summarized: true, tags: ['chat', 's1'], blockId: 'chat:s1' });
+    state = memory.add(state, { type: 'conversation', content: 'Physics strong', source: 'ai', summarized: true, tags: ['chat', 's2'], blockId: 'chat:s2' });
+    const blocks = memory.listBlocks(state);
+    expect(blocks).toHaveLength(2);
+    const s1 = blocks.find((b) => b.blockId === 'chat:s1');
+    expect(s1?.entries).toHaveLength(2);
+    expect(s1?.entries[0].longTerm).toBe(true);
+  });
+
+  it('curates goals, preferences and high-importance entries into long-term memory', () => {
+    const memory = makeService();
+    let state = emptyAppState();
+    state = memory.add(state, { type: 'goal', content: 'Target 200 marks', source: 'user', importance: 0.9 });
+    state = memory.add(state, { type: 'preference', content: 'Prefers evening study', source: 'user', importance: 0.6 });
+    state = memory.add(state, { type: 'journal', content: 'low value note', source: 'user', importance: 0.3 });
+    state = memory.add(state, { type: 'observation', content: 'important observation', source: 'ai', importance: 0.85 });
+    state = memory.curateLongTerm(state);
+    const pinned = state.memory.entries.filter((e) => e.longTerm);
+    const contents = pinned.map((e) => e.content);
+    expect(contents).toContain('Target 200 marks');
+    expect(contents).toContain('Prefers evening study');
+    expect(contents).toContain('important observation');
+    expect(contents).not.toContain('low value note');
+  });
+
+  it('pins and unpins specific entries via setLongTerm', () => {
+    const memory = makeService();
+    let state = emptyAppState();
+    state = memory.add(state, { type: 'journal', content: 'pinnable note', source: 'user', importance: 0.5 });
+    const target = state.memory.entries[0];
+    state = memory.setLongTerm(state, [target.id], true);
+    expect(state.memory.entries[0].longTerm).toBe(true);
+    state = memory.setLongTerm(state, [target.id], false);
+    expect(state.memory.entries[0].longTerm).toBe(false);
+  });
 });

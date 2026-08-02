@@ -1,11 +1,12 @@
 import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT } from '../../core/domain/chat';
-import type { ChatMessage, ChatSession, ChatPreferences, ChatStoreState, ChatAttachment } from '../../core/domain/chat';
+import type { ChatMessage, ChatSession, ChatPreferences, ChatStoreState, ChatAttachment, GlobalChatPrefs } from '../../core/domain/chat';
 import {
   MAX_MESSAGES_PER_SESSION,
   MAX_SESSIONS,
+  applyGlobalChatPrefs,
   defaultChatPrefs,
 } from '../../core/domain/chat';
-import type { LLMMessage, LLMRequest, ThinkingLevel, ContentPart } from '../../core/domain/llm';
+import type { LLMMessage, LLMRequest, LLMResponse, ThinkingLevel, ContentPart } from '../../core/domain/llm';
 import { isAbortError } from '../../core/domain/llm';
 import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY } from '../../core/domain/chat-tools';
 import type { ChatToolResult } from '../../core/domain/chat-tools';
@@ -16,11 +17,12 @@ import type { LLMService } from '../ai/llm.service';
 import type { ProviderSettingsService } from '../ai/provider-settings.service';
 import type { MemoryService } from '../ai/memory.service';
 import type { ChatToolsService } from './chat-tools.service';
+import type { MemoryToolsService } from './memory-tools.service';
+import { MEMORY_TOOL_INSTRUCTIONS } from '../../core/domain/memory-tools';
+import type { MemoryToolResult } from '../../core/domain/memory-tools';
 
 const HISTORY_FOR_PROMPT = 30;
 const MEMORY_FOR_PROMPT = 8;
-const MEMORY_USER_MAX_CHARS = 500;
-const MEMORY_AI_MAX_CHARS = 400;
 /** Max decision hops per message: initial guess + plan-fetch replans. */
 const MAX_TOOL_HOPS = 3;
 
@@ -36,9 +38,18 @@ export class ChatService {
   private readonly clock: Clock;
   private readonly tools: ChatToolsService | null;
   private readonly memory: MemoryService | null;
+  private readonly memoryTools: MemoryToolsService | null;
   private readonly store: StateStore | null;
+  /** Lazily extracts text from a raw file (blob URL) when the direct file path fails. */
+  private readonly extractAttachmentText?: (blobUrl: string, name: string) => Promise<string>;
+  /** Sessions where a direct file send already fell back to text — use text from now on. */
+  private readonly fileFallbackSessions = new Set<string>();
   /** In-memory snapshot so mutations survive across persist() calls. */
   private cache: ChatStoreState | null = null;
+  /** Sessions created while "auto-save chats" is off — never written to disk. */
+  private ephemeral = new Map<string, ChatSession>();
+  /** In-flight transcript persistence awaited by the next send (first reply). */
+  private pendingSummary: Promise<number> | null = null;
 
   constructor(
     repo: ChatRepository,
@@ -49,6 +60,8 @@ export class ChatService {
     tools: ChatToolsService | null = null,
     memory: MemoryService | null = null,
     store: StateStore | null = null,
+    extractAttachmentText?: (blobUrl: string, name: string) => Promise<string>,
+    memoryTools: MemoryToolsService | null = null,
   ) {
     this.repo = repo;
     this.llm = llm;
@@ -58,6 +71,8 @@ export class ChatService {
     this.tools = tools;
     this.memory = memory;
     this.store = store;
+    this.extractAttachmentText = extractAttachmentText;
+    this.memoryTools = memoryTools;
   }
 
   private state(): ChatStoreState {
@@ -66,11 +81,11 @@ export class ChatService {
   }
 
   listSessions(): ChatSession[] {
-    return this.state().sessions.map(cloneSession);
+    return this.state().sessions.map(cloneSession).concat(Array.from(this.ephemeral.values()).map(cloneSession));
   }
 
   getSession(id: string): ChatSession | null {
-    return this.state().sessions.find((s) => s.id === id) ?? null;
+    return this.state().sessions.find((s) => s.id === id) ?? this.ephemeral.get(id) ?? null;
   }
 
   createSession(title = '', prefs: ChatPreferences = defaultChatPrefs()): ChatSession {
@@ -83,10 +98,20 @@ export class ChatService {
       createdAt: now,
       updatedAt: now,
     };
-    const state = this.state();
-    state.sessions.unshift(session);
-    if (state.sessions.length > MAX_SESSIONS) state.sessions.length = MAX_SESSIONS;
-    this.repo.save(state);
+    // "Auto-save chats" off → keep the session ephemeral (still usable for the
+    // current chat, but it never lands in history and is gone after reload).
+    if (this.autoSaveChats()) {
+      const state = this.state();
+      state.sessions.unshift(session);
+      if (state.sessions.length > MAX_SESSIONS) state.sessions.length = MAX_SESSIONS;
+      this.repo.save(state);
+    } else {
+      if (this.ephemeral.size >= MAX_SESSIONS) {
+        const oldest = Array.from(this.ephemeral.keys())[0];
+        if (oldest) this.ephemeral.delete(oldest);
+      }
+      this.ephemeral.set(session.id, session);
+    }
     return session;
   }
 
@@ -94,6 +119,7 @@ export class ChatService {
     const state = this.state();
     state.sessions = state.sessions.filter((s) => s.id !== id);
     this.repo.save(state);
+    this.ephemeral.delete(id);
   }
 
   clearSession(id: string): void {
@@ -135,6 +161,31 @@ export class ChatService {
   }
 
   /**
+   * Applies the global chat settings (temperature, max tokens, personas,
+   * journey-context flag) to every session's prefs. Session-only fields such
+   * as providerId, model and thinking are left untouched. Keeps the Settings
+   * tab and the AI Coach in sync.
+   */
+  applyGlobalPrefs(global: GlobalChatPrefs): void {
+    const state = this.state();
+    const applyTo = (session: ChatSession): ChatSession => {
+      session.prefs = applyGlobalChatPrefs(normalizePrefs(session.prefs), global);
+      session.updatedAt = this.clock.now().toISOString();
+      return session;
+    };
+    let touched = false;
+    for (const session of state.sessions) {
+      applyTo(session);
+      touched = true;
+    }
+    if (this.ephemeral.size > 0) {
+      for (const session of this.ephemeral.values()) applyTo(session);
+      touched = true;
+    }
+    if (touched) this.persist();
+  }
+
+  /**
    * Sends a message and streams the answer. Appends the user message up front;
    * on a hard error the user message is rolled back so retry stays clean.
    * When the caller aborts mid-stream the partial text is kept as a `stopped`
@@ -157,6 +208,14 @@ export class ChatService {
     const session = this.getSession(sessionId);
     if (!session) throw new Error('Chat session not found');
 
+    // When a fresh chat was just created, prior conversations are being
+    // condensed into memory — let that finish so this reply can use it.
+    if (this.pendingSummary) {
+      const pending = this.pendingSummary;
+      this.pendingSummary = null;
+      await pending;
+    }
+
     const now = this.clock.now().toISOString();
     const userMsg: ChatMessage = { id: uid(), role: 'user', content: text, createdAt: now, attachments };
     session.messages.push(userMsg);
@@ -164,11 +223,60 @@ export class ChatService {
     if (titleWasEmpty) session.title = deriveTitle(text);
     session.updatedAt = now;
     this.persist();
-    this.remember(text, 'user', sessionId);
 
     let partial = '';
 
     try {
+      // Memory tool decision hop — the AI can read/edit/delete/pin its memory
+      // on command ("memory mein kya hai", "ye delete karo", "yaad rakho").
+      // Skipped entirely when AI memory is turned off in settings.
+      if (this.memoryTools && this.memoryEnabled() && this.memoryTools.isMemoryQuery(text)) {
+        onStatus?.('AI memory soch raha hai…');
+        const decision = await this.llm.complete(await this.buildMemoryDecisionRequest(session, signal));
+        let actions = this.memoryTools.parseTools(decision.text);
+        let answer = decision.text;
+        if (actions.length === 0 && answer) {
+          onStatus?.('Memory tool retry kar raha hai…');
+          const retry = await this.llm.complete(await this.buildMemoryDecisionRequest(session, signal, decision.text));
+          actions = this.memoryTools.parseTools(retry.text);
+          if (retry.text) answer = retry.text;
+        }
+        if (actions.length === 0) {
+          if (answer) {
+            const assistant: ChatMessage = {
+              id: uid(),
+              role: 'assistant',
+              content: sanitizeAssistantLeaks(answer),
+              createdAt: this.clock.now().toISOString(),
+              model: decision.model,
+            };
+            this.appendAssistant(session, assistant);
+            return assistant;
+          }
+          throw new Error('AI memory ka jawab nahi de paya — simple language mein pucho.');
+        }
+        onStatus?.('Memory update kar raha hai…');
+        const memoryResult: MemoryToolResult = await this.memoryTools.runMany(actions);
+        // Destructive actions need one explicit confirmation round.
+        if (memoryResult.requiresConfirmation) {
+          const confirm = await this.llm.complete(await this.buildMemoryConfirmRequest(session, memoryResult.summary, signal));
+          const confirmedActions = this.memoryTools.parseTools(confirm.text);
+          if (confirmedActions.length > 0) {
+            const confirmed = await this.memoryTools.runMany(confirmedActions);
+            memoryResult.summary = confirmed.summary || memoryResult.summary;
+          }
+        }
+        const memoryAssistant: ChatMessage = {
+          id: uid(),
+          role: 'assistant',
+          content: sanitizeAssistantLeaks(memoryResult.summary),
+          createdAt: this.clock.now().toISOString(),
+          model: decision.model,
+        };
+        this.appendAssistant(session, memoryAssistant);
+        return memoryAssistant;
+      }
+
       // Tool decision hop for plan/task queries.
       if (this.tools && this.tools.isTaskQuery(text)) {
         onStatus?.('AI soch raha hai…');
@@ -243,6 +351,13 @@ export class ChatService {
           onReasoningDelta?.(delta);
         });
         const summary = await this.llm.stream(summaryRequest);
+        // Release any trailing chunk the sanitizer held back as a possible
+        // partial timestamp — otherwise the streamed tail is silently dropped.
+        const streamTail = streamSani.flush();
+        if (streamTail) {
+          partial += streamTail;
+          onDelta?.(streamTail);
+        }
         if (!summary.text && !summary.reasoning) {
           throw new Error('AI ka reply khaali aaya — max tokens barhao ya thinking off karo.');
         }
@@ -261,18 +376,41 @@ export class ChatService {
 
       // Default streaming path.
       let reasoning = '';
-      const streamSani = createStreamSanitizer();
-      const request = await this.buildRequest(session, (delta) => {
-        const clean = streamSani.push(delta);
-        if (clean) {
-          partial += clean;
-          onDelta?.(clean);
+      const runStream = async (): Promise<LLMResponse> => {
+        const streamSani = createStreamSanitizer();
+        const request = await this.buildRequest(session, (delta) => {
+          const clean = streamSani.push(delta);
+          if (clean) {
+            partial += clean;
+            onDelta?.(clean);
+          }
+        }, signal, (delta) => {
+          reasoning += delta;
+          onReasoningDelta?.(delta);
+        });
+        const resp = await this.llm.stream(request);
+        // Release any trailing chunk the sanitizer held back as a possible
+        // partial timestamp — otherwise the streamed tail is silently dropped.
+        const streamTail = streamSani.flush();
+        if (streamTail) {
+          partial += streamTail;
+          onDelta?.(streamTail);
         }
-      }, signal, (delta) => {
-        reasoning += delta;
-        onReasoningDelta?.(delta);
-      });
-      const resp = await this.llm.stream(request);
+        return resp;
+      };
+      let resp: LLMResponse;
+      try {
+        resp = await runStream();
+      } catch (err) {
+        // User aborts must propagate as-is — no fallback retry on cancel.
+        if (isAbortError(err)) throw err;
+        // The direct file send can fail when the model doesn't accept files or
+        // is down/rate-limited. Fall back to client-extracted text once.
+        const fellBack = await this.applyFileFallback(session);
+        if (!fellBack) throw err;
+        onStatus?.('File extract karke dobara try kar raha hoon…');
+        resp = await runStream();
+      }
       if (!resp.text && !resp.reasoning) {
         throw new Error('AI ka reply khaali aaya — max tokens barhao ya thinking off karo.');
       }
@@ -321,6 +459,44 @@ export class ChatService {
       signal,
       // Decision hops must be fast, deterministic JSON — thinking only risks
       // a budget clash and prose contamination.
+      thinking: 'off',
+    };
+    const model = this.resolveModel(session);
+    if (model) request.model = model;
+    return request;
+  }
+
+  private async buildMemoryDecisionRequest(session: ChatSession, signal?: AbortSignal, previousReply?: string): Promise<LLMRequest> {
+    const extra = previousReply
+      ? `\n\nYour previous reply was:\n${previousReply}\n\nThat was not a valid action. Reply with exactly ONE JSON object from the list above now.`
+      : '';
+    const system = `${MEMORY_TOOL_INSTRUCTIONS}\n\nRead the student's question above and decide the single best action.${extra}`;
+    const request: LLMRequest = {
+      messages: await this.buildMessages(session, system),
+      temperature: session.prefs.temperature,
+      maxTokens: 1024,
+      providerId: session.prefs.providerId,
+      signal,
+      thinking: 'off',
+    };
+    const model = this.resolveModel(session);
+    if (model) request.model = model;
+    return request;
+  }
+
+  /** Confirmation follow-up after a destructive memory action preview. */
+  private async buildMemoryConfirmRequest(session: ChatSession, preview: string, signal?: AbortSignal): Promise<LLMRequest> {
+    const system =
+      `${MEMORY_TOOL_INSTRUCTIONS}\n\n` +
+      `The user is being asked to confirm a memory deletion.\n` +
+      `Tool preview:\n${preview}\n\n` +
+      `If the user agreed, re-emit the exact same action with "confirmed":true. Otherwise reply with no JSON and explain in Hinglish.`;
+    const request: LLMRequest = {
+      messages: await this.buildMessages(session, system),
+      temperature: session.prefs.temperature,
+      maxTokens: 1024,
+      providerId: session.prefs.providerId,
+      signal,
       thinking: 'off',
     };
     const model = this.resolveModel(session);
@@ -381,10 +557,11 @@ export class ChatService {
     const system =
       `A plan tool executed and returned:\n${toolSummary}\n\n` +
       `Reply to the user's request in concise Hinglish. Tell them what was done (or why it failed).`;
+    const thinking = this.resolveThinking(session);
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),
       temperature: session.prefs.temperature,
-      maxTokens: Math.max(1, Math.min(session.prefs.maxTokens ?? 4096, 8192)),
+      maxTokens: this.effectiveMaxTokens(session, thinking),
       providerId: session.prefs.providerId,
       onDelta,
       onReasoningDelta,
@@ -392,7 +569,6 @@ export class ChatService {
     };
     const model = this.resolveModel(session);
     if (model) request.model = model;
-    const thinking = this.resolveThinking(session);
     if (thinking) request.thinking = thinking;
     return request;
   }
@@ -404,11 +580,13 @@ export class ChatService {
       const ctx = this.contextProvider();
       if (ctx) messages.push({ role: 'system', content: `Today's LevelUp context: ${ctx}` });
     }
-    const mem = this.recall(session.id);
-    if (mem) messages.push({ role: 'system', content: `Earlier conversations yaad hain (bas reference lo, repeat mat karo):\n${mem}` });
-    
+    if (this.memoryEnabled()) {
+      const mem = this.recall(session.id);
+      if (mem) messages.push({ role: 'system', content: `Earlier conversations yaad hain (bas reference lo, repeat mat karo):\n${mem}` });
+    }
+
     const history: LLMMessage[] = [];
-    for (const m of session.messages.slice(-HISTORY_FOR_PROMPT)) {
+    for (const m of session.messages.slice(-this.historyLength())) {
       // If message has attachments, convert to ContentPart array
       if (m.attachments && m.attachments.length > 0) {
         const parts: ContentPart[] = [];
@@ -419,6 +597,17 @@ export class ChatService {
             const dataUrl = await this.blobToDataUrl(att.previewUrl);
             if (dataUrl) {
               parts.push({ type: 'image', image: dataUrl });
+            }
+          } else if (att.kind === 'file' && att.previewUrl) {
+            if (this.fileFallbackSessions.has(session.id)) {
+              // Direct file send already failed for this session — use extracted text.
+              const text = await this.extractAttachmentText?.(att.previewUrl, att.name);
+              if (text) parts.push({ type: 'text', text: `\n[Attached file: ${att.name}]\n${text}` });
+            } else {
+              const dataUrl = await this.blobToDataUrl(att.previewUrl);
+              if (dataUrl) {
+                parts.push({ type: 'file', file: { filename: att.name, file_data: dataUrl } });
+              }
             }
           } else if (att.kind === 'text') {
             parts.push({ type: 'text', text: `\n[Attached file: ${att.name}]\n` });
@@ -451,6 +640,44 @@ export class ChatService {
     }
   }
 
+  /**
+   * After a direct file send fails (model doesn't accept files, down, or
+   * rate-limited), rewrites the last user message to inline the extracted text
+   * and strips the raw file parts so the retry uses plain text. Returns true
+   * when a retry with extracted content is possible.
+   */
+  private async applyFileFallback(session: ChatSession): Promise<boolean> {
+    const last = session.messages[session.messages.length - 1];
+    if (!last || last.role !== 'user') return false;
+    const fileAtts = (last.attachments ?? []).filter((a) => a.kind === 'file');
+    if (fileAtts.length === 0) return false;
+
+    const blocks: string[] = [];
+    let extractedAny = false;
+    for (const att of fileAtts) {
+      let text = att.content ?? '';
+      if (!text && this.extractAttachmentText && att.previewUrl) {
+        try {
+          text = await this.extractAttachmentText(att.previewUrl, att.name);
+        } catch {
+          text = '';
+        }
+      }
+      if (text.trim()) {
+        extractedAny = true;
+        blocks.push(`<attached_file>\nAttachment: ${att.name}\n\n${text.trim()}\n</attached_file>`);
+      }
+    }
+
+    last.attachments = last.attachments!.filter((a) => a.kind !== 'file');
+    if (extractedAny) {
+      last.content = `${last.content}\n\n${blocks.join('\n\n')}`;
+      this.fileFallbackSessions.add(session.id);
+    }
+    this.persist();
+    return extractedAny;
+  }
+
   private resolveModel(session: ChatSession): string | undefined {
     if (session.prefs.providerId) {
       const config = this.settings.getProviderById(session.prefs.providerId);
@@ -474,10 +701,11 @@ export class ChatService {
     signal?: AbortSignal,
     onReasoningDelta?: (d: string) => void,
   ): Promise<LLMRequest> {
+    const thinking = this.resolveThinking(session);
     const request: LLMRequest = {
       messages: await this.buildMessages(session),
       temperature: session.prefs.temperature,
-      maxTokens: Math.max(1, Math.min(session.prefs.maxTokens ?? 4096, 8192)),
+      maxTokens: this.effectiveMaxTokens(session, thinking),
       providerId: session.prefs.providerId,
       onDelta,
       onReasoningDelta,
@@ -485,9 +713,21 @@ export class ChatService {
     };
     const model = this.resolveModel(session);
     if (model) request.model = model;
-    const thinking = this.resolveThinking(session);
     if (thinking) request.thinking = thinking;
     return request;
+  }
+
+  /**
+   * Reasoning models spend part of the max_tokens budget on the hidden chain
+   * of thought, silently cutting the visible answer. When thinking is on,
+   * reserve headroom by doubling the budget so the visible reply isn't
+   * truncated mid-sentence. Capped at 32768 — the current top-of-the-line
+   * output limits for Gemini 2.5 / Claude / GPT-5-class models.
+   */
+  private effectiveMaxTokens(session: ChatSession, thinking: string | null | undefined): number {
+    const base = Math.max(1, Math.min(session.prefs.maxTokens ?? 8192, 32768));
+    if (!thinking || thinking === 'off') return base;
+    return Math.min(base * 2, 65536);
   }
 
   private appendAssistant(session: ChatSession, assistant: ChatMessage): void {
@@ -496,35 +736,110 @@ export class ChatService {
     if (overflow > 0) session.messages.splice(0, overflow);
     session.updatedAt = this.clock.now().toISOString();
     this.persist();
-    this.remember(assistant.content, 'ai', session.id);
   }
 
-  /** Persists a chat exchange into AI memory so later conversations recall it. */
-  private remember(content: string, source: 'user' | 'ai', sessionId: string): void {
-    if (!this.memory || !this.store) return;
-    const cleaned = stripAttachmentBlocks(content).trim();
-    if (!cleaned) return;
-    const state = this.store.get();
-    const next = this.memory.add(state, {
+  /**
+   * Persists every finished chat into AI memory as its RAW transcript — both
+   * the student's and the coach's words, verbatim, no AI condensation.
+   * Triggered on every "new chat" action and on the memory panel's manual
+   * button. Only sessions the app has NOT yet stored are processed (dedup by
+   * `memorySummarizedAt`).
+   *
+   * Never fails as a whole: per-session errors are swallowed and the session
+   * is left unmarked so the next run retries it instead of permanently
+   * skipping it. Resolves to the number of sessions stored.
+   */
+  async summarizePriorChats(): Promise<number> {
+    if (!this.store || !this.memory || !this.memoryEnabled()) return 0;
+    if (this.pendingSummary) return this.pendingSummary;
+    const targets = this.state().sessions.filter((s) => s.messages.length > 0 && !s.memorySummarizedAt);
+    if (targets.length === 0) return 0;
+    const task = (async () => {
+      let done = 0;
+      for (const session of targets) {
+        try {
+          await this.persistSessionToMemory(session);
+          done += 1;
+        } catch {
+          // Leave memorySummarizedAt unset so the next run retries.
+        }
+      }
+      this.pendingSummary = null;
+      return done;
+    })();
+    this.pendingSummary = task;
+    return task;
+  }
+
+  /** Number of finished chats not yet condensed into memory. */
+  pendingSummaries(): number {
+    if (!this.memoryEnabled()) return 0;
+    return this.state().sessions.filter((s) => s.messages.length > 0 && !s.memorySummarizedAt).length;
+  }
+
+  /** Whether the global "AI Memory" setting is on (defaults to on). */
+  private memoryEnabled(): boolean {
+    const chat = this.store?.get().aiSettings.chat;
+    return chat ? chat.memoryEnabled !== false : true;
+  }
+
+  /** Whether new chats should be persisted to history (defaults to on). */
+  private autoSaveChats(): boolean {
+    const chat = this.store?.get().aiSettings.chat;
+    return chat ? chat.autoSaveChats !== false : true;
+  }
+
+  /** How many past messages to send to the model (global setting, 0 = none). */
+  private historyLength(): number {
+    const chat = this.store?.get().aiSettings.chat;
+    const configured = chat?.conversationHistoryLength;
+    if (typeof configured === 'number' && Number.isFinite(configured)) {
+      return Math.max(0, Math.floor(configured));
+    }
+    return HISTORY_FOR_PROMPT;
+  }
+
+  /** Dumps a finished chat's raw transcript into memory as one block. */
+  private async persistSessionToMemory(session: ChatSession): Promise<void> {
+    let memState = this.memory!.removeConversationByTag(this.store!.get(), session.id);
+    const transcript = this.buildRawTranscript(session);
+    memState = this.memory!.add(memState, {
       type: 'conversation',
-      source,
-      content: cleaned.slice(0, source === 'user' ? MEMORY_USER_MAX_CHARS : MEMORY_AI_MAX_CHARS),
-      importance: source === 'user' ? 0.5 : 0.4,
-      tags: ['chat', sessionId],
+      source: 'system',
+      content: transcript,
+      importance: 0.6,
+      tags: ['chat', session.id],
+      blockId: `chat:${session.id}`,
     });
-    this.store.save(next);
+    this.store!.save(memState);
+    const target = this.state().sessions.find((s) => s.id === session.id);
+    if (target) {
+      target.memorySummarizedAt = this.clock.now().toISOString();
+      this.persist();
+    }
+  }
+
+  /** Both sides verbatim (Student / AI Coach lines), capped to a sane size. */
+  private buildRawTranscript(session: ChatSession): string {
+    try {
+      const body = session.messages
+        .map((m) => `${m.role === 'user' ? 'Student' : 'AI Coach'}: ${m.content}`)
+        .join('\n');
+      return body.length > 6000 ? `${body.slice(0, 6000)}…` : body;
+    } catch {
+      return 'Empty conversation.';
+    }
   }
 
   /** Recent memories from OTHER sessions, so history stays in the transcript. */
   private recall(sessionId: string): string {
     if (!this.memory || !this.store) return '';
     const state = this.store.get();
-    const recent = this.memory.relevant(state, { max: 12 });
-    const lines = recent
+    const all = [...state.memory.summaries, ...state.memory.entries]
       .filter((e) => e.context.tags.includes('chat') && !e.context.tags.includes(sessionId))
-      .slice(0, MEMORY_FOR_PROMPT)
-      .map((e) => `- ${e.source === 'user' ? '[user] ' : '[ai] '}${truncateMemory(e.content)}`);
-    return lines.join('\n');
+      .sort((a, b) => Number(Boolean(b.longTerm)) - Number(Boolean(a.longTerm)) || b.createdAt.localeCompare(a.createdAt))
+      .slice(0, MEMORY_FOR_PROMPT);
+    return all.map((e) => `- ${e.longTerm ? '[long-term] ' : ''}${truncateMemory(e.content)}`).join('\n');
   }
 
   private persist(): void {
@@ -590,13 +905,6 @@ function composeSystemPrompt(systemPersona: string, userPersona = '', extraSyste
   const extra = extraSystemPrompt.trim();
   if (extra) blocks.push(extra);
   return blocks.join('\n\n');
-}
-
-function stripAttachmentBlocks(text: string): string {
-  return text
-    .replace(/<attached_file>[\s\S]*?<\/attached_file>/g, '')
-    .replace(/<attached_image>[\s\S]*?<\/attached_image>/g, '')
-    .trim();
 }
 
 function truncateMemory(s: string, max = 300): string {

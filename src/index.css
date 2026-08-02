@@ -212,30 +212,31 @@ body {
   z-index: 45;
   display: inline-flex;
   align-items: center;
-  min-height: 2.25rem;
-  width: 2.25rem;
-  max-width: 2.25rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-panel);
-  color: var(--color-text);
+  justify-content: center;
+  height: 2.5rem;
+  width: 2.5rem;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(22, 21, 18, 0.72);
+  color: var(--color-l);
   padding: 0;
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-card), 0 6px 20px -10px rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(18px) saturate(1.35);
   -webkit-backdrop-filter: blur(18px) saturate(1.35);
   touch-action: manipulation;
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
   opacity: 1;
   transition: opacity 0.18s var(--ease-standard), transform 0.22s var(--ease-emphasized), visibility 0.18s var(--ease-standard);
+}
+.nav-handle:active {
+  transform: scale(0.9);
 }
 .nav-handle[data-visible='false'] {
   visibility: hidden;
   opacity: 0;
-  transform: translateY(calc(-125% - env(safe-area-inset-top, 0px)));
+  transform: translateY(calc(-160% - env(safe-area-inset-top, 0px))) scale(0.9);
   pointer-events: none;
-}
-.nav-handle-label {
-  display: none;
 }
 .swipe-edge {
   position: fixed;
@@ -1113,6 +1114,12 @@ label.field-label {
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
+/* Keep the floating hamburger from covering the "New chat" button on phones. */
+@media (max-width: 59rem) {
+  .chat-topbar {
+    padding-left: calc(3.5rem + env(safe-area-inset-left, 0px));
+  }
+}
 .chat-thread {
   min-height: 0;
   flex: 1 1 0%;
@@ -1680,4 +1687,23 @@ label.field-label {
   border-radius: 999px;
   background: rgba(138, 154, 91, 0.14);
   color: var(--color-l);
+}
+.memory-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5rem;
+  width: 1.5rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  color: var(--color-muted);
+  transition: color 0.15s var(--ease-standard), background-color 0.15s var(--ease-standard);
+}
+.memory-action:hover {
+  color: var(--color-text);
+  background: var(--color-panel);
+}
+.memory-action.text-danger:hover {
+  color: var(--color-danger);
+  background: rgba(201, 87, 87, 0.12);
 }

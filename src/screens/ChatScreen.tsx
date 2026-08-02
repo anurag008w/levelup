@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 import type { ChatMessage, ChatPreferences, ChatSession } from '../core/domain/chat';
 import type { ModelInfo, ThinkingLevel } from '../core/domain/llm';
-import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, defaultChatPrefs } from '../core/domain/chat';
+import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, defaultChatPrefs, globalChatPrefsFromSettings } from '../core/domain/chat';
 import { container } from '../di/container';
 import { redoLastAiAction, undoLastAiAction } from '../core/domain/ai-actions';
 import ChatMarkdown from '../components/ChatMarkdown';
@@ -38,14 +38,14 @@ import FileCard from '../components/FileCard';
 import AddProviderForm from '../components/AddProviderForm';
 import { detectFileDoc, looksLikeMarkdown } from '../components/markdown-utils';
 import { haptic, hapticError, hapticSuccess } from '../lib/haptics';
-import { extractPdfText } from '../lib/pdf';
+import { extractFileText } from '../lib/fileText';
 
 interface DraftAttachment {
   id: string;
   name: string;
   type: string;
   size: number;
-  kind: 'text' | 'image' | 'binary';
+  kind: 'text' | 'image' | 'file' | 'binary';
   content?: string;
   previewUrl?: string;
 }
@@ -56,11 +56,6 @@ interface MenuState {
   y: number;
 }
 
-const TEXT_EXTENSIONS = new Set([
-  'txt', 'md', 'markdown', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'htm', 'css', 'scss', 'less',
-  'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'cs', 'go', 'rs', 'rb', 'php', 'swift', 'kt',
-  'sh', 'bash', 'bat', 'ps1', 'sql', 'toml', 'ini', 'cfg', 'log', 'tex', 'env', 'properties',
-]);
 const MAX_TEXT_ATTACHMENT_CHARS = 24_000;
 const VISIBLE_MESSAGES = 40;
 
@@ -125,6 +120,7 @@ export default function ChatScreen() {
   const hasMessages = active !== null && messages.length > 0;
   const lastAssistantStreaming = streaming && streamText.length > 0;
   const aiEnabled = container.providerSettings.isAiEnabled();
+  const showThinking = container.store.get().aiSettings.chat.showThinking;
 
   const modelChip = useMemo(() => {
     const pid = active?.prefs.providerId ?? null;
@@ -136,6 +132,17 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!activeId && sessions.length > 0) setActiveId(sessions[0].id);
   }, [activeId, sessions]);
+
+  // Keep every session's shared prefs in line with the global chat settings
+  // (Settings tab -> Chat Experience) whenever the coach screen mounts.
+  useEffect(() => {
+    container.chat.applyGlobalPrefs(globalChatPrefsFromSettings(container.store.get().aiSettings.chat));
+    setSessions(container.chat.listSessions());
+    // Persist any unread chats into memory as raw transcripts — cheap and
+    // safe to rerun (sessions already stored are skipped).
+    void container.chat.summarizePriorChats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -186,6 +193,7 @@ export default function ChatScreen() {
       s = container.chat.createSession('', globalChatPrefs());
       refresh();
       setActiveId(s.id);
+      void container.chat.summarizePriorChats();
     }
     return s;
   }
@@ -200,7 +208,14 @@ export default function ChatScreen() {
     setAttachments([]);
     setError('');
     setShowHistory(false);
+    void container.chat.summarizePriorChats();
     focusComposer();
+  }
+
+  /** Opens the chat settings sheet, creating a session first when none exists. */
+  function openSettings() {
+    ensureSession();
+    setShowSettings(true);
   }
 
   function openSession(id: string) {
@@ -225,15 +240,36 @@ export default function ChatScreen() {
     if (!active) return;
     const next = { ...active.prefs, ...patch };
     container.chat.updatePrefs(active.id, next);
+    syncGlobalChatSettings(next);
     refresh();
   }
 
   function resetPrefs() {
     if (!active) return;
-    container.chat.updatePrefs(active.id, defaultChatPrefs());
+    container.chat.updatePrefs(active.id, globalChatPrefs());
     refresh();
     haptic();
     setNotice('Chat settings reset ho gaye');
+  }
+
+  /** Mirrors shared session settings back into the global chat settings. */
+  function syncGlobalChatSettings(prefs: ChatPreferences) {
+    const s = container.store.get();
+    container.store.save({
+      ...s,
+      aiSettings: {
+        ...s.aiSettings,
+        chat: {
+          ...s.aiSettings.chat,
+          temperature: prefs.temperature,
+          maxTokens: prefs.maxTokens,
+          systemPrompt: prefs.systemPrompt,
+          userPersona: prefs.userPersona,
+          includeJourneyContext: prefs.includeContext,
+          ...(prefs.thinking ? { thinking: prefs.thinking } : { thinking: undefined }),
+        },
+      },
+    });
   }
 
   async function loadCatalog() {
@@ -282,12 +318,13 @@ export default function ChatScreen() {
     abortRef.current = controller;
 
     // Convert DraftAttachment to ChatAttachment for LLM
-    const chatAttachments: { id: string; name: string; kind: 'text' | 'image' | 'binary'; previewUrl?: string }[] = 
+    const chatAttachments: { id: string; name: string; kind: 'text' | 'image' | 'file' | 'binary'; previewUrl?: string; content?: string }[] = 
       pendingAttachments.map(a => ({
         id: a.id,
         name: a.name,
         kind: a.kind,
         previewUrl: a.previewUrl,
+        content: a.content,
       }));
 
     const pending = container.chat.send(
@@ -524,7 +561,7 @@ export default function ChatScreen() {
         </button>
         <button
           type="button"
-          onClick={() => setShowSettings(true)}
+          onClick={openSettings}
           className="flex h-8 max-w-[9.5rem] shrink-0 items-center gap-1.5 rounded-full border border-border bg-panel px-2.5 text-[10px] font-semibold text-muted transition-colors hover:border-border-strong"
           aria-label="Model settings"
           title="Model settings"
@@ -539,7 +576,7 @@ export default function ChatScreen() {
         </button>
         <button
           type="button"
-          onClick={() => setShowSettings(true)}
+          onClick={openSettings}
           className="icon-btn"
           aria-label="Chat settings"
           title="Chat settings"
@@ -577,6 +614,7 @@ export default function ChatScreen() {
                 key={m.id}
                 message={m}
                 isLast={i === windowedMessages.length - 1}
+                showThinking={showThinking}
                 onMenu={openMenu}
                 onCopy={(msg) => void copyMessage(msg)}
                 onEdit={editMessage}
@@ -588,7 +626,7 @@ export default function ChatScreen() {
             ))}
             {streaming &&
               (lastAssistantStreaming ? (
-                <StreamBubble reasoning={streamReasoning} text={streamText} />
+                <StreamBubble reasoning={streamReasoning} text={streamText} showThinking={showThinking} />
               ) : (
                 <TypingBubble status={status} />
               ))}
@@ -816,7 +854,7 @@ interface MessageActions {
   onShare: (m: ChatMessage) => void;
 }
 
-function MessageBubble({ message, isLast, ...actions }: MessageActions & { message: ChatMessage; isLast: boolean }) {
+function MessageBubble({ message, isLast, showThinking, ...actions }: MessageActions & { message: ChatMessage; isLast: boolean; showThinking?: boolean }) {
   const isUser = message.role === 'user';
   const holdTimer = useRef<number | null>(null);
   const firedRef = useRef(false);
@@ -872,7 +910,7 @@ function MessageBubble({ message, isLast, ...actions }: MessageActions & { messa
             : 'bubble-ai rounded-bl-lg'
         }`}
       >
-        {message.reasoning && <ThinkingBlock text={message.reasoning} />}
+        {message.reasoning && showThinking !== false && <ThinkingBlock text={message.reasoning} />}
         {message.tool && <ToolBadge tool={message.tool} />}
         {isUser ? (
           <UserMessageContent content={message.content} />
@@ -952,7 +990,7 @@ function BubbleAction({ label, onClick, children }: { label: string; onClick: ()
   );
 }
 
-function StreamBubble({ reasoning, text }: { reasoning: string; text: string }) {
+function StreamBubble({ reasoning, text, showThinking }: { reasoning: string; text: string; showThinking?: boolean }) {
   return (
     <motion.div
       className="mb-2.5 flex items-end gap-2"
@@ -961,7 +999,7 @@ function StreamBubble({ reasoning, text }: { reasoning: string; text: string }) 
       transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.9 }}
     >
       <div className="message-card bubble-ai rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed">
-        {reasoning && <ThinkingBlock text={reasoning} />}
+        {reasoning && showThinking !== false && <ThinkingBlock text={reasoning} />}
         <div className="markdown-body">
           <ChatMarkdown text={text} />
           <span className="caret-blink" aria-hidden="true" />
@@ -1192,18 +1230,18 @@ function SettingsSheet({
             <div className="px-4 py-3.5">
               <label className="field-label flex items-center justify-between">
                 <span>Max tokens</span>
-                <span className="font-mono text-light">{prefs.maxTokens ?? 4096}</span>
+                <span className="font-mono text-light">{prefs.maxTokens ?? 8192}</span>
               </label>
               <input
                 type="number"
                 min={1}
-                max={8192}
+                max={32768}
                 step={128}
-                value={prefs.maxTokens ?? 4096}
+                value={prefs.maxTokens ?? 8192}
                 onChange={(e) => onChange({ maxTokens: clampTokens(Number(e.target.value)) })}
                 className="field"
               />
-              <p className="mt-0.5 text-[10px] text-muted">Response budget; 1 se 8192 tokens tak.</p>
+              <p className="mt-0.5 text-[10px] text-muted">Response budget; 1 se 32768 tokens tak.</p>
             </div>
             <div className="px-4 py-3.5">
               <label className="field-label">Thinking / reasoning</label>
@@ -1323,6 +1361,7 @@ function globalChatPrefs(): ChatPreferences {
     systemPrompt: global.systemPrompt,
     userPersona: global.userPersona,
     includeContext: global.includeJourneyContext,
+    ...(global.thinking ? { thinking: global.thinking } : {}),
   };
 }
 
@@ -1608,46 +1647,36 @@ function MessageMenu({
 
 async function readAttachment(file: File): Promise<DraftAttachment> {
   const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-  const isText = file.type.startsWith('text/') || TEXT_EXTENSIONS.has(extension);
 
-  if (file.type === 'application/pdf' || extension === 'pdf') {
-    try {
-      const raw = await extractPdfText(file);
-      const content = raw
-        ? `--- Extracted text from PDF: ${file.name} (${file.type}, ${formatBytes(file.size)}) ---\n\n${raw}`
-        : '';
-      return {
-        id: uid('att'),
-        name: file.name,
-        type: file.type || 'application/pdf',
-        size: file.size,
-        kind: content ? 'text' : 'binary',
-        content: content || undefined,
-      };
-    } catch {
-      return { id: uid('att'), name: file.name, type: file.type || 'application/pdf', size: file.size, kind: 'binary' };
-    }
-  }
-
-  if (isText) {
-    try {
-      const raw = await file.text();
-      const truncated = raw.length > MAX_TEXT_ATTACHMENT_CHARS;
-      return {
-        id: uid('att'),
-        name: file.name,
-        type: file.type || extension || 'text',
-        size: file.size,
-        kind: 'text',
-        content: truncated ? `${raw.slice(0, MAX_TEXT_ATTACHMENT_CHARS)}\n\n[Attachment truncated after ${MAX_TEXT_ATTACHMENT_CHARS} characters]` : raw,
-      };
-    } catch {
-      return { id: uid('att'), name: file.name, type: file.type || extension || 'text', size: file.size, kind: 'binary' };
-    }
-  }
   if (file.type.startsWith('image/')) {
     return { id: uid('att'), name: file.name, type: file.type, size: file.size, kind: 'image', previewUrl: URL.createObjectURL(file) };
   }
+
+  const isPdf = file.type === 'application/pdf' || extension === 'pdf';
+  const isOffice = extension === 'docx' || extension === 'pptx' || extension === 'xlsx';
+
+  // PDFs and Office files go straight to the model as a raw file when the
+  // model accepts them; client-side text extraction only kicks in as a
+  // fallback if that direct send fails.
+  if (isPdf || isOffice) {
+    return { id: uid('att'), name: file.name, type: file.type || extension || 'file', size: file.size, kind: 'file', previewUrl: URL.createObjectURL(file) };
+  }
+
+  const raw = await extractFileText(file);
+  if (raw) {
+    const sourceNote = isPdf ? `--- Extracted text from PDF: ${file.name} (${file.type || 'application/pdf'}, ${formatBytes(file.size)}) ---\n\n` : '';
+    const truncated = raw.length > MAX_TEXT_ATTACHMENT_CHARS;
+    const body = truncated ? `${raw.slice(0, MAX_TEXT_ATTACHMENT_CHARS)}\n\n[Attachment truncated after ${MAX_TEXT_ATTACHMENT_CHARS} characters]` : raw;
+    return {
+      id: uid('att'),
+      name: file.name,
+      type: file.type || extension || 'text',
+      size: file.size,
+      kind: 'text',
+      content: `${sourceNote}${body}`,
+    };
+  }
+
   return { id: uid('att'), name: file.name, type: file.type || extension || 'binary', size: file.size, kind: 'binary' };
 }
 
@@ -1663,7 +1692,9 @@ function buildPromptWithAttachments(draft: string, attachments: DraftAttachment[
     const header = `Attachment ${idx + 1}: ${a.name} (${a.type || 'unknown'}, ${formatBytes(a.size)})`;
     if (a.kind === 'text') return `<attached_file>\n${header}\n\n${a.content ?? ''}\n</attached_file>`;
     if (a.kind === 'image') return `<attached_image>\n${header}\nUser ne ek image attach ki hai (preview UI mein visible hai). Agar tum image dekh sakte ho toh analyze karo; warna user ko text/OCR dekar likhne ko bolo.\n</attached_image>`;
-    return `<attached_file>\n${header}\nYeh file type in-browser extract nahi ho sakti. "System limitation" mat bolo — bas user se puchho ki content ko .txt/.md me export kare ya copy-paste kare.\n</attached_file>`;
+    if (a.kind === 'file')
+      return `<attached_file>\n${header}\nYeh file (${a.type || 'document'}) model ko direct bheji gayi hai. Agar file ka content tumhe mila ho toh use karo; agar na mile toh bolo ki text yahan visible nahi hai.\n</attached_file>`;
+    return `<attached_file>\n${header}\nYeh file type in-browser extract nahi ho sakti (scanned PDF, zip ya legacy binary). Bas honestly bolo ki content yahan visible nahi hai aur user se .txt/.md export ya copy-paste maango.\n</attached_file>`;
   });
   return [draft || 'In uploaded attachments ko analyze karo.', ...blocks].join('\n\n');
 }
@@ -1764,6 +1795,6 @@ function uid(prefix: string): string {
 }
 
 function clampTokens(value: number): number {
-  if (!Number.isFinite(value)) return 2048;
-  return Math.max(1, Math.min(Math.round(value), 8192));
+  if (!Number.isFinite(value)) return 8192;
+  return Math.max(1, Math.min(Math.round(value), 32768));
 }

@@ -114,6 +114,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         content: msg.content.map(part => {
           if (part.type === 'text') return { type: 'text', text: part.text };
           if (part.type === 'image') return { type: 'image_url', image_url: { url: part.image, alt: part.alt } };
+          if (part.type === 'file') return { type: 'file', file: { filename: part.file.filename, file_data: part.file.file_data } };
           return part;
         })
       };
@@ -165,6 +166,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         content: msg.content.map(part => {
           if (part.type === 'text') return { type: 'text', text: part.text };
           if (part.type === 'image') return { type: 'image_url', image_url: { url: part.image, alt: part.alt } };
+          if (part.type === 'file') return { type: 'file', file: { filename: part.file.filename, file_data: part.file.file_data } };
           return part;
         })
       };
