@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
+  Archive,
   Camera,
   Check,
   ChevronDown,
@@ -29,6 +30,7 @@ import {
   X,
 } from 'lucide-react';
 import type { ChatMessage, ChatPreferences, ChatSession } from '../core/domain/chat';
+import type { ArchivedConversation } from '../core/domain/chat-transcript';
 import type { ModelInfo, ThinkingLevel } from '../core/domain/llm';
 import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, defaultChatPrefs, globalChatPrefsFromSettings } from '../core/domain/chat';
 import { container } from '../di/container';
@@ -36,6 +38,7 @@ import { redoLastAiAction, undoLastAiAction } from '../core/domain/ai-actions';
 import ChatMarkdown from '../components/ChatMarkdown';
 import FileCard from '../components/FileCard';
 import AddProviderForm from '../components/AddProviderForm';
+import ReadOnlyChatViewer from '../components/ReadOnlyChatViewer';
 import { detectFileDoc, looksLikeMarkdown } from '../components/markdown-utils';
 import { haptic, hapticError, hapticSuccess } from '../lib/haptics';
 import { extractFileText } from '../lib/fileText';
@@ -103,6 +106,8 @@ export default function ChatScreen() {
   const [showAttach, setShowAttach] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showProviderPicker, setShowProviderPicker] = useState(false);
+  const [showMemoryChatId, setShowMemoryChatId] = useState<string | null>(null);
+  const [memoryChats, setMemoryChats] = useState<ArchivedConversation[]>([]);
   const [catalog, setCatalog] = useState<ModelInfo[]>([]);
   const [providerCount, setProviderCount] = useState(container.providerSettings.listStoredProviders().length);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -139,10 +144,17 @@ export default function ChatScreen() {
     container.chat.applyGlobalPrefs(globalChatPrefsFromSettings(container.store.get().aiSettings.chat));
     setSessions(container.chat.listSessions());
     // Persist any unread chats into memory as raw transcripts — cheap and
-    // safe to rerun (sessions already stored are skipped).
-    void container.chat.summarizePriorChats();
+    // safe to rerun (sessions already stored are skipped). Only the
+    // deterministic fallback; when AI is on the summarizer button owns this.
+    maybeAutoDumpChats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    // The session the user is actively chatting in stays internal to the AI —
+    // it is never included in the one-click memory summarization.
+    container.chat.setActiveSessionId(activeId);
+  }, [activeId]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -163,12 +175,12 @@ export default function ChatScreen() {
   }, [activeId]);
 
   useEffect(() => {
-    const open = showSettings || showAttach || showHistory || showProviderPicker || menu !== null;
+    const open = showSettings || showAttach || showHistory || showProviderPicker || menu !== null || showMemoryChatId !== null;
     document.body.style.overflow = open ? 'hidden' : '';
     return () => {
       document.body.style.overflow = '';
     };
-  }, [showSettings, showAttach, showHistory, showProviderPicker, menu]);
+  }, [showSettings, showAttach, showHistory, showProviderPicker, menu, showMemoryChatId]);
 
   useEffect(() => {
     if (!notice) return;
@@ -187,13 +199,36 @@ export default function ChatScreen() {
     setSessions(container.chat.listSessions());
   }
 
+  /**
+   * Archives every finished chat into AI memory as a structured, timestamped
+   * read-only transcript. Runs unconditionally — the AI summarizer condenses
+   * those same chats into durable blocks later (tracked by a separate marker),
+   * so the read-only archive never blocks it.
+   */
+  function maybeAutoDumpChats() {
+    void container.chat.summarizePriorChats();
+  }
+
+  /** Loads the memory archive and opens the chat history sheet. */
+  function openHistory() {
+    setMemoryChats(container.chat.listMemoryConversations());
+    setShowHistory(true);
+  }
+
+  /** Opens a memory-archived chat in the read-only viewer. */
+  function openMemoryChat(sessionId: string) {
+    haptic();
+    setShowHistory(false);
+    setShowMemoryChatId(sessionId);
+  }
+
   function ensureSession(): ChatSession {
     let s = active;
     if (!s) {
       s = container.chat.createSession('', globalChatPrefs());
       refresh();
       setActiveId(s.id);
-      void container.chat.summarizePriorChats();
+      maybeAutoDumpChats();
     }
     return s;
   }
@@ -208,7 +243,7 @@ export default function ChatScreen() {
     setAttachments([]);
     setError('');
     setShowHistory(false);
-    void container.chat.summarizePriorChats();
+    maybeAutoDumpChats();
     focusComposer();
   }
 
@@ -548,7 +583,7 @@ export default function ChatScreen() {
         </button>
         <button
           type="button"
-          onClick={() => setShowHistory(true)}
+          onClick={openHistory}
           className="flex h-full min-w-0 flex-1 items-center gap-2 px-1 text-left"
           aria-label="Open chat history"
         >
@@ -767,12 +802,18 @@ export default function ChatScreen() {
       {showHistory && (
         <HistorySheet
           sessions={sessions}
+          memory={memoryChats}
           activeId={activeId}
           onOpen={openSession}
           onNew={newChat}
           onDelete={removeSession}
+          onOpenMemory={openMemoryChat}
           onClose={() => setShowHistory(false)}
         />
+      )}
+
+      {showMemoryChatId !== null && (
+        <ReadOnlyChatViewer initialId={showMemoryChatId} onClose={() => setShowMemoryChatId(null)} />
       )}
 
       {showAttach && <AttachmentSheet onPick={attachTool} onClose={() => setShowAttach(false)} />}
@@ -1441,17 +1482,21 @@ function ProviderPickerSheet({
 
 function HistorySheet({
   sessions,
+  memory,
   activeId,
   onOpen,
   onNew,
   onDelete,
+  onOpenMemory,
   onClose,
 }: {
   sessions: ChatSession[];
+  memory: ArchivedConversation[];
   activeId: string | null;
   onOpen: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  onOpenMemory: (sessionId: string) => void;
   onClose: () => void;
 }) {
   return (
@@ -1465,7 +1510,9 @@ function HistorySheet({
           <MessageSquarePlus size={15} />
           Naya chat
         </button>
-        {sessions.length === 0 && <p className="px-1 py-4 text-center text-sm text-muted">Abhi koi chat nahi hai.</p>}
+        {sessions.length === 0 && memory.length === 0 && (
+          <p className="px-1 py-4 text-center text-sm text-muted">Abhi koi chat nahi hai.</p>
+        )}
         {sessions.map((s) => {
           const isActive = s.id === activeId;
           return (
@@ -1486,6 +1533,7 @@ function HistorySheet({
                 <span className="w-full truncate text-sm font-semibold text-text">{s.title || 'Naya chat'}</span>
                 <span className="text-[10px] text-muted">
                   {s.messages.length} messages · {timeAgo(s.updatedAt)}
+                  {s.aiSummarizedAt ? ' · memory me summarized' : ''}
                 </span>
               </button>
               <button
@@ -1502,6 +1550,34 @@ function HistorySheet({
             </div>
           );
         })}
+
+        {memory.length > 0 && (
+          <>
+            <p className="px-1 pt-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+              Memory se purani chats · read-only
+            </p>
+            {memory.map((c) => (
+              <button
+                key={c.sessionId}
+                type="button"
+                onClick={() => onOpenMemory(c.sessionId)}
+                className="flex w-full items-center gap-2 rounded-xl border border-border bg-panel px-3 py-2.5 text-left transition-colors hover:bg-panel-raised active:bg-panel-raised"
+              >
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-l/10 text-l">
+                  <Archive size={13} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-text">{c.title || 'Memory chat'}</span>
+                  <span className="block text-[10px] text-muted">
+                    {c.messages.length} messages · {timeAgo(c.updatedAt)} ·{' '}
+                    {c.source === 'ai-summary' ? 'AI summarized' : 'archived'}
+                  </span>
+                </span>
+                <ChevronRight size={14} className="shrink-0 text-muted" />
+              </button>
+            ))}
+          </>
+        )}
       </div>
     </Sheet>
   );

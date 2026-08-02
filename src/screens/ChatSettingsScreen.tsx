@@ -1,9 +1,12 @@
-import { Brain, ChevronLeft, MessageSquare, Save, Sparkles, Type } from 'lucide-react';
+import { useState } from 'react';
+import { Brain, ChevronLeft, Eye, MessageSquare, Save, Sparkles, Type } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ChatSettings } from '../core/domain/state';
 import type { ThinkingLevel } from '../core/domain/llm';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
+import MemorySummaryPanel from '../components/MemorySummaryPanel';
+import ReadOnlyChatViewer from '../components/ReadOnlyChatViewer';
 import { haptic } from '../lib/haptics';
 import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, globalChatPrefsFromSettings } from '../core/domain/chat';
 import { container } from '../di/container';
@@ -16,6 +19,7 @@ interface ChatSettingsScreenProps {
 
 export default function ChatSettingsScreen({ state, update, onBack }: ChatSettingsScreenProps) {
   const chat = state.aiSettings.chat;
+  const [showAdvancedView, setShowAdvancedView] = useState(false);
 
   function updateChat(partial: Partial<ChatSettings>) {
     haptic();
@@ -176,6 +180,53 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
         </div>
       </div>
 
+      {/* Memory Summary */}
+      <div className="mb-6">
+        <SectionHeader
+          icon={<Sparkles size={14} color="var(--color-l)" />}
+          accent="var(--color-l)"
+          title="Memory Summary"
+          meta="ek click mein sab"
+        />
+        <MemorySummaryPanel />
+      </div>
+
+      {/* Advanced */}
+      <div className="mb-6">
+        <SectionHeader
+          icon={<Eye size={14} color="var(--color-m)" />}
+          accent="var(--color-m)"
+          title="Advanced"
+        />
+        <div className="gradient-border rounded-[1.25rem] p-px">
+          <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-bg text-muted">
+                  <Eye size={16} />
+                </span>
+                <div>
+                  <p className="text-sm font-medium">Advanced view</p>
+                  <p className="text-xs text-muted">
+                    Active chats aur memory archive ki purani chats read-only dekho — timestamps ke saath, koi chat nahi kar sakte.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-ghost min-h-8 shrink-0 px-2.5 py-1 text-xs"
+                onClick={() => {
+                  haptic();
+                  setShowAdvancedView(true);
+                }}
+              >
+                View
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Chat Behavior */}
       <div className="mb-6">
         <SectionHeader
@@ -260,6 +311,8 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
           </div>
         </div>
       </div>
+
+      {showAdvancedView && <ReadOnlyChatViewer onClose={() => setShowAdvancedView(false)} />}
     </div>
   );
 }
