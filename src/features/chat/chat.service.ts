@@ -37,7 +37,7 @@ import type { MemoryEntry } from '../../core/domain/memory';
 import type { ChatToolsService } from './chat-tools.service';
 import type { MemoryToolsService } from './memory-tools.service';
 import { MEMORY_TOOL_INSTRUCTIONS } from '../../core/domain/memory-tools';
-import type { MemoryToolResult } from '../../core/domain/memory-tools';
+import type { MemoryToolResult, MemoryToolAction } from '../../core/domain/memory-tools';
 
 const HISTORY_FOR_PROMPT = 30;
 const MEMORY_FOR_PROMPT = 8;
