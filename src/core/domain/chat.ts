@@ -152,7 +152,10 @@ export function globalChatPrefsFromSettings(global: {
     systemPrompt: global.systemPrompt,
     userPersona: global.userPersona,
     includeContext: global.includeJourneyContext,
-    ...(global.thinking ? { thinking: global.thinking } : {}),
+    // Include thinking UNCONDITIONALLY — even when undefined — so that
+    // selecting "Provider default" explicitly clears the value on every
+    // session instead of leaving the previous selection sticky.
+    thinking: global.thinking,
   };
 }
 

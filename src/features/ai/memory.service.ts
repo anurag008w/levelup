@@ -75,11 +75,15 @@ export class MemoryService {
   summarize(store: MemoryStore): MemoryStore {
     const now = isoDate(this.clock.now());
     const entries = store.entries;
-    // Raw chat archives (source 'system' conversation entries) are user-visible
-    // read-only history — never roll them up, regardless of age/importance.
-    const isArchive = (e: MemoryEntry): boolean => e.type === 'conversation' && e.source === 'system';
+    // User-visible chat history must NEVER be rolled up, regardless of age or
+    // importance: raw transcript archives (source 'system' conversation
+    // entries) AND AI-condensed chat blocks (source 'ai' + 'ai-summary' tag).
+    // Rolling either up would silently erase the read-only chat archive shown
+    // in the memory panel.
+    const isArchive = (e: MemoryEntry): boolean =>
+      (e.type === 'conversation' && e.source === 'system') || e.context.tags.includes('ai-summary');
     const keepVerbatim = entries.filter((e) => isArchive(e) || e.importance >= IMPORTANCE_KEEP_VERBATIM || !isOld(e, now));
-    const condenseCandidates = entries.filter((e) => e.importance < IMPORTANCE_KEEP_VERBATIM && isOld(e, now));
+    const condenseCandidates = entries.filter((e) => !isArchive(e) && e.importance < IMPORTANCE_KEEP_VERBATIM && isOld(e, now));
 
     const byWeek = new Map<string, MemoryEntry[]>();
     for (const e of condenseCandidates) {

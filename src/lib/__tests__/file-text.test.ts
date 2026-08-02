@@ -180,6 +180,37 @@ describe('extractFileText', () => {
     expect(text).toContain('Rohit\t95');
   });
 
+  it('extracts inline (non-shared) string cells from .xlsx files', async () => {
+    // Inline strings live in <is><t>…</t></is> with NO <v> element — they
+    // were silently dropped before the <is> reader was added.
+    const file = await zipToFile(
+      {
+        'xl/worksheets/sheet1.xml':
+          '<worksheet><sheetData>' +
+          '<row r="1"><c r="A1" t="inlineStr"><is><t>Subject</t></is></c><c r="B1" t="inlineStr"><is><t>Score</t></is></c></row>' +
+          '<row r="2"><c r="A2" t="inlineStr"><is><t>Physics</t></is></c><c r="B2"><v>88</v></c></row>' +
+          '</sheetData></worksheet>',
+      },
+      'inline.xlsx',
+    );
+    const text = await extractFileText(file);
+    expect(text).toContain('Subject\tScore');
+    expect(text).toContain('Physics\t88');
+  });
+
+  it('caps extracted office text and marks the truncation', async () => {
+    const file = await zipToFile(
+      {
+        'ppt/slides/slide1.xml': `<a:p><a:r><a:t>${'A'.repeat(120_000)}</a:t></a:r></a:p>`,
+        '[Content_Types].xml': '<Types/>',
+      },
+      'huge.pptx',
+    );
+    const text = await extractFileText(file);
+    expect(text.length).toBeLessThanOrEqual(60_000 + 100);
+    expect(text).toContain('[Document truncated after 60000 characters]');
+  });
+
   it('falls back to the lightweight parser when pdfjs is unavailable', async () => {
     const pdf = buildPdf('BT /F1 24 Tf 72 700 Td (Fallback PDF text) Tj ET');
     const file = new File([new Uint8Array(pdf)], 'doc.pdf', { type: 'application/pdf' });

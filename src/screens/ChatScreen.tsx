@@ -29,7 +29,7 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import type { ChatMessage, ChatPreferences, ChatSession } from '../core/domain/chat';
+import type { ChatAttachment, ChatMessage, ChatPreferences, ChatSession } from '../core/domain/chat';
 import type { ArchivedConversation } from '../core/domain/chat-transcript';
 import type { ModelInfo, ThinkingLevel } from '../core/domain/llm';
 import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, defaultChatPrefs, globalChatPrefsFromSettings } from '../core/domain/chat';
@@ -42,6 +42,7 @@ import ReadOnlyChatViewer from '../components/ReadOnlyChatViewer';
 import { detectFileDoc, looksLikeMarkdown } from '../components/markdown-utils';
 import { haptic, hapticError, hapticSuccess } from '../lib/haptics';
 import { extractFileText } from '../lib/fileText';
+import { timeAgo } from '../lib/relative-time';
 import { splitReplyIntoBubbles } from '../features/chat/message-segments';
 
 interface DraftAttachment {
@@ -291,24 +292,30 @@ export default function ChatScreen() {
     setNotice('Chat settings reset ho gaye');
   }
 
-  /** Mirrors shared session settings back into the global chat settings. */
+  /** Mirrors shared session settings back into the global chat settings AND
+   *  re-propagates them to every other session. Without the applyGlobalPrefs
+   *  call the other sessions would silently keep their old values. */
   function syncGlobalChatSettings(prefs: ChatPreferences) {
     const s = container.store.get();
+    const chat = {
+      ...s.aiSettings.chat,
+      temperature: prefs.temperature,
+      maxTokens: prefs.maxTokens,
+      systemPrompt: prefs.systemPrompt,
+      userPersona: prefs.userPersona,
+      includeJourneyContext: prefs.includeContext,
+      // Keep `thinking` present even when provider-default, so the shared
+      // global can CLEAR sessions that had a custom level (not just set one).
+      ...(prefs.thinking ? { thinking: prefs.thinking } : { thinking: undefined }),
+    };
     container.store.save({
       ...s,
       aiSettings: {
         ...s.aiSettings,
-        chat: {
-          ...s.aiSettings.chat,
-          temperature: prefs.temperature,
-          maxTokens: prefs.maxTokens,
-          systemPrompt: prefs.systemPrompt,
-          userPersona: prefs.userPersona,
-          includeJourneyContext: prefs.includeContext,
-          ...(prefs.thinking ? { thinking: prefs.thinking } : { thinking: undefined }),
-        },
+        chat,
       },
     });
+    container.chat.applyGlobalPrefs(globalChatPrefsFromSettings(chat));
   }
 
   async function loadCatalog() {
@@ -354,14 +361,13 @@ export default function ChatScreen() {
     abortRef.current = controller;
 
     // Convert DraftAttachment to ChatAttachment for LLM
-    const chatAttachments: { id: string; name: string; kind: 'text' | 'image' | 'file' | 'binary'; previewUrl?: string; content?: string }[] = 
-      pendingAttachments.map(a => ({
-        id: a.id,
-        name: a.name,
-        kind: a.kind,
-        previewUrl: a.previewUrl,
-        content: a.content,
-      }));
+    const chatAttachments: ChatAttachment[] = pendingAttachments.map((a) => ({
+      id: a.id,
+      name: a.name,
+      kind: a.kind,
+      previewUrl: a.previewUrl,
+      content: a.content,
+    }));
 
     // Collect the whole reply first — nothing is shown while it streams, and no
     // thinking/typing indicator starts early (even during tool calls). Only
@@ -1323,7 +1329,14 @@ function SettingsSheet({
                 max={32768}
                 step={128}
                 value={prefs.maxTokens ?? 8192}
-                onChange={(e) => onChange({ maxTokens: clampTokens(Number(e.target.value)) })}
+                onChange={(e) => {
+                  // An empty field parses as Number('') === 0 and would snap
+                  // the value to the 1-token floor while the user is typing.
+                  // Let the field stay empty instead of fighting the input.
+                  const raw = e.target.value;
+                  if (raw === '') return;
+                  onChange({ maxTokens: clampTokens(Number(raw)) });
+                }}
                 className="field"
               />
               <p className="mt-0.5 text-[10px] text-muted">Response budget; 1 se 32768 tokens tak.</p>
@@ -1784,7 +1797,9 @@ async function readAttachment(file: File): Promise<DraftAttachment> {
 
   const raw = await extractFileText(file);
   if (raw) {
-    const sourceNote = isPdf ? `--- Extracted text from PDF: ${file.name} (${file.type || 'application/pdf'}, ${formatBytes(file.size)}) ---\n\n` : '';
+    // Note: PDFs and Office files never reach this branch — they are sent to
+    // the model as raw files and only fall back to text extraction on failure
+    // (inside ChatService.applyFileFallback).
     const truncated = raw.length > MAX_TEXT_ATTACHMENT_CHARS;
     const body = truncated ? `${raw.slice(0, MAX_TEXT_ATTACHMENT_CHARS)}\n\n[Attachment truncated after ${MAX_TEXT_ATTACHMENT_CHARS} characters]` : raw;
     return {
@@ -1793,7 +1808,7 @@ async function readAttachment(file: File): Promise<DraftAttachment> {
       type: file.type || extension || 'text',
       size: file.size,
       kind: 'text',
-      content: `${sourceNote}${body}`,
+      content: body,
     };
   }
 
@@ -1896,17 +1911,6 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return 'abhi';
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
 }
 
 function uid(prefix: string): string {

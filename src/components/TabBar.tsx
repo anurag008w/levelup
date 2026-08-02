@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Brain, CalendarCheck, Check, ChevronRight, Download, LayoutList, LineChart, ListTodo, Menu, MessageCircle, NotebookPen, PenLine, Pin, PinOff, Settings, Trash2, Upload, User, X } from 'lucide-react';
 import type { AppState, UserProfile } from '../types';
@@ -127,26 +127,35 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
   }
 
   const profile = state.userProfile;
-  const allMemory = [...state.memory.summaries, ...state.memory.entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const longTermMemory = allMemory.filter((e) => e.longTerm === true).slice(0, 12);
-  // Group the rest into blocks (one per chat transcript) plus loose entries.
-  const blocks = new Map<string, MemoryEntry[]>();
-  const loose: MemoryEntry[] = [];
-  for (const entry of allMemory) {
-    if (longTermMemory.some((e) => e.id === entry.id)) continue;
-    if (entry.blockId) {
-      const list = blocks.get(entry.blockId) ?? [];
-      list.push(entry);
-      blocks.set(entry.blockId, list);
-    } else {
-      loose.push(entry);
+  // Memoized memory grouping so re-renders (typing, sidebar state) don't
+  // re-sort/re-clone the whole memory list on every frame.
+  const { longTermMemory, blockGroups, memoryItems } = useMemo(() => {
+    const allMemory = [...state.memory.summaries, ...state.memory.entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    // Long-term membership is decided on the FULL set — slicing for display
+    // must not drop pinned entries into the archive/loose groups below.
+    const longTermAll = allMemory.filter((e) => e.longTerm === true);
+    const longTermMemory = longTermAll.slice(0, 12);
+    const longTermIds = new Set(longTermAll.map((e) => e.id));
+    // Group the rest into blocks (one per chat transcript) plus loose entries.
+    const blocks = new Map<string, MemoryEntry[]>();
+    const loose: MemoryEntry[] = [];
+    for (const entry of allMemory) {
+      if (longTermIds.has(entry.id)) continue;
+      if (entry.blockId) {
+        const list = blocks.get(entry.blockId) ?? [];
+        list.push(entry);
+        blocks.set(entry.blockId, list);
+      } else {
+        loose.push(entry);
+      }
     }
-  }
-  const blockGroups = [...blocks.values()]
-    .map((entries) => ({ entries: entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), updatedAt: entries[0]?.createdAt ?? '' }))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .slice(0, 12);
-  const memoryItems = loose.slice(0, 12);
+    const blockGroups = [...blocks.values()]
+      .map((entries) => ({ entries: entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), updatedAt: entries[0]?.createdAt ?? '' }))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, 12);
+    const memoryItems = loose.slice(0, 12);
+    return { longTermMemory, blockGroups, memoryItems };
+  }, [state.memory.entries, state.memory.summaries]);
 
   function updateProfile(field: keyof UserProfile, value: string) {
     update((s) => ({
@@ -162,6 +171,11 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
     haptic();
     setEditingMemoryId(entry.id);
     setEditDraft(entry.content);
+  }
+
+  function cancelEditMemory() {
+    setEditingMemoryId(null);
+    setEditDraft('');
   }
 
   function saveEditMemory(id: string) {
@@ -378,7 +392,7 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
                           onEdit={() => startEditMemory(entry)}
                           onDraft={setEditDraft}
                           onSave={() => saveEditMemory(entry.id)}
-                          onCancel={() => { setEditingMemoryId(null); setEditDraft(''); }}
+                          onCancel={cancelEditMemory}
                           onDelete={() => deleteMemory(entry.id)}
                           onTogglePin={() => toggleLongTerm(entry)}
                         />
@@ -406,7 +420,7 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
                               onEdit={() => startEditMemory(entry)}
                               onDraft={setEditDraft}
                               onSave={() => saveEditMemory(entry.id)}
-                              onCancel={() => { setEditingMemoryId(null); setEditDraft(''); }}
+                              onCancel={cancelEditMemory}
                               onDelete={() => deleteMemory(entry.id)}
                               onTogglePin={() => toggleLongTerm(entry)}
                             />
@@ -427,7 +441,7 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
                           onEdit={() => startEditMemory(entry)}
                           onDraft={setEditDraft}
                           onSave={() => saveEditMemory(entry.id)}
-                          onCancel={() => { setEditingMemoryId(null); setEditDraft(''); }}
+                          onCancel={cancelEditMemory}
                           onDelete={() => deleteMemory(entry.id)}
                           onTogglePin={() => toggleLongTerm(entry)}
                         />

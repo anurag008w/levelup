@@ -256,6 +256,29 @@ describe('GeminiProvider', () => {
     expect(parts[1].fileData).toBeUndefined();
   });
 
+  it('uses the image part MIME type from its data URL instead of assuming JPEG', async () => {
+    let captured: HttpRequestInit | null = null;
+    const http = fakeHttp((init) => {
+      captured = init;
+      return { candidates: [{ content: { parts: [{ text: 'ok' }] } }] };
+    });
+    const provider = new GeminiProvider({ id: 'gemini', label: 'Gemini', apiKey: 'gk', model: 'gemini-2.5-flash', enabled: true }, http);
+    await provider.complete({
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'what is in this image?' },
+            { type: 'image', image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==' },
+          ],
+        },
+      ],
+    });
+    const body = captured!.body as { contents: Array<{ parts: Array<{ inlineData?: { mimeType: string; data: string } }> }> };
+    const parts = body.contents[0].parts;
+    expect(parts[1].inlineData).toEqual({ mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUg==' });
+  });
+
   it('merges adjacent same-role contents for Gemini tool-loop requests', async () => {
     let captured: HttpRequestInit | null = null;
     const http = fakeHttp((init) => {

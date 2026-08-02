@@ -112,11 +112,13 @@ export class MemoryToolsService {
         const exists = all.some((e) => e.id === action.id);
         if (!exists) return { result: { ok: false, summary: `Memory entry not found: ${action.id}` } };
         if (action.confirmed !== true) {
+          const entry = all.find((e) => e.id === action.id);
+          const label = entry ? (entry.content.length > 90 ? `${entry.content.slice(0, 89)}…` : entry.content) : action.id;
           return {
             result: {
               ok: false,
               requiresConfirmation: true,
-              summary: `Preview — confirm deletion of memory entry ${action.id}. Reply with the same action and "confirmed":true.`,
+              summary: `⚠️ Ye memory entry delete kar doon?\n"${label}"\n\nHaan bolo toh main delete kar dungi.`,
             },
           };
         }

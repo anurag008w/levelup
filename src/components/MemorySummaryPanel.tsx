@@ -56,7 +56,8 @@ export default function MemorySummaryPanel() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-      setShowRetryPicker(false);
+      // Keep the retry picker OPEN so a failed "retry with another model" run
+      // doesn't close the picker and force the user to re-open it.
     } finally {
       setRunning(false);
       setStatus('');
@@ -75,10 +76,18 @@ export default function MemorySummaryPanel() {
 
   function openRetryPicker() {
     haptic();
-    setRetryProviderId(providers[0]?.id ?? '');
-    setRetryModel('');
-    setCatalog([]);
-    setShowRetryPicker((v) => !v);
+    setShowRetryPicker((v) => {
+      const opening = !v;
+      if (opening) {
+        // Only reset + prime the picker when opening; closing leaves state
+        // alone so a failed run doesn't wipe the user's selection.
+        setRetryProviderId(providers[0]?.id ?? '');
+        setRetryModel('');
+        setCatalog([]);
+        if (providers[0]?.id) void loadCatalog(providers[0].id);
+      }
+      return opening;
+    });
   }
 
   return (
@@ -138,10 +147,10 @@ export default function MemorySummaryPanel() {
             {error}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <button type="button" className="btn min-h-8 px-2.5 py-1 text-[11px]" onClick={() => void run()}>
+            <button type="button" className="btn min-h-8 px-2.5 py-1 text-[11px]" onClick={() => void run()} disabled={running}>
               <RefreshCw size={12} /> Retry now
             </button>
-            <button type="button" className="btn btn-ghost min-h-8 px-2.5 py-1 text-[11px]" onClick={openRetryPicker}>
+            <button type="button" className="btn btn-ghost min-h-8 px-2.5 py-1 text-[11px]" onClick={openRetryPicker} disabled={running}>
               <ChevronDown size={12} /> Retry with another model
             </button>
           </div>

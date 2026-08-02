@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Archive, ArrowLeft, Eye, MessageSquareText, X } from 'lucide-react';
 import type { ChatMessage } from '../core/domain/chat';
 import { container } from '../di/container';
 import { haptic } from '../lib/haptics';
+import { timeAgo } from '../lib/relative-time';
 import ChatMarkdown from './ChatMarkdown';
 
 interface ReadItem {
@@ -30,11 +31,49 @@ export default function ReadOnlyChatViewer({ onClose, initialId }: { onClose: ()
   const selected = items.find((i) => i.id === selectedId) ?? null;
   const activeCount = items.filter((i) => !i.readOnly).length;
   const archivedCount = items.length - activeCount;
+  const panelRef = useRef<HTMLElement>(null);
+
+  // Modal keyboard behaviour: Escape closes, and focus moves into the dialog
+  // (trap stays inside so background app state is not reachable by Tab).
+  useEffect(() => {
+    const panel = panelRef.current;
+    const focusable = () =>
+      Array.from(
+        panel?.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])') ?? [],
+      ).filter((el) => el.offsetParent !== null || el === document.activeElement);
+    const first = focusable()[0] as HTMLElement | undefined;
+    first?.focus();
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const list = focusable();
+      if (list.length === 0) return;
+      const firstEl = list[0] as HTMLElement;
+      const lastEl = list[list.length - 1] as HTMLElement;
+      if (event.shiftKey && document.activeElement === firstEl) {
+        event.preventDefault();
+        lastEl.focus();
+      } else if (!event.shiftKey && document.activeElement === lastEl) {
+        event.preventDefault();
+        firstEl.focus();
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
 
   return (
     <div className="settings-modal-layer" role="dialog" aria-modal="true" aria-label="Advanced view">
       <button type="button" className="settings-modal-scrim" aria-label="Close advanced view" onClick={onClose} />
       <motion.section
+        ref={panelRef}
+        tabIndex={-1}
         className="settings-modal"
         initial={{ opacity: 0, y: 18, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -188,15 +227,4 @@ function buildItems(): ReadItem[] {
 function resolveInitial(items: ReadItem[], initialId?: string | null): string | null {
   if (!initialId) return null;
   return items.find((i) => i.sessionId === initialId)?.id ?? null;
-}
-
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return 'abhi';
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
 }
