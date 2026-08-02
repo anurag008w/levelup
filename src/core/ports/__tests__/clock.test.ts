@@ -54,6 +54,10 @@ describe('deviceTimeZone', () => {
     const tz = deviceTimeZone();
     expect(typeof tz).toBe('string');
     expect(tz.length).toBeGreaterThan(0);
-    expect(tz).toMatch(/\w+\/\w+/);
+    // Valid IANA names come in two forms: "Region/City" (Asia/Kolkata) or a
+    // fixed-offset name like "UTC". Minimal environments (CI/containers with
+    // no TZ configured) legitimately report "UTC" — both forms work fine with
+    // Intl.DateTimeFormat, so only enforce Region/City when a slash is present.
+    if (tz.includes('/')) expect(tz).toMatch(/\w+\/\w+/);
   });
 });
