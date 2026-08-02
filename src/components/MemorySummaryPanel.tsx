@@ -32,6 +32,18 @@ export default function MemorySummaryPanel() {
     setNotice('');
     setStatus('');
     try {
+      // No provider configured — fall back to the deterministic raw-archive
+      // dump so memory still grows without any AI call.
+      if (!container.llm.isAvailable()) {
+        const pending = container.chat.pendingRawDumps();
+        if (pending === 0) {
+          setNotice('Koi nayi chat memory me save hone ko baaqi nahi hai.');
+        } else {
+          const done = await container.chat.summarizePriorChats();
+          setNotice(done > 0 ? `${done} chat ka raw transcript memory me save ho gaya.` : 'Koi nayi chat nahi mili.');
+        }
+        return;
+      }
       const res = await container.chat.summarizeAllMemoryWithAi({
         providerId,
         model,
@@ -84,7 +96,7 @@ export default function MemorySummaryPanel() {
       </div>
       <p className="mb-3 text-[11px] leading-relaxed text-muted">
         AI ek hi baar mein saari unread chats padhega, purani 7-din ki memory ko continuity ke liye dekhega,
-        aur chhote-chhote blocks (max 4 lines, '----' se alag) mein condense karega. Jo chat abhi kholi hai woh
+        aur chhote-chhote blocks (max 8 lines, '----' se alag) mein condense karega. Jo chat abhi kholi hai woh
         internal rehti hai — summarize nahi hoti. Ek baar ho jaye toh wahi chat dobara kabhi nahi padhi jaati.
       </p>
 

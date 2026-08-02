@@ -48,7 +48,14 @@ export async function extractPdfTextFallback(data: Uint8Array): Promise<string> 
 }
 
 function parseObjects(data: Uint8Array): Map<number, PdfObject> {
-  const text = new TextDecoder('latin1').decode(data);
+  // NOTE: TextDecoder('latin1') actually resolves to windows-1252 per the
+  // WHATWG encoding spec, which remaps the C1 bytes 0x80-0x9F (e.g. 0x9C →
+  // U+0153) and corrupts binary streams. Build a byte-preserving string
+  // instead so binary content survives the object scan untouched.
+  let text = '';
+  for (let i = 0; i < data.length; i += 0x8000) {
+    text += String.fromCharCode(...data.subarray(i, i + 0x8000));
+  }
   const objects = new Map<number, PdfObject>();
   const re = /(\d+)\s+0\s+obj([\s\S]*?)endobj/g;
   let m: RegExpExecArray | null;

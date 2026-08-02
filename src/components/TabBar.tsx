@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Brain, CalendarCheck, Check, ChevronRight, LayoutList, LineChart, ListTodo, Menu, MessageCircle, NotebookPen, PenLine, Pin, PinOff, Settings, Sparkles, Trash2, User, X } from 'lucide-react';
+import { Brain, CalendarCheck, Check, ChevronRight, Download, LayoutList, LineChart, ListTodo, Menu, MessageCircle, NotebookPen, PenLine, Pin, PinOff, Settings, Trash2, Upload, User, X } from 'lucide-react';
 import type { AppState, UserProfile } from '../types';
 import type { MemoryEntry } from '../core/domain/memory';
 import { container } from '../di/container';
 import { haptic } from '../lib/haptics';
+import MemorySummaryPanel from './MemorySummaryPanel';
 
 export type Tab = 'today' | 'levels' | 'progress' | 'review' | 'task-bank' | 'ai' | 'chat';
 
@@ -14,7 +15,7 @@ const TABS: { id: Tab; label: string; hint: string; icon: typeof CalendarCheck }
   { id: 'progress', label: 'Progress', hint: 'Analytics', icon: LineChart },
   { id: 'review', label: 'Review', hint: 'Reflect', icon: NotebookPen },
   { id: 'task-bank', label: 'Tasks', hint: 'Bank', icon: ListTodo },
-  { id: 'chat', label: 'AI Coach', hint: 'Doubts & maths', icon: MessageCircle },
+  { id: 'chat', label: 'Misa', hint: 'Doubts & maths', icon: MessageCircle },
   { id: 'ai', label: 'Settings', hint: 'App & AI', icon: Settings },
 ];
 
@@ -35,9 +36,8 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
   const [settingsPanel, setSettingsPanel] = useState<'profile' | 'memory' | null>(null);
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
-  const [memoryNotice, setMemoryNotice] = useState<string>('');
-  const [saving, setSaving] = useState(false);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -185,42 +185,33 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
     update((s) => container.memory.setLongTerm(s, [entry.id], !entry.longTerm));
   }
 
-  /** Condenses every unread chat into memory — AI when available, raw archive otherwise. */
-  async function summarizeNow() {
-    if (saving) return;
+  function exportMemoryBackup() {
     haptic();
-    setSaving(true);
-    try {
-      if (container.llm.isAvailable()) {
-        const pending = container.chat.pendingSummaries();
-        if (pending === 0) {
-          setMemoryNotice('Koi nayi chat memory me save hone ko baaqi nahi hai.');
-          window.setTimeout(() => setMemoryNotice(''), 2600);
-          return;
-        }
-        setMemoryNotice(`Abhi ${pending} chat(s) padh ke summarize ho rahe hain…`);
-        const res = await container.chat.summarizeAllMemoryWithAi({ onStatus: (s) => setMemoryNotice(s) });
-        setMemoryNotice(
-          res.count > 0
-            ? `${res.count} chat summarize ho gaya — ${res.blocks} blocks memory me (${res.pinned} long-term).`
-            : 'Koi nayi chat nahi mili.',
-        );
-      } else {
-        const pending = container.chat.pendingRawDumps();
-        if (pending === 0) {
-          setMemoryNotice('Koi nayi chat memory me save hone ko baaqi nahi hai.');
-          window.setTimeout(() => setMemoryNotice(''), 2600);
-          return;
-        }
-        const done = await container.chat.summarizePriorChats();
-        setMemoryNotice(done > 0 ? `${done} chat ka raw transcript memory me save ho gaya.` : 'Koi nayi chat nahi mili.');
+    const json = container.memory.exportMemory(state);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `levelup-memory-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importMemoryBackup(file: File | null) {
+    if (!file) return;
+    haptic();
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const json = String(reader.result ?? '');
+        update((s) => container.memory.importMemory(s, json));
+        setSettingsPanel('memory');
+      } catch {
+        alert('Import fail — file ek valid JSON memory backup nahi hai.');
       }
-    } catch (err) {
-      setMemoryNotice(`Summarize karte waqt error aaya — ${err instanceof Error ? err.message : 'dobara try karo.'}`);
-    } finally {
-      setSaving(false);
-      window.setTimeout(() => setMemoryNotice(''), 4200);
-    }
+    };
+    reader.onerror = () => alert('File padhna fail ho gaya.');
+    reader.readAsText(file);
   }
 
   return (
@@ -338,7 +329,7 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
                       value={profile.notes}
                       onChange={(e) => updateProfile('notes', e.target.value)}
                       className="field min-h-28 resize-none text-sm"
-                      placeholder="Anything Divya should remember while coaching."
+                      placeholder="Anything Misa should remember while studying."
                     />
                   </label>
                 </div>
@@ -353,17 +344,27 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
                   Purani chats yahan memory me archive hoti hain (read-only chat history). Ek click se saari unread
                   chats AI se ek saath condense ho jaati hain — blocks edit, delete ya pin kar sakte ho.
                 </p>
-                <button
-                  type="button"
-                  className="btn mb-3 w-full justify-center text-xs"
-                  onClick={summarizeNow}
-                  disabled={saving}
-                >
-                  <Sparkles size={14} /> {saving ? 'Summarize ho raha hai…' : 'Poori memory ek saath summarize karo'}
-                </button>
-                {memoryNotice && (
-                  <p className="mb-2 rounded-lg border border-border bg-panel-raised px-3 py-2 text-[11px] text-text">{memoryNotice}</p>
-                )}
+                <div className="mb-3">
+                  <MemorySummaryPanel />
+                </div>
+                <div className="mb-3 grid grid-cols-2 gap-2">
+                  <button type="button" className="btn btn-ghost justify-center text-[11px]" onClick={exportMemoryBackup}>
+                    <Download size={12} /> Backup export
+                  </button>
+                  <button type="button" className="btn btn-ghost justify-center text-[11px]" onClick={() => importInputRef.current?.click()}>
+                    <Upload size={12} /> Backup import
+                  </button>
+                  <input
+                    ref={importInputRef}
+                    type="file"
+                    accept=".json,application/json"
+                    className="hidden"
+                    onChange={(e) => {
+                      importMemoryBackup(e.target.files?.[0] ?? null);
+                      e.target.value = '';
+                    }}
+                  />
+                </div>
                 <div className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
                   {longTermMemory.length > 0 && (
                     <>

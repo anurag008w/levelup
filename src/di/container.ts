@@ -1,7 +1,7 @@
 import { LEVELS, TOTAL_DAYS } from '../data/curriculum';
 import { DEFAULT_PROGRESSION_CONFIG } from '../core/domain/progress';
 import type { StateRepository, StateStore } from '../core/ports/repositories';
-import { SystemClock, type Clock, todayISO } from '../core/ports/clock';
+import { deviceTimeZone, SystemClock, type Clock, todayISO } from '../core/ports/clock';
 import { BrowserStorage, persistentStore } from '../infra/storage/local-storage';
 import { CachedStateStore, LocalStateRepository } from '../infra/storage/state-repository';
 import { FetchHttpClient, type HttpClient } from '../infra/ai/http';
@@ -90,10 +90,10 @@ export function createContainer(): AppContainer {
     providerSettings,
     () => {
       const state = store.get();
-      const dateISO = todayISO(clock);
+      const timeZone = state.timeZone ?? deviceTimeZone();
+      const dateISO = todayISO(clock, timeZone);
       const now = clock.now();
-      const timeLabel = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-      const timeZone = (Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'local').replace(/_/g, ' ');
+      const timeLabel = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone });
       const plan = planner.buildPlan(state, dateISO, DEFAULT_PROGRESSION_CONFIG);
       const context = planner.buildContext(state, dateISO, DEFAULT_PROGRESSION_CONFIG);
       const recentProgress = buildRecentProgress(state, dateISO, planner);
@@ -159,7 +159,9 @@ function formatUserProfileContext(profile: { name?: string; classLevel?: string;
   return items.join('; ');
 }
 export const container = createContainer();
-function buildRecentProgress(state: import('../core/domain/state').AppState, today: string, planner: HabitProgressionService): string[] {
+
+/** Exported for tests: compact journey-level stats used in the AI context. */
+export function buildRecentProgress(state: import('../core/domain/state').AppState, today: string, planner: HabitProgressionService): string[] {
   if (!state.startDateISO) return [];
   const todayDay = rawDayNumberForDate(today, state.startDateISO);
   const fromDay = Math.max(1, todayDay - 13);
@@ -176,21 +178,20 @@ const XP_PER_TASK = 10;
 const XP_PER_LEVEL = 250;
 
 /** Compact journey-level stats mirroring the Progress tab (XP, consistency, levels, habit tiers, achievements). */
-function buildJourneyOverview(state: import('../core/domain/state').AppState, today: string): string {
+export function buildJourneyOverview(state: import('../core/domain/state').AppState, today: string): string {
   if (!state.startDateISO) return 'mission not started';
-  const start = new Date(`${state.startDateISO}T00:00:00`);
-  const end = new Date(`${today}T00:00:00`);
+  // Iterate in pure UTC so day keys match the planner's UTC taskLogs keys
+  // (local-time iteration shifts every key by a day on non-UTC machines).
   let totalDone = 0;
   let activeDays = 0;
   let days = 0;
-  const d = new Date(start);
-  while (d.getTime() <= end.getTime()) {
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const done = Object.values(state.taskLogs[key] ?? {}).filter(Boolean).length;
+  let cursor = state.startDateISO;
+  while (cursor <= today) {
+    const done = Object.values(state.taskLogs[cursor] ?? {}).filter(Boolean).length;
     if (done > 0) activeDays += 1;
     totalDone += done;
     days += 1;
-    d.setDate(d.getDate() + 1);
+    cursor = isoAddDays(cursor, 1);
   }
   const xp = totalDone * XP_PER_TASK;
   const consistency = days > 0 ? Math.round((activeDays / days) * 100) : 0;

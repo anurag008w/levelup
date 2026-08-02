@@ -245,19 +245,21 @@ interface DayInfo {
 }
 
 function isoFor(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return d.toISOString().slice(0, 10);
 }
 
 function buildDayInfos(state: AppState, startISO: string, todayISO: string): DayInfo[] {
   const out: DayInfo[] = [];
-  const d = new Date(`${startISO}T00:00:00`);
-  const end = new Date(`${todayISO}T00:00:00`);
+  // Pure UTC iteration so `iso` keys match the planner's UTC taskLogs keys.
+  const d = new Date(`${startISO}T00:00:00Z`);
+  const end = new Date(`${todayISO}T00:00:00Z`);
   let offset = 1;
   while (d.getTime() <= end.getTime()) {
-    const log = state.taskLogs[isoFor(d)] ?? {};
+    const iso = isoFor(d);
+    const log = state.taskLogs[iso] ?? {};
     const done = Object.values(log).filter(Boolean).length;
-    out.push({ iso: isoFor(d), offset, done });
-    d.setDate(d.getDate() + 1);
+    out.push({ iso, offset, done });
+    d.setUTCDate(d.getUTCDate() + 1);
     offset += 1;
   }
   return out;
@@ -350,14 +352,14 @@ function WeeklyChart({ dayInfos }: { dayInfos: DayInfo[] }) {
 }
 
 function MonthlyChart({ dayInfos, today }: { dayInfos: DayInfo[]; today: string }) {
-  const todayDate = new Date(`${today}T00:00:00`);
-  const daysInMonth = new Date(todayDate.getFullYear(), todayDate.getMonth() + 1, 0).getDate();
+  const todayDate = new Date(`${today}T00:00:00Z`);
+  const daysInMonth = new Date(Date.UTC(todayDate.getUTCFullYear(), todayDate.getUTCMonth() + 1, 0)).getUTCDate();
   const maxDone = Math.max(1, ...dayInfos.map((d) => d.done));
   const cells: Array<{ day: number; done: number; isSunday: boolean }> = [];
   for (let i = 1; i <= daysInMonth; i++) {
-    const dd = new Date(todayDate.getFullYear(), todayDate.getMonth(), i);
+    const dd = new Date(Date.UTC(todayDate.getUTCFullYear(), todayDate.getUTCMonth(), i));
     const info = dayInfos.find((d) => d.iso === isoFor(dd));
-    cells.push({ day: i, done: info?.done ?? 0, isSunday: dd.getDay() === 0 });
+    cells.push({ day: i, done: info?.done ?? 0, isSunday: dd.getUTCDay() === 0 });
   }
 
   return (
@@ -391,8 +393,7 @@ function MonthlyChart({ dayInfos, today }: { dayInfos: DayInfo[]; today: string 
 }
 
 function monthLabel(iso: string): string {
-  const d = new Date(`${iso}T00:00:00`);
-  return d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 }
 
 function TierSection({ title, accent, icon, items }: { title: string; accent: string; icon: React.ReactNode; items: Array<{ habit: { id: string; name: string }; score: number | null; streak: number }> }) {

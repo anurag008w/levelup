@@ -11,6 +11,7 @@ import type { TaskBankService } from '../task-bank/task-bank.service';
 import type { TaskGenerationService } from '../ai/task-generation.service';
 import { isAbortError } from '../../core/domain/llm';
 import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from './plan-format';
+import { isoAddDays } from '../habit-engine/dates';
 
 const MIN_DAY = 1;
 const MAX_DAY = 90;
@@ -961,10 +962,17 @@ export class ChatToolsService {
     return this.planner.buildPlan(state, dateISO, this.config);
   }
 
+  /**
+   * Day → ISO date, computed in pure UTC — MUST match the planner's
+   * `rawDayNumberForDate` (also UTC). Mixing local-time parsing with
+   * `toISOString()` shifts every date by a day on non-UTC machines, which
+   * would write completion logs under the wrong calendar day.
+   */
   private dateForDay(state: AppState, day: number): string {
-    const start = new Date(`${state.startDateISO}T00:00:00`);
-    start.setDate(start.getDate() + day - 1);
-    return start.toISOString().slice(0, 10);
+    if (!state.startDateISO) {
+      throw new Error('Cannot map plan day to a date without a journey start date.');
+    }
+    return isoAddDays(state.startDateISO, day - 1);
   }
 }
 

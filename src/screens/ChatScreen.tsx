@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Archive,
@@ -42,6 +42,7 @@ import ReadOnlyChatViewer from '../components/ReadOnlyChatViewer';
 import { detectFileDoc, looksLikeMarkdown } from '../components/markdown-utils';
 import { haptic, hapticError, hapticSuccess } from '../lib/haptics';
 import { extractFileText } from '../lib/fileText';
+import { splitReplyIntoBubbles } from '../features/chat/message-segments';
 
 interface DraftAttachment {
   id: string;
@@ -94,11 +95,10 @@ export default function ChatScreen() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [streaming, setStreaming] = useState(false);
-  const [streamText, setStreamText] = useState('');
-  const [streamReasoning, setStreamReasoning] = useState('');
-  const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  /** Id of the freshly generated assistant message that should reveal bubble-by-bubble. */
+  const [revealId, setRevealId] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ sessionId: string; messageId: string; originalDraft: string } | null>(null);
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const [processing, setProcessing] = useState<string[]>([]);
@@ -123,9 +123,10 @@ export default function ChatScreen() {
   );
   const messages = active?.messages ?? [];
   const hasMessages = active !== null && messages.length > 0;
-  const lastAssistantStreaming = streaming && streamText.length > 0;
   const aiEnabled = container.providerSettings.isAiEnabled();
   const showThinking = container.store.get().aiSettings.chat.showThinking;
+  // Stable identity so the reveal effect never restarts from its callback.
+  const handleRevealDone = useCallback(() => setRevealId(null), []);
 
   const modelChip = useMemo(() => {
     const pid = active?.prefs.providerId ?? null;
@@ -159,7 +160,10 @@ export default function ChatScreen() {
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [active?.messages.length, streamText, streaming]);
+  }, [active?.messages.length, streaming]);
+
+  // If the screen unmounts mid-stream, the in-flight AbortController is
+  // cancelled by stop(); nothing paced is left behind.
 
   useEffect(() => {
     void loadCatalog();
@@ -346,9 +350,6 @@ export default function ChatScreen() {
     setDraft('');
     setAttachments([]);
     setStreaming(true);
-    setStreamText('');
-    setStreamReasoning('');
-    setStatus('');
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -362,22 +363,29 @@ export default function ChatScreen() {
         content: a.content,
       }));
 
+    // Collect the whole reply first — nothing is shown while it streams, and no
+    // thinking/typing indicator starts early (even during tool calls). Only
+    // when the full answer is ready do we reveal it: a fixed 3s thinking pause
+    // with dots, the first paragraph, then a random 3-8s thinking pause before
+    // each next paragraph — like a person sending short messages one at a time.
+    let lastAssistantId: string | null = null;
     const pending = container.chat.send(
       sessionId,
       text,
-      (delta) => setStreamText((prev) => prev + delta),
+      undefined, // onDelta — intentionally not shown live
       controller.signal,
-      (s) => setStatus(s),
-      (reasoning) => setStreamReasoning((prev) => prev + reasoning),
+      undefined, // onStatus — no premature thinking/typing during collection
+      undefined, // reasoning delta — collected and stored on the message
       chatAttachments,
     );
     // chat.send() pushes the user message synchronously before its first await,
     // so re-read sessions now — the user's own message appears immediately
-    // while the AI streams, instead of only after the reply completes.
+    // while the AI collects the reply, instead of only after it completes.
     refresh();
     try {
-      await pending;
+      const assistant = await pending;
       sent = true;
+      lastAssistantId = assistant.id;
     } catch (err) {
       setDraft(pendingDraft);
       setAttachments(pendingAttachments);
@@ -386,10 +394,10 @@ export default function ChatScreen() {
       if (sent) revokeAttachmentUrls(pendingAttachments);
       abortRef.current = null;
       setStreaming(false);
-      setStreamText('');
-      setStreamReasoning('');
-      setStatus('');
       refresh();
+      // Only the message we just generated gets the reveal effect; reopening
+      // an old chat must never replay it.
+      if (sent && lastAssistantId) setRevealId(lastAssistantId);
     }
   }
 
@@ -589,8 +597,7 @@ export default function ChatScreen() {
         >
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-l/10 text-l"><Sparkles size={16} /></span>
           <span className="min-w-0">
-            <span className="block truncate font-display text-[15px] font-bold leading-none">{active?.title || 'AI Coach'}</span>
-            <span className="mt-0.5 block truncate text-[10px] font-medium text-muted">ChatGPT-style maths, notes & files</span>
+            <span className="block truncate font-display text-[15px] font-bold leading-none">{active?.title || 'Misa'}</span>
           </span>
           <ChevronDown size={13} className="shrink-0 text-muted" />
         </button>
@@ -650,6 +657,8 @@ export default function ChatScreen() {
                 message={m}
                 isLast={i === windowedMessages.length - 1}
                 showThinking={showThinking}
+                reveal={m.id === revealId}
+                onRevealDone={handleRevealDone}
                 onMenu={openMenu}
                 onCopy={(msg) => void copyMessage(msg)}
                 onEdit={editMessage}
@@ -659,12 +668,6 @@ export default function ChatScreen() {
                 onShare={(msg) => shareMessage(msg)}
               />
             ))}
-            {streaming &&
-              (lastAssistantStreaming ? (
-                <StreamBubble reasoning={streamReasoning} text={streamText} showThinking={showThinking} />
-              ) : (
-                <TypingBubble status={status} />
-              ))}
           </div>
         )}
       </main>
@@ -751,9 +754,6 @@ export default function ChatScreen() {
             )}
           </div>
         </div>
-        <p className="pb-1 pt-1 text-center text-[9px] tracking-wide text-muted-dim">
-          AI Coach · LaTeX maths · files · 100% local
-        </p>
       </div>
 
       <input
@@ -853,8 +853,8 @@ function EmptyChat({ onPick }: { onPick: (prompt: string) => void }) {
       >
         <Sparkles size={30} color="var(--color-l)" />
       </span>
-      <h2 className="mt-5 font-display text-2xl font-bold tracking-tight">{greeting()}, I’m your AI Coach</h2>
-      <p className="mt-1 max-w-sm text-sm leading-relaxed text-muted">Ask doubts, solve JEE math with clean LaTeX, summarize notes, or turn files into revision material.</p>
+      <h2 className="mt-5 font-display text-2xl font-bold tracking-tight">{greeting()}! I’m Misa</h2>
+      <p className="mt-1 max-w-sm text-sm leading-relaxed text-muted">JEE doubts, maths & notes — sab yahan, tension mat lo.</p>
       <div className="no-scrollbar mt-6 flex w-full gap-2 overflow-x-auto pb-1">
         {SUGGESTIONS.map((s) => (
           <button
@@ -895,12 +895,82 @@ interface MessageActions {
   onShare: (m: ChatMessage) => void;
 }
 
-function MessageBubble({ message, isLast, showThinking, ...actions }: MessageActions & { message: ChatMessage; isLast: boolean; showThinking?: boolean }) {
+function MessageBubble({
+  message,
+  isLast,
+  showThinking,
+  reveal = false,
+  onRevealDone,
+  ...actions
+}: MessageActions & {
+  message: ChatMessage;
+  isLast: boolean;
+  showThinking?: boolean;
+  reveal?: boolean;
+  onRevealDone?: () => void;
+}) {
   const isUser = message.role === 'user';
   const holdTimer = useRef<number | null>(null);
   const firedRef = useRef(false);
   const doc = useMemo(() => (isUser ? null : detectFileDoc(message.content)), [isUser, message.content]);
   const [showPreview, setShowPreview] = useState(true);
+  // An AI reply is shown as several short bubbles, one per paragraph break.
+  const bubbleTexts = useMemo(() => (isUser ? [] : splitReplyIntoBubbles(message.content)), [isUser, message.content]);
+  // Fresh replies reveal their bubbles like a person sending short messages:
+  // a fixed 3s thinking pause with dots, the first paragraph, then a random
+  // 3-8s thinking pause before every next paragraph (no repeating pattern).
+  // Reopened chats skip this entirely.
+  const [revealed, setRevealed] = useState(0);
+  const [thinking, setThinking] = useState(() => reveal && bubbleTexts.length > 0);
+  const onRevealDoneRef = useRef(onRevealDone);
+  onRevealDoneRef.current = onRevealDone;
+  const msgRef = useRef<HTMLDivElement | null>(null);
+
+  // If a reply has no visible bubbles (e.g. the model replied with only
+  // whitespace), don't leave reveal stuck — finish it immediately.
+  useEffect(() => {
+    if (reveal && !isUser && bubbleTexts.length === 0) {
+      onRevealDoneRef.current?.();
+    }
+  }, [reveal, isUser, bubbleTexts.length]);
+
+  useEffect(() => {
+    if (!reveal || isUser || bubbleTexts.length === 0) return;
+    let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const wait = (ms: number, fn: () => void) => {
+      if (cancelled) return;
+      timers.push(setTimeout(fn, ms));
+    };
+    const showBubble = (i: number) => {
+      if (cancelled) return;
+      setThinking(false);
+      setRevealed(i + 1);
+      if (i + 1 >= bubbleTexts.length) {
+        onRevealDoneRef.current?.();
+        return;
+      }
+      // Thinking pause before the next paragraph: dots for a random 3-8s.
+      setThinking(true);
+      wait(3000 + Math.random() * 5000, () => showBubble(i + 1));
+    };
+    // After the reply is collected, Misa "thinks" for a fixed 3s before her
+    // first paragraph lands.
+    setThinking(true);
+    wait(3000, () => showBubble(0));
+    return () => {
+      cancelled = true;
+      for (const t of timers) clearTimeout(t);
+    };
+  }, [reveal, isUser, bubbleTexts.length]);
+
+  // Keep the freshly revealed message in view as its bubbles grow.
+  useEffect(() => {
+    if (!reveal) return;
+    msgRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [revealed, thinking, reveal]);
+
+  const visibleBubbleTexts = reveal ? bubbleTexts.slice(0, revealed) : bubbleTexts;
 
   function triggerMenu(clientX: number, clientY: number) {
     haptic(20);
@@ -909,6 +979,7 @@ function MessageBubble({ message, isLast, showThinking, ...actions }: MessageAct
 
   return (
     <motion.div
+      ref={msgRef}
       className={`mb-4 flex items-end gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}
       initial={{ opacity: 0, y: 12, scale: 0.99 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -944,20 +1015,32 @@ function MessageBubble({ message, isLast, showThinking, ...actions }: MessageAct
         }
       }}
     >
-      <div
-        className={`message-card relative rounded-3xl px-4 py-3 text-[13.5px] leading-relaxed ${
-          isUser
-            ? 'bubble-user rounded-br-lg'
-            : 'bubble-ai rounded-bl-lg'
-        }`}
-      >
-        {message.reasoning && showThinking !== false && <ThinkingBlock text={message.reasoning} />}
-        {message.tool && <ToolBadge tool={message.tool} />}
-        {isUser ? (
+      {isUser ? (
+        <div className="message-card relative rounded-3xl rounded-br-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-user">
           <UserMessageContent content={message.content} />
-        ) : (
-          <div className="markdown-body">
-            {doc && (
+          <div className="mt-2 flex items-center justify-end gap-0.5">
+            {message.stopped && <span className="rounded bg-black/20 px-1.5 py-0.5 text-[9px]">stopped</span>}
+            <BubbleAction label="Edit" onClick={() => actions.onEdit(message)}>
+              <PenLine size={13} />
+            </BubbleAction>
+            <BubbleAction label="Copy" onClick={() => actions.onCopy(message)}>
+              <Copy size={13} />
+            </BubbleAction>
+            <BubbleAction label="Delete" onClick={() => actions.onDelete(message)}>
+              <Trash2 size={13} />
+            </BubbleAction>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col items-start gap-1.5">
+          {(message.reasoning && showThinking !== false) || message.tool ? (
+            <div className="message-card relative rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-ai">
+              {message.reasoning && showThinking !== false && <ThinkingBlock text={message.reasoning} />}
+              {message.tool && <ToolBadge tool={message.tool} />}
+            </div>
+          ) : null}
+          {doc && (
+            <div className="message-card relative rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-ai">
               <FileCard
                 name={doc.name}
                 sizeLabel={doc.sizeLabel}
@@ -968,47 +1051,47 @@ function MessageBubble({ message, isLast, showThinking, ...actions }: MessageAct
                 }}
                 onDownload={() => actions.onDownload(message)}
               />
+            </div>
+          )}
+          {(!doc || showPreview) &&
+            visibleBubbleTexts.map((seg, i) => (
+              <div
+                key={i}
+                className="message-card relative rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-ai"
+              >
+                <div className="markdown-body">
+                  <ChatMarkdown text={seg} />
+                </div>
+              </div>
+            ))}
+          {reveal && thinking && (
+            <div className="bubble-ai flex items-center gap-2.5 rounded-2xl rounded-bl-md px-4 py-3">
+              <span className="typing-dots" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+            </div>
+          )}
+          <div className="mt-1.5 flex items-center gap-0.5 pl-1">
+            {message.stopped && (
+              <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[9px] text-muted">stopped</span>
             )}
-            {(!doc || showPreview) && <ChatMarkdown text={message.content} />}
+            <Check size={11} color="var(--color-success)" />
+            <BubbleAction label="Copy" onClick={() => actions.onCopy(message)}>
+              <Copy size={13} />
+            </BubbleAction>
+            {isLast && (
+              <BubbleAction label="Regenerate" onClick={actions.onRegenerate}>
+                <RefreshCw size={13} />
+              </BubbleAction>
+            )}
+            <BubbleAction label="Download .md" onClick={() => actions.onDownload(message)}>
+              <Download size={13} />
+            </BubbleAction>
           </div>
-        )}
-
-        <div className={`mt-2 flex items-center gap-0.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
-          {message.stopped && (
-            <span className={`rounded px-1.5 py-0.5 text-[9px] ${isUser ? 'bg-black/20' : 'bg-surface-3 text-muted'}`}>
-              stopped
-            </span>
-          )}
-          {message.role === 'assistant' && <Check size={11} color="var(--color-success)" />}
-          {isUser ? (
-            <>
-              <BubbleAction label="Edit" onClick={() => actions.onEdit(message)}>
-                <PenLine size={13} />
-              </BubbleAction>
-              <BubbleAction label="Copy" onClick={() => actions.onCopy(message)}>
-                <Copy size={13} />
-              </BubbleAction>
-              <BubbleAction label="Delete" onClick={() => actions.onDelete(message)}>
-                <Trash2 size={13} />
-              </BubbleAction>
-            </>
-          ) : (
-            <>
-              <BubbleAction label="Copy" onClick={() => actions.onCopy(message)}>
-                <Copy size={13} />
-              </BubbleAction>
-              {isLast && (
-                <BubbleAction label="Regenerate" onClick={actions.onRegenerate}>
-                  <RefreshCw size={13} />
-                </BubbleAction>
-              )}
-              <BubbleAction label="Download .md" onClick={() => actions.onDownload(message)}>
-                <Download size={13} />
-              </BubbleAction>
-            </>
-          )}
         </div>
-      </div>
+      )}
     </motion.div>
   );
 }
@@ -1028,45 +1111,6 @@ function BubbleAction({ label, onClick, children }: { label: string; onClick: ()
     >
       {children}
     </button>
-  );
-}
-
-function StreamBubble({ reasoning, text, showThinking }: { reasoning: string; text: string; showThinking?: boolean }) {
-  return (
-    <motion.div
-      className="mb-2.5 flex items-end gap-2"
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.9 }}
-    >
-      <div className="message-card bubble-ai rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed">
-        {reasoning && showThinking !== false && <ThinkingBlock text={reasoning} />}
-        <div className="markdown-body">
-          <ChatMarkdown text={text} />
-          <span className="caret-blink" aria-hidden="true" />
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-function TypingBubble({ status }: { status: string }) {
-  return (
-    <motion.div
-      className="mb-2.5 flex items-end gap-2"
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.9 }}
-    >
-      <div className="bubble-ai flex items-center gap-2.5 rounded-2xl rounded-bl-md px-4 py-3">
-        <span className="typing-dots" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </span>
-        {status && <span className="text-[11px] text-muted">{status}</span>}
-      </div>
-    </motion.div>
   );
 }
 
@@ -1358,7 +1402,7 @@ function SettingsSheet({
                   rows={5}
                   value={prefs.systemPrompt}
                   onChange={(e) => onChange({ systemPrompt: e.target.value })}
-                  placeholder="Divya coach persona, tone, Markdown/LaTeX rules..."
+                  placeholder="Misa persona, tone, Markdown/LaTeX rules..."
                   className="field resize-none"
                 />
                 <div className="mt-1.5 flex items-center justify-between gap-2">
@@ -1368,7 +1412,7 @@ function SettingsSheet({
                     onClick={() => onChange({ systemPrompt: INTERNAL_SYSTEM_PROMPT })}
                     className="text-xs text-muted underline-offset-2 hover:text-text hover:underline"
                   >
-                    Reset Divya persona
+                    Reset Misa persona
                   </button>
                 </div>
               </div>

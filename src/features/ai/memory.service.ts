@@ -1,6 +1,12 @@
 import type { AppState } from '../../core/domain/state';
 import type { MemoryEntry, MemoryStore, MemoryType } from '../../core/domain/memory';
-import { emptyMemoryStore } from '../../core/domain/memory';
+import {
+  emptyMemoryStore,
+  MEMORY_MAX_ENTRIES,
+  MEMORY_BYTES_BUDGET,
+  normalizeMemoryStore,
+  pruneMemoryToBudget,
+} from '../../core/domain/memory';
 import { SESSION_TAG_PREFIX, sessionMemoryTag } from '../../core/domain/chat-transcript';
 import { isoAddDays } from '../habit-engine/dates';
 import { isoDate, type Clock } from '../../core/ports/clock';
@@ -23,7 +29,7 @@ export interface AddMemoryInput {
   longTerm?: boolean;
 }
 
-export const MEMORY_MAX_ENTRIES = 200;
+export { MEMORY_MAX_ENTRIES } from '../../core/domain/memory';
 export const MEMORY_SUMMARIZE_THRESHOLD = 120;
 export const IMPORTANCE_KEEP_VERBATIM = 0.8;
 
@@ -60,7 +66,9 @@ export class MemoryService {
     const next: MemoryStore = { ...store, entries: [...store.entries, entry] };
     const needsSummarize = next.entries.length > MEMORY_SUMMARIZE_THRESHOLD;
     const withSummaries = needsSummarize ? this.summarize(next) : next;
-    return { ...state, memory: prune(withSummaries) };
+    // Count cap first, then a byte budget so a bloated memory can never push
+    // the whole app state past the localStorage quota (silent data loss).
+    return { ...state, memory: pruneMemoryToBudget(prune(withSummaries), MEMORY_BYTES_BUDGET) };
   }
 
   /** Condense old low-importance entries into weekly rollups. Deterministic. */
@@ -242,6 +250,36 @@ export class MemoryService {
   clear(state: AppState): AppState {
     return { ...state, memory: emptyMemoryStore() };
   }
+
+  /**
+   * Serializes the whole memory store into a portable JSON backup (envelope +
+   * versioned so importMemory can validate it). Non-memory state is not
+   * included — restore merges into whatever state the app currently has.
+   */
+  exportMemory(state: AppState): string {
+    return JSON.stringify(
+      {
+        app: 'jee-human-os',
+        kind: 'ai-memory-backup',
+        version: 1,
+        exportedAt: isoDate(this.clock.now()),
+        memory: state.memory,
+      },
+      null,
+      2,
+    );
+  }
+
+  /**
+   * Replaces the current memory with a validated backup produced by
+   * exportMemory (or any object with a `memory` field). Corrupt/invalid
+   * entries are dropped silently; the rest of the app state is preserved.
+   * Throws on malformed JSON.
+   */
+  importMemory(state: AppState, json: string): AppState {
+    const parsed = JSON.parse(json) as { memory?: unknown };
+    return { ...state, memory: normalizeMemoryStore(parsed.memory) };
+  }
 }
 
 function isOld(e: MemoryEntry, nowISO: string): boolean {
@@ -249,9 +287,11 @@ function isOld(e: MemoryEntry, nowISO: string): boolean {
 }
 
 function weekStart(dateISO: string): string {
-  const d = new Date(dateISO + 'T00:00:00');
-  const day = d.getDay(); // 0 (Sun) .. 6
-  d.setDate(d.getDate() - ((day + 6) % 7)); // back to Monday
+  // Pure UTC arithmetic so the result matches UTC memory keys (local-time
+  // setDate + toISOString shifts the Monday back by one day on non-UTC machines).
+  const d = new Date(dateISO + 'T00:00:00Z');
+  const day = d.getUTCDay(); // 0 (Sun) .. 6
+  d.setUTCDate(d.getUTCDate() - ((day + 6) % 7)); // back to Monday
   return isoDate(d);
 }
 

@@ -75,7 +75,7 @@ export default function ReviewScreen({
       ...s,
       weeklyReviews: [
         ...s.weeklyReviews,
-        { weekNumber: currentWeekNumber(dayNumber), dateISO: todayISO(), strongest, weakest, planForNextWeek: plan },
+        { weekNumber: currentWeekNumber(dayNumber), dateISO: todayISO(state.timeZone), strongest, weakest, planForNextWeek: plan },
       ],
     }));
     setStrongest('');
@@ -87,7 +87,7 @@ export default function ReviewScreen({
     hapticSuccess();
     update((s) => ({
       ...s,
-      monthlyAssessments: [...s.monthlyAssessments, { monthNumber: currentMonthNumber(dayNumber), dateISO: todayISO(), reflection }],
+      monthlyAssessments: [...s.monthlyAssessments, { monthNumber: currentMonthNumber(dayNumber), dateISO: todayISO(state.timeZone), reflection }],
     }));
     setReflection('');
   }

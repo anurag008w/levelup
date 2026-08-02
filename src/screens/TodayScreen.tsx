@@ -532,8 +532,7 @@ function planPct(plan: DailyPlan, state: AppState): number {
 }
 
 function formatDate(iso: string): string {
-  const d = new Date(`${iso}T00:00:00`);
-  return d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 }
 
 const TaskRow = memo(function TaskRow({
@@ -666,7 +665,7 @@ function StartScreen({ onStart }: { onStart: () => void }) {
           {[
             { icon: <Target size={16} color="var(--color-l)" />, label: 'Task Bank' },
             { icon: <Flame size={16} color="var(--color-light)" />, label: 'Streaks' },
-            { icon: <Zap size={16} color="var(--color-peak)" />, label: 'AI Coach' },
+            { icon: <Zap size={16} color="var(--color-peak)" />, label: 'Misa' },
           ].map((f) => (
             <div key={f.label} className="card flex flex-col items-center gap-1.5 px-2 py-3.5">
               {f.icon}

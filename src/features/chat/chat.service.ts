@@ -1,4 +1,9 @@
-import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT } from '../../core/domain/chat';
+import {
+  DEFAULT_USER_PERSONA,
+  INTERNAL_SYSTEM_PROMPT,
+  LEGACY_DIVYA_SYSTEM_PROMPT,
+  MISA_IDENTITY_GUARD,
+} from '../../core/domain/chat';
 import type { ChatMessage, ChatSession, ChatPreferences, ChatStoreState, ChatAttachment, GlobalChatPrefs } from '../../core/domain/chat';
 import {
   MAX_MESSAGES_PER_SESSION,
@@ -11,7 +16,7 @@ import { isAbortError } from '../../core/domain/llm';
 import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY } from '../../core/domain/chat-tools';
 import type { ChatToolResult } from '../../core/domain/chat-tools';
 import { createStreamSanitizer, sanitizeAssistantLeaks } from './leak-sanitizer';
-import { MEMORY_SUMMARY_INSTRUCTIONS, parseMemoryBlocks } from '../../core/domain/memory-summary';
+import { MEMORY_SUMMARY_INSTRUCTIONS, parseMemoryBlocks, shouldPinMemoryBlock, type MemoryBlock } from '../../core/domain/memory-summary';
 import {
   buildChatTranscript,
   extractBlockTitle,
@@ -37,6 +42,10 @@ const HISTORY_FOR_PROMPT = 30;
 const MEMORY_FOR_PROMPT = 8;
 /** Max decision hops per message: initial guess + plan-fetch replans. */
 const MAX_TOOL_HOPS = 3;
+/** AI memory condensation batches: at most this many chats per AI pass… */
+const AI_SUMMARY_CHUNK_SIZE = 4;
+/** …or ~this many transcript chars, whichever hits first (bounds prompt size). */
+const AI_SUMMARY_CHUNK_CHARS = 14_000;
 
 /**
  * Chat feature service: session persistence + LLM streaming. Chat data lives in
@@ -62,7 +71,9 @@ export class ChatService {
   private ephemeral = new Map<string, ChatSession>();
   /** In-flight transcript persistence awaited by the next send (first reply). */
   private pendingSummary: Promise<number> | null = null;
-  /** Session currently open in the AI Coach — never summarized ("running chat stays internal"). */
+  /** In-flight full-memory AI condensation — dedups concurrent taps. */
+  private pendingAiSummary: Promise<{ count: number; blocks: number; pinned: number }> | null = null;
+  /** Session currently open in Misa — never summarized ("running chat stays internal"). */
   private activeSessionId: string | null = null;
 
   constructor(
@@ -131,14 +142,15 @@ export class ChatService {
 
   deleteSession(id: string): void {
     const state = this.state();
-    const session = state.sessions.find((s) => s.id === id);
-    // Keep a read-only copy in memory before the session disappears, so the
-    // chat stays viewable in the memory archive.
-    if (session && session.messages.length > 0 && this.memory && this.store) {
+    // Deleting a chat removes its memory footprint too: the raw transcript
+    // archive AND any AI-condensed blocks tagged with this session are cleaned
+    // up, so a deleted chat never lingers in the memory archive.
+    if (this.memory && this.store) {
       try {
-        this.persistSessionToMemory(session);
+        const memState = this.memory.removeConversationByTag(this.store.get(), id);
+        this.store.save(memState);
       } catch {
-        // Best-effort archive — deletion must still succeed.
+        // Best-effort memory cleanup — deletion must still succeed.
       }
     }
     state.sessions = state.sessions.filter((s) => s.id !== id);
@@ -188,7 +200,7 @@ export class ChatService {
    * Applies the global chat settings (temperature, max tokens, personas,
    * journey-context flag) to every session's prefs. Session-only fields such
    * as providerId, model and thinking are left untouched. Keeps the Settings
-   * tab and the AI Coach in sync.
+   * tab and Misa in sync.
    */
   applyGlobalPrefs(global: GlobalChatPrefs): void {
     const state = this.state();
@@ -288,6 +300,10 @@ export class ChatService {
           if (confirmedActions.length > 0) {
             const confirmed = await this.memoryTools.runMany(confirmedActions);
             memoryResult.summary = confirmed.summary || memoryResult.summary;
+          } else if (confirm.text) {
+            // The model declined the deletion — surface its Hinglish
+            // explanation instead of the internal "preview" protocol text.
+            memoryResult.summary = confirm.text;
           }
         }
         const memoryAssistant: ChatMessage = {
@@ -814,9 +830,9 @@ export class ChatService {
    * last 7 days of already-summarized memory, and condenses it into compact
    * memory blocks. Each block becomes its own memory entry; long-term blocks
    * are pinned. Sessions processed by the AI are marked `aiSummarizedAt` so
-   * they are NEVER condensed again (their read-only transcript archive is kept
-   * separately and marked `memorySummarizedAt`). Resolves to the number of
-   * sessions handled.
+   * they are NEVER condensed again, and their raw transcript archives are
+   * dropped — the condensed blocks are the single source of truth. Resolves
+   * to the number of sessions handled.
    */
   async summarizeAllMemoryWithAi(opts?: {
     providerId?: string | null;
@@ -827,38 +843,79 @@ export class ChatService {
     if (!this.store || !this.memory || !this.memoryEnabled()) {
       return { count: 0, blocks: 0, pinned: 0 };
     }
+    // Concurrent-call guard: the UI has a `running` flag, but two rapid taps
+    // can both read `running === false` before either finishes. Dedup at the
+    // service level so a single in-flight run absorbs every caller — no
+    // duplicate AI calls, no double blocks.
+    if (this.pendingAiSummary) return this.pendingAiSummary;
+    const task = this.runAiMemorySummary(opts);
+    this.pendingAiSummary = task;
+    // Clear the handle when the run settles (success OR failure — a failed
+    // run must be retryable).
+    void task.then(
+      () => {
+        if (this.pendingAiSummary === task) this.pendingAiSummary = null;
+      },
+      () => {
+        if (this.pendingAiSummary === task) this.pendingAiSummary = null;
+      },
+    );
+    return task;
+  }
+
+  private async runAiMemorySummary(opts?: {
+    providerId?: string | null;
+    model?: string | null;
+    excludeSessionId?: string | null;
+    onStatus?: (status: string) => void;
+  }): Promise<{ count: number; blocks: number; pinned: number }> {
+    // Guarded in `summarizeAiMemory`, but this private run can also be reached
+    // directly — keep the null-safety invariant local to the method.
+    if (!this.store || !this.memory) {
+      return { count: 0, blocks: 0, pinned: 0 };
+    }
     const exclude = opts?.excludeSessionId ?? this.activeSessionId;
     const targets = this.state().sessions.filter(
       (s) => s.messages.length > 0 && !s.aiSummarizedAt && s.id !== exclude,
     );
     if (targets.length === 0) return { count: 0, blocks: 0, pinned: 0 };
 
-    opts?.onStatus?.('AI poore unread chats padh raha hai…');
-    const request = this.buildMemorySummaryRequest(targets, this.buildPriorMemoryContext(), opts);
-    const resp = await this.llm.complete(request);
-    const blocks = parseMemoryBlocks(resp.text);
+    // Unread chats are read in bounded batches so a single AI request never
+    // grows past the model context (many unread chats = huge prompt).
+    const chunks = this.chunkUnreadSessions(targets);
+    const chunksTotal = chunks.length;
+    const blocks: MemoryBlock[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      if (chunksTotal > 1) {
+        const from = i * AI_SUMMARY_CHUNK_SIZE + 1;
+        const to = from + chunk.length - 1;
+        opts?.onStatus?.(`AI chats ${from}-${to} padh raha hai (${i + 1}/${chunksTotal})…`);
+      } else {
+        opts?.onStatus?.('AI poore unread chats padh raha hai…');
+      }
+      const request = this.buildMemorySummaryRequest(chunk, this.buildPriorMemoryContext(), opts);
+      const resp = await this.llm.complete(request);
+      blocks.push(...parseMemoryBlocks(resp.text));
+    }
     if (blocks.length === 0) {
       throw new Error('AI ne koi memory block nahi banaya — Retry now karo ya dusra model chuno.');
     }
 
-    // Success path: make sure every processed chat also has its durable
-    // read-only transcript archive (deterministic, no AI involved).
-    for (const target of targets) {
-      if (!target.memorySummarizedAt) {
-        try {
-          this.persistSessionToMemory(target);
-        } catch {
-          // Archive is best-effort; the condensed blocks below are the source
-          // of truth for recall and the chat stays viewable from memory.
-        }
-      }
-    }
-
+    // Success path: drop the raw transcript archives for the processed chats —
+    // the AI-condensed blocks below are now the single source of truth, so
+    // memory never carries the same conversation twice (raw dump + blocks).
     const sessionIds = targets.map((s) => s.id);
     let memState = this.store.get();
+    for (const target of targets) {
+      memState = this.memory.removeTranscriptArchive(memState, target.id);
+    }
     let pinned = 0;
     for (const block of blocks) {
-      const longTerm = block.longTerm === true;
+      // Deterministic gate: the model tends to mark everything longTerm — only
+      // blocks that actually carry a durable fact (goal/preference/weakness/
+      // commitment/plan) stay pinned. The rest become normal memory.
+      const longTerm = block.longTerm === true && shouldPinMemoryBlock(block);
       if (longTerm) pinned += 1;
       memState = this.memory.add(memState, {
         type: 'conversation',
@@ -871,6 +928,10 @@ export class ChatService {
         longTerm,
       });
     }
+    // Deterministic long-term curation: promote goals, preferences and
+    // high-importance entries that were never explicitly pinned (e.g. daily
+    // summaries, AI observations) into long-term memory.
+    memState = this.memory.curateLongTerm(memState);
     this.store.save(memState);
 
     // Mark the processed sessions so the next run never condenses them again.
@@ -990,6 +1051,41 @@ export class ChatService {
     return lines.length > 0 ? lines.join('\n') : '(abhi koi pichhli summarized memory nahi hai)';
   }
 
+  /**
+   * Splits unread chats into batches that keep each AI request small: at most
+   * AI_SUMMARY_CHUNK_SIZE chats or ~AI_SUMMARY_CHUNK_CHARS of transcript chars
+   * per pass. Big conversations stay readable without blowing the model
+   * context (which is what would make the one-shot pass fail on heavy usage).
+   */
+  private chunkUnreadSessions(targets: ChatSession[]): ChatSession[][] {
+    const chunks: ChatSession[][] = [];
+    let current: ChatSession[] = [];
+    let chars = 0;
+    for (const t of targets) {
+      // buildRawTranscript caps each transcript at 3500 chars — mirror that.
+      const approx = Math.min(this.rawTranscriptChars(t), 3500) + 60;
+      if (current.length > 0 && (current.length >= AI_SUMMARY_CHUNK_SIZE || chars + approx > AI_SUMMARY_CHUNK_CHARS)) {
+        chunks.push(current);
+        current = [];
+        chars = 0;
+      }
+      current.push(t);
+      chars += approx;
+    }
+    if (current.length > 0) chunks.push(current);
+    return chunks;
+  }
+
+  private rawTranscriptChars(session: ChatSession): number {
+    try {
+      let len = 0;
+      for (const m of session.messages) len += (m.content?.length ?? 0) + 12;
+      return len;
+    } catch {
+      return 0;
+    }
+  }
+
   private buildMemorySummaryRequest(
     unread: ChatSession[],
     priorContext: string,
@@ -1032,7 +1128,12 @@ export class ChatService {
     return chat ? chat.autoSaveChats !== false : true;
   }
 
-  /** How many past messages to send to the model (global setting, 0 = none). */
+  /**
+   * How many past messages to send to the model (global setting).
+   * NOTE: 0 intentionally means "full conversation memory" (slice(-0) ===
+   * slice(0) → the entire array), matching the settings UI label. Values > 0
+   * trim to the N most recent messages.
+   */
   private historyLength(): number {
     const chat = this.store?.get().aiSettings.chat;
     const configured = chat?.conversationHistoryLength;
@@ -1062,11 +1163,11 @@ export class ChatService {
     }
   }
 
-  /** Both sides verbatim (Student / AI Coach lines), capped to a sane size. */
+  /** Both sides verbatim (Student / Misa lines), capped to a sane size. */
   private buildRawTranscript(session: ChatSession, maxChars = 6000): string {
     try {
       const body = session.messages
-        .map((m) => `${m.role === 'user' ? 'Student' : 'AI Coach'}: ${m.content}`)
+        .map((m) => `${m.role === 'user' ? 'Student' : 'Misa'}: ${m.content}`)
         .join('\n');
       return body.length > maxChars ? `${body.slice(0, maxChars)}…` : body;
     } catch {
@@ -1141,7 +1242,7 @@ function normalizePrefs(prefs: Partial<ChatPreferences>): ChatPreferences {
 
   // Sessions created before editable system persona used `systemPrompt` as the
   // user persona. Keep non-default custom text as user instructions, while new
-  // sessions get Divya as the editable system persona and a blank user persona.
+  // sessions get Misa as the editable system persona and a blank user persona.
   const legacyDefault = 'Mere JEE coach bano. Hinglish mein concise, direct aur step-by-step samjhao. Maths ke answers LaTeX + short explanation ke saath do.';
   const legacySystemPrompt = prefs.systemPrompt;
   const isOldDivyaDefault =
@@ -1154,11 +1255,19 @@ function normalizePrefs(prefs: Partial<ChatPreferences>): ChatPreferences {
     merged.userPersona = legacySystemPrompt === legacyDefault || isOldDivyaDefault ? DEFAULT_USER_PERSONA : legacySystemPrompt;
   }
 
+  // Upgrade sessions that still carry the exact pre-Misa Divya default persona;
+  // anything the user edited themselves is preserved.
+  if (merged.systemPrompt === LEGACY_DIVYA_SYSTEM_PROMPT) {
+    merged.systemPrompt = INTERNAL_SYSTEM_PROMPT;
+  }
+
   return merged;
 }
 
 function composeSystemPrompt(systemPersona: string, userPersona = '', extraSystemPrompt = ''): string {
-  const blocks = [systemPersona.trim() || INTERNAL_SYSTEM_PROMPT];
+  // Identity guard is always first and is NOT user-editable — the persona can
+  // be rewritten freely but Misa's identity rules stay locked in.
+  const blocks = [MISA_IDENTITY_GUARD, systemPersona.trim() || INTERNAL_SYSTEM_PROMPT];
   const persona = userPersona.trim();
   if (persona) blocks.push(`User persona / custom instructions:\n${persona}`);
   const extra = extraSystemPrompt.trim();

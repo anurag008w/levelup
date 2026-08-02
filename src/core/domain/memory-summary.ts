@@ -7,7 +7,7 @@
 export interface MemoryBlock {
   /** Optional short label shown above the block. */
   title?: string;
-  /** Compact memory points — max 4 per block. */
+  /** Compact memory points — max 8 per block. */
   lines: string[];
   /** True when this block should be pinned into long-term memory. */
   longTerm: boolean;
@@ -24,10 +24,10 @@ JSON format:
 Rules:
 1. Read EVERY chat listed under "Unread chats" below, fully. Extract only what matters for a JEE student: goals, weak/strong topics, mistakes, preferences, study style, exam targets, important personal facts, commitments.
 2. "Previous memory (last 7 days)" is listed too — use it only for continuity. Do NOT repeat facts already present there.
-3. Each block has AT MOST 4 lines. Each line is one compact, self-contained Hinglish memory point (max ~12 words).
-4. Separate blocks with a line containing only "----". If a block would need more than 4 lines, the block CHANGES — split it into a NEW block starting after a "----" line. Never go above 4 lines inside one block.
+3. Each block has AT MOST 8 lines. Each line is one compact, self-contained Hinglish memory point (max ~12 words). Do NOT cut important points just to fit — if a chat has more than 8 worthy points, add a NEW block.
+4. Separate blocks with a line containing only "----". If a block would need more than 8 lines, the block CHANGES — split it into a NEW block starting after a "----" line. Never go above 8 lines inside one block.
 5. Keep different topics/sessions in DIFFERENT blocks. Each block is one independent memory unit and will be stored as its own separate memory entry.
-6. "longTerm": true ONLY for facts the coach must never forget (goals, preferences, strengths/weaknesses, exam targets, commitments). Every separate block is its own memory entry — longTerm blocks are pinned into long-term memory.
+6. "longTerm": true ONLY for facts the coach must never forget (goals, preferences, strengths/weaknesses, exam targets, commitments). Be STRICT and RARE — at most 2 longTerm blocks per run. When in doubt, keep "longTerm": false; the student can always pin a block later. Every separate block is its own memory entry — longTerm blocks are pinned into long-term memory.
 7. Skip greetings, small talk and generic encouragement. Do not output empty blocks.`;
 
 /** Parses a model reply into memory blocks — JSON first, plain "----" blocks as fallback. */
@@ -51,8 +51,23 @@ export function parseMemoryBlocks(text: string): MemoryBlock[] {
 }
 
 /** Max memory points a single block may carry (matches the prompt rule). */
-export const MAX_BLOCK_LINES = 4;
+export const MAX_BLOCK_LINES = 8;
 export const MAX_BLOCKS = 30;
+
+/**
+ * Deterministic long-term gate for AI memory blocks. Models tend to mark
+ * nearly every block `longTerm:true`; this keeps only blocks that actually
+ * carry a durable coaching fact (goal, target, preference, strength/weakness,
+ * commitment, exam plan, marks/score). Anything else is demoted to normal
+ * memory — the student can always pin it manually later.
+ */
+const LONG_TERM_SIGNAL =
+  /(goal|target|aim|lakshya|chahiye|want|dream|sapna|prefer|pasand|acha lagta|likes|weak|strong|strength|weakness|dikkat|problem|mushkil|aata hai|nahi aata|commit|roz|daily|har roz|karna hai|jee|iit|nit|rank|crack|mock|exam|score|marks)/i;
+
+export function shouldPinMemoryBlock(block: Pick<MemoryBlock, 'title' | 'lines'>): boolean {
+  const text = [block.title ?? '', ...block.lines].join(' ').toLowerCase();
+  return LONG_TERM_SIGNAL.test(text);
+}
 
 function parseJsonBlocks(raw: unknown[]): MemoryBlock[] {
   const blocks: MemoryBlock[] = [];
