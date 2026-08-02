@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
+  Archive,
   Camera,
   Check,
   ChevronDown,
@@ -28,24 +29,28 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import type { ChatMessage, ChatPreferences, ChatSession } from '../core/domain/chat';
+import type { ChatAttachment, ChatMessage, ChatPreferences, ChatSession } from '../core/domain/chat';
+import type { ArchivedConversation } from '../core/domain/chat-transcript';
 import type { ModelInfo, ThinkingLevel } from '../core/domain/llm';
-import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, defaultChatPrefs } from '../core/domain/chat';
+import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, defaultChatPrefs, globalChatPrefsFromSettings } from '../core/domain/chat';
 import { container } from '../di/container';
 import { redoLastAiAction, undoLastAiAction } from '../core/domain/ai-actions';
 import ChatMarkdown from '../components/ChatMarkdown';
 import FileCard from '../components/FileCard';
 import AddProviderForm from '../components/AddProviderForm';
+import ReadOnlyChatViewer from '../components/ReadOnlyChatViewer';
 import { detectFileDoc, looksLikeMarkdown } from '../components/markdown-utils';
 import { haptic, hapticError, hapticSuccess } from '../lib/haptics';
-import { extractPdfText } from '../lib/pdf';
+import { extractFileText } from '../lib/fileText';
+import { timeAgo } from '../lib/relative-time';
+import { splitReplyIntoBubbles } from '../features/chat/message-segments';
 
 interface DraftAttachment {
   id: string;
   name: string;
   type: string;
   size: number;
-  kind: 'text' | 'image' | 'binary';
+  kind: 'text' | 'image' | 'file' | 'binary';
   content?: string;
   previewUrl?: string;
 }
@@ -56,11 +61,6 @@ interface MenuState {
   y: number;
 }
 
-const TEXT_EXTENSIONS = new Set([
-  'txt', 'md', 'markdown', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'htm', 'css', 'scss', 'less',
-  'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'cs', 'go', 'rs', 'rb', 'php', 'swift', 'kt',
-  'sh', 'bash', 'bat', 'ps1', 'sql', 'toml', 'ini', 'cfg', 'log', 'tex', 'env', 'properties',
-]);
 const MAX_TEXT_ATTACHMENT_CHARS = 24_000;
 const VISIBLE_MESSAGES = 40;
 
@@ -96,11 +96,10 @@ export default function ChatScreen() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [streaming, setStreaming] = useState(false);
-  const [streamText, setStreamText] = useState('');
-  const [streamReasoning, setStreamReasoning] = useState('');
-  const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  /** Id of the freshly generated assistant message that should reveal bubble-by-bubble. */
+  const [revealId, setRevealId] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ sessionId: string; messageId: string; originalDraft: string } | null>(null);
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const [processing, setProcessing] = useState<string[]>([]);
@@ -108,6 +107,8 @@ export default function ChatScreen() {
   const [showAttach, setShowAttach] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showProviderPicker, setShowProviderPicker] = useState(false);
+  const [showMemoryChatId, setShowMemoryChatId] = useState<string | null>(null);
+  const [memoryChats, setMemoryChats] = useState<ArchivedConversation[]>([]);
   const [catalog, setCatalog] = useState<ModelInfo[]>([]);
   const [providerCount, setProviderCount] = useState(container.providerSettings.listStoredProviders().length);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -123,8 +124,10 @@ export default function ChatScreen() {
   );
   const messages = active?.messages ?? [];
   const hasMessages = active !== null && messages.length > 0;
-  const lastAssistantStreaming = streaming && streamText.length > 0;
   const aiEnabled = container.providerSettings.isAiEnabled();
+  const showThinking = container.store.get().aiSettings.chat.showThinking;
+  // Stable identity so the reveal effect never restarts from its callback.
+  const handleRevealDone = useCallback(() => setRevealId(null), []);
 
   const modelChip = useMemo(() => {
     const pid = active?.prefs.providerId ?? null;
@@ -137,10 +140,31 @@ export default function ChatScreen() {
     if (!activeId && sessions.length > 0) setActiveId(sessions[0].id);
   }, [activeId, sessions]);
 
+  // Keep every session's shared prefs in line with the global chat settings
+  // (Settings tab -> Chat Experience) whenever the coach screen mounts.
+  useEffect(() => {
+    container.chat.applyGlobalPrefs(globalChatPrefsFromSettings(container.store.get().aiSettings.chat));
+    setSessions(container.chat.listSessions());
+    // Persist any unread chats into memory as raw transcripts — cheap and
+    // safe to rerun (sessions already stored are skipped). Only the
+    // deterministic fallback; when AI is on the summarizer button owns this.
+    maybeAutoDumpChats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    // The session the user is actively chatting in stays internal to the AI —
+    // it is never included in the one-click memory summarization.
+    container.chat.setActiveSessionId(activeId);
+  }, [activeId]);
+
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [active?.messages.length, streamText, streaming]);
+  }, [active?.messages.length, streaming]);
+
+  // If the screen unmounts mid-stream, the in-flight AbortController is
+  // cancelled by stop(); nothing paced is left behind.
 
   useEffect(() => {
     void loadCatalog();
@@ -156,12 +180,12 @@ export default function ChatScreen() {
   }, [activeId]);
 
   useEffect(() => {
-    const open = showSettings || showAttach || showHistory || showProviderPicker || menu !== null;
+    const open = showSettings || showAttach || showHistory || showProviderPicker || menu !== null || showMemoryChatId !== null;
     document.body.style.overflow = open ? 'hidden' : '';
     return () => {
       document.body.style.overflow = '';
     };
-  }, [showSettings, showAttach, showHistory, showProviderPicker, menu]);
+  }, [showSettings, showAttach, showHistory, showProviderPicker, menu, showMemoryChatId]);
 
   useEffect(() => {
     if (!notice) return;
@@ -180,12 +204,36 @@ export default function ChatScreen() {
     setSessions(container.chat.listSessions());
   }
 
+  /**
+   * Archives every finished chat into AI memory as a structured, timestamped
+   * read-only transcript. Runs unconditionally — the AI summarizer condenses
+   * those same chats into durable blocks later (tracked by a separate marker),
+   * so the read-only archive never blocks it.
+   */
+  function maybeAutoDumpChats() {
+    void container.chat.summarizePriorChats();
+  }
+
+  /** Loads the memory archive and opens the chat history sheet. */
+  function openHistory() {
+    setMemoryChats(container.chat.listMemoryConversations());
+    setShowHistory(true);
+  }
+
+  /** Opens a memory-archived chat in the read-only viewer. */
+  function openMemoryChat(sessionId: string) {
+    haptic();
+    setShowHistory(false);
+    setShowMemoryChatId(sessionId);
+  }
+
   function ensureSession(): ChatSession {
     let s = active;
     if (!s) {
       s = container.chat.createSession('', globalChatPrefs());
       refresh();
       setActiveId(s.id);
+      maybeAutoDumpChats();
     }
     return s;
   }
@@ -200,7 +248,14 @@ export default function ChatScreen() {
     setAttachments([]);
     setError('');
     setShowHistory(false);
+    maybeAutoDumpChats();
     focusComposer();
+  }
+
+  /** Opens the chat settings sheet, creating a session first when none exists. */
+  function openSettings() {
+    ensureSession();
+    setShowSettings(true);
   }
 
   function openSession(id: string) {
@@ -225,15 +280,42 @@ export default function ChatScreen() {
     if (!active) return;
     const next = { ...active.prefs, ...patch };
     container.chat.updatePrefs(active.id, next);
+    syncGlobalChatSettings(next);
     refresh();
   }
 
   function resetPrefs() {
     if (!active) return;
-    container.chat.updatePrefs(active.id, defaultChatPrefs());
+    container.chat.updatePrefs(active.id, globalChatPrefs());
     refresh();
     haptic();
     setNotice('Chat settings reset ho gaye');
+  }
+
+  /** Mirrors shared session settings back into the global chat settings AND
+   *  re-propagates them to every other session. Without the applyGlobalPrefs
+   *  call the other sessions would silently keep their old values. */
+  function syncGlobalChatSettings(prefs: ChatPreferences) {
+    const s = container.store.get();
+    const chat = {
+      ...s.aiSettings.chat,
+      temperature: prefs.temperature,
+      maxTokens: prefs.maxTokens,
+      systemPrompt: prefs.systemPrompt,
+      userPersona: prefs.userPersona,
+      includeJourneyContext: prefs.includeContext,
+      // Keep `thinking` present even when provider-default, so the shared
+      // global can CLEAR sessions that had a custom level (not just set one).
+      ...(prefs.thinking ? { thinking: prefs.thinking } : { thinking: undefined }),
+    };
+    container.store.save({
+      ...s,
+      aiSettings: {
+        ...s.aiSettings,
+        chat,
+      },
+    });
+    container.chat.applyGlobalPrefs(globalChatPrefsFromSettings(chat));
   }
 
   async function loadCatalog() {
@@ -275,37 +357,41 @@ export default function ChatScreen() {
     setDraft('');
     setAttachments([]);
     setStreaming(true);
-    setStreamText('');
-    setStreamReasoning('');
-    setStatus('');
     const controller = new AbortController();
     abortRef.current = controller;
 
     // Convert DraftAttachment to ChatAttachment for LLM
-    const chatAttachments: { id: string; name: string; kind: 'text' | 'image' | 'binary'; previewUrl?: string }[] = 
-      pendingAttachments.map(a => ({
-        id: a.id,
-        name: a.name,
-        kind: a.kind,
-        previewUrl: a.previewUrl,
-      }));
+    const chatAttachments: ChatAttachment[] = pendingAttachments.map((a) => ({
+      id: a.id,
+      name: a.name,
+      kind: a.kind,
+      previewUrl: a.previewUrl,
+      content: a.content,
+    }));
 
+    // Collect the whole reply first — nothing is shown while it streams, and no
+    // thinking/typing indicator starts early (even during tool calls). Only
+    // when the full answer is ready do we reveal it: a fixed 3s thinking pause
+    // with dots, the first paragraph, then a random 3-8s thinking pause before
+    // each next paragraph — like a person sending short messages one at a time.
+    let lastAssistantId: string | null = null;
     const pending = container.chat.send(
       sessionId,
       text,
-      (delta) => setStreamText((prev) => prev + delta),
+      undefined, // onDelta — intentionally not shown live
       controller.signal,
-      (s) => setStatus(s),
-      (reasoning) => setStreamReasoning((prev) => prev + reasoning),
+      undefined, // onStatus — no premature thinking/typing during collection
+      undefined, // reasoning delta — collected and stored on the message
       chatAttachments,
     );
     // chat.send() pushes the user message synchronously before its first await,
     // so re-read sessions now — the user's own message appears immediately
-    // while the AI streams, instead of only after the reply completes.
+    // while the AI collects the reply, instead of only after it completes.
     refresh();
     try {
-      await pending;
+      const assistant = await pending;
       sent = true;
+      lastAssistantId = assistant.id;
     } catch (err) {
       setDraft(pendingDraft);
       setAttachments(pendingAttachments);
@@ -314,10 +400,10 @@ export default function ChatScreen() {
       if (sent) revokeAttachmentUrls(pendingAttachments);
       abortRef.current = null;
       setStreaming(false);
-      setStreamText('');
-      setStreamReasoning('');
-      setStatus('');
       refresh();
+      // Only the message we just generated gets the reveal effect; reopening
+      // an old chat must never replay it.
+      if (sent && lastAssistantId) setRevealId(lastAssistantId);
     }
   }
 
@@ -511,20 +597,19 @@ export default function ChatScreen() {
         </button>
         <button
           type="button"
-          onClick={() => setShowHistory(true)}
+          onClick={openHistory}
           className="flex h-full min-w-0 flex-1 items-center gap-2 px-1 text-left"
           aria-label="Open chat history"
         >
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-l/10 text-l"><Sparkles size={16} /></span>
           <span className="min-w-0">
-            <span className="block truncate font-display text-[15px] font-bold leading-none">{active?.title || 'AI Coach'}</span>
-            <span className="mt-0.5 block truncate text-[10px] font-medium text-muted">ChatGPT-style maths, notes & files</span>
+            <span className="block truncate font-display text-[15px] font-bold leading-none">{active?.title || 'Misa'}</span>
           </span>
           <ChevronDown size={13} className="shrink-0 text-muted" />
         </button>
         <button
           type="button"
-          onClick={() => setShowSettings(true)}
+          onClick={openSettings}
           className="flex h-8 max-w-[9.5rem] shrink-0 items-center gap-1.5 rounded-full border border-border bg-panel px-2.5 text-[10px] font-semibold text-muted transition-colors hover:border-border-strong"
           aria-label="Model settings"
           title="Model settings"
@@ -539,7 +624,7 @@ export default function ChatScreen() {
         </button>
         <button
           type="button"
-          onClick={() => setShowSettings(true)}
+          onClick={openSettings}
           className="icon-btn"
           aria-label="Chat settings"
           title="Chat settings"
@@ -577,6 +662,9 @@ export default function ChatScreen() {
                 key={m.id}
                 message={m}
                 isLast={i === windowedMessages.length - 1}
+                showThinking={showThinking}
+                reveal={m.id === revealId}
+                onRevealDone={handleRevealDone}
                 onMenu={openMenu}
                 onCopy={(msg) => void copyMessage(msg)}
                 onEdit={editMessage}
@@ -586,12 +674,6 @@ export default function ChatScreen() {
                 onShare={(msg) => shareMessage(msg)}
               />
             ))}
-            {streaming &&
-              (lastAssistantStreaming ? (
-                <StreamBubble reasoning={streamReasoning} text={streamText} />
-              ) : (
-                <TypingBubble status={status} />
-              ))}
           </div>
         )}
       </main>
@@ -678,9 +760,6 @@ export default function ChatScreen() {
             )}
           </div>
         </div>
-        <p className="pb-1 pt-1 text-center text-[9px] tracking-wide text-muted-dim">
-          AI Coach · LaTeX maths · files · 100% local
-        </p>
       </div>
 
       <input
@@ -729,12 +808,18 @@ export default function ChatScreen() {
       {showHistory && (
         <HistorySheet
           sessions={sessions}
+          memory={memoryChats}
           activeId={activeId}
           onOpen={openSession}
           onNew={newChat}
           onDelete={removeSession}
+          onOpenMemory={openMemoryChat}
           onClose={() => setShowHistory(false)}
         />
+      )}
+
+      {showMemoryChatId !== null && (
+        <ReadOnlyChatViewer initialId={showMemoryChatId} onClose={() => setShowMemoryChatId(null)} />
       )}
 
       {showAttach && <AttachmentSheet onPick={attachTool} onClose={() => setShowAttach(false)} />}
@@ -774,8 +859,8 @@ function EmptyChat({ onPick }: { onPick: (prompt: string) => void }) {
       >
         <Sparkles size={30} color="var(--color-l)" />
       </span>
-      <h2 className="mt-5 font-display text-2xl font-bold tracking-tight">{greeting()}, I’m your AI Coach</h2>
-      <p className="mt-1 max-w-sm text-sm leading-relaxed text-muted">Ask doubts, solve JEE math with clean LaTeX, summarize notes, or turn files into revision material.</p>
+      <h2 className="mt-5 font-display text-2xl font-bold tracking-tight">{greeting()}! I’m Misa</h2>
+      <p className="mt-1 max-w-sm text-sm leading-relaxed text-muted">JEE doubts, maths & notes — sab yahan, tension mat lo.</p>
       <div className="no-scrollbar mt-6 flex w-full gap-2 overflow-x-auto pb-1">
         {SUGGESTIONS.map((s) => (
           <button
@@ -816,12 +901,82 @@ interface MessageActions {
   onShare: (m: ChatMessage) => void;
 }
 
-function MessageBubble({ message, isLast, ...actions }: MessageActions & { message: ChatMessage; isLast: boolean }) {
+function MessageBubble({
+  message,
+  isLast,
+  showThinking,
+  reveal = false,
+  onRevealDone,
+  ...actions
+}: MessageActions & {
+  message: ChatMessage;
+  isLast: boolean;
+  showThinking?: boolean;
+  reveal?: boolean;
+  onRevealDone?: () => void;
+}) {
   const isUser = message.role === 'user';
   const holdTimer = useRef<number | null>(null);
   const firedRef = useRef(false);
   const doc = useMemo(() => (isUser ? null : detectFileDoc(message.content)), [isUser, message.content]);
   const [showPreview, setShowPreview] = useState(true);
+  // An AI reply is shown as several short bubbles, one per paragraph break.
+  const bubbleTexts = useMemo(() => (isUser ? [] : splitReplyIntoBubbles(message.content)), [isUser, message.content]);
+  // Fresh replies reveal their bubbles like a person sending short messages:
+  // a fixed 3s thinking pause with dots, the first paragraph, then a random
+  // 3-8s thinking pause before every next paragraph (no repeating pattern).
+  // Reopened chats skip this entirely.
+  const [revealed, setRevealed] = useState(0);
+  const [thinking, setThinking] = useState(() => reveal && bubbleTexts.length > 0);
+  const onRevealDoneRef = useRef(onRevealDone);
+  onRevealDoneRef.current = onRevealDone;
+  const msgRef = useRef<HTMLDivElement | null>(null);
+
+  // If a reply has no visible bubbles (e.g. the model replied with only
+  // whitespace), don't leave reveal stuck — finish it immediately.
+  useEffect(() => {
+    if (reveal && !isUser && bubbleTexts.length === 0) {
+      onRevealDoneRef.current?.();
+    }
+  }, [reveal, isUser, bubbleTexts.length]);
+
+  useEffect(() => {
+    if (!reveal || isUser || bubbleTexts.length === 0) return;
+    let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const wait = (ms: number, fn: () => void) => {
+      if (cancelled) return;
+      timers.push(setTimeout(fn, ms));
+    };
+    const showBubble = (i: number) => {
+      if (cancelled) return;
+      setThinking(false);
+      setRevealed(i + 1);
+      if (i + 1 >= bubbleTexts.length) {
+        onRevealDoneRef.current?.();
+        return;
+      }
+      // Thinking pause before the next paragraph: dots for a random 3-8s.
+      setThinking(true);
+      wait(3000 + Math.random() * 5000, () => showBubble(i + 1));
+    };
+    // After the reply is collected, Misa "thinks" for a fixed 3s before her
+    // first paragraph lands.
+    setThinking(true);
+    wait(3000, () => showBubble(0));
+    return () => {
+      cancelled = true;
+      for (const t of timers) clearTimeout(t);
+    };
+  }, [reveal, isUser, bubbleTexts.length]);
+
+  // Keep the freshly revealed message in view as its bubbles grow.
+  useEffect(() => {
+    if (!reveal) return;
+    msgRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [revealed, thinking, reveal]);
+
+  const visibleBubbleTexts = reveal ? bubbleTexts.slice(0, revealed) : bubbleTexts;
 
   function triggerMenu(clientX: number, clientY: number) {
     haptic(20);
@@ -830,6 +985,7 @@ function MessageBubble({ message, isLast, ...actions }: MessageActions & { messa
 
   return (
     <motion.div
+      ref={msgRef}
       className={`mb-4 flex items-end gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}
       initial={{ opacity: 0, y: 12, scale: 0.99 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -865,20 +1021,32 @@ function MessageBubble({ message, isLast, ...actions }: MessageActions & { messa
         }
       }}
     >
-      <div
-        className={`message-card relative rounded-3xl px-4 py-3 text-[13.5px] leading-relaxed ${
-          isUser
-            ? 'bubble-user rounded-br-lg'
-            : 'bubble-ai rounded-bl-lg'
-        }`}
-      >
-        {message.reasoning && <ThinkingBlock text={message.reasoning} />}
-        {message.tool && <ToolBadge tool={message.tool} />}
-        {isUser ? (
+      {isUser ? (
+        <div className="message-card relative rounded-3xl rounded-br-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-user">
           <UserMessageContent content={message.content} />
-        ) : (
-          <div className="markdown-body">
-            {doc && (
+          <div className="mt-2 flex items-center justify-end gap-0.5">
+            {message.stopped && <span className="rounded bg-black/20 px-1.5 py-0.5 text-[9px]">stopped</span>}
+            <BubbleAction label="Edit" onClick={() => actions.onEdit(message)}>
+              <PenLine size={13} />
+            </BubbleAction>
+            <BubbleAction label="Copy" onClick={() => actions.onCopy(message)}>
+              <Copy size={13} />
+            </BubbleAction>
+            <BubbleAction label="Delete" onClick={() => actions.onDelete(message)}>
+              <Trash2 size={13} />
+            </BubbleAction>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col items-start gap-1.5">
+          {(message.reasoning && showThinking !== false) || message.tool ? (
+            <div className="message-card relative rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-ai">
+              {message.reasoning && showThinking !== false && <ThinkingBlock text={message.reasoning} />}
+              {message.tool && <ToolBadge tool={message.tool} />}
+            </div>
+          ) : null}
+          {doc && (
+            <div className="message-card relative rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-ai">
               <FileCard
                 name={doc.name}
                 sizeLabel={doc.sizeLabel}
@@ -889,47 +1057,47 @@ function MessageBubble({ message, isLast, ...actions }: MessageActions & { messa
                 }}
                 onDownload={() => actions.onDownload(message)}
               />
+            </div>
+          )}
+          {(!doc || showPreview) &&
+            visibleBubbleTexts.map((seg, i) => (
+              <div
+                key={i}
+                className="message-card relative rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-ai"
+              >
+                <div className="markdown-body">
+                  <ChatMarkdown text={seg} />
+                </div>
+              </div>
+            ))}
+          {reveal && thinking && (
+            <div className="bubble-ai flex items-center gap-2.5 rounded-2xl rounded-bl-md px-4 py-3">
+              <span className="typing-dots" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+            </div>
+          )}
+          <div className="mt-1.5 flex items-center gap-0.5 pl-1">
+            {message.stopped && (
+              <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[9px] text-muted">stopped</span>
             )}
-            {(!doc || showPreview) && <ChatMarkdown text={message.content} />}
+            <Check size={11} color="var(--color-success)" />
+            <BubbleAction label="Copy" onClick={() => actions.onCopy(message)}>
+              <Copy size={13} />
+            </BubbleAction>
+            {isLast && (
+              <BubbleAction label="Regenerate" onClick={actions.onRegenerate}>
+                <RefreshCw size={13} />
+              </BubbleAction>
+            )}
+            <BubbleAction label="Download .md" onClick={() => actions.onDownload(message)}>
+              <Download size={13} />
+            </BubbleAction>
           </div>
-        )}
-
-        <div className={`mt-2 flex items-center gap-0.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
-          {message.stopped && (
-            <span className={`rounded px-1.5 py-0.5 text-[9px] ${isUser ? 'bg-black/20' : 'bg-surface-3 text-muted'}`}>
-              stopped
-            </span>
-          )}
-          {message.role === 'assistant' && <Check size={11} color="var(--color-success)" />}
-          {isUser ? (
-            <>
-              <BubbleAction label="Edit" onClick={() => actions.onEdit(message)}>
-                <PenLine size={13} />
-              </BubbleAction>
-              <BubbleAction label="Copy" onClick={() => actions.onCopy(message)}>
-                <Copy size={13} />
-              </BubbleAction>
-              <BubbleAction label="Delete" onClick={() => actions.onDelete(message)}>
-                <Trash2 size={13} />
-              </BubbleAction>
-            </>
-          ) : (
-            <>
-              <BubbleAction label="Copy" onClick={() => actions.onCopy(message)}>
-                <Copy size={13} />
-              </BubbleAction>
-              {isLast && (
-                <BubbleAction label="Regenerate" onClick={actions.onRegenerate}>
-                  <RefreshCw size={13} />
-                </BubbleAction>
-              )}
-              <BubbleAction label="Download .md" onClick={() => actions.onDownload(message)}>
-                <Download size={13} />
-              </BubbleAction>
-            </>
-          )}
         </div>
-      </div>
+      )}
     </motion.div>
   );
 }
@@ -949,45 +1117,6 @@ function BubbleAction({ label, onClick, children }: { label: string; onClick: ()
     >
       {children}
     </button>
-  );
-}
-
-function StreamBubble({ reasoning, text }: { reasoning: string; text: string }) {
-  return (
-    <motion.div
-      className="mb-2.5 flex items-end gap-2"
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.9 }}
-    >
-      <div className="message-card bubble-ai rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed">
-        {reasoning && <ThinkingBlock text={reasoning} />}
-        <div className="markdown-body">
-          <ChatMarkdown text={text} />
-          <span className="caret-blink" aria-hidden="true" />
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-function TypingBubble({ status }: { status: string }) {
-  return (
-    <motion.div
-      className="mb-2.5 flex items-end gap-2"
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.9 }}
-    >
-      <div className="bubble-ai flex items-center gap-2.5 rounded-2xl rounded-bl-md px-4 py-3">
-        <span className="typing-dots" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </span>
-        {status && <span className="text-[11px] text-muted">{status}</span>}
-      </div>
-    </motion.div>
   );
 }
 
@@ -1192,18 +1321,25 @@ function SettingsSheet({
             <div className="px-4 py-3.5">
               <label className="field-label flex items-center justify-between">
                 <span>Max tokens</span>
-                <span className="font-mono text-light">{prefs.maxTokens ?? 4096}</span>
+                <span className="font-mono text-light">{prefs.maxTokens ?? 8192}</span>
               </label>
               <input
                 type="number"
                 min={1}
-                max={8192}
+                max={32768}
                 step={128}
-                value={prefs.maxTokens ?? 4096}
-                onChange={(e) => onChange({ maxTokens: clampTokens(Number(e.target.value)) })}
+                value={prefs.maxTokens ?? 8192}
+                onChange={(e) => {
+                  // An empty field parses as Number('') === 0 and would snap
+                  // the value to the 1-token floor while the user is typing.
+                  // Let the field stay empty instead of fighting the input.
+                  const raw = e.target.value;
+                  if (raw === '') return;
+                  onChange({ maxTokens: clampTokens(Number(raw)) });
+                }}
                 className="field"
               />
-              <p className="mt-0.5 text-[10px] text-muted">Response budget; 1 se 8192 tokens tak.</p>
+              <p className="mt-0.5 text-[10px] text-muted">Response budget; 1 se 32768 tokens tak.</p>
             </div>
             <div className="px-4 py-3.5">
               <label className="field-label">Thinking / reasoning</label>
@@ -1279,7 +1415,7 @@ function SettingsSheet({
                   rows={5}
                   value={prefs.systemPrompt}
                   onChange={(e) => onChange({ systemPrompt: e.target.value })}
-                  placeholder="Divya coach persona, tone, Markdown/LaTeX rules..."
+                  placeholder="Misa persona, tone, Markdown/LaTeX rules..."
                   className="field resize-none"
                 />
                 <div className="mt-1.5 flex items-center justify-between gap-2">
@@ -1289,7 +1425,7 @@ function SettingsSheet({
                     onClick={() => onChange({ systemPrompt: INTERNAL_SYSTEM_PROMPT })}
                     className="text-xs text-muted underline-offset-2 hover:text-text hover:underline"
                   >
-                    Reset Divya persona
+                    Reset Misa persona
                   </button>
                 </div>
               </div>
@@ -1323,6 +1459,7 @@ function globalChatPrefs(): ChatPreferences {
     systemPrompt: global.systemPrompt,
     userPersona: global.userPersona,
     includeContext: global.includeJourneyContext,
+    ...(global.thinking ? { thinking: global.thinking } : {}),
   };
 }
 
@@ -1402,17 +1539,21 @@ function ProviderPickerSheet({
 
 function HistorySheet({
   sessions,
+  memory,
   activeId,
   onOpen,
   onNew,
   onDelete,
+  onOpenMemory,
   onClose,
 }: {
   sessions: ChatSession[];
+  memory: ArchivedConversation[];
   activeId: string | null;
   onOpen: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  onOpenMemory: (sessionId: string) => void;
   onClose: () => void;
 }) {
   return (
@@ -1426,7 +1567,9 @@ function HistorySheet({
           <MessageSquarePlus size={15} />
           Naya chat
         </button>
-        {sessions.length === 0 && <p className="px-1 py-4 text-center text-sm text-muted">Abhi koi chat nahi hai.</p>}
+        {sessions.length === 0 && memory.length === 0 && (
+          <p className="px-1 py-4 text-center text-sm text-muted">Abhi koi chat nahi hai.</p>
+        )}
         {sessions.map((s) => {
           const isActive = s.id === activeId;
           return (
@@ -1447,6 +1590,7 @@ function HistorySheet({
                 <span className="w-full truncate text-sm font-semibold text-text">{s.title || 'Naya chat'}</span>
                 <span className="text-[10px] text-muted">
                   {s.messages.length} messages · {timeAgo(s.updatedAt)}
+                  {s.aiSummarizedAt ? ' · memory me summarized' : ''}
                 </span>
               </button>
               <button
@@ -1463,6 +1607,34 @@ function HistorySheet({
             </div>
           );
         })}
+
+        {memory.length > 0 && (
+          <>
+            <p className="px-1 pt-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+              Memory se purani chats · read-only
+            </p>
+            {memory.map((c) => (
+              <button
+                key={c.sessionId}
+                type="button"
+                onClick={() => onOpenMemory(c.sessionId)}
+                className="flex w-full items-center gap-2 rounded-xl border border-border bg-panel px-3 py-2.5 text-left transition-colors hover:bg-panel-raised active:bg-panel-raised"
+              >
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-l/10 text-l">
+                  <Archive size={13} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-text">{c.title || 'Memory chat'}</span>
+                  <span className="block text-[10px] text-muted">
+                    {c.messages.length} messages · {timeAgo(c.updatedAt)} ·{' '}
+                    {c.source === 'ai-summary' ? 'AI summarized' : 'archived'}
+                  </span>
+                </span>
+                <ChevronRight size={14} className="shrink-0 text-muted" />
+              </button>
+            ))}
+          </>
+        )}
       </div>
     </Sheet>
   );
@@ -1608,46 +1780,38 @@ function MessageMenu({
 
 async function readAttachment(file: File): Promise<DraftAttachment> {
   const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-  const isText = file.type.startsWith('text/') || TEXT_EXTENSIONS.has(extension);
 
-  if (file.type === 'application/pdf' || extension === 'pdf') {
-    try {
-      const raw = await extractPdfText(file);
-      const content = raw
-        ? `--- Extracted text from PDF: ${file.name} (${file.type}, ${formatBytes(file.size)}) ---\n\n${raw}`
-        : '';
-      return {
-        id: uid('att'),
-        name: file.name,
-        type: file.type || 'application/pdf',
-        size: file.size,
-        kind: content ? 'text' : 'binary',
-        content: content || undefined,
-      };
-    } catch {
-      return { id: uid('att'), name: file.name, type: file.type || 'application/pdf', size: file.size, kind: 'binary' };
-    }
-  }
-
-  if (isText) {
-    try {
-      const raw = await file.text();
-      const truncated = raw.length > MAX_TEXT_ATTACHMENT_CHARS;
-      return {
-        id: uid('att'),
-        name: file.name,
-        type: file.type || extension || 'text',
-        size: file.size,
-        kind: 'text',
-        content: truncated ? `${raw.slice(0, MAX_TEXT_ATTACHMENT_CHARS)}\n\n[Attachment truncated after ${MAX_TEXT_ATTACHMENT_CHARS} characters]` : raw,
-      };
-    } catch {
-      return { id: uid('att'), name: file.name, type: file.type || extension || 'text', size: file.size, kind: 'binary' };
-    }
-  }
   if (file.type.startsWith('image/')) {
     return { id: uid('att'), name: file.name, type: file.type, size: file.size, kind: 'image', previewUrl: URL.createObjectURL(file) };
   }
+
+  const isPdf = file.type === 'application/pdf' || extension === 'pdf';
+  const isOffice = extension === 'docx' || extension === 'pptx' || extension === 'xlsx';
+
+  // PDFs and Office files go straight to the model as a raw file when the
+  // model accepts them; client-side text extraction only kicks in as a
+  // fallback if that direct send fails.
+  if (isPdf || isOffice) {
+    return { id: uid('att'), name: file.name, type: file.type || extension || 'file', size: file.size, kind: 'file', previewUrl: URL.createObjectURL(file) };
+  }
+
+  const raw = await extractFileText(file);
+  if (raw) {
+    // Note: PDFs and Office files never reach this branch — they are sent to
+    // the model as raw files and only fall back to text extraction on failure
+    // (inside ChatService.applyFileFallback).
+    const truncated = raw.length > MAX_TEXT_ATTACHMENT_CHARS;
+    const body = truncated ? `${raw.slice(0, MAX_TEXT_ATTACHMENT_CHARS)}\n\n[Attachment truncated after ${MAX_TEXT_ATTACHMENT_CHARS} characters]` : raw;
+    return {
+      id: uid('att'),
+      name: file.name,
+      type: file.type || extension || 'text',
+      size: file.size,
+      kind: 'text',
+      content: body,
+    };
+  }
+
   return { id: uid('att'), name: file.name, type: file.type || extension || 'binary', size: file.size, kind: 'binary' };
 }
 
@@ -1663,7 +1827,9 @@ function buildPromptWithAttachments(draft: string, attachments: DraftAttachment[
     const header = `Attachment ${idx + 1}: ${a.name} (${a.type || 'unknown'}, ${formatBytes(a.size)})`;
     if (a.kind === 'text') return `<attached_file>\n${header}\n\n${a.content ?? ''}\n</attached_file>`;
     if (a.kind === 'image') return `<attached_image>\n${header}\nUser ne ek image attach ki hai (preview UI mein visible hai). Agar tum image dekh sakte ho toh analyze karo; warna user ko text/OCR dekar likhne ko bolo.\n</attached_image>`;
-    return `<attached_file>\n${header}\nYeh file type in-browser extract nahi ho sakti. "System limitation" mat bolo — bas user se puchho ki content ko .txt/.md me export kare ya copy-paste kare.\n</attached_file>`;
+    if (a.kind === 'file')
+      return `<attached_file>\n${header}\nYeh file (${a.type || 'document'}) model ko direct bheji gayi hai. Agar file ka content tumhe mila ho toh use karo; agar na mile toh bolo ki text yahan visible nahi hai.\n</attached_file>`;
+    return `<attached_file>\n${header}\nYeh file type in-browser extract nahi ho sakti (scanned PDF, zip ya legacy binary). Bas honestly bolo ki content yahan visible nahi hai aur user se .txt/.md export ya copy-paste maango.\n</attached_file>`;
   });
   return [draft || 'In uploaded attachments ko analyze karo.', ...blocks].join('\n\n');
 }
@@ -1747,23 +1913,12 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return 'abhi';
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
-}
-
 function uid(prefix: string): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 function clampTokens(value: number): number {
-  if (!Number.isFinite(value)) return 2048;
-  return Math.max(1, Math.min(Math.round(value), 8192));
+  if (!Number.isFinite(value)) return 8192;
+  return Math.max(1, Math.min(Math.round(value), 32768));
 }

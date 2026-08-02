@@ -40,7 +40,10 @@ export async function extractPdfText(file: File): Promise<string> {
         .join(' ')
         .replace(/\s+/g, ' ')
         .trim();
-      parts.push(`--- Page ${pageNum}/${pageCount} ---\n${text}`);
+      // Skip pages with no extractable text (e.g. image-only scans). Emitting
+      // a bare "--- Page 1/1 ---" header would make a textless PDF look like a
+      // successful extraction and block the lightweight fallback in fileText.
+      if (text) parts.push(`--- Page ${pageNum}/${pageCount} ---\n${text}`);
       page.cleanup();
       const total = parts.join('\n\n').length;
       if (total >= MAX_PDF_CHARS) break;

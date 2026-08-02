@@ -17,7 +17,7 @@ import { todayISO } from './storage';
  */
 export function useAppState() {
   const [state, setState] = useState<AppState>(() => container.store.get());
-  const [realToday, setRealToday] = useState<string>(() => todayISO());
+  const [realToday, setRealToday] = useState<string>(() => todayISO(container.store.get().timeZone));
   const [adminUnlocked, setAdminUnlockedState] = useState<boolean>(() => isAdminUnlocked());
   const [adminDay, setAdminDayState] = useState<number | null>(null);
 
@@ -36,7 +36,7 @@ export function useAppState() {
 
   // Keep "today" fresh if the app is left open across midnight
   useEffect(() => {
-    const id = setInterval(() => setRealToday(todayISO()), 60 * 1000);
+    const id = setInterval(() => setRealToday(todayISO(container.store.get().timeZone)), 60 * 1000);
     return () => clearInterval(id);
   }, []);
 
@@ -59,7 +59,7 @@ export function useAppState() {
   }
 
   function startJourney() {
-    update((s) => ({ ...s, startDateISO: todayISO() }));
+    update((s) => ({ ...s, startDateISO: todayISO(s.timeZone) }));
   }
 
   function resetAll() {

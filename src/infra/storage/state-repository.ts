@@ -1,10 +1,14 @@
 import type { KeyValueRepository, StateRepository, StateStore } from '../../core/ports/repositories';
 import type { AppState } from '../../core/domain/state';
 import { defaultUserProfile, emptyAppState, STATE_SCHEMA_VERSION } from '../../core/domain/state';
+import { MEMORY_BYTES_BUDGET, normalizeMemoryStore, pruneMemoryToBudget } from '../../core/domain/memory';
 import { migrateV1toV2 } from './migration';
 
 export const STATE_KEY_V1 = 'levelup-state-v1';
 export const STATE_KEY = 'levelup-state-v2';
+
+/** Serialized state budget — kept safely under the ~5MB localStorage quota. */
+const STATE_SAVE_BUDGET = 3_500_000;
 
 const REQUIRED_V2_KEYS = [
   'schemaVersion',
@@ -41,10 +45,7 @@ export function normalizeState(raw: unknown): AppState {
     failureLog: Array.isArray(r.failureLog) ? r.failureLog : [],
     examDateISO: typeof r.examDateISO === 'string' ? r.examDateISO : null,
     clearedLevels: Array.isArray(r.clearedLevels) ? r.clearedLevels : [],
-    memory:
-      isRecord(r.memory) && Array.isArray((r.memory as { entries?: unknown }).entries)
-        ? (r.memory as unknown as AppState['memory'])
-        : base.memory,
+    memory: normalizeMemoryStore(r.memory),
     summaries: Array.isArray(r.summaries) ? r.summaries : [],
     aiSettings:
       isRecord(r.aiSettings) && isRecord((r.aiSettings as { providers?: unknown }).providers)
@@ -84,6 +85,7 @@ export function normalizeState(raw: unknown): AppState {
           ...(r.userProfile as Partial<AppState['userProfile']>),
         }
       : base.userProfile,
+    timeZone: typeof r.timeZone === 'string' && r.timeZone.length > 0 ? r.timeZone : null,
   };
 }
 
@@ -121,7 +123,16 @@ export class LocalStateRepository {
   }
 
   save(state: AppState): void {
-    this.store.setItem(STATE_KEY, JSON.stringify(normalizeState(state)));
+    let normalized = normalizeState(state);
+    let serialized = JSON.stringify(normalized);
+    // Quota safeguard: if the whole state is about to exceed the localStorage
+    // budget, shrink memory (the biggest consumer) until it fits, then write
+    // that. Better a trimmed memory than a silently lost save on restart.
+    if (serialized.length > STATE_SAVE_BUDGET) {
+      normalized = { ...normalized, memory: pruneMemoryToBudget(normalized.memory, MEMORY_BYTES_BUDGET) };
+      serialized = JSON.stringify(normalized);
+    }
+    this.store.setItem(STATE_KEY, serialized);
   }
 
   clear(): void {

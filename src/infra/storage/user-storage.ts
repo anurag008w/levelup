@@ -4,6 +4,7 @@
  */
 
 import { persistentStorage } from './persistent-storage';
+import { deviceTimeZone, isoDateInTimeZone } from '../../core/ports/clock';
 
 // Storage Keys
 export const STORAGE_KEYS = {
@@ -78,7 +79,7 @@ const DEFAULT_AI_SETTINGS: AISettings = {
   selectedModel: 'gemini-2.0-flash',
   temperature: 0.7,
   maxTokens: 2048,
-  systemPrompt: 'Tum Divya ho — LevelUp ki warm, sharp aur motivating girl JEE study coach. Hinglish mein reply do. Maths formulas clean LaTeX me likho.',
+  systemPrompt: 'Tum Misa ho — LevelUp ki cute, friendly, thodi cheesy JEE study partner; topper, khud bhi learner. Hinglish mein reply do. Maths formulas clean LaTeX me likho.',
   conversationHistoryLength: 10,
   memoryEnabled: true,
   autoSaveChats: true,
@@ -151,7 +152,7 @@ export async function completeOnboarding(): Promise<void> {
 // Streak Management
 export async function updateStudyStreak(): Promise<number> {
   const progress = await getUserProgress();
-  const today = new Date().toISOString().split('T')[0];
+  const today = isoDateInTimeZone(new Date(), deviceTimeZone());
   const lastDate = progress.lastStudyDate;
 
   let newStreak = progress.studyStreak;
@@ -204,11 +205,14 @@ export async function addXP(amount: number): Promise<{ level: number; xp: number
 // Progress Analytics
 export async function recordQuestionAttempt(correct: boolean): Promise<void> {
   const progress = await getUserProgress();
-  const today = new Date().toISOString().split('T')[0];
+  const today = isoDateInTimeZone(new Date(), deviceTimeZone());
 
   await saveUserProgress({
     totalQuestionsAttempted: progress.totalQuestionsAttempted + 1,
     correctAnswers: progress.correctAnswers + (correct ? 1 : 0),
+    // Track the study day so consecutive same-day attempts accumulate and a
+    // new calendar day resets the counter (mirrors updateStudyStreak).
+    lastStudyDate: today,
     todayProgress: progress.lastStudyDate === today ? progress.todayProgress + 1 : 1,
   });
 }

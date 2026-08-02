@@ -25,6 +25,32 @@ const snapshot: UnlockSnapshot = {
   revisionDueHabitIds: [],
 };
 
+describe('task bank seed integrity', () => {
+  it('every task references an existing habit (no dangling habitIds)', () => {
+    const bank = makeRepo();
+    const habitIds = new Set(buildSeed().habits.map((h) => h.id));
+    const dangling = bank.getAll().filter((t) => !habitIds.has(t.habitId));
+    expect(dangling.map((t) => `${t.id}->${t.habitId}`)).toEqual([]);
+  });
+
+  it('every task has a unique id and at least one unlock condition', () => {
+    const bank = makeRepo();
+    const all = bank.getAll();
+    expect(new Set(all.map((t) => t.id)).size).toBe(all.length);
+    for (const t of all) expect(t.unlockConditions.length).toBeGreaterThan(0);
+  });
+
+  it('mock-sunday tasks are gated to Day 15+ and exam tasks to the exam window', () => {
+    const bank = makeRepo();
+    for (const t of bank.getAll().filter((x) => x.unlockConditions.some((c) => c.type === 'mock-sunday'))) {
+      expect(t.unlockConditions).toContainEqual(expect.objectContaining({ type: 'day', fromDay: 15 }));
+    }
+    for (const t of bank.getAll().filter((x) => x.unlockConditions.some((c) => c.type === 'exam-window'))) {
+      expect(t.unlockConditions).toContainEqual(expect.objectContaining({ type: 'exam-window', daysBeforeExam: 30 }));
+    }
+  });
+});
+
 describe('task bank search', () => {
   it('returns only day-1 unlocked curriculum tasks by default', () => {
     const bank = makeRepo();
@@ -40,13 +66,16 @@ describe('task bank search', () => {
     for (const t of mockTasks) expect(isUnlockMet(t, snapshot)).toBe(false);
   });
 
-  it('unlocks mock-sunday tasks only on mock Sundays', () => {
+  it('unlocks mock-sunday tasks only on mock Sundays after Day 15', () => {
     const bank = makeRepo();
     const mockTasks = bank.getAll().filter((t) => t.unlockConditions.some((c) => c.type === 'mock-sunday'));
-    const onSunday = { ...snapshot, dayNumber: 7, mockSunday: true, weekday: 0 };
+    const onSunday = { ...snapshot, dayNumber: 15, mockSunday: true, weekday: 0 };
     const unlocked = mockTasks.filter((t) => isUnlockMet(t, onSunday));
     expect(unlocked.length).toBeGreaterThan(0);
     expect(unlocked.every((t) => t.taskType === 'Challenge')).toBe(true);
+    // mock-sunday alone is not enough — the day>=15 gate also applies
+    const tooEarly = { ...snapshot, dayNumber: 14, mockSunday: true, weekday: 0 };
+    expect(mockTasks.every((t) => !isUnlockMet(t, tooEarly))).toBe(true);
   });
 
   it('supports filters (habitIds, taskTypes, maxDuration)', () => {
