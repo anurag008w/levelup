@@ -83,8 +83,8 @@
       "description": "Har study block ke baad 2-min active recall (bina notes dekhe likho kya yaad hai)",
       "phase": "jee-core",
       "difficulty": 1,
-      "estimatedDurationMin": 60,
-      "energyLevel": "high",
+      "estimatedDurationMin": 2,
+      "energyLevel": "low",
       "tags": [
         "focus",
         "study-block",
@@ -1532,7 +1532,7 @@
     },
     {
       "id": "mock_1",
-      "habitId": "protocols",
+      "habitId": "preparation_readiness",
       "title": "Full-syllabus mock test complete kiya (exact JEE timing follow ki)",
       "description": "Full-syllabus mock test complete kiya (exact JEE timing follow ki)",
       "phase": "jee-core",
@@ -1559,6 +1559,10 @@
       "unlockConditions": [
         {
           "type": "mock-sunday"
+        },
+        {
+          "type": "day",
+          "fromDay": 15
         }
       ],
       "active": true,
@@ -1570,7 +1574,7 @@
     },
     {
       "id": "mock_2",
-      "habitId": "protocols",
+      "habitId": "double_checking",
       "title": "Mock ke turant baad OMR/answers ka rough self-check kiya (same din)",
       "description": "Mock ke turant baad OMR/answers ka rough self-check kiya (same din)",
       "phase": "jee-core",
@@ -1597,6 +1601,10 @@
       "unlockConditions": [
         {
           "type": "mock-sunday"
+        },
+        {
+          "type": "day",
+          "fromDay": 15
         }
       ],
       "active": true,
@@ -1608,7 +1616,7 @@
     },
     {
       "id": "mock_3",
-      "habitId": "protocols",
+      "habitId": "mistake_logging",
       "title": "Har galat question Mistake Log mein daala (concept gap / silly / time pressure)",
       "description": "Har galat question Mistake Log mein daala (concept gap / silly / time pressure)",
       "phase": "jee-core",
@@ -1635,6 +1643,10 @@
       "unlockConditions": [
         {
           "type": "mock-sunday"
+        },
+        {
+          "type": "day",
+          "fromDay": 15
         }
       ],
       "active": true,
@@ -1646,7 +1658,7 @@
     },
     {
       "id": "mock_4",
-      "habitId": "protocols",
+      "habitId": "progress_tracking",
       "title": "Section-wise time-spent breakdown likha (Physics/Chem/Maths kitna time liya)",
       "description": "Section-wise time-spent breakdown likha (Physics/Chem/Maths kitna time liya)",
       "phase": "jee-core",
@@ -1673,6 +1685,10 @@
       "unlockConditions": [
         {
           "type": "mock-sunday"
+        },
+        {
+          "type": "day",
+          "fromDay": 15
         }
       ],
       "active": true,
@@ -1684,7 +1700,7 @@
     },
     {
       "id": "mock_5",
-      "habitId": "protocols",
+      "habitId": "performance_review",
       "title": "Top 3 improvement actions agle week ke liye likhe",
       "description": "Top 3 improvement actions agle week ke liye likhe",
       "phase": "jee-core",
@@ -1711,6 +1727,10 @@
       "unlockConditions": [
         {
           "type": "mock-sunday"
+        },
+        {
+          "type": "day",
+          "fromDay": 15
         }
       ],
       "active": true,
@@ -1722,7 +1742,7 @@
     },
     {
       "id": "exam_1",
-      "habitId": "protocols",
+      "habitId": "daily_revision",
       "title": "Aaj koi NAYA topic nahi — sirf revision aur practice",
       "description": "Aaj koi NAYA topic nahi — sirf revision aur practice",
       "phase": "jee-core",
@@ -1760,7 +1780,7 @@
     },
     {
       "id": "exam_2",
-      "habitId": "protocols",
+      "habitId": "daily_revision",
       "title": "Formula sheet / short notes revise kiye (20-30 min)",
       "description": "Formula sheet / short notes revise kiye (20-30 min)",
       "phase": "jee-core",
@@ -1798,7 +1818,7 @@
     },
     {
       "id": "exam_3",
-      "habitId": "protocols",
+      "habitId": "mistake_logging",
       "title": "Mistake Log ke top repeated errors dobara padhe",
       "description": "Mistake Log ke top repeated errors dobara padhe",
       "phase": "jee-core",
@@ -1836,7 +1856,7 @@
     },
     {
       "id": "exam_4",
-      "habitId": "protocols",
+      "habitId": "preparation_readiness",
       "title": "Ek timed practice set solve kiya (exam-pressure simulate)",
       "description": "Ek timed practice set solve kiya (exam-pressure simulate)",
       "phase": "jee-core",
@@ -1874,7 +1894,7 @@
     },
     {
       "id": "exam_5",
-      "habitId": "protocols",
+      "habitId": "sleep_plan",
       "title": "Sleep 7+ hours ka target — koi late-night cramming nahi",
       "description": "Sleep 7+ hours ka target — koi late-night cramming nahi",
       "phase": "jee-core",
@@ -1912,7 +1932,7 @@
     },
     {
       "id": "exam_6",
-      "habitId": "protocols",
+      "habitId": "preparation_readiness",
       "title": "Admit card / stationery / ID check (agar exam week hai)",
       "description": "Admit card / stationery / ID check (agar exam week hai)",
       "phase": "jee-core",

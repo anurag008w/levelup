@@ -58,9 +58,10 @@ function healthyStateWithRecentCompletion(planner: HabitProgressionService, toda
 }
 
 function isoFromDay(day: number): string {
-  const start = new Date('2026-01-01T00:00:00');
-  start.setDate(start.getDate() + (day - 1));
-  return start.toISOString().slice(0, 10);
+  // Pure UTC: Date.UTC + toISOString keeps the ISO date EXACTLY `day` days
+  // after the start in every timezone. (Local `setDate` + `toISOString`
+  // shifts the result by one day on non-UTC machines.)
+  return new Date(Date.UTC(2026, 0, day)).toISOString().slice(0, 10);
 }
 
 describe('HabitProgressionService backward compatibility', () => {
@@ -77,15 +78,22 @@ describe('HabitProgressionService backward compatibility', () => {
     }
   });
 
-  it('has planned tasks for every journey day across all phases', () => {
-    const { planner } = makePlanner();
-    const state = healthyState();
+  it(
+    'has planned tasks for every journey day across all phases',
+    // Heavy loop (TOTAL_DAYS plans, each scanning a 14-day history) — give it
+    // room when the suite runs files in parallel, otherwise it flakes as a
+    // 5s timeout under CPU contention.
+    { timeout: 30000 },
+    () => {
+      const { planner } = makePlanner();
+      const state = healthyState();
 
-    for (let day = 1; day <= TOTAL_DAYS; day++) {
-      const plan = planner.buildPlan(state, isoFromDay(day), legacyConfig);
-      expect(plan.tasks.length, `Day ${day} should have at least one task`).toBeGreaterThan(0);
-    }
-  });
+      for (let day = 1; day <= TOTAL_DAYS; day++) {
+        const plan = planner.buildPlan(state, isoFromDay(day), legacyConfig);
+        expect(plan.tasks.length, `Day ${day} should have at least one task`).toBeGreaterThan(0);
+      }
+    },
+  );
 
   it('has seed task coverage for every level across all phases', () => {
     const { bank } = makePlanner();
@@ -294,19 +302,24 @@ describe('HabitProgressionService day-scoped scheduling', () => {
 
   it('rest day suppresses the mock Sunday protocol too', () => {
     const { planner } = makePlanner();
-    // 2026-01-04 is an actual Sunday (day 4); a rest day there must yield no tasks.
-    const state = { ...healthyState(), restDays: [4] };
-    const plan = planner.buildPlan(state, isoFromDay(4), DEFAULT_PROGRESSION_CONFIG);
+    // 2026-01-18 is an actual Sunday (day 18 ≥ 15 → mocks would be due); a rest day there must yield no tasks.
+    const state = { ...healthyState(), restDays: [18] };
+    const plan = planner.buildPlan(state, isoFromDay(18), DEFAULT_PROGRESSION_CONFIG);
     expect(plan.tasks).toEqual([]);
   });
 
-  it('mock tasks only appear on actual calendar Sundays, not every 7th journey day', () => {
+  it('mock tasks only appear on actual calendar Sundays at Day 15+, not every 7th journey day', () => {
     const { planner, bank } = makePlanner();
-    // 2026-01-04 is Sunday (day 4), 2026-01-11 is Sunday (day 11).
-    for (const sundayDay of [4, 11]) {
+    // 2026-01-18 is Sunday (day 18) and 2026-01-25 is Sunday (day 25) — both past the Day-15 gate.
+    for (const sundayDay of [18, 25]) {
       const plan = planner.buildPlan(healthyState(), isoFromDay(sundayDay), legacyConfig);
       const mocks = plan.tasks.filter((t) => t.entry.id.startsWith('mock_'));
       expect(mocks.length, `Day ${sundayDay} (Sunday) should have mock tasks`).toBeGreaterThan(0);
+    }
+    // Sundays before the Day-15 gate (day 4, day 11) must NOT unlock mocks yet.
+    for (const earlySunday of [4, 11]) {
+      const plan = planner.buildPlan(healthyState(), isoFromDay(earlySunday), legacyConfig);
+      expect(plan.tasks.some((t) => t.entry.id.startsWith('mock_')), `Day ${earlySunday} is too early for mocks`).toBe(false);
     }
     // 2026-01-07 is Wednesday (day 7, old "every 7th day" logic) — no mocks now.
     const wednesday = planner.buildPlan(healthyState(), isoFromDay(7), legacyConfig);
@@ -389,5 +402,60 @@ describe('HabitProgressionService day-scoped scheduling', () => {
     expect(plannerHidden.buildPlan(healthyState(), isoFromDay(hiddenDay + 1), DEFAULT_PROGRESSION_CONFIG).tasks.some((t) => t.entry.id === 'd1_t1')).toBe(true);
     // The bank entry itself is never deleted.
     expect(bank.getById('d1_t1')).toBeTruthy();
+  });
+});
+
+describe('HabitProgressionService time-horizon matrix', () => {
+  it('plans beyond day 90 when the post-journey extension is active', () => {
+    const { planner } = makePlanner();
+    const state: AppState = {
+      ...healthyState(),
+      postJourney: {
+        ...emptyAppState().postJourney,
+        journeyComplete: true,
+        extensionDays: 30,
+      },
+    };
+    const day = TOTAL_DAYS + 5; // 95
+    const plan = planner.buildPlan(state, isoFromDay(day), DEFAULT_PROGRESSION_CONFIG);
+    expect(plan.dayNumber).toBe(day);
+    expect(plan.tasks.length).toBeGreaterThan(0);
+  });
+
+  it('does not plan beyond the original 90 days without an extension', () => {
+    const { planner } = makePlanner();
+    // journeyComplete=false (default) → day clamps to TOTAL_DAYS.
+    const plan = planner.buildPlan(healthyState(), isoFromDay(TOTAL_DAYS + 10), DEFAULT_PROGRESSION_CONFIG);
+    expect(plan.dayNumber).toBe(TOTAL_DAYS);
+    expect(plan.tasks.length).toBeGreaterThan(0);
+  });
+
+  it('clamps a pre-start date to journey day 1 without crashing', () => {
+    const { planner } = makePlanner();
+    const state = healthyState(); // startDateISO = 2026-01-01
+    const plan = planner.buildPlan(state, '2025-12-31', DEFAULT_PROGRESSION_CONFIG);
+    expect(plan.dayNumber).toBe(1);
+    expect(plan.tasks.length).toBeGreaterThan(0);
+  });
+
+  it('enters the exam window when the exam is within 30 days', () => {
+    const { planner } = makePlanner();
+    const state: AppState = { ...healthyState(), examDateISO: '2026-01-30' };
+    const plan = planner.buildPlan(state, '2026-01-08', DEFAULT_PROGRESSION_CONFIG);
+    expect(plan.contextSummary).toContain('exam-window');
+  });
+
+  it('leaves the exam window when the exam is further than 30 days out', () => {
+    const { planner } = makePlanner();
+    const state: AppState = { ...healthyState(), examDateISO: '2026-03-15' };
+    const plan = planner.buildPlan(state, '2026-01-08', DEFAULT_PROGRESSION_CONFIG);
+    expect(plan.contextSummary).not.toContain('exam-window');
+  });
+
+  it('does not flag the exam window after the exam date has passed', () => {
+    const { planner } = makePlanner();
+    const state: AppState = { ...healthyState(), examDateISO: '2026-01-05' };
+    const plan = planner.buildPlan(state, '2026-01-08', DEFAULT_PROGRESSION_CONFIG);
+    expect(plan.contextSummary).not.toContain('exam-window');
   });
 });

@@ -152,11 +152,11 @@ describe('ChatToolsService', () => {
   it('markDone uses special plan log keys such as mock days', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    // Day 5 (2026-07-05) is an actual Sunday → mock protocol active.
-    const result = await tools.run({ action: 'markDone', day: 5, taskId: 'mock_1' });
+    // Day 19 (2026-07-19) is an actual Sunday past the Day-15 gate → mock protocol active.
+    const result = await tools.run({ action: 'markDone', day: 19, taskId: 'mock_1' });
     expect(result.ok).toBe(true);
-    expect(store.get().taskLogs['mock:2026-07-05']?.mock_1).toBe(true);
-    expect(store.get().taskLogs['2026-07-05']?.mock_1).toBeUndefined();
+    expect(store.get().taskLogs['mock:2026-07-19']?.mock_1).toBe(true);
+    expect(store.get().taskLogs['2026-07-19']?.mock_1).toBeUndefined();
   });
 
   it('addTask appends a dynamic entry through the store', async () => {
@@ -346,12 +346,12 @@ describe('ChatToolsService', () => {
   it('can add tasks on a mock Sunday and they appear in that plan', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    // Day 5 (2026-07-05) is an actual Sunday → mock protocol active.
-    const sunday = await tools.run({ action: 'getPlan', day: 5 });
+    // Day 19 (2026-07-19) is an actual Sunday past the Day-15 gate → mock protocol active.
+    const sunday = await tools.run({ action: 'getPlan', day: 19 });
     expect(sunday.summary).toContain('id:mock_1');
-    const add = await tools.run({ action: 'addTask', day: 5, intent: 'sunday revision', durationMin: 20 });
+    const add = await tools.run({ action: 'addTask', day: 19, intent: 'sunday revision', durationMin: 20 });
     expect(add.ok).toBe(true);
-    const updated = await tools.run({ action: 'getPlan', day: 5 });
+    const updated = await tools.run({ action: 'getPlan', day: 19 });
     expect(updated.summary).toContain('Chat se add hua task');
   });
 

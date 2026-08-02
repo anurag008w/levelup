@@ -58,6 +58,9 @@ export class DailySummaryService {
       summaries: [...state.summaries.filter((s) => s.dateISO !== dateISO), summary],
       lastSummaryDate: dateISO,
     };
+    // Respect the global "AI Memory" toggle — a disabled feature must not
+    // keep growing memory in the background.
+    if (!this.memoryEnabled(state)) return next;
     let memState = this.deps.memory.add(next, {
       type: 'progression',
       source: 'system',
@@ -75,6 +78,12 @@ export class DailySummaryService {
       });
     }
     return memState;
+  }
+
+  /** Whether the global "AI Memory" setting is on (defaults to on). */
+  private memoryEnabled(state: AppState): boolean {
+    const chat = state.aiSettings?.chat;
+    return chat ? chat.memoryEnabled !== false : true;
   }
 
   private computeDeterministic(

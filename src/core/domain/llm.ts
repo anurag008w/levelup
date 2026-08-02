@@ -34,7 +34,8 @@ export interface ProviderConfig {
 
 export type ContentPart = 
   | { type: 'text'; text: string }
-  | { type: 'image'; image: string; alt?: string };
+  | { type: 'image'; image: string; alt?: string }
+  | { type: 'file'; file: { filename: string; file_data: string } };
 
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant';

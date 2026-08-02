@@ -1,10 +1,36 @@
-import { Brain, ChevronLeft, MessageSquare, Save, Sparkles, Type } from 'lucide-react';
+import { useRef } from 'react';
+import { Brain, ChevronLeft, Clock, MessageSquare, Save, Sparkles, Type } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ChatSettings } from '../core/domain/state';
+import type { ThinkingLevel } from '../core/domain/llm';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
 import { haptic } from '../lib/haptics';
-import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT } from '../core/domain/chat';
+import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, globalChatPrefsFromSettings } from '../core/domain/chat';
+import { deviceTimeZone } from '../core/ports/clock';
+import { container } from '../di/container';
+
+/** Common IANA zones users can pin for the app's day boundary. */
+const TIME_ZONES: Array<{ id: string; label: string }> = [
+  { id: 'Asia/Kolkata', label: 'India (Asia/Kolkata)' },
+  { id: 'Asia/Karachi', label: 'Pakistan (Asia/Karachi)' },
+  { id: 'Asia/Dhaka', label: 'Bangladesh (Asia/Dhaka)' },
+  { id: 'Asia/Kathmandu', label: 'Nepal (Asia/Kathmandu)' },
+  { id: 'Asia/Colombo', label: 'Sri Lanka (Asia/Colombo)' },
+  { id: 'Asia/Dubai', label: 'UAE (Asia/Dubai)' },
+  { id: 'Asia/Singapore', label: 'Singapore (Asia/Singapore)' },
+  { id: 'Asia/Kuala_Lumpur', label: 'Malaysia (Asia/Kuala_Lumpur)' },
+  { id: 'Asia/Shanghai', label: 'China (Asia/Shanghai)' },
+  { id: 'Asia/Tokyo', label: 'Japan (Asia/Tokyo)' },
+  { id: 'Europe/London', label: 'UK (Europe/London)' },
+  { id: 'Europe/Berlin', label: 'Germany (Europe/Berlin)' },
+  { id: 'Europe/Paris', label: 'France (Europe/Paris)' },
+  { id: 'America/New_York', label: 'US East (America/New_York)' },
+  { id: 'America/Chicago', label: 'US Central (America/Chicago)' },
+  { id: 'America/Los_Angeles', label: 'US West (America/Los_Angeles)' },
+  { id: 'America/Sao_Paulo', label: 'Brazil (America/Sao_Paulo)' },
+  { id: 'Australia/Sydney', label: 'Australia (Australia/Sydney)' },
+];
 
 interface ChatSettingsScreenProps {
   state: AppState;
@@ -14,9 +40,17 @@ interface ChatSettingsScreenProps {
 
 export default function ChatSettingsScreen({ state, update, onBack }: ChatSettingsScreenProps) {
   const chat = state.aiSettings.chat;
+  // Heavy text-field changes (persona/system prompt) are propagated to every
+  // session with a short debounce so typing doesn't trigger a repo save per
+  // keystroke. Immediate fields (sliders, toggles, selects) stay instant.
+  const propagateTimer = useRef<number | null>(null);
 
   function updateChat(partial: Partial<ChatSettings>) {
     haptic();
+    // Propagate from the LATEST store state, not the render-time `chat` prop:
+    // rapid keystrokes could otherwise race and push a stale persona snapshot
+    // into every session.
+    const latest = container.store.get().aiSettings.chat;
     update((s) => ({
       ...s,
       aiSettings: {
@@ -24,6 +58,15 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
         chat: { ...s.aiSettings.chat, ...partial },
       },
     }));
+    const needsDebounce = typeof partial.userPersona === 'string' || typeof partial.systemPrompt === 'string';
+    if (needsDebounce) {
+      if (propagateTimer.current) window.clearTimeout(propagateTimer.current);
+      propagateTimer.current = window.setTimeout(() => {
+        container.chat.applyGlobalPrefs(globalChatPrefsFromSettings(container.store.get().aiSettings.chat));
+      }, 350);
+    } else {
+      container.chat.applyGlobalPrefs(globalChatPrefsFromSettings({ ...latest, ...partial }));
+    }
   }
 
   return (
@@ -86,7 +129,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
               <input
                 type="range"
                 min="256"
-                max="8192"
+                max="32768"
                 step="256"
                 value={chat.maxTokens}
                 onChange={(e) => updateChat({ maxTokens: parseInt(e.target.value) })}
@@ -96,6 +139,26 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                 <span>Short</span>
                 <span>Long</span>
               </div>
+            </div>
+
+            {/* Thinking / reasoning */}
+            <div>
+              <label htmlFor="chat-thinking-level" className="mb-2 block text-sm font-medium">Thinking / reasoning</label>
+              <select
+                id="chat-thinking-level"
+                className="field"
+                value={chat.thinking ?? ''}
+                onChange={(e) =>
+                  updateChat({ thinking: (e.target.value || undefined) as ThinkingLevel | undefined })
+                }
+              >
+                <option value="">Provider default</option>
+                <option value="off">Off</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+              <p className="mt-1 text-[10px] text-muted">Reasoning models ke liye thinking budget.</p>
             </div>
           </div>
         </div>
@@ -147,7 +210,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                 onChange={(e) => updateChat({ conversationHistoryLength: parseInt(e.target.value) })}
                 className="slider w-full"
               />
-              <p className="mt-1 text-[10px] text-muted">0 = no history, full conversation memory</p>
+              <p className="mt-1 text-[10px] text-muted">0 = full conversation memory (koi trimming nahi); 5/10/... = sirf last N messages</p>
             </div>
           </div>
         </div>
@@ -180,6 +243,42 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
               checked={chat.showThinking}
               onChange={(v) => updateChat({ showThinking: v })}
             />
+          </div>
+        </div>
+      </div>
+
+      {/* Time zone */}
+      <div className="mb-6">
+        <SectionHeader
+          icon={<Clock size={14} color="var(--color-w)" />}
+          accent="var(--color-w)"
+          title="Time zone"
+        />
+
+        <div className="gradient-border rounded-[1.25rem] p-px">
+          <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-4">
+            <div>
+              <label className="field-label">Day boundary timezone</label>
+              <select
+                className="field"
+                aria-label="Time zone"
+                value={state.timeZone ?? ''}
+                onChange={(e) =>
+                  update((s) => ({ ...s, timeZone: e.target.value || null }))
+                }
+              >
+                <option value="">Auto (device · {deviceTimeZone()})</option>
+                {TIME_ZONES.map((tz) => (
+                  <option key={tz.id} value={tz.id}>
+                    {tz.label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[10px] text-muted">
+                Journey ka "aaj" kis timezone ke hisaab se roll hota hai. India ke liye Asia/Kolkata — raat
+                12 baje naya day shuru hota hai.
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -221,7 +320,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                   className="field min-h-[120px] resize-none"
                   value={chat.systemPrompt}
                   onChange={(e) => updateChat({ systemPrompt: e.target.value })}
-                  placeholder="Divya coach persona, tone, Markdown/LaTeX rules..."
+                  placeholder="Misa persona, tone, Markdown/LaTeX rules..."
                 />
                 <div className="mt-2 flex items-center justify-between">
                   <span className="text-[10px] text-muted">{chat.systemPrompt.length} characters</span>
@@ -229,7 +328,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                     className="btn btn-ghost text-xs"
                     onClick={() => updateChat({ systemPrompt: INTERNAL_SYSTEM_PROMPT })}
                   >
-                    Reset Divya persona
+                    Reset Misa persona
                   </button>
                 </div>
               </div>

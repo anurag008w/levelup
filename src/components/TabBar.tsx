@@ -1,7 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Brain, CalendarCheck, ChevronRight, LayoutList, LineChart, ListTodo, Menu, MessageCircle, NotebookPen, Settings, User, X } from 'lucide-react';
+import { Brain, CalendarCheck, Check, ChevronRight, Download, LayoutList, LineChart, ListTodo, Menu, MessageCircle, NotebookPen, PenLine, Pin, PinOff, Settings, Trash2, Upload, User, X } from 'lucide-react';
 import type { AppState, UserProfile } from '../types';
+import type { MemoryEntry } from '../core/domain/memory';
+import { container } from '../di/container';
+import { haptic } from '../lib/haptics';
+import MemorySummaryPanel from './MemorySummaryPanel';
 
 export type Tab = 'today' | 'levels' | 'progress' | 'review' | 'task-bank' | 'ai' | 'chat';
 
@@ -11,7 +15,7 @@ const TABS: { id: Tab; label: string; hint: string; icon: typeof CalendarCheck }
   { id: 'progress', label: 'Progress', hint: 'Analytics', icon: LineChart },
   { id: 'review', label: 'Review', hint: 'Reflect', icon: NotebookPen },
   { id: 'task-bank', label: 'Tasks', hint: 'Bank', icon: ListTodo },
-  { id: 'chat', label: 'AI Coach', hint: 'Doubts & maths', icon: MessageCircle },
+  { id: 'chat', label: 'Misa', hint: 'Doubts & maths', icon: MessageCircle },
   { id: 'ai', label: 'Settings', hint: 'App & AI', icon: Settings },
 ];
 
@@ -28,8 +32,12 @@ interface TabBarProps {
 
 export default function TabBar({ active, state, onChange, update }: TabBarProps) {
   const [open, setOpen] = useState(false);
+  const [handleVisible, setHandleVisible] = useState(true);
   const [settingsPanel, setSettingsPanel] = useState<'profile' | 'memory' | null>(null);
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState('');
   const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -41,6 +49,48 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [settingsPanel]);
+
+  // Auto-hide the floating hamburger while scrolling down, reveal it when the
+  // user scrolls back up or returns to the top. Works for both the document
+  // scroller and inner scroll containers (e.g. the chat thread).
+  useEffect(() => {
+    let lastTarget: EventTarget | null = null;
+    let lastScrollTop = 0;
+    let ticking = false;
+
+    function scrollTopOf(target: EventTarget | null): number {
+      if (!target || target === document) {
+        return window.scrollY || document.documentElement.scrollTop || 0;
+      }
+      const el = target as HTMLElement;
+      return el.scrollTop ?? 0;
+    }
+
+    function onScroll(event: Event) {
+      const target = event.target;
+      const scrollTop = scrollTopOf(target);
+      if (target !== lastTarget) {
+        lastTarget = target;
+        lastScrollTop = scrollTop;
+      }
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        ticking = false;
+        const delta = scrollTop - lastScrollTop;
+        lastScrollTop = scrollTop;
+        setHandleVisible((visible) => {
+          if (scrollTop <= 2) return true;
+          if (delta > 4) return false;
+          if (delta < -4) return true;
+          return visible;
+        });
+      });
+    }
+
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    return () => window.removeEventListener('scroll', onScroll, { capture: true });
+  }, []);
 
   useEffect(() => {
     function onTouchStart(event: TouchEvent) {
@@ -73,12 +123,39 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
   function selectTab(next: Tab) {
     onChange(next);
     setOpen(false);
+    setHandleVisible(true);
   }
 
   const profile = state.userProfile;
-  const memoryItems = [...state.memory.summaries, ...state.memory.entries]
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, 24);
+  // Memoized memory grouping so re-renders (typing, sidebar state) don't
+  // re-sort/re-clone the whole memory list on every frame.
+  const { longTermMemory, blockGroups, memoryItems } = useMemo(() => {
+    const allMemory = [...state.memory.summaries, ...state.memory.entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    // Long-term membership is decided on the FULL set — slicing for display
+    // must not drop pinned entries into the archive/loose groups below.
+    const longTermAll = allMemory.filter((e) => e.longTerm === true);
+    const longTermMemory = longTermAll.slice(0, 12);
+    const longTermIds = new Set(longTermAll.map((e) => e.id));
+    // Group the rest into blocks (one per chat transcript) plus loose entries.
+    const blocks = new Map<string, MemoryEntry[]>();
+    const loose: MemoryEntry[] = [];
+    for (const entry of allMemory) {
+      if (longTermIds.has(entry.id)) continue;
+      if (entry.blockId) {
+        const list = blocks.get(entry.blockId) ?? [];
+        list.push(entry);
+        blocks.set(entry.blockId, list);
+      } else {
+        loose.push(entry);
+      }
+    }
+    const blockGroups = [...blocks.values()]
+      .map((entries) => ({ entries: entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), updatedAt: entries[0]?.createdAt ?? '' }))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, 12);
+    const memoryItems = loose.slice(0, 12);
+    return { longTermMemory, blockGroups, memoryItems };
+  }, [state.memory.entries, state.memory.summaries]);
 
   function updateProfile(field: keyof UserProfile, value: string) {
     update((s) => ({
@@ -90,6 +167,67 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
     }));
   }
 
+  function startEditMemory(entry: MemoryEntry) {
+    haptic();
+    setEditingMemoryId(entry.id);
+    setEditDraft(entry.content);
+  }
+
+  function cancelEditMemory() {
+    setEditingMemoryId(null);
+    setEditDraft('');
+  }
+
+  function saveEditMemory(id: string) {
+    const content = editDraft.trim();
+    if (!content) return;
+    haptic();
+    update((s) => container.memory.update(s, id, { content }));
+    setEditingMemoryId(null);
+    setEditDraft('');
+  }
+
+  function deleteMemory(id: string) {
+    if (!confirm('Is memory entry ko delete karna hai?')) return;
+    haptic();
+    update((s) => container.memory.remove(s, id));
+    if (editingMemoryId === id) setEditingMemoryId(null);
+  }
+
+  function toggleLongTerm(entry: MemoryEntry) {
+    haptic();
+    update((s) => container.memory.setLongTerm(s, [entry.id], !entry.longTerm));
+  }
+
+  function exportMemoryBackup() {
+    haptic();
+    const json = container.memory.exportMemory(state);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `levelup-memory-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importMemoryBackup(file: File | null) {
+    if (!file) return;
+    haptic();
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const json = String(reader.result ?? '');
+        update((s) => container.memory.importMemory(s, json));
+        setSettingsPanel('memory');
+      } catch {
+        alert('Import fail — file ek valid JSON memory backup nahi hai.');
+      }
+    };
+    reader.onerror = () => alert('File padhna fail ho gaya.');
+    reader.readAsText(file);
+  }
+
   return (
     <>
       <button
@@ -98,9 +236,9 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
         className="nav-handle"
         aria-label="Open navigation menu"
         aria-expanded={open}
-        data-visible
+        data-visible={handleVisible}
       >
-        <Menu size={19} strokeWidth={2} />
+        <Menu size={18} strokeWidth={2.2} />
       </button>
 
       <div className="swipe-edge" aria-hidden="true" />
@@ -205,30 +343,113 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
                       value={profile.notes}
                       onChange={(e) => updateProfile('notes', e.target.value)}
                       className="field min-h-28 resize-none text-sm"
-                      placeholder="Anything Divya should remember while coaching."
+                      placeholder="Anything Misa should remember while studying."
                     />
                   </label>
                 </div>
               </div>
             ) : (
               <div>
-                <div className="mb-4 flex items-center justify-between gap-2 rounded-lg border border-border bg-panel-raised p-3">
+                <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-border bg-panel-raised p-3">
                   <p className="text-sm font-semibold text-text">Saved coaching memory</p>
                   <span className="font-mono text-[10px] text-muted">{state.memory.entries.length + state.memory.summaries.length} items</span>
                 </div>
+                <p className="mb-2 text-[11px] leading-relaxed text-muted">
+                  Purani chats yahan memory me archive hoti hain (read-only chat history). Ek click se saari unread
+                  chats AI se ek saath condense ho jaati hain — blocks edit, delete ya pin kar sakte ho.
+                </p>
+                <div className="mb-3">
+                  <MemorySummaryPanel />
+                </div>
+                <div className="mb-3 grid grid-cols-2 gap-2">
+                  <button type="button" className="btn btn-ghost justify-center text-[11px]" onClick={exportMemoryBackup}>
+                    <Download size={12} /> Backup export
+                  </button>
+                  <button type="button" className="btn btn-ghost justify-center text-[11px]" onClick={() => importInputRef.current?.click()}>
+                    <Upload size={12} /> Backup import
+                  </button>
+                  <input
+                    ref={importInputRef}
+                    type="file"
+                    accept=".json,application/json"
+                    className="hidden"
+                    onChange={(e) => {
+                      importMemoryBackup(e.target.files?.[0] ?? null);
+                      e.target.value = '';
+                    }}
+                  />
+                </div>
                 <div className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
-                  {memoryItems.length > 0 ? (
-                    memoryItems.map((entry) => (
-                      <article key={entry.id} className="rounded-lg border border-border bg-panel-raised p-3">
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <span className="badge">{entry.type}</span>
-                          <span className="font-mono text-[10px] text-muted">{new Date(entry.createdAt).toLocaleDateString()}</span>
+                  {longTermMemory.length > 0 && (
+                    <>
+                      <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Long-term memory</p>
+                      {longTermMemory.map((entry) => (
+                        <MemoryCard
+                          key={entry.id}
+                          entry={entry}
+                          editing={editingMemoryId === entry.id}
+                          draft={editDraft}
+                          onEdit={() => startEditMemory(entry)}
+                          onDraft={setEditDraft}
+                          onSave={() => saveEditMemory(entry.id)}
+                          onCancel={cancelEditMemory}
+                          onDelete={() => deleteMemory(entry.id)}
+                          onTogglePin={() => toggleLongTerm(entry)}
+                        />
+                      ))}
+                    </>
+                  )}
+                  {blockGroups.length > 0 && (
+                    <>
+                      <p className="px-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Chat archives</p>
+                      {blockGroups.map((group) => (
+                        <div key={group.entries[0].id} className="rounded-lg border border-border bg-panel-raised p-3">
+                          <div className="mb-1.5 flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+                              Chat block · {new Date(group.updatedAt).toLocaleDateString()}
+                            </span>
+                            <span className="font-mono text-[10px] text-muted">{group.entries.length} pt</span>
+                          </div>
+                          {group.entries.map((entry) => (
+                            <MemoryCard
+                              key={entry.id}
+                              entry={entry}
+                              compact
+                              editing={editingMemoryId === entry.id}
+                              draft={editDraft}
+                              onEdit={() => startEditMemory(entry)}
+                              onDraft={setEditDraft}
+                              onSave={() => saveEditMemory(entry.id)}
+                              onCancel={cancelEditMemory}
+                              onDelete={() => deleteMemory(entry.id)}
+                              onTogglePin={() => toggleLongTerm(entry)}
+                            />
+                          ))}
                         </div>
-                        <p className="text-sm leading-relaxed text-muted">{entry.content}</p>
-                      </article>
-                    ))
-                  ) : (
-                    <p className="rounded-lg border border-border bg-panel-raised p-4 text-sm leading-relaxed text-muted">No memory entries yet.</p>
+                      ))}
+                    </>
+                  )}
+                  {memoryItems.length > 0 && (
+                    <>
+                      <p className="px-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Other entries</p>
+                      {memoryItems.map((entry) => (
+                        <MemoryCard
+                          key={entry.id}
+                          entry={entry}
+                          editing={editingMemoryId === entry.id}
+                          draft={editDraft}
+                          onEdit={() => startEditMemory(entry)}
+                          onDraft={setEditDraft}
+                          onSave={() => saveEditMemory(entry.id)}
+                          onCancel={cancelEditMemory}
+                          onDelete={() => deleteMemory(entry.id)}
+                          onTogglePin={() => toggleLongTerm(entry)}
+                        />
+                      ))}
+                    </>
+                  )}
+                  {longTermMemory.length === 0 && blockGroups.length === 0 && memoryItems.length === 0 && (
+                    <p className="rounded-lg border border-border bg-panel-raised p-4 text-sm leading-relaxed text-muted">No memory entries yet. New chats ka raw transcript automatically memory me save hota hai — ya upar wale button se abhi karo.</p>
                   )}
                 </div>
               </div>
@@ -245,6 +466,72 @@ function ProfileField({ label, value, onChange, placeholder }: { label: string; 
       <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">{label}</span>
       <input value={value} onChange={(e) => onChange(e.target.value)} className="field min-h-9 py-1.5 text-xs" placeholder={placeholder} />
     </label>
+  );
+}
+
+function MemoryCard({
+  entry,
+  editing,
+  draft,
+  compact,
+  onEdit,
+  onDraft,
+  onSave,
+  onCancel,
+  onDelete,
+  onTogglePin,
+}: {
+  entry: MemoryEntry;
+  editing: boolean;
+  draft: string;
+  compact?: boolean;
+  onEdit: () => void;
+  onDraft: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  onDelete: () => void;
+  onTogglePin: () => void;
+}) {
+  return (
+    <article className={compact ? 'py-1' : 'mb-2 rounded-lg border border-border bg-panel-raised p-3'}>
+      <div className="flex items-center justify-between gap-2">
+        <span className={compact ? 'truncate font-mono text-[9px] uppercase tracking-wide text-muted' : 'badge'}>
+          {compact ? entry.type : `${entry.type}${entry.longTerm ? ' · long-term' : ''}`}
+        </span>
+        <div className="flex items-center gap-1">
+          <span className="font-mono text-[10px] text-muted">{new Date(entry.createdAt).toLocaleDateString()}</span>
+          <button type="button" className="memory-action" onClick={onTogglePin} aria-label={entry.longTerm ? 'Unpin from long-term' : 'Pin to long-term'}>
+            {entry.longTerm ? <PinOff size={12} /> : <Pin size={12} />}
+          </button>
+          <button type="button" className="memory-action" onClick={onEdit} aria-label="Edit memory">
+            <PenLine size={12} />
+          </button>
+          <button type="button" className="memory-action text-danger" onClick={onDelete} aria-label="Delete memory">
+            <Trash2 size={12} />
+          </button>
+        </div>
+      </div>
+      {editing ? (
+        <div className="space-y-2">
+          <textarea
+            value={draft}
+            onChange={(e) => onDraft(e.target.value)}
+            className="field min-h-20 resize-none text-sm"
+            autoFocus
+          />
+          <div className="flex justify-end gap-1.5">
+            <button type="button" className="btn btn-ghost min-h-7 px-2.5 text-[11px]" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="button" className="btn min-h-7 px-2.5 text-[11px]" onClick={onSave}>
+              <Check size={12} /> Save
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm leading-relaxed text-muted">{entry.content}</p>
+      )}
+    </article>
   );
 }
 
