@@ -302,19 +302,24 @@ describe('HabitProgressionService day-scoped scheduling', () => {
 
   it('rest day suppresses the mock Sunday protocol too', () => {
     const { planner } = makePlanner();
-    // 2026-01-04 is an actual Sunday (day 4); a rest day there must yield no tasks.
-    const state = { ...healthyState(), restDays: [4] };
-    const plan = planner.buildPlan(state, isoFromDay(4), DEFAULT_PROGRESSION_CONFIG);
+    // 2026-01-18 is an actual Sunday (day 18 ≥ 15 → mocks would be due); a rest day there must yield no tasks.
+    const state = { ...healthyState(), restDays: [18] };
+    const plan = planner.buildPlan(state, isoFromDay(18), DEFAULT_PROGRESSION_CONFIG);
     expect(plan.tasks).toEqual([]);
   });
 
-  it('mock tasks only appear on actual calendar Sundays, not every 7th journey day', () => {
+  it('mock tasks only appear on actual calendar Sundays at Day 15+, not every 7th journey day', () => {
     const { planner, bank } = makePlanner();
-    // 2026-01-04 is Sunday (day 4), 2026-01-11 is Sunday (day 11).
-    for (const sundayDay of [4, 11]) {
+    // 2026-01-18 is Sunday (day 18) and 2026-01-25 is Sunday (day 25) — both past the Day-15 gate.
+    for (const sundayDay of [18, 25]) {
       const plan = planner.buildPlan(healthyState(), isoFromDay(sundayDay), legacyConfig);
       const mocks = plan.tasks.filter((t) => t.entry.id.startsWith('mock_'));
       expect(mocks.length, `Day ${sundayDay} (Sunday) should have mock tasks`).toBeGreaterThan(0);
+    }
+    // Sundays before the Day-15 gate (day 4, day 11) must NOT unlock mocks yet.
+    for (const earlySunday of [4, 11]) {
+      const plan = planner.buildPlan(healthyState(), isoFromDay(earlySunday), legacyConfig);
+      expect(plan.tasks.some((t) => t.entry.id.startsWith('mock_')), `Day ${earlySunday} is too early for mocks`).toBe(false);
     }
     // 2026-01-07 is Wednesday (day 7, old "every 7th day" logic) — no mocks now.
     const wednesday = planner.buildPlan(healthyState(), isoFromDay(7), legacyConfig);
