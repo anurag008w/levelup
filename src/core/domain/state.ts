@@ -1,7 +1,7 @@
 import type { MemoryStore } from './memory';
 import type { DailySummary } from './summary';
 import type { DailyPlan } from './progress';
-import type { ProviderConfig, ModelInfo } from './llm';
+import type { ProviderConfig, ModelInfo, ThinkingLevel } from './llm';
 import type { TaskBankEntry } from './task-bank';
 import type { AiActionHistoryState } from './ai-actions';
 import { emptyAiActionHistory } from './ai-actions';
@@ -42,6 +42,8 @@ export interface ChatSettings {
   includeJourneyContext: boolean;
   /** Show thinking process */
   showThinking: boolean;
+  /** Reasoning effort / thinking budget for chat replies */
+  thinking?: ThinkingLevel;
 }
 
 export interface UserProfile {
@@ -65,7 +67,7 @@ export function defaultUserProfile(): UserProfile {
 export function defaultChatSettings(): ChatSettings {
   return {
     temperature: 0.7,
-    maxTokens: 2048,
+    maxTokens: 8192,
     systemPrompt: INTERNAL_SYSTEM_PROMPT,
     userPersona: '',
     memoryEnabled: true,

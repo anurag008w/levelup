@@ -1,10 +1,12 @@
 import { Brain, ChevronLeft, MessageSquare, Save, Sparkles, Type } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ChatSettings } from '../core/domain/state';
+import type { ThinkingLevel } from '../core/domain/llm';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
 import { haptic } from '../lib/haptics';
-import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT } from '../core/domain/chat';
+import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, globalChatPrefsFromSettings } from '../core/domain/chat';
+import { container } from '../di/container';
 
 interface ChatSettingsScreenProps {
   state: AppState;
@@ -17,6 +19,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
 
   function updateChat(partial: Partial<ChatSettings>) {
     haptic();
+    const next = { ...chat, ...partial };
     update((s) => ({
       ...s,
       aiSettings: {
@@ -24,6 +27,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
         chat: { ...s.aiSettings.chat, ...partial },
       },
     }));
+    container.chat.applyGlobalPrefs(globalChatPrefsFromSettings(next));
   }
 
   return (
@@ -86,7 +90,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
               <input
                 type="range"
                 min="256"
-                max="8192"
+                max="32768"
                 step="256"
                 value={chat.maxTokens}
                 onChange={(e) => updateChat({ maxTokens: parseInt(e.target.value) })}
@@ -96,6 +100,25 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                 <span>Short</span>
                 <span>Long</span>
               </div>
+            </div>
+
+            {/* Thinking / reasoning */}
+            <div>
+              <label className="mb-2 block text-sm font-medium">Thinking / reasoning</label>
+              <select
+                className="field"
+                value={chat.thinking ?? ''}
+                onChange={(e) =>
+                  updateChat({ thinking: (e.target.value || undefined) as ThinkingLevel | undefined })
+                }
+              >
+                <option value="">Provider default</option>
+                <option value="off">Off</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+              <p className="mt-1 text-[10px] text-muted">Reasoning models ke liye thinking budget.</p>
             </div>
           </div>
         </div>

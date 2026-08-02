@@ -87,13 +87,23 @@ export class GeminiProvider implements LLMProvider {
         const text = typeof msg.content === 'string' ? msg.content : msg.content.map(p => p.type === 'text' ? p.text : '').join('\n');
         systemInstruction.parts.push({ text });
       } else if (msg.content) {
-        const parts: { text?: string; inlineData?: { mimeType: string; data: string } }[] = [];
+        const parts: { text?: string; inlineData?: { mimeType: string; data: string }; fileData?: { mimeType: string; fileUri: string } }[] = [];
         if (typeof msg.content === 'string') {
           parts.push({ text: msg.content });
         } else {
           for (const part of msg.content) {
             if (part.type === 'text') parts.push({ text: part.text });
             if (part.type === 'image') parts.push({ inlineData: { mimeType: 'image/jpeg', data: part.image.split(',')[1] } });
+            if (part.type === 'file') {
+              // Gemini has no "file_data" part — inline raw bytes as base64.
+              // `fileData` would require an already-uploaded Files-API URI, so a
+              // raw data URL there fails; inlineData is the correct shape.
+              const comma = part.file.file_data.indexOf(',');
+              const header = comma > 0 ? part.file.file_data.slice(0, comma) : '';
+              const base64 = comma > 0 ? part.file.file_data.slice(comma + 1) : part.file.file_data;
+              const mimeType = /^data:([^;,]+)/.exec(header)?.[1] ?? 'application/pdf';
+              parts.push({ inlineData: { mimeType, data: base64 } });
+            }
           }
         }
         if (parts.length > 0) {

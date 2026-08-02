@@ -27,6 +27,14 @@ export interface MemoryEntry {
     habitId?: string;
     tags: string[];
   };
+  /**
+   * Block grouping. Conversation summaries share one blockId per chat session
+   * so the memory history can render them as a single "block" and curate
+   * "the important part of a block" into long-term memory.
+   */
+  blockId?: string;
+  /** Pinned into long-term memory. The AI/user can promote or demote entries. */
+  longTerm?: boolean;
 }
 
 export interface MemoryStore {
