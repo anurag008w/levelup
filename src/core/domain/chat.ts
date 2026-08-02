@@ -57,8 +57,10 @@ export interface ChatSession {
   prefs: ChatPreferences;
   createdAt: string;
   updatedAt: string;
-  /** ISO timestamp when the session transcript was summarized into AI memory. */
+  /** ISO timestamp when the session transcript was archived into AI memory. */
   memorySummarizedAt?: string | null;
+  /** ISO timestamp when the AI condensed this session into memory blocks. */
+  aiSummarizedAt?: string | null;
 }
 
 export interface ChatStoreState {

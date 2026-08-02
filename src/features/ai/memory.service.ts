@@ -1,6 +1,7 @@
 import type { AppState } from '../../core/domain/state';
 import type { MemoryEntry, MemoryStore, MemoryType } from '../../core/domain/memory';
 import { emptyMemoryStore } from '../../core/domain/memory';
+import { SESSION_TAG_PREFIX, sessionMemoryTag } from '../../core/domain/chat-transcript';
 import { isoAddDays } from '../habit-engine/dates';
 import { isoDate, type Clock } from '../../core/ports/clock';
 
@@ -66,7 +67,10 @@ export class MemoryService {
   summarize(store: MemoryStore): MemoryStore {
     const now = isoDate(this.clock.now());
     const entries = store.entries;
-    const keepVerbatim = entries.filter((e) => e.importance >= IMPORTANCE_KEEP_VERBATIM || !isOld(e, now));
+    // Raw chat archives (source 'system' conversation entries) are user-visible
+    // read-only history — never roll them up, regardless of age/importance.
+    const isArchive = (e: MemoryEntry): boolean => e.type === 'conversation' && e.source === 'system';
+    const keepVerbatim = entries.filter((e) => isArchive(e) || e.importance >= IMPORTANCE_KEEP_VERBATIM || !isOld(e, now));
     const condenseCandidates = entries.filter((e) => e.importance < IMPORTANCE_KEEP_VERBATIM && isOld(e, now));
 
     const byWeek = new Map<string, MemoryEntry[]>();
@@ -200,15 +204,37 @@ export class MemoryService {
   }
 
   /**
-   * Deletes raw per-message conversation entries tagged with a session id.
-   * Used to clean legacy dumps before writing a condensed summary.
+   * Deletes conversation entries tagged with a session id (either the bare id
+   * or the canonical "session:<id>" form). Used to clean legacy/stale dumps
+   * before writing a fresh archive.
    */
   removeConversationByTag(state: AppState, tag: string): AppState {
+    const matches = (e: MemoryEntry): boolean =>
+      e.type === 'conversation' &&
+      (e.context.tags.includes(tag) || e.context.tags.includes(sessionMemoryTag(tag)) || e.context.tags.includes(`${SESSION_TAG_PREFIX}${tag}`));
     return {
       ...state,
       memory: {
         ...state.memory,
-        entries: state.memory.entries.filter((e) => !(e.type === 'conversation' && e.context.tags.includes(tag))),
+        entries: state.memory.entries.filter((e) => !matches(e)),
+      },
+    };
+  }
+
+  /**
+   * Removes only the raw read-only transcript archive for a session (source
+   * 'system'), leaving AI-condensed summary blocks untouched. Used when
+   * replacing/stale-dropping an archive.
+   */
+  removeTranscriptArchive(state: AppState, sessionId: string): AppState {
+    const tag = sessionMemoryTag(sessionId);
+    return {
+      ...state,
+      memory: {
+        ...state.memory,
+        entries: state.memory.entries.filter(
+          (e) => !(e.type === 'conversation' && e.source === 'system' && e.context.tags.includes(tag)),
+        ),
       },
     };
   }

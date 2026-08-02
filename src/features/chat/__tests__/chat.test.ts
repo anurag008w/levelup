@@ -3,6 +3,7 @@ import type { AppState } from '../../../core/domain/state';
 import { emptyAppState } from '../../../core/domain/state';
 import type { ChatRepository } from '../../../core/ports/repositories';
 import { defaultChatPrefs, type ChatStoreState } from '../../../core/domain/chat';
+import { parseChatTranscript, sessionMemoryTag } from '../../../core/domain/chat-transcript';
 import type { ContentPart, LLMProvider, LLMResponse, HealthCheckResult, ModelInfo, LLMRequest, ProviderId } from '../../../core/domain/llm';
 import { ProviderError } from '../../../core/domain/llm';
 import type { StateStore } from '../../../core/ports/repositories';
@@ -332,11 +333,15 @@ describe('ChatService', () => {
 
     const entries = store.get().memory.entries.filter((e) => e.type === 'conversation');
     expect(entries.length).toBeGreaterThan(0);
-    const stored = entries.find((e) => e.context.tags.includes(s1.id));
+    const stored = entries.find((e) => e.context.tags.includes(sessionMemoryTag(s1.id)));
     expect(stored).toBeDefined();
-    // Both sides are kept raw — no AI condensation.
-    expect(stored?.content).toContain('Student: Meri aim IIT hai');
-    expect(stored?.content).toContain('AI Coach:');
+    // Both sides are archived as a structured, timestamped transcript — no AI
+    // condensation.
+    const transcript = parseChatTranscript(stored?.content ?? '');
+    expect(transcript).not.toBeNull();
+    expect(transcript?.sessionId).toBe(s1.id);
+    expect(transcript?.messages.some((m) => m.role === 'user' && m.content === 'Meri aim IIT hai')).toBe(true);
+    expect(transcript?.messages.some((m) => m.role === 'assistant')).toBe(true);
     expect(stored?.blockId).toBe(`chat:${s1.id}`);
     expect(stored?.summarized).toBe(false);
 
@@ -412,9 +417,10 @@ describe('ChatService', () => {
 
     await expect(chat.summarizePriorChats()).resolves.toBe(1);
 
-    const entries = store.get().memory.entries.filter((e) => e.type === 'conversation' && e.context.tags.includes(s1.id));
+    const entries = store.get().memory.entries.filter((e) => e.type === 'conversation' && e.context.tags.includes(sessionMemoryTag(s1.id)));
     expect(entries.length).toBeGreaterThan(0);
-    expect(entries[0].content).toContain('Meri aim IIT hai');
+    const transcript = parseChatTranscript(entries[0].content);
+    expect(transcript?.messages.some((m) => m.content.includes('Meri aim IIT hai'))).toBe(true);
     expect(repo.load().sessions.find((s) => s.id === s1.id)?.memorySummarizedAt).toBeDefined();
     // Raw storage is deterministic — the model is never consulted.
     expect(completeCalls).toBe(0);
@@ -464,7 +470,7 @@ describe('ChatService', () => {
     // Second run: retried and completed.
     await expect(chat.summarizePriorChats()).resolves.toBe(1);
     expect(repo.load().sessions.find((s) => s.id === s1.id)?.memorySummarizedAt).toBeDefined();
-    const entries = store.get().memory.entries.filter((e) => e.context.tags.includes(s1.id));
+    const entries = store.get().memory.entries.filter((e) => e.context.tags.includes(sessionMemoryTag(s1.id)));
     expect(entries.length).toBeGreaterThan(0);
   });
 
@@ -473,7 +479,7 @@ describe('ChatService', () => {
     const s1 = chat.createSession();
     await chat.send(s1.id, '   ');
     await chat.summarizePriorChats();
-    const entries = store.get().memory.entries.filter((e) => e.context.tags.includes(s1.id));
+    const entries = store.get().memory.entries.filter((e) => e.context.tags.includes(sessionMemoryTag(s1.id)));
     expect(entries.length).toBeGreaterThan(0);
     expect(repo.load().sessions.find((s) => s.id === s1.id)?.memorySummarizedAt).toBeDefined();
   });
@@ -506,17 +512,19 @@ describe('ChatService', () => {
 
     const all = store
       .get()
-      .memory.entries.filter((e) => e.context.tags.includes(s1.id))
-      .map((e) => e.content)
+      .memory.entries.filter((e) => e.context.tags.includes(sessionMemoryTag(s1.id)));
+    const transcript = parseChatTranscript(all[0]?.content ?? '');
+    const text = (transcript?.messages ?? [])
+      .map((m) => `${m.role === 'user' ? 'Student' : 'AI Coach'}: ${m.content}`)
       .join('\n');
     // Both sides of the chat land in memory untouched, in one transcript.
-    expect(all).toContain('weak topic vectors');
-    expect(all).toContain('step-by-step solution');
-    expect(all).toContain('AI Coach');
-    expect(all).toContain('### Problem:');
-    expect(all).toContain('Student: Hi');
+    expect(text).toContain('weak topic vectors');
+    expect(text).toContain('step-by-step solution');
+    expect(text).toContain('AI Coach');
+    expect(text).toContain('### Problem:');
+    expect(text).toContain('Student: Hi');
     // The AI reply right after the student line is kept together with it.
-    expect(all).toMatch(/Student: Hi\nAI Coach: done/);
+    expect(text).toMatch(/Student: Hi\nAI Coach: done/);
   });
 
   it('sends file attachments directly to the model as file parts', async () => {
@@ -917,6 +925,246 @@ describe('ChatService', () => {
     });
     expect(chat.getSession(s.id)?.prefs.thinking).toBe('high');
     expect(chat.getSession(s.id)?.prefs.maxTokens).toBe(4096);
+  });
+
+  it('summarizes every unread chat into AI memory blocks in one pass', async () => {
+    const repo = new MemoryChatRepository();
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+    });
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({
+        text: '{"blocks":[{"title":"Aim","lines":["Target IIT Delhi","Weak in Calculus"],"longTerm":true,"tags":["goal"]},{"lines":["Prefers evening study"],"longTerm":false,"tags":[]}]}',
+        model: 'a',
+      }),
+      stream: async (): Promise<LLMResponse> => ({ text: 'done', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const memory = new MemoryService(new FakeClock());
+    const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), null, memory, store);
+    const s1 = chat.createSession();
+    await chat.send(s1.id, 'Meri aim IIT Delhi hai, calculus weak hai');
+    const s2 = chat.createSession();
+    await chat.send(s2.id, 'mujhe shaam ko padhna achha lagta hai');
+
+    const result = await chat.summarizeAllMemoryWithAi();
+    expect(result).toEqual({ count: 2, blocks: 2, pinned: 1 });
+
+    // Processed sessions are marked so they are never read again.
+    expect(repo.load().sessions.find((s) => s.id === s1.id)?.memorySummarizedAt).toBeDefined();
+    expect(repo.load().sessions.find((s) => s.id === s2.id)?.memorySummarizedAt).toBeDefined();
+
+    // Each AI block landed as its own memory entry; the long-term one is pinned.
+    const entries = store.get().memory.entries.filter((e) => e.type === 'conversation' && e.context.tags.includes('ai-summary'));
+    expect(entries).toHaveLength(2);
+    expect(entries.find((e) => e.longTerm)?.content).toContain('Target IIT Delhi');
+    expect(entries.find((e) => e.longTerm)?.importance).toBe(0.9);
+
+    // Re-running finds nothing to read — chats are not re-read.
+    await expect(chat.summarizeAllMemoryWithAi()).resolves.toEqual({ count: 0, blocks: 0, pinned: 0 });
+    expect(chat.pendingSummaries()).toBe(0);
+  });
+
+  it('excludes the currently running session from AI summarization', async () => {
+    const repo = new MemoryChatRepository();
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+    });
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({
+        text: '{"blocks":[{"lines":["Keep this"],"longTerm":false,"tags":[]}]}',
+        model: 'a',
+      }),
+      stream: async (): Promise<LLMResponse> => ({ text: 'done', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const memory = new MemoryService(new FakeClock());
+    const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), null, memory, store);
+    const running = chat.createSession();
+    await chat.send(running.id, 'yeh chat abhi chal rahi hai');
+    const finished = chat.createSession();
+    await chat.send(finished.id, 'yeh purani chat hai');
+    chat.setActiveSessionId(running.id);
+
+    const result = await chat.summarizeAllMemoryWithAi();
+    expect(result.count).toBe(1);
+    // Only the finished chat was read & marked; the running one stays unread.
+    expect(repo.load().sessions.find((s) => s.id === finished.id)?.memorySummarizedAt).toBeDefined();
+    expect(repo.load().sessions.find((s) => s.id === running.id)?.memorySummarizedAt).toBeUndefined();
+  });
+
+  it('passes unread transcripts + 7-day prior memory + model override to the AI', async () => {
+    const repo = new MemoryChatRepository();
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+    });
+    // Seed prior memory (already-summarized context the AI must see).
+    let state = store.get();
+    const memory = new MemoryService(new FakeClock());
+    state = memory.add(state, { type: 'goal', content: 'Purana goal: NIT trichy', source: 'user', importance: 0.9, createdAt: '2026-07-30' });
+    store.save(state);
+
+    let captured: LLMRequest | null = null;
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (req: LLMRequest): Promise<LLMResponse> => {
+        captured = req;
+        return { text: '{"blocks":[{"lines":["Naya point"],"longTerm":false,"tags":[]}]}', model: 'a' };
+      },
+      stream: async (): Promise<LLMResponse> => ({ text: 'done', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), null, memory, store);
+    const s1 = chat.createSession();
+    await chat.send(s1.id, 'abhi wali baat: physics theek hai');
+
+    await chat.summarizeAllMemoryWithAi({ providerId: 'openrouter', model: 'gpt-4o-mini' });
+
+    expect(captured).not.toBeNull();
+    expect(captured!.model).toBe('gpt-4o-mini');
+    const userText = String(captured!.messages.find((m) => m.role === 'user')?.content);
+    expect(userText).toContain('physics theek hai');
+    expect(userText).toContain('Purana goal');
+    const systemText = String(captured!.messages.find((m) => m.role === 'system')?.content);
+    expect(systemText).toContain('----');
+    expect(systemText).toContain('4 lines');
+  });
+
+  it('throws when the AI returns no usable memory blocks', async () => {
+    const repo = new MemoryChatRepository();
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+    });
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({ text: 'sorry, kuch nahi mila', model: 'a' }),
+      stream: async (): Promise<LLMResponse> => ({ text: 'done', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const memory = new MemoryService(new FakeClock());
+    const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), null, memory, store);
+    const s1 = chat.createSession();
+    await chat.send(s1.id, 'koi baat');
+
+    await expect(chat.summarizeAllMemoryWithAi()).rejects.toThrow();
+    // Nothing was marked — a retry can still pick the chat up.
+    expect(repo.load().sessions.find((s) => s.id === s1.id)?.memorySummarizedAt).toBeUndefined();
+  });
+
+  it('surfaces deleted chats as read-only transcript archives from memory', async () => {
+    const { chat, store } = buildService({ withMemory: true, replies: ['reply'] });
+    const s1 = chat.createSession('Integrals doubt');
+    await chat.send(s1.id, 'Meri integral weak hai');
+
+    // Archive, then delete — the live session disappears but memory keeps it.
+    await chat.summarizePriorChats();
+    chat.deleteSession(s1.id);
+    expect(chat.listSessions().some((s) => s.id === s1.id)).toBe(false);
+
+    const conversations = chat.listMemoryConversations();
+    const archived = conversations.find((c) => c.sessionId === s1.id);
+    expect(archived).toBeDefined();
+    expect(archived?.source).toBe('transcript');
+    expect(archived?.title).toBe('Integrals doubt');
+    expect(archived?.messages.some((m) => m.role === 'user' && m.content === 'Meri integral weak hai')).toBe(true);
+    expect(archived?.messages.some((m) => m.role === 'assistant')).toBe(true);
+    // Timestamps round-trip from the archive.
+    expect(archived?.updatedAt).toBeTruthy();
+    // The raw transcript entry is kept verbatim in memory.
+    expect(store.get().memory.entries.some((e) => e.context.tags.includes(sessionMemoryTag(s1.id)))).toBe(true);
+  });
+
+  it('reconstructs AI-condensed conversations when no full transcript exists', () => {
+    const { chat, store } = buildService({ withMemory: true });
+    const memory = new MemoryService(new FakeClock());
+    const ghostId = 'ghost-session';
+    let state = store.get();
+    state = memory.add(state, {
+      type: 'conversation',
+      source: 'ai',
+      summarized: true,
+      tags: ['chat', 'ai-summary', sessionMemoryTag(ghostId)],
+      content: '[Physics]\nRotation weak hai',
+      createdAt: '2026-07-30',
+    });
+    store.save(state);
+
+    const conversations = chat.listMemoryConversations();
+    const archived = conversations.find((c) => c.sessionId === ghostId);
+    expect(archived).toBeDefined();
+    expect(archived?.source).toBe('ai-summary');
+    expect(archived?.title).toBe('Physics');
+    expect(archived?.messages.some((m) => m.content.includes('Rotation weak hai'))).toBe(true);
+  });
+
+  it('keeps the read-only transcript archive alongside AI-condensed blocks', async () => {
+    const repo = new MemoryChatRepository();
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+    });
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({
+        text: '{"blocks":[{"lines":["Goal IIT"],"longTerm":true,"tags":["goal"]}]}',
+        model: 'a',
+      }),
+      stream: async (): Promise<LLMResponse> => ({ text: 'done', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const memory = new MemoryService(new FakeClock());
+    const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), null, memory, store);
+    const s1 = chat.createSession();
+    await chat.send(s1.id, 'mujhe IIT chahiye');
+
+    // No raw dump before the AI pass — the success path archives for us.
+    await chat.summarizeAllMemoryWithAi();
+
+    const tags = store.get().memory.entries.map((e) => e.context.tags);
+    expect(tags.some((t) => t.includes('transcript') && t.includes(sessionMemoryTag(s1.id)))).toBe(true);
+    expect(tags.some((t) => t.includes('ai-summary') && t.includes(sessionMemoryTag(s1.id)))).toBe(true);
+    const live = repo.load().sessions.find((s) => s.id === s1.id);
+    expect(live?.memorySummarizedAt).toBeDefined();
+    expect(live?.aiSummarizedAt).toBeDefined();
+    // Pending counts are driven by the AI marker, not the archive marker.
+    expect(chat.pendingSummaries()).toBe(0);
+    expect(chat.pendingRawDumps()).toBe(0);
   });
 });
 

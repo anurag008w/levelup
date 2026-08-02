@@ -185,26 +185,41 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
     update((s) => container.memory.setLongTerm(s, [entry.id], !entry.longTerm));
   }
 
-  /** Manually dumps every unread chat into memory as its raw transcript. */
+  /** Condenses every unread chat into memory — AI when available, raw archive otherwise. */
   async function summarizeNow() {
     if (saving) return;
     haptic();
-    const pending = container.chat.pendingSummaries();
-    if (pending === 0) {
-      setMemoryNotice('Koi nayi chat memory me save hone ko baaqi nahi hai.');
-      window.setTimeout(() => setMemoryNotice(''), 2600);
-      return;
-    }
     setSaving(true);
-    setMemoryNotice(`Abhi ${pending} chat(s) memory me save kar raha hoon…`);
     try {
-      const done = await container.chat.summarizePriorChats();
-      setMemoryNotice(done > 0 ? `${done} chat ka raw transcript memory me save ho gaya.` : 'Koi nayi chat nahi mili.');
-    } catch {
-      setMemoryNotice('Memory save karte waqt error aaya — dobara try karo.');
+      if (container.llm.isAvailable()) {
+        const pending = container.chat.pendingSummaries();
+        if (pending === 0) {
+          setMemoryNotice('Koi nayi chat memory me save hone ko baaqi nahi hai.');
+          window.setTimeout(() => setMemoryNotice(''), 2600);
+          return;
+        }
+        setMemoryNotice(`Abhi ${pending} chat(s) padh ke summarize ho rahe hain…`);
+        const res = await container.chat.summarizeAllMemoryWithAi({ onStatus: (s) => setMemoryNotice(s) });
+        setMemoryNotice(
+          res.count > 0
+            ? `${res.count} chat summarize ho gaya — ${res.blocks} blocks memory me (${res.pinned} long-term).`
+            : 'Koi nayi chat nahi mili.',
+        );
+      } else {
+        const pending = container.chat.pendingRawDumps();
+        if (pending === 0) {
+          setMemoryNotice('Koi nayi chat memory me save hone ko baaqi nahi hai.');
+          window.setTimeout(() => setMemoryNotice(''), 2600);
+          return;
+        }
+        const done = await container.chat.summarizePriorChats();
+        setMemoryNotice(done > 0 ? `${done} chat ka raw transcript memory me save ho gaya.` : 'Koi nayi chat nahi mili.');
+      }
+    } catch (err) {
+      setMemoryNotice(`Summarize karte waqt error aaya — ${err instanceof Error ? err.message : 'dobara try karo.'}`);
     } finally {
       setSaving(false);
-      window.setTimeout(() => setMemoryNotice(''), 3200);
+      window.setTimeout(() => setMemoryNotice(''), 4200);
     }
   }
 
@@ -335,7 +350,8 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
                   <span className="font-mono text-[10px] text-muted">{state.memory.entries.length + state.memory.summaries.length} items</span>
                 </div>
                 <p className="mb-2 text-[11px] leading-relaxed text-muted">
-                  Purani chats yahan raw transcript blocks ke roop me save hoti hain. Edit, delete ya pin kar sakte ho.
+                  Purani chats yahan memory me archive hoti hain (read-only chat history). Ek click se saari unread
+                  chats AI se ek saath condense ho jaati hain — blocks edit, delete ya pin kar sakte ho.
                 </p>
                 <button
                   type="button"
@@ -343,7 +359,7 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
                   onClick={summarizeNow}
                   disabled={saving}
                 >
-                  <Sparkles size={14} /> {saving ? 'Memory me save ho raha hai…' : 'Purani chats memory me save karo'}
+                  <Sparkles size={14} /> {saving ? 'Summarize ho raha hai…' : 'Poori memory ek saath summarize karo'}
                 </button>
                 {memoryNotice && (
                   <p className="mb-2 rounded-lg border border-border bg-panel-raised px-3 py-2 text-[11px] text-text">{memoryNotice}</p>
@@ -370,7 +386,7 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
                   )}
                   {blockGroups.length > 0 && (
                     <>
-                      <p className="px-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Chat history blocks</p>
+                      <p className="px-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Chat archives</p>
                       {blockGroups.map((group) => (
                         <div key={group.entries[0].id} className="rounded-lg border border-border bg-panel-raised p-3">
                           <div className="mb-1.5 flex items-center justify-between gap-2">

@@ -11,11 +11,23 @@ import { isAbortError } from '../../core/domain/llm';
 import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY } from '../../core/domain/chat-tools';
 import type { ChatToolResult } from '../../core/domain/chat-tools';
 import { createStreamSanitizer, sanitizeAssistantLeaks } from './leak-sanitizer';
+import { MEMORY_SUMMARY_INSTRUCTIONS, parseMemoryBlocks } from '../../core/domain/memory-summary';
+import {
+  buildChatTranscript,
+  extractBlockTitle,
+  parseChatTranscript,
+  sessionMemoryTag,
+  stripBlockTitle,
+  type ArchivedConversation,
+} from '../../core/domain/chat-transcript';
+import { isoAddDays } from '../habit-engine/dates';
 import type { Clock } from '../../core/ports/clock';
+import { isoDate } from '../../core/ports/clock';
 import type { ChatRepository, StateStore } from '../../core/ports/repositories';
 import type { LLMService } from '../ai/llm.service';
 import type { ProviderSettingsService } from '../ai/provider-settings.service';
 import type { MemoryService } from '../ai/memory.service';
+import type { MemoryEntry } from '../../core/domain/memory';
 import type { ChatToolsService } from './chat-tools.service';
 import type { MemoryToolsService } from './memory-tools.service';
 import { MEMORY_TOOL_INSTRUCTIONS } from '../../core/domain/memory-tools';
@@ -50,6 +62,8 @@ export class ChatService {
   private ephemeral = new Map<string, ChatSession>();
   /** In-flight transcript persistence awaited by the next send (first reply). */
   private pendingSummary: Promise<number> | null = null;
+  /** Session currently open in the AI Coach — never summarized ("running chat stays internal"). */
+  private activeSessionId: string | null = null;
 
   constructor(
     repo: ChatRepository,
@@ -117,6 +131,16 @@ export class ChatService {
 
   deleteSession(id: string): void {
     const state = this.state();
+    const session = state.sessions.find((s) => s.id === id);
+    // Keep a read-only copy in memory before the session disappears, so the
+    // chat stays viewable in the memory archive.
+    if (session && session.messages.length > 0 && this.memory && this.store) {
+      try {
+        this.persistSessionToMemory(session);
+      } catch {
+        // Best-effort archive — deletion must still succeed.
+      }
+    }
     state.sessions = state.sessions.filter((s) => s.id !== id);
     this.repo.save(state);
     this.ephemeral.delete(id);
@@ -758,23 +782,242 @@ export class ChatService {
       let done = 0;
       for (const session of targets) {
         try {
-          await this.persistSessionToMemory(session);
+          this.persistSessionToMemory(session);
           done += 1;
         } catch {
           // Leave memorySummarizedAt unset so the next run retries.
         }
       }
-      this.pendingSummary = null;
       return done;
     })();
     this.pendingSummary = task;
+    // Clear the dedup handle when the batch settles — the loop body is
+    // synchronous, so do this on settlement rather than inside the task.
+    void task.then(() => {
+      if (this.pendingSummary === task) this.pendingSummary = null;
+    });
     return task;
   }
 
-  /** Number of finished chats not yet condensed into memory. */
+  /** Marks the session the user is currently chatting in (kept out of AI summarization). */
+  setActiveSessionId(id: string | null): void {
+    this.activeSessionId = id;
+  }
+
+  getActiveSessionId(): string | null {
+    return this.activeSessionId;
+  }
+
+  /**
+   * Summarizes the ENTIRE unread memory in one AI pass. Reads every chat the AI
+   * has not condensed yet (excluding the currently running session), plus the
+   * last 7 days of already-summarized memory, and condenses it into compact
+   * memory blocks. Each block becomes its own memory entry; long-term blocks
+   * are pinned. Sessions processed by the AI are marked `aiSummarizedAt` so
+   * they are NEVER condensed again (their read-only transcript archive is kept
+   * separately and marked `memorySummarizedAt`). Resolves to the number of
+   * sessions handled.
+   */
+  async summarizeAllMemoryWithAi(opts?: {
+    providerId?: string | null;
+    model?: string | null;
+    excludeSessionId?: string | null;
+    onStatus?: (status: string) => void;
+  }): Promise<{ count: number; blocks: number; pinned: number }> {
+    if (!this.store || !this.memory || !this.memoryEnabled()) {
+      return { count: 0, blocks: 0, pinned: 0 };
+    }
+    const exclude = opts?.excludeSessionId ?? this.activeSessionId;
+    const targets = this.state().sessions.filter(
+      (s) => s.messages.length > 0 && !s.aiSummarizedAt && s.id !== exclude,
+    );
+    if (targets.length === 0) return { count: 0, blocks: 0, pinned: 0 };
+
+    opts?.onStatus?.('AI poore unread chats padh raha hai…');
+    const request = this.buildMemorySummaryRequest(targets, this.buildPriorMemoryContext(), opts);
+    const resp = await this.llm.complete(request);
+    const blocks = parseMemoryBlocks(resp.text);
+    if (blocks.length === 0) {
+      throw new Error('AI ne koi memory block nahi banaya — Retry now karo ya dusra model chuno.');
+    }
+
+    // Success path: make sure every processed chat also has its durable
+    // read-only transcript archive (deterministic, no AI involved).
+    for (const target of targets) {
+      if (!target.memorySummarizedAt) {
+        try {
+          this.persistSessionToMemory(target);
+        } catch {
+          // Archive is best-effort; the condensed blocks below are the source
+          // of truth for recall and the chat stays viewable from memory.
+        }
+      }
+    }
+
+    const sessionIds = targets.map((s) => s.id);
+    let memState = this.store.get();
+    let pinned = 0;
+    for (const block of blocks) {
+      const longTerm = block.longTerm === true;
+      if (longTerm) pinned += 1;
+      memState = this.memory.add(memState, {
+        type: 'conversation',
+        source: 'ai',
+        content: [block.title ? `[${block.title}]` : '', ...block.lines].filter(Boolean).join('\n'),
+        importance: longTerm ? 0.9 : 0.55,
+        summarized: true,
+        tags: ['chat', 'ai-summary', ...block.tags, ...sessionIds.map(sessionMemoryTag)],
+        blockId: `aiblk:${uid()}`,
+        longTerm,
+      });
+    }
+    this.store.save(memState);
+
+    // Mark the processed sessions so the next run never condenses them again.
+    const state = this.state();
+    const now = this.clock.now().toISOString();
+    for (const target of targets) {
+      const live = state.sessions.find((s) => s.id === target.id);
+      if (live) {
+        live.memorySummarizedAt = now;
+        live.aiSummarizedAt = now;
+      }
+    }
+    this.persist();
+    return { count: targets.length, blocks: blocks.length, pinned };
+  }
+
+  /** Number of finished chats not yet condensed into AI memory. */
   pendingSummaries(): number {
     if (!this.memoryEnabled()) return 0;
+    return this.state().sessions.filter(
+      (s) => s.messages.length > 0 && !s.aiSummarizedAt && s.id !== this.activeSessionId,
+    ).length;
+  }
+
+  /** Number of finished chats not yet archived as a read-only transcript. */
+  pendingRawDumps(): number {
+    if (!this.memoryEnabled()) return 0;
     return this.state().sessions.filter((s) => s.messages.length > 0 && !s.memorySummarizedAt).length;
+  }
+
+  /**
+   * Read-only conversations preserved in memory: full transcript archives of
+   * deleted sessions, plus AI-condensed blocks for chats whose full transcript
+   * is no longer around. Live sessions are excluded (they are already shown in
+   * the normal history) so nothing appears twice.
+   */
+  listMemoryConversations(): ArchivedConversation[] {
+    if (!this.store || !this.memory) return [];
+    const liveIds = new Set(this.state().sessions.map((s) => s.id));
+    const all = [...this.store.get().memory.summaries, ...this.store.get().memory.entries];
+
+    const conversations: ArchivedConversation[] = [];
+    const archivedSessionIds = new Set<string>();
+
+    // 1) Full structured transcript archives (source 'system', session-tagged).
+    for (const entry of all) {
+      if (entry.type !== 'conversation' || entry.source === 'ai') continue;
+      const sessionTag = entry.context.tags.find((t) => t.startsWith('session:'));
+      if (!sessionTag) continue;
+      const sessionId = sessionTag.slice('session:'.length);
+      if (liveIds.has(sessionId) || archivedSessionIds.has(sessionId)) continue;
+      const parsed = parseChatTranscript(entry.content);
+      if (!parsed) continue;
+      archivedSessionIds.add(sessionId);
+      conversations.push({
+        sessionId,
+        title: parsed.title || 'Memory chat',
+        createdAt: parsed.createdAt,
+        updatedAt: parsed.updatedAt,
+        messages: parsed.messages,
+        source: 'transcript',
+        memoryEntryId: entry.id,
+      });
+    }
+
+    // 2) AI-condensed blocks for sessions with no full transcript left.
+    const aiBySession = new Map<string, MemoryEntry[]>();
+    for (const entry of all) {
+      if (entry.type !== 'conversation' || !entry.context.tags.includes('ai-summary')) continue;
+      for (const tag of entry.context.tags) {
+        if (!tag.startsWith('session:')) continue;
+        const sessionId = tag.slice('session:'.length);
+        if (liveIds.has(sessionId) || archivedSessionIds.has(sessionId)) continue;
+        const list = aiBySession.get(sessionId) ?? [];
+        list.push(entry);
+        aiBySession.set(sessionId, list);
+      }
+    }
+    for (const [sessionId, group] of aiBySession) {
+      const sorted = [...group].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const first = sorted[0];
+      const title = extractBlockTitle(first?.content ?? '') ?? 'Memory conversation';
+      const messages = sorted.map((e) => ({
+        id: e.id,
+        role: 'assistant' as const,
+        content: stripBlockTitle(e.content),
+        createdAt: `${e.createdAt}T12:00:00`,
+      }));
+      conversations.push({
+        sessionId,
+        title,
+        createdAt: sorted.at(-1)?.createdAt ?? '',
+        updatedAt: first?.createdAt ?? '',
+        messages,
+        source: 'ai-summary',
+        memoryEntryId: first?.id,
+      });
+    }
+
+    return conversations.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  /** Recent already-summarized memory fed to the AI as continuity context. */
+  private buildPriorMemoryContext(): string {
+    const state = this.store!.get();
+    const cutoff = isoAddDays(isoDate(this.clock.now()), -7);
+    // Raw transcript archives are read directly in the user prompt — they are
+    // not useful continuity facts, so keep them out of the prior context.
+    const recent = [...state.memory.summaries, ...state.memory.entries]
+      .filter((e) => e.createdAt >= cutoff && !e.context.tags.includes('transcript'))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 25);
+    const lines = recent.map((e) => {
+      const pin = e.longTerm ? '[long-term] ' : '';
+      return `- ${pin}${truncateMemory(e.content, 400)}`;
+    });
+    return lines.length > 0 ? lines.join('\n') : '(abhi koi pichhli summarized memory nahi hai)';
+  }
+
+  private buildMemorySummaryRequest(
+    unread: ChatSession[],
+    priorContext: string,
+    opts?: { providerId?: string | null; model?: string | null },
+  ): LLMRequest {
+    const transcripts = unread
+      .map((s, i) => `### Chat ${i + 1}: ${s.title || 'Untitled'} (${s.updatedAt.slice(0, 10)})\n${this.buildRawTranscript(s, 3500)}`)
+      .join('\n\n');
+    const user = [
+      'Neeche diye gaye sabhi unread chats ko poori tarah padho aur unme se yaad rakhne layak baatein condensed memory blocks mein likho.',
+      '',
+      transcripts,
+      '',
+      'Previous memory (last 7 days) — bas continuity ke liye, isme jo facts hain unhe repeat mat karna:',
+      priorContext,
+    ].join('\n');
+    const request: LLMRequest = {
+      messages: [
+        { role: 'system', content: MEMORY_SUMMARY_INSTRUCTIONS },
+        { role: 'user', content: user },
+      ],
+      temperature: 0.3,
+      maxTokens: 4096,
+      thinking: 'off',
+    };
+    if (opts?.providerId) request.providerId = opts.providerId;
+    if (opts?.model) request.model = opts.model;
+    return request;
   }
 
   /** Whether the global "AI Memory" setting is on (defaults to on). */
@@ -799,16 +1042,16 @@ export class ChatService {
     return HISTORY_FOR_PROMPT;
   }
 
-  /** Dumps a finished chat's raw transcript into memory as one block. */
-  private async persistSessionToMemory(session: ChatSession): Promise<void> {
-    let memState = this.memory!.removeConversationByTag(this.store!.get(), session.id);
-    const transcript = this.buildRawTranscript(session);
+  /** Dumps a finished chat's structured transcript into memory as one block. */
+  private persistSessionToMemory(session: ChatSession): void {
+    let memState = this.memory!.removeTranscriptArchive(this.store!.get(), session.id);
+    const transcript = buildChatTranscript(session);
     memState = this.memory!.add(memState, {
       type: 'conversation',
       source: 'system',
       content: transcript,
       importance: 0.6,
-      tags: ['chat', session.id],
+      tags: ['chat', 'transcript', sessionMemoryTag(session.id)],
       blockId: `chat:${session.id}`,
     });
     this.store!.save(memState);
@@ -820,12 +1063,12 @@ export class ChatService {
   }
 
   /** Both sides verbatim (Student / AI Coach lines), capped to a sane size. */
-  private buildRawTranscript(session: ChatSession): string {
+  private buildRawTranscript(session: ChatSession, maxChars = 6000): string {
     try {
       const body = session.messages
         .map((m) => `${m.role === 'user' ? 'Student' : 'AI Coach'}: ${m.content}`)
         .join('\n');
-      return body.length > 6000 ? `${body.slice(0, 6000)}…` : body;
+      return body.length > maxChars ? `${body.slice(0, maxChars)}…` : body;
     } catch {
       return 'Empty conversation.';
     }
@@ -835,11 +1078,27 @@ export class ChatService {
   private recall(sessionId: string): string {
     if (!this.memory || !this.store) return '';
     const state = this.store.get();
-    const all = [...state.memory.summaries, ...state.memory.entries]
-      .filter((e) => e.context.tags.includes('chat') && !e.context.tags.includes(sessionId))
+    const all = [...state.memory.summaries, ...state.memory.entries];
+    // Sessions that were AI-condensed already have their facts in blocks —
+    // drop their raw transcript archive so the model never sees both.
+    const aiSummarizedSessions = new Set(
+      all
+        .filter((e) => e.context.tags.includes('ai-summary'))
+        .flatMap((e) => e.context.tags.filter((t) => t.startsWith('session:')).map((t) => t.slice('session:'.length))),
+    );
+    const selected = all
+      .filter((e) => {
+        if (!e.context.tags.includes('chat')) return false;
+        if (e.context.tags.includes(sessionMemoryTag(sessionId)) || e.context.tags.includes(sessionId)) return false;
+        if (e.context.tags.includes('transcript')) {
+          const tag = e.context.tags.find((t) => t.startsWith('session:'));
+          if (tag && aiSummarizedSessions.has(tag.slice('session:'.length))) return false;
+        }
+        return true;
+      })
       .sort((a, b) => Number(Boolean(b.longTerm)) - Number(Boolean(a.longTerm)) || b.createdAt.localeCompare(a.createdAt))
       .slice(0, MEMORY_FOR_PROMPT);
-    return all.map((e) => `- ${e.longTerm ? '[long-term] ' : ''}${truncateMemory(e.content)}`).join('\n');
+    return selected.map((e) => `- ${e.longTerm ? '[long-term] ' : ''}${truncateMemory(e.content)}`).join('\n');
   }
 
   private persist(): void {
