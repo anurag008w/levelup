@@ -189,6 +189,8 @@ export interface AppState {
   postJourney: PostJourneyState;
   /** User-owned profile used for AI personalization. */
   userProfile: UserProfile;
+  /** IANA timezone for the app's day boundary (null = auto/device timezone). */
+  timeZone: string | null;
 }
 
 export function defaultAiSettings(): AiSettings {
@@ -223,5 +225,6 @@ export function emptyAppState(): AppState {
     lastSummaryDate: null,
     postJourney: defaultPostJourney(),
     userProfile: defaultUserProfile(),
+    timeZone: null,
   };
 }

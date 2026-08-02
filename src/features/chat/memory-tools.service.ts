@@ -4,6 +4,7 @@ import type { MemoryService } from '../ai/memory.service';
 import {
   memoryToolActionSchema,
   memoryToolBatchSchema,
+  MAX_MEMORY_TOOL_ACTIONS,
   isMemoryQuery,
   memoryEntriesToText,
   type MemoryToolAction,
@@ -35,15 +36,16 @@ export class MemoryToolsService {
     const parsed = tryJson(text);
     if (parsed === null) return [];
 
-    // {"actions": [...]}
+    // {"actions": [...]} — validate the shape, then cap defensively so a huge
+    // batch can never drop entirely just because it exceeds the limit.
     if (typeof parsed === 'object' && parsed !== null && 'actions' in parsed) {
       const batch = memoryToolBatchSchema.safeParse(parsed);
-      return batch.success ? batch.data.actions : [];
+      return batch.success ? batch.data.actions.slice(0, MAX_MEMORY_TOOL_ACTIONS) : [];
     }
 
     if (Array.isArray(parsed)) {
       const out: MemoryToolAction[] = [];
-      for (const item of parsed.slice(0, 20)) {
+      for (const item of parsed.slice(0, MAX_MEMORY_TOOL_ACTIONS)) {
         const single = memoryToolActionSchema.safeParse(item);
         if (single.success) out.push(single.data);
       }
@@ -56,19 +58,26 @@ export class MemoryToolsService {
 
   /** Executes a batch of memory actions in order. */
   async runMany(actions: MemoryToolAction[]): Promise<MemoryToolResult> {
-    if (actions.length === 0) return { ok: false, summary: 'Koi memory action nahi mila.' };
+    const limited = actions.slice(0, MAX_MEMORY_TOOL_ACTIONS);
+    if (limited.length === 0) return { ok: false, summary: 'Koi memory action nahi mila.' };
     const parts: string[] = [];
+    let anyOk = false;
     let requiresConfirmation = false;
     let state = this.store.get();
-    for (const action of actions) {
+    for (const action of limited) {
       const result = this.runOnState(state, action);
       if (result.result.requiresConfirmation) requiresConfirmation = true;
       if (result.state) state = result.state;
       parts.push(result.result.summary);
-      if (result.result.ok) this.store.save(state);
+      if (result.result.ok) {
+        anyOk = true;
+        this.store.save(state);
+      }
     }
     return {
-      ok: parts.length > 0,
+      // ok means "at least one action applied" — a batch where every action
+      // failed (wrong ids etc.) must not look like a success.
+      ok: anyOk,
       requiresConfirmation,
       summary: parts.join('\n'),
     };
@@ -83,6 +92,15 @@ export class MemoryToolsService {
       case 'readMemory': {
         const items = this.memory.relevant(state, { max: 30 });
         return { result: { ok: true, summary: `Current memory:\n${memoryEntriesToText(items)}` } };
+      }
+      case 'addMemory': {
+        const next = this.memory.add(state, {
+          type: action.type ?? 'observation',
+          content: action.content,
+          source: 'user',
+          importance: action.importance,
+        });
+        return { state: next, result: { ok: true, summary: `Memory mein save kar diya: ${action.content}` } };
       }
       case 'editMemory': {
         const exists = all.some((e) => e.id === action.id);

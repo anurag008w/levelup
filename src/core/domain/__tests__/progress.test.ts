@@ -16,23 +16,35 @@ function createLog(completedTaskIds: string[]): DayLog {
   return log;
 }
 
+/** Pure UTC day → ISO for January 2026. Deterministic in every timezone
+ *  (local `new Date(2026, 0, d)` + `toISOString()` shifts the result by one
+ *  day on non-UTC machines). */
+function isoDay(day: number): string {
+  return new Date(Date.UTC(2026, 0, day)).toISOString().slice(0, 10);
+}
+
+function previousISO(iso: string): string {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 // Helper function: count consecutive completed days ending on given date
 function countConsecutiveCompletedDays(logs: Record<string, DayLog>, endDateISO: string): number {
   let streak = 0;
-  let currentDate = new Date(endDateISO + 'T00:00:00');
-  
+  let cursor = endDateISO;
+
   while (true) {
-    const dateISO = currentDate.toISOString().slice(0, 10);
-    const log = logs[dateISO];
-    
+    const log = logs[cursor];
+
     if (!log || Object.keys(log).length === 0) {
       break;
     }
-    
+
     streak++;
-    currentDate.setDate(currentDate.getDate() - 1);
+    cursor = previousISO(cursor);
   }
-  
+
   return streak;
 }
 
@@ -40,18 +52,17 @@ function countConsecutiveCompletedDays(logs: Record<string, DayLog>, endDateISO:
 function calculateWeeklyCompletionRate(logs: Record<string, DayLog>, fromDay: number, toDay: number): number {
   let completedDays = 0;
   let totalDays = 0;
-  
+
   for (let d = fromDay; d <= toDay; d++) {
-    const date = new Date(2026, 0, d);
-    const dateISO = date.toISOString().slice(0, 10);
+    const dateISO = isoDay(d);
     const log = logs[dateISO];
-    
+
     totalDays++;
     if (log && Object.keys(log).length > 0) {
       completedDays++;
     }
   }
-  
+
   return totalDays > 0 ? Math.round((completedDays / totalDays) * 100) : 0;
 }
 
@@ -94,8 +105,7 @@ describe('Progress Calculations', () => {
     it('handles multiple weeks of completion', () => {
       const logs: Record<string, DayLog> = {};
       for (let i = 1; i <= 14; i++) {
-        const date = new Date(2026, 0, i);
-        const dateISO = date.toISOString().slice(0, 10);
+        const dateISO = isoDay(i);
         logs[dateISO] = createLog([`task${i}`]);
       }
       const streak = countConsecutiveCompletedDays(logs, '2026-01-14');
@@ -122,8 +132,7 @@ describe('Progress Calculations', () => {
     it('returns 100 for perfect completion', () => {
       const logs: Record<string, DayLog> = {};
       for (let i = 1; i <= 7; i++) {
-        const date = new Date(2026, 0, i);
-        const dateISO = date.toISOString().slice(0, 10);
+        const dateISO = isoDay(i);
         logs[dateISO] = createLog(['task1', 'task2', 'task3']);
       }
       const rate = calculateWeeklyCompletionRate(logs, 1, 7);
@@ -134,8 +143,7 @@ describe('Progress Calculations', () => {
       const logs: Record<string, DayLog> = {};
       const completedDays = [1, 3, 5, 7];
       for (let i = 1; i <= 7; i++) {
-        const date = new Date(2026, 0, i);
-        const dateISO = date.toISOString().slice(0, 10);
+        const dateISO = isoDay(i);
         if (completedDays.includes(i)) {
           logs[dateISO] = createLog(['task1']);
         }
@@ -148,8 +156,7 @@ describe('Progress Calculations', () => {
     it('returns 0 for no completion', () => {
       const logs: Record<string, DayLog> = {};
       for (let i = 1; i <= 7; i++) {
-        const date = new Date(2026, 0, i);
-        const dateISO = date.toISOString().slice(0, 10);
+        const dateISO = isoDay(i);
         logs[dateISO] = createLog([]);
       }
       const rate = calculateWeeklyCompletionRate(logs, 1, 7);
@@ -251,8 +258,7 @@ describe('Progress Calculations', () => {
       logs['2026-01-02'] = createLog([]);
 
       const shouldEnterRecovery = (dayNumber: number, logs: Record<string, DayLog>) => {
-        const yesterday = new Date(2026, 0, dayNumber - 1);
-        const yesterdayISO = yesterday.toISOString().slice(0, 10);
+        const yesterdayISO = isoDay(dayNumber - 1);
         const yesterdayLog = logs[yesterdayISO];
         return !yesterdayLog || Object.keys(yesterdayLog).length === 0;
       };
@@ -266,8 +272,7 @@ describe('Progress Calculations', () => {
       logs['2026-01-02'] = createLog(['task1']);
 
       const shouldEnterRecovery = (dayNumber: number, logs: Record<string, DayLog>) => {
-        const yesterday = new Date(2026, 0, dayNumber - 1);
-        const yesterdayISO = yesterday.toISOString().slice(0, 10);
+        const yesterdayISO = isoDay(dayNumber - 1);
         const yesterdayLog = logs[yesterdayISO];
         return !yesterdayLog || Object.keys(yesterdayLog).length === 0;
       };
@@ -286,8 +291,7 @@ describe('Progress Calculations', () => {
       const countGaps = (fromDay: number, toDay: number, logs: Record<string, DayLog>) => {
         let gaps = 0;
         for (let d = fromDay; d <= toDay; d++) {
-          const date = new Date(2026, 0, d);
-          const dateISO = date.toISOString().slice(0, 10);
+          const dateISO = isoDay(d);
           if (!logs[dateISO] || Object.keys(logs[dateISO]).length === 0) {
             gaps++;
           }
@@ -301,16 +305,14 @@ describe('Progress Calculations', () => {
     it('handles no gaps', () => {
       const logs: Record<string, DayLog> = {};
       for (let i = 1; i <= 5; i++) {
-        const date = new Date(2026, 0, i);
-        const dateISO = date.toISOString().slice(0, 10);
+        const dateISO = isoDay(i);
         logs[dateISO] = createLog(['task1']);
       }
 
       const countGaps = (fromDay: number, toDay: number, logs: Record<string, DayLog>) => {
         let gaps = 0;
         for (let d = fromDay; d <= toDay; d++) {
-          const date = new Date(2026, 0, d);
-          const dateISO = date.toISOString().slice(0, 10);
+          const dateISO = isoDay(d);
           if (!logs[dateISO] || Object.keys(logs[dateISO]).length === 0) {
             gaps++;
           }

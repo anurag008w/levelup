@@ -996,16 +996,6 @@ label.field-label {
   }
 }
 
-/* Streaming caret */
-.caret-blink {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  margin-left: 2px;
-  vertical-align: -0.15em;
-  background: var(--color-l);
-  animation: caretBlink 1s steps(2, start) infinite;
-}
 @keyframes caretBlink {
   to {
     visibility: hidden;
@@ -1088,7 +1078,7 @@ label.field-label {
 
 
 /* =====================================================================
-   AI Coach / chat shell
+   Misa / chat shell
    ===================================================================== */
 
 .chat-shell {

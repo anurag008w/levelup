@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import TabBar, { type Tab } from './components/TabBar';
 import TodayScreen from './screens/TodayScreen';
@@ -17,6 +17,14 @@ const pageSpring = { type: 'tween', duration: 0.32, ease: [0.2, 0, 0, 1] } as co
 export default function App() {
   const { state, today, update, refresh, resetAll, adminUnlocked, unlockAdmin, lockAdmin, setAdminDay } = useAppState();
   const [tab, setTab] = useState<Tab>('today');
+  // Once the user has opened the coach, keep it mounted across tab switches so
+  // an in-flight AI stream survives (a fresh chat reply must not die just
+  // because the user peeked at another tab). Hidden screens keep running.
+  const [chatVisited, setChatVisited] = useState(false);
+
+  useEffect(() => {
+    if (tab === 'chat') setChatVisited(true);
+  }, [tab]);
 
   function renderScreen() {
     switch (tab) {
@@ -45,23 +53,31 @@ export default function App() {
       case 'ai':
         return <AISettingsScreen state={state} update={update} />;
       case 'chat':
-        return <ChatScreen />;
+        // Rendered separately below so it never unmounts on tab switch.
+        return null;
     }
   }
 
   return (
     <div className="min-h-screen bg-bg text-text">
       <AnimatePresence mode="wait" initial={false}>
-        <motion.div
-          key={tab}
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -6 }}
-          transition={pageSpring}
-        >
-          <Suspense fallback={<ScreenSkeleton />}>{renderScreen()}</Suspense>
-        </motion.div>
+        {tab !== 'chat' && (
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={pageSpring}
+          >
+            <Suspense fallback={<ScreenSkeleton />}>{renderScreen()}</Suspense>
+          </motion.div>
+        )}
       </AnimatePresence>
+      {(chatVisited || tab === 'chat') && (
+        <div style={{ display: tab === 'chat' ? undefined : 'none' }} aria-hidden={tab !== 'chat'}>
+          <ChatScreen />
+        </div>
+      )}
       <TabBar
         active={tab}
         state={state}

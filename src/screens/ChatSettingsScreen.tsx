@@ -1,15 +1,35 @@
-import { useState } from 'react';
-import { Brain, ChevronLeft, Eye, MessageSquare, Save, Sparkles, Type } from 'lucide-react';
+import { Brain, ChevronLeft, Clock, MessageSquare, Save, Sparkles, Type } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ChatSettings } from '../core/domain/state';
 import type { ThinkingLevel } from '../core/domain/llm';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
-import MemorySummaryPanel from '../components/MemorySummaryPanel';
-import ReadOnlyChatViewer from '../components/ReadOnlyChatViewer';
 import { haptic } from '../lib/haptics';
 import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, globalChatPrefsFromSettings } from '../core/domain/chat';
+import { deviceTimeZone } from '../core/ports/clock';
 import { container } from '../di/container';
+
+/** Common IANA zones users can pin for the app's day boundary. */
+const TIME_ZONES: Array<{ id: string; label: string }> = [
+  { id: 'Asia/Kolkata', label: 'India (Asia/Kolkata)' },
+  { id: 'Asia/Karachi', label: 'Pakistan (Asia/Karachi)' },
+  { id: 'Asia/Dhaka', label: 'Bangladesh (Asia/Dhaka)' },
+  { id: 'Asia/Kathmandu', label: 'Nepal (Asia/Kathmandu)' },
+  { id: 'Asia/Colombo', label: 'Sri Lanka (Asia/Colombo)' },
+  { id: 'Asia/Dubai', label: 'UAE (Asia/Dubai)' },
+  { id: 'Asia/Singapore', label: 'Singapore (Asia/Singapore)' },
+  { id: 'Asia/Kuala_Lumpur', label: 'Malaysia (Asia/Kuala_Lumpur)' },
+  { id: 'Asia/Shanghai', label: 'China (Asia/Shanghai)' },
+  { id: 'Asia/Tokyo', label: 'Japan (Asia/Tokyo)' },
+  { id: 'Europe/London', label: 'UK (Europe/London)' },
+  { id: 'Europe/Berlin', label: 'Germany (Europe/Berlin)' },
+  { id: 'Europe/Paris', label: 'France (Europe/Paris)' },
+  { id: 'America/New_York', label: 'US East (America/New_York)' },
+  { id: 'America/Chicago', label: 'US Central (America/Chicago)' },
+  { id: 'America/Los_Angeles', label: 'US West (America/Los_Angeles)' },
+  { id: 'America/Sao_Paulo', label: 'Brazil (America/Sao_Paulo)' },
+  { id: 'Australia/Sydney', label: 'Australia (Australia/Sydney)' },
+];
 
 interface ChatSettingsScreenProps {
   state: AppState;
@@ -19,7 +39,6 @@ interface ChatSettingsScreenProps {
 
 export default function ChatSettingsScreen({ state, update, onBack }: ChatSettingsScreenProps) {
   const chat = state.aiSettings.chat;
-  const [showAdvancedView, setShowAdvancedView] = useState(false);
 
   function updateChat(partial: Partial<ChatSettings>) {
     haptic();
@@ -174,54 +193,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                 onChange={(e) => updateChat({ conversationHistoryLength: parseInt(e.target.value) })}
                 className="slider w-full"
               />
-              <p className="mt-1 text-[10px] text-muted">0 = no history, full conversation memory</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Memory Summary */}
-      <div className="mb-6">
-        <SectionHeader
-          icon={<Sparkles size={14} color="var(--color-l)" />}
-          accent="var(--color-l)"
-          title="Memory Summary"
-          meta="ek click mein sab"
-        />
-        <MemorySummaryPanel />
-      </div>
-
-      {/* Advanced */}
-      <div className="mb-6">
-        <SectionHeader
-          icon={<Eye size={14} color="var(--color-m)" />}
-          accent="var(--color-m)"
-          title="Advanced"
-        />
-        <div className="gradient-border rounded-[1.25rem] p-px">
-          <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-bg text-muted">
-                  <Eye size={16} />
-                </span>
-                <div>
-                  <p className="text-sm font-medium">Advanced view</p>
-                  <p className="text-xs text-muted">
-                    Active chats aur memory archive ki purani chats read-only dekho — timestamps ke saath, koi chat nahi kar sakte.
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                className="btn btn-ghost min-h-8 shrink-0 px-2.5 py-1 text-xs"
-                onClick={() => {
-                  haptic();
-                  setShowAdvancedView(true);
-                }}
-              >
-                View
-              </button>
+              <p className="mt-1 text-[10px] text-muted">0 = full conversation memory (koi trimming nahi); 5/10/... = sirf last N messages</p>
             </div>
           </div>
         </div>
@@ -254,6 +226,42 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
               checked={chat.showThinking}
               onChange={(v) => updateChat({ showThinking: v })}
             />
+          </div>
+        </div>
+      </div>
+
+      {/* Time zone */}
+      <div className="mb-6">
+        <SectionHeader
+          icon={<Clock size={14} color="var(--color-w)" />}
+          accent="var(--color-w)"
+          title="Time zone"
+        />
+
+        <div className="gradient-border rounded-[1.25rem] p-px">
+          <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-4">
+            <div>
+              <label className="field-label">Day boundary timezone</label>
+              <select
+                className="field"
+                aria-label="Time zone"
+                value={state.timeZone ?? ''}
+                onChange={(e) =>
+                  update((s) => ({ ...s, timeZone: e.target.value || null }))
+                }
+              >
+                <option value="">Auto (device · {deviceTimeZone()})</option>
+                {TIME_ZONES.map((tz) => (
+                  <option key={tz.id} value={tz.id}>
+                    {tz.label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[10px] text-muted">
+                Journey ka "aaj" kis timezone ke hisaab se roll hota hai. India ke liye Asia/Kolkata — raat
+                12 baje naya day shuru hota hai.
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -295,7 +303,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                   className="field min-h-[120px] resize-none"
                   value={chat.systemPrompt}
                   onChange={(e) => updateChat({ systemPrompt: e.target.value })}
-                  placeholder="Divya coach persona, tone, Markdown/LaTeX rules..."
+                  placeholder="Misa persona, tone, Markdown/LaTeX rules..."
                 />
                 <div className="mt-2 flex items-center justify-between">
                   <span className="text-[10px] text-muted">{chat.systemPrompt.length} characters</span>
@@ -303,7 +311,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                     className="btn btn-ghost text-xs"
                     onClick={() => updateChat({ systemPrompt: INTERNAL_SYSTEM_PROMPT })}
                   >
-                    Reset Divya persona
+                    Reset Misa persona
                   </button>
                 </div>
               </div>
@@ -311,8 +319,6 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
           </div>
         </div>
       </div>
-
-      {showAdvancedView && <ReadOnlyChatViewer onClose={() => setShowAdvancedView(false)} />}
     </div>
   );
 }

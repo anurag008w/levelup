@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { emptyAppState } from '../../../core/domain/state';
 import type { MemoryStore } from '../../../core/domain/memory';
+import { MEMORY_BYTES_BUDGET } from '../../../core/domain/memory';
 import { MemoryService, MEMORY_SUMMARIZE_THRESHOLD } from '../memory.service';
 import type { Clock } from '../../../core/ports/clock';
 
@@ -140,6 +141,20 @@ describe('MemoryService', () => {
     expect(contents).toContain('keep note');
   });
 
+  it('removes only the raw transcript archive for a session, keeping AI summaries', () => {
+    const memory = makeService();
+    let state = emptyAppState();
+    state = memory.add(state, { type: 'conversation', content: 'raw transcript abc', source: 'system', importance: 0.6, tags: ['chat', 'transcript', 'session:abc'] });
+    state = memory.add(state, { type: 'conversation', content: 'AI condensed abc', source: 'ai', importance: 0.7, summarized: true, tags: ['chat', 'ai-summary', 'session:abc'] });
+    state = memory.add(state, { type: 'conversation', content: 'raw transcript xyz', source: 'system', importance: 0.6, tags: ['chat', 'transcript', 'session:xyz'] });
+    state = memory.removeTranscriptArchive(state, 'abc');
+    const contents = state.memory.entries.map((e) => e.content);
+    expect(contents).not.toContain('raw transcript abc');
+    expect(contents).toContain('AI condensed abc');
+    // Other sessions' archives are untouched.
+    expect(contents).toContain('raw transcript xyz');
+  });
+
   it('groups conversation summaries into one block per chat', () => {
     const memory = makeService();
     let state = emptyAppState();
@@ -178,5 +193,67 @@ describe('MemoryService', () => {
     expect(state.memory.entries[0].longTerm).toBe(true);
     state = memory.setLongTerm(state, [target.id], false);
     expect(state.memory.entries[0].longTerm).toBe(false);
+  });
+
+  it('never lets the serialized memory exceed the byte budget (quota safety)', () => {
+    const memory = makeService();
+    let state = emptyAppState();
+    const big = 'x'.repeat(300_000);
+    // 12 × 300KB transcripts >> 2.5MB budget — the budget prune must kick in.
+    for (let i = 0; i < 12; i++) {
+      state = memory.add(state, {
+        type: 'conversation',
+        content: big,
+        source: 'system',
+        tags: ['chat', 'transcript'],
+        createdAt: `2026-02-${String(1 + i).padStart(2, '0')}`,
+      });
+    }
+    const size = JSON.stringify(state.memory).length;
+    expect(size).toBeLessThanOrEqual(MEMORY_BYTES_BUDGET);
+    // Only as much as needed is dropped — newer/smaller entries survive.
+    expect(state.memory.entries.length).toBeGreaterThan(0);
+  });
+
+  it('keeps long-term and AI-condensed entries during byte-budget pruning', () => {
+    const memory = makeService();
+    let state = emptyAppState();
+    const big = 'z'.repeat(400_000);
+    state = memory.add(state, { type: 'goal', content: 'IIT Delhi', source: 'user', importance: 0.9, longTerm: true });
+    state = memory.add(state, { type: 'conversation', content: 'condensed', source: 'ai', summarized: true, importance: 0.6 });
+    for (let i = 0; i < 10; i++) {
+      state = memory.add(state, { type: 'conversation', content: big, source: 'system', tags: ['chat', 'transcript'] });
+    }
+    const contents = state.memory.entries.map((e) => e.content);
+    expect(contents).toContain('IIT Delhi');
+    expect(contents).toContain('condensed');
+    expect(JSON.stringify(state.memory).length).toBeLessThanOrEqual(MEMORY_BYTES_BUDGET);
+  });
+
+  it('round-trips memory through the export/import backup format', () => {
+    const memory = makeService();
+    let state = emptyAppState();
+    state = memory.add(state, { type: 'goal', content: 'IIT Delhi', source: 'user', importance: 0.9 });
+    state = memory.add(state, { type: 'conversation', content: 'chat archive', source: 'system', importance: 0.6, tags: ['chat', 'session:abc'] });
+    const json = memory.exportMemory(state);
+    expect(json).toContain('ai-memory-backup');
+
+    const restored = memory.importMemory(emptyAppState(), json);
+    expect(restored.memory.entries).toHaveLength(2);
+    expect(restored.memory.entries.find((e) => e.content === 'IIT Delhi')?.type).toBe('goal');
+    expect(restored.memory.entries.find((e) => e.content === 'chat archive')?.context.tags).toContain('session:abc');
+    // Import replaces only memory — the rest of the state is untouched.
+    expect(restored.startDateISO).toBe(emptyAppState().startDateISO);
+  });
+
+  it('drops corrupt entries on import and throws on malformed JSON', () => {
+    const memory = makeService();
+    const state = memory.importMemory(
+      emptyAppState(),
+      JSON.stringify({ memory: { entries: [{ id: 1 }, { id: 'ok', type: 'goal', content: 'x', importance: 0.5, source: 'user', createdAt: '2026-07-01', context: { tags: [] } }], summaries: [], lastSummarizedAt: null } }),
+    );
+    expect(state.memory.entries).toHaveLength(1);
+    expect(state.memory.entries[0].content).toBe('x');
+    expect(() => memory.importMemory(emptyAppState(), 'not-json')).toThrow();
   });
 });

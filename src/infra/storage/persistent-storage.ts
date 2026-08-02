@@ -8,6 +8,7 @@ const PREFIX = '@levelup:';
 
 class PersistentStorage {
   private cache: Map<string, string> = new Map();
+  private lastWriteError: string | null = null;
 
   constructor() {
     // Initialize cache from localStorage
@@ -54,18 +55,33 @@ class PersistentStorage {
   }
 
   /**
-   * Set item in storage
+   * Set item in storage. Resolves to true on success, false on failure.
+   * Quota errors are tracked (see getLastWriteError) — a swallowed quota error
+   * would otherwise mean SILENT data loss on the next app restart.
    */
-  async set<T>(key: string, value: T): Promise<void> {
+  async set<T>(key: string, value: T): Promise<boolean> {
     const storageKey = PREFIX + key;
-    
+
     try {
       const serialized = JSON.stringify(value);
       this.cache.set(storageKey, serialized);
       localStorage.setItem(storageKey, serialized);
+      this.lastWriteError = null;
+      return true;
     } catch (error) {
-      console.error(`Error setting ${key}:`, error);
+      const quota = error instanceof DOMException && (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED');
+      this.lastWriteError = quota
+        ? `Storage full — "${key}" save nahi hua (quota exceeded). Kuch purani memory delete karo.`
+        : `Storage write failed for "${key}": ${String(error)}`;
+      if (quota) console.error(`[storage] QUOTA EXCEEDED while saving ${key} — data will be lost on restart`, error);
+      else console.error(`Error setting ${key}:`, error);
+      return false;
     }
+  }
+
+  /** Last write failure (e.g. quota exceeded) or null when the last write succeeded. */
+  getLastWriteError(): string | null {
+    return this.lastWriteError;
   }
 
   /**

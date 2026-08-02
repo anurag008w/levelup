@@ -16,8 +16,9 @@ const SLOT_START_MINUTES: Record<TaskGroup, number> = {
 const BUFFER_MINUTES = 10;
 
 export function formatDayLabel(dateISO: string): string {
-  const date = new Date(`${dateISO}T00:00:00`);
-  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  // Parse as UTC so the label always matches the UTC day key (local-time
+  // parsing shifts the label to the previous day on non-UTC machines).
+  return new Date(`${dateISO}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
 
 export function formatPlanProgress(plan: DailyPlan, state: AppState): string {
