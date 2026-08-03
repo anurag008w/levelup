@@ -11,6 +11,7 @@ import LevelsScreen from './screens/LevelsScreen';
 import ReviewScreen from './screens/ReviewScreen';
 import TaskBankScreen from './screens/TaskBankScreen';
 import PostJourneyScreen from './screens/PostJourneyScreen';
+import LoginScreen from './screens/LoginScreen';
 
 const noop = () => {};
 const unlockAdmin = (_username: string, _password: string) => true;
@@ -70,5 +71,14 @@ describe('screen smoke tests', () => {
   it('PostJourneyScreen renders custom blocks section', () => {
     render(React.createElement(PostJourneyScreen, { state: populated(), update: noop, onBack: noop }));
     expect(screen.getByText('Custom blocks & mastery levels')).toBeTruthy();
+  });
+
+  it('LoginScreen renders the app-start auth gate with server + credentials fields', () => {
+    render(React.createElement(LoginScreen, { onLoggedIn: noop, defaultServerUrl: 'https://smartrotator.onrender.com' }));
+    expect(screen.getByText('LevelUp')).toBeTruthy();
+    expect(screen.getByText('Login / Continue')).toBeTruthy();
+    expect(screen.getByText('Register')).toBeTruthy();
+    expect(screen.getByPlaceholderText('https://smartrotator.onrender.com')).toBeTruthy();
+    expect(screen.getByPlaceholderText('aapka username')).toBeTruthy();
   });
 });

@@ -1,7 +1,8 @@
 import { Suspense, useRef, useState, lazy } from 'react';
-import { Check, ChevronRight, Database, Download, KeyRound, ListChecks, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff } from 'lucide-react';
+import { Check, ChevronRight, Database, Download, KeyRound, ListChecks, LogOut, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ProviderConfig, ModelInfo } from '../core/domain/llm';
+import type { AuthSession } from '../lib/auth';
 import { container } from '../di/container';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
@@ -13,7 +14,17 @@ import { normalizeState } from '../infra/storage/state-repository';
 
 const ChatSettingsScreen = lazy(() => import('./ChatSettingsScreen'));
 
-export default function AISettingsScreen({ state, update }: { state: AppState; update: (fn: (s: AppState) => AppState) => void }) {
+export default function AISettingsScreen({
+  state,
+  update,
+  session,
+  onLogout,
+}: {
+  state: AppState;
+  update: (fn: (s: AppState) => AppState) => void;
+  session: AuthSession | null;
+  onLogout: () => void;
+}) {
   const settings = state.aiSettings;
   const providers = Object.values(settings.providers);
   const hiddenEnabled = container.providerSettings.isHiddenEnabled();
@@ -154,6 +165,48 @@ export default function AISettingsScreen({ state, update }: { state: AppState; u
           <MiniStat label="Active" value={effectiveActive ? 'Set' : 'None'} />
         </div>
       </section>
+
+      {session && (
+        <>
+          <div className="mb-2.5">
+            <SectionHeader
+              icon={<ShieldCheck size={14} color="var(--color-l)" />}
+              accent="var(--color-l)"
+              title="My Server"
+              meta="signed in"
+            />
+          </div>
+
+          <div className="card mb-4 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
+                  <ShieldCheck size={19} />
+                </span>
+                <div className="min-w-0">
+                  <p className="flex flex-wrap items-center gap-2 font-display text-[15px] font-bold">
+                    {session.username}
+                    {session.role === 'admin' && (
+                      <span className="badge" style={{ backgroundColor: 'rgba(201,162,39,0.14)', color: 'var(--color-light)' }}>
+                        admin
+                      </span>
+                    )}
+                  </p>
+                  <p className="mt-0.5 break-all text-xs text-muted">{session.serverUrl}</p>
+                  <p className="mt-1 font-mono text-[10px] text-muted-dim">api key · {maskKey(session.apiKey)}</p>
+                </div>
+              </div>
+              <button type="button" onClick={onLogout} className="btn btn-ghost min-h-9 shrink-0 gap-1.5 px-3 text-xs">
+                <LogOut size={13} /> Logout
+              </button>
+            </div>
+            <p className="mt-3 text-[11px] leading-relaxed text-muted-dim">
+              Chat "My Server" provider se chal rahi hai — per-user daily quota server pe track hoti hai. Logout karne pe
+              login screen par wapas aa jayenge (app data local hi rahega).
+            </p>
+          </div>
+        </>
+      )}
 
       {hiddenEnabled && (
         <div className="card mb-4 flex items-start gap-2.5 p-3.5 text-sm text-muted">
@@ -610,6 +663,12 @@ function shortError(err: unknown): string {
     return msg.length > 140 ? `${msg.slice(0, 140)}…` : msg;
   }
   return String(err);
+}
+
+function maskKey(key: string): string {
+  if (!key) return '(missing)';
+  if (key.length <= 8) return '••••••••';
+  return `${key.slice(0, 4)}••••${key.slice(-4)}`;
 }
 
 function downloadTextFile(text: string, filename: string) {
