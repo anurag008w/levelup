@@ -12,19 +12,25 @@ const OPENROUTER_REFERER = 'https://jee-levelup.local';
 /**
  * Hidden default provider configured only via environment variables
  * (VITE_DEFAULT_AI_*). Its API key and model name are never surfaced to the
- * UI or logs; presence alone is reported.
+ * UI or logs; presence alone is reported. An optional comma-separated model
+ * list (VITE_DEFAULT_AI_MODELS) powers a user-facing model picker.
  */
 export function buildHiddenDefaultConfig(env: Record<string, string | undefined> = readEnv()): ProviderConfig | null {
   const baseUrl = env.VITE_DEFAULT_AI_BASE_URL;
   const apiKey = env.VITE_DEFAULT_AI_API_KEY;
   const model = env.VITE_DEFAULT_AI_MODEL;
-  if (!baseUrl || !apiKey || !model) return null;
+  const modelList = parseModelList(env.VITE_DEFAULT_AI_MODELS);
+  if (model && !modelList.includes(model)) modelList.unshift(model);
+  if (!baseUrl || !apiKey || modelList.length === 0) return null;
   return {
     id: 'custom',
     label: 'Default',
     baseUrl,
     apiKey,
-    model,
+    model: modelList[0],
+    // Only expose a picker when there is a real choice — a single configured
+    // model stays fully hidden in the UI.
+    models: modelList.length > 1 ? modelList : undefined,
     temperature: env.VITE_DEFAULT_AI_TEMPERATURE !== undefined ? Number(env.VITE_DEFAULT_AI_TEMPERATURE) : 0.7,
     maxTokens: env.VITE_DEFAULT_AI_MAX_TOKENS !== undefined ? Number(env.VITE_DEFAULT_AI_MAX_TOKENS) : 4096,
     timeoutMs: env.VITE_DEFAULT_AI_TIMEOUT_MS !== undefined ? Number(env.VITE_DEFAULT_AI_TIMEOUT_MS) : 120_000,
@@ -35,12 +41,24 @@ export function buildHiddenDefaultConfig(env: Record<string, string | undefined>
   };
 }
 
+/** Parses a comma-separated model id list, trimmed + deduped. */
+function parseModelList(raw: string | undefined): string[] {
+  if (!raw) return [];
+  const seen = new Set<string>();
+  for (const part of raw.split(',')) {
+    const id = part.trim();
+    if (id) seen.add(id);
+  }
+  return [...seen];
+}
+
 function readEnv(): Record<string, string | undefined> {
   const e = import.meta.env as Record<string, string | undefined>;
   return {
     VITE_DEFAULT_AI_BASE_URL: e.VITE_DEFAULT_AI_BASE_URL,
     VITE_DEFAULT_AI_API_KEY: e.VITE_DEFAULT_AI_API_KEY,
     VITE_DEFAULT_AI_MODEL: e.VITE_DEFAULT_AI_MODEL,
+    VITE_DEFAULT_AI_MODELS: e.VITE_DEFAULT_AI_MODELS,
     VITE_DEFAULT_AI_TEMPERATURE: e.VITE_DEFAULT_AI_TEMPERATURE,
     VITE_DEFAULT_AI_MAX_TOKENS: e.VITE_DEFAULT_AI_MAX_TOKENS,
     VITE_DEFAULT_AI_TIMEOUT_MS: e.VITE_DEFAULT_AI_TIMEOUT_MS,

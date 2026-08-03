@@ -57,7 +57,7 @@ export class GeminiProvider implements LLMProvider {
   }
 
   private baseUrl(): string {
-    return (this.config.baseUrl ?? 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+    return (this.config.baseUrl || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
   }
 
   isConfigured(): boolean {
