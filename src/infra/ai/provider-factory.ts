@@ -77,6 +77,8 @@ export function providerLabel(id: ProviderId): string {
     case 'openai-compatible':
     case 'custom':
       return 'Custom';
+    case 'rotator':
+      return 'My Server';
   }
 }
 
@@ -105,6 +107,7 @@ export class ProviderFactory {
         return new OpenAICompatibleProvider(config, this.http, { defaultBaseUrl: OPENCODE_BASE_URL });
       case 'openai-compatible':
       case 'custom':
+      case 'rotator':
       default:
         return new OpenAICompatibleProvider(config, this.http, { defaultBaseUrl: '' });
     }

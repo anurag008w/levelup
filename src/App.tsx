@@ -2,7 +2,9 @@ import { Suspense, lazy, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import TabBar, { type Tab } from './components/TabBar';
 import TodayScreen from './screens/TodayScreen';
+import LoginScreen from './screens/LoginScreen';
 import { useAppState } from './lib/useAppState';
+import { buildServerProvider, clearSession, loadSession, saveSession, type AuthSession } from './lib/auth';
 import ScreenSkeleton from './components/ScreenSkeleton';
 
 const LevelsScreen = lazy(() => import('./screens/LevelsScreen'));
@@ -21,10 +23,52 @@ export default function App() {
   // an in-flight AI stream survives (a fresh chat reply must not die just
   // because the user peeked at another tab). Hidden screens keep running.
   const [chatVisited, setChatVisited] = useState(false);
+  const [session, setSession] = useState<AuthSession | null>(() => loadSession());
 
   useEffect(() => {
     if (tab === 'chat') setChatVisited(true);
   }, [tab]);
+
+  // Auto-wire the server provider ("My Server") after login: the app's chat
+  // routes through the gateway with the user's own sk- key, so the server can
+  // enforce per-user quotas. Self-healing on restart — a removed provider is
+  // re-created as long as a session exists.
+  useEffect(() => {
+    if (!session) return;
+    update((s) => {
+      const provider = buildServerProvider(session);
+      const existing = s.aiSettings.providers.rotator;
+      if (existing && existing.baseUrl === provider.baseUrl && existing.apiKey === provider.apiKey && existing.enabled) {
+        return s;
+      }
+      return {
+        ...s,
+        aiSettings: {
+          ...s.aiSettings,
+          aiEnabled: true,
+          activeProviderId: 'rotator',
+          providers: { ...s.aiSettings.providers, rotator: provider },
+        },
+      };
+    });
+  }, [session]);
+
+  function handleLoggedIn(next: AuthSession) {
+    saveSession(next);
+    setSession(next);
+    setTab('today');
+  }
+
+  function handleLogout() {
+    clearSession();
+    setSession(null);
+    setTab('today');
+  }
+
+  // App-start login gate: levelup content only appears after authentication.
+  if (!session) {
+    return <LoginScreen onLoggedIn={handleLoggedIn} />;
+  }
 
   function renderScreen() {
     switch (tab) {
@@ -51,7 +95,7 @@ export default function App() {
       case 'task-bank':
         return <TaskBankScreen state={state} update={update} />;
       case 'ai':
-        return <AISettingsScreen state={state} update={update} />;
+        return <AISettingsScreen state={state} update={update} session={session} onLogout={handleLogout} />;
       case 'chat':
         // Rendered separately below so it never unmounts on tab switch.
         return null;

@@ -27,7 +27,7 @@ describe('settings open smoke', () => {
   });
 
   it('AISettingsScreen Chat Experience opens ChatSettingsScreen', async () => {
-    render(React.createElement(AISettingsScreen, { state: container.store.get(), update: () => {} }));
+    render(React.createElement(AISettingsScreen, { state: container.store.get(), update: () => {}, session: null, onLogout: () => {} }));
     const btn = screen.getByText('Chat Experience');
     fireEvent.click(btn);
     await waitFor(() => expect(screen.getByText('Response Quality')).toBeTruthy());
