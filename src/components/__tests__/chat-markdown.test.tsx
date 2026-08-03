@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectFileDoc, looksLikeMarkdown, unwrapMarkdownFence } from '../markdown-utils';
+import { detectFileDoc, looksLikeMarkdown, normalizeLatexDelimiters, unwrapMarkdownFence } from '../markdown-utils';
 
 describe('markdown-utils', () => {
   it('looksLikeMarkdown detects headings, lists, tables and math', () => {
@@ -27,6 +27,17 @@ describe('markdown-utils', () => {
     expect(detectFileDoc('too short')).toBeNull();
     expect(detectFileDoc('# One heading\n\nonly one section')).toBeNull();
     expect(detectFileDoc('no heading at all, just a long chat reply that goes on for a while and repeats itself many times to be longer than one hundred twenty characters')).toBeNull();
+  });
+
+  it('normalizeLatexDelimiters converts \\(...\\) and \\[...\\] to $...$/$$...$$ so remark-math can parse them', () => {
+    expect(normalizeLatexDelimiters('Solve \\(x^2 + 1\\) here')).toBe('Solve $x^2 + 1$ here');
+    expect(normalizeLatexDelimiters('\\[\\int_0^1 x\\,dx\\]')).toBe('$$\\int_0^1 x\\,dx$$');
+    expect(normalizeLatexDelimiters('plain text, no math')).toBe('plain text, no math');
+    // Leaves code fences / inline code untouched even if they contain literal \( \)
+    expect(normalizeLatexDelimiters('`\\(not math\\)`')).toBe('`\\(not math\\)`');
+    expect(normalizeLatexDelimiters('```\\(also not math\\)```')).toBe('```\\(also not math\\)```');
+    // Unclosed delimiters (mid-stream) are left as-is rather than corrupted
+    expect(normalizeLatexDelimiters('\\(unclosed')).toBe('\\(unclosed');
   });
 });
 

@@ -285,13 +285,13 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
                         <button type="button" className="icon-btn" onClick={() => startEdit(entry)} aria-label="Edit task">
                           <Pencil size={15} />
                         </button>
-                        <button type="button" className="icon-btn text-red-400/70 hover:bg-danger/10 hover:text-danger" onClick={() => deleteTask(entry)} aria-label="Delete task">
+                        <button type="button" className="icon-btn text-danger/60 hover:bg-danger/10 hover:text-danger" onClick={() => deleteTask(entry)} aria-label="Delete task">
                           <Trash2 size={15} />
                         </button>
                       </div>
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <span className="badge" style={{ backgroundColor: 'rgba(79,209,197,0.12)', color: 'var(--color-l)' }}>
+                      <span className="badge" style={{ backgroundColor: 'rgba(138,154,91,0.12)', color: 'var(--color-l)' }}>
                         Day {day}
                       </span>
                       <span className="badge" style={{ backgroundColor: 'var(--color-panel-raised)', color: 'var(--color-muted)' }}>
@@ -322,7 +322,7 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
 }
 
 function EnergyBadge({ level }: { level: EnergyLevel }) {
-  const color = level === 'low' ? 'var(--color-l)' : level === 'medium' ? 'var(--color-light)' : 'var(--color-danger)';
+  const color = level === 'low' ? '#8a9a5b' : level === 'medium' ? '#c9a227' : '#b3372f';
   return (
     <span className="badge" style={{ backgroundColor: `${color}1a`, color }}>
       <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />

@@ -1,17 +1,17 @@
 import { useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Check, Plug, Plus, Smartphone, X } from 'lucide-react';
 import type { ProviderConfig, ProviderId, ThinkingLevel } from '../core/domain/llm';
 import { providerLabel } from '../infra/ai/provider-factory';
 
-const OPTIONS: { id: ProviderId; label: string }[] = [
-  { id: 'openrouter', label: 'OpenRouter (browser + mobile ✓)' },
-  { id: 'gemini', label: 'Gemini (browser + mobile ✓)' },
-  { id: 'opencode', label: 'OpenCode Zen (browser ✗, mobile ✓)' },
-  { id: 'openai-compatible', label: 'Custom (OpenAI-compatible)' },
+const OPTIONS: { id: ProviderId; label: string; hint: string; browser: boolean; mobile: boolean }[] = [
+  { id: 'openrouter', label: 'OpenRouter', hint: 'Most models, one key', browser: true, mobile: true },
+  { id: 'gemini', label: 'Gemini', hint: "Google's models", browser: true, mobile: true },
+  { id: 'opencode', label: 'OpenCode Zen', hint: 'Coding-tuned models', browser: false, mobile: true },
+  { id: 'openai-compatible', label: 'Custom', hint: 'Any OpenAI-compatible endpoint', browser: true, mobile: true },
 ];
 
 const THINKING_LEVELS: Array<{ value: ThinkingLevel | ''; label: string }> = [
-  { value: '', label: 'Auto (provider default)' },
+  { value: '', label: 'Auto' },
   { value: 'off', label: 'Off' },
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
@@ -28,48 +28,93 @@ export default function AddProviderForm({ onAdd }: { onAdd: (c: ProviderConfig) 
     return (
       <button
         onClick={() => setOpen(true)}
-        className="btn btn-ghost mt-2 w-full border border-dashed py-3 text-sm font-semibold text-muted"
+        className="btn btn-ghost mt-2 w-full gap-2 border-dashed py-3 text-sm font-semibold text-muted"
       >
-        <Plus size={15} />
+        <Plus size={16} />
         Add provider
       </button>
     );
   }
 
+  const selected = OPTIONS.find((o) => o.id === id) ?? OPTIONS[0];
+
   return (
-    <div className="card mt-2 p-4 text-xs fade-up">
-      <p className="mb-2 font-display text-sm font-bold">Add provider</p>
-      <div className="space-y-2">
+    <div className="card mt-2 p-4 fade-up">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="font-display text-base font-bold">Add provider</p>
+        <button type="button" className="icon-btn" onClick={() => setOpen(false)} aria-label="Close">
+          <X size={16} />
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        <div>
+          <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.08em] text-muted">Provider</span>
+          <div className="grid gap-1.5">
+            {OPTIONS.map((o) => {
+              const isSelected = o.id === id;
+              return (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => setId(o.id)}
+                  aria-pressed={isSelected}
+                  className="flex w-full items-center gap-3 rounded-[var(--radius-lg)] border px-3 py-2.5 text-left transition-colors"
+                  style={{
+                    borderColor: isSelected ? 'var(--color-l)' : 'var(--color-border)',
+                    background: isSelected ? 'rgba(138,154,91,0.1)' : 'var(--color-panel-raised)',
+                  }}
+                >
+                  <span
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+                    style={{ background: isSelected ? 'rgba(138,154,91,0.18)' : 'var(--color-surface-3)', color: isSelected ? 'var(--color-l)' : 'var(--color-muted)' }}
+                  >
+                    <Plug size={14} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-text">{o.label}</span>
+                    <span className="block truncate text-xs text-muted">{o.hint}</span>
+                  </span>
+                  {!o.browser && (
+                    <span className="chip shrink-0 gap-1 !py-0.5 !text-[9px]" title="Mobile app only">
+                      <Smartphone size={9} /> App only
+                    </span>
+                  )}
+                  {isSelected && <Check size={16} color="var(--color-l)" className="shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         <label className="block">
-          <span className="mb-0.5 block text-muted">Provider</span>
-          <select className="field" value={id} onChange={(e) => setId(e.target.value as ProviderId)}>
-            {OPTIONS.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+          <span className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-muted">Default model (optional)</span>
+          <input className="field text-sm" value={model} placeholder="gpt-4o-mini" onChange={(e) => setModel(e.target.value)} />
         </label>
-        <label className="block">
-          <span className="mb-0.5 block text-muted">Default model (optional)</span>
-          <input className="field" value={model} placeholder="gpt-4o-mini" onChange={(e) => setModel(e.target.value)} />
-        </label>
-        <label className="block">
-          <span className="mb-0.5 block text-muted">Thinking level (default)</span>
-          <select className="field" value={thinking} onChange={(e) => setThinking(e.target.value as ThinkingLevel | '')}>
+
+        <div>
+          <span className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-muted">Thinking level</span>
+          <div className="flex flex-wrap gap-1.5">
             {THINKING_LEVELS.map((l) => (
-              <option key={l.value} value={l.value}>
+              <button
+                key={l.value || 'auto'}
+                type="button"
+                className="filter-chip"
+                aria-pressed={thinking === l.value}
+                onClick={() => setThinking(l.value)}
+              >
                 {l.label}
-              </option>
+              </button>
             ))}
-          </select>
-          <span className="mt-0.5 block text-[10px] text-muted">
+          </div>
+          <span className="mt-1.5 block text-[11px] leading-relaxed text-muted-dim">
             Sirf reasoning/thinking-support wale models par asar karta hai (OpenAI o-series, Gemini thinking, OpenRouter).
           </span>
-        </label>
+        </div>
+
         <div className="flex gap-2 pt-1">
           <button
-            className="btn btn-primary px-4 py-2 text-xs font-bold"
+            className="btn btn-primary flex-1 justify-center text-sm font-bold"
             onClick={() => {
               onAdd({ id, label: providerLabel(id), model: model || undefined, thinking: thinking || undefined, enabled: true });
               setOpen(false);
@@ -77,9 +122,9 @@ export default function AddProviderForm({ onAdd }: { onAdd: (c: ProviderConfig) 
               setThinking('');
             }}
           >
-            Add
+            Add {selected.label}
           </button>
-          <button className="btn btn-ghost px-4 py-2 text-xs" onClick={() => setOpen(false)}>
+          <button className="btn btn-ghost px-4 text-sm" onClick={() => setOpen(false)}>
             Cancel
           </button>
         </div>

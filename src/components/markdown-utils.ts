@@ -36,6 +36,26 @@ export function unwrapMarkdownFence(text: string): string {
   return m && m[1] ? m[1] : normalized;
 }
 
+/**
+ * remark-math only recognizes `$...$` / `$$...$$`. Many LLMs (including the
+ * ones this app targets) default to `\( ... \)` / `\[ ... \]` notation — and
+ * the app's own suggestion chips demonstrate that exact format — so without
+ * this conversion, valid LaTeX from the model renders as literal backslash
+ * text instead of a formula. Code fences/inline code are left untouched so a
+ * literal `\(` inside a code sample is never rewritten.
+ */
+export function normalizeLatexDelimiters(text: string): string {
+  const segments = text.split(/(```[\s\S]*?```|`[^`\n]*`)/g);
+  return segments
+    .map((seg, i) => {
+      if (i % 2 === 1) return seg; // inside a code fence/inline code — leave as-is
+      return seg
+        .replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner: string) => `$$${inner}$$`)
+        .replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner: string) => `$${inner}$`);
+    })
+    .join('');
+}
+
 export interface FileDocInfo {
   name: string;
   extension: string;
