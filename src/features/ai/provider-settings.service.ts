@@ -103,6 +103,8 @@ export class ProviderSettingsService {
       label: providerLabel(config.id),
       enabled: config.enabled,
       hidden: true,
+      // Model ids are not secrets — they only power the optional model picker.
+      models: config.models,
     };
   }
 }

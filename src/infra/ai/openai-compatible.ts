@@ -89,7 +89,14 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   private baseUrl(): string {
-    return (this.config.baseUrl ?? this.options.defaultBaseUrl).replace(/\/+$/, '');
+    return (this.config.baseUrl || this.options.defaultBaseUrl).replace(/\/+$/, '');
+  }
+
+  /** Base URL or a clear error — guards against an empty persisted base URL. */
+  private requireBaseUrl(): string {
+    const base = this.baseUrl();
+    if (!base) throw new ProviderError(this.id, 'bad-request', 'Provider base URL set nahi hai — Settings > Providers mein Base URL daalo');
+    return base;
   }
 
   isConfigured(): boolean {
@@ -130,7 +137,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     };
     const res = await this.http.requestJson<OpenAICompletionResponse>(
       {
-        url: `${this.baseUrl()}/chat/completions`,
+        url: `${this.requireBaseUrl()}/chat/completions`,
         headers: this.headers(),
         body,
         timeoutMs: this.config.timeoutMs,
@@ -201,7 +208,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       }
     };
     await this.http.requestSse(
-      { url: `${this.baseUrl()}/chat/completions`, headers: this.headers(), body, timeoutMs: this.config.timeoutMs, retries: this.config.retries, signal: request.signal },
+      { url: `${this.requireBaseUrl()}/chat/completions`, headers: this.headers(), body, timeoutMs: this.config.timeoutMs, retries: this.config.retries, signal: request.signal },
       onData,
     ).catch((err) => {
       throw this.normalize(err);
@@ -231,7 +238,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
   async fetchModels(): Promise<ModelInfo[]> {
     const models: ModelInfo[] = [];
-    let url = `${this.baseUrl()}/models`;
+    let url = `${this.requireBaseUrl()}/models`;
     for (let page = 0; page < MAX_MODEL_PAGES; page++) {
       const res = await this.http
         .requestJson<OpenAIModelsList>({ url, headers: this.headers(), method: 'GET', timeoutMs: this.config.timeoutMs, retries: this.config.retries })
@@ -244,7 +251,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       }
       const next = (res as { next_page_token?: string }).next_page_token ?? (res as { last_id?: string }).last_id;
       if (!next || models.length === 0) break;
-      url = `${this.baseUrl()}/models?after=${encodeURIComponent(next)}`;
+      url = `${this.requireBaseUrl()}/models?after=${encodeURIComponent(next)}`;
     }
     return models;
   }
@@ -259,7 +266,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     
     try {
       await this.http.requestJson<unknown>({
-        url: `${this.baseUrl()}/models`,
+        url: `${this.requireBaseUrl()}/models`,
         headers: this.headers(),
         method: 'GET',
         timeoutMs: Math.min(this.config.timeoutMs ?? 15_000, 15_000),

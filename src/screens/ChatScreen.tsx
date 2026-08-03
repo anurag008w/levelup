@@ -1236,7 +1236,7 @@ function SettingsSheet({
   onClose,
 }: {
   prefs: ChatPreferences;
-  providers: Array<{ id: string; label: string; enabled?: boolean }>;
+  providers: Array<{ id: string; label: string; enabled?: boolean; models?: string[] }>;
   catalog: ModelInfo[];
   onChange: (patch: Partial<ChatPreferences>) => void;
   onReset: () => void;
@@ -1249,6 +1249,7 @@ function SettingsSheet({
   onClose: () => void;
 }) {
   const providerLabel = providers.find((p) => p.id === prefs.providerId)?.label ?? 'App default';
+  const presetModels = providers.find((p) => p.id === prefs.providerId)?.models ?? [];
   return (
     <Sheet open onClose={onClose} title="Chat settings" icon={<Settings2 size={16} />}>
       <div className="space-y-6 pb-2">
@@ -1268,6 +1269,27 @@ function SettingsSheet({
               </span>
             </button>
             <div className="border-t border-border/70 px-4 py-3.5">
+              {presetModels.length > 1 && (
+                <div className="mb-3">
+                  <span className="field-label">Quick pick</span>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {presetModels.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => onChange({ model: prefs.model === m ? null : m })}
+                        className="filter-chip"
+                        aria-pressed={prefs.model === m}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="mt-1.5 block text-[11px] leading-snug text-muted-dim">
+                    Default: {presetModels[0]} — tap karke badlo.
+                  </span>
+                </div>
+              )}
               <label className="field-label flex items-center justify-between">
                 <span>Model override</span>
                 <button type="button" onClick={onLoadCatalog} className="font-normal text-muted underline-offset-2 hover:text-text hover:underline">
@@ -1284,6 +1306,9 @@ function SettingsSheet({
               <datalist id="chat-model-catalog">
                 {catalog.map((m) => (
                   <option key={m.id} value={m.id} />
+                ))}
+                {presetModels.map((m) => (
+                  <option key={`preset-${m}`} value={m} />
                 ))}
               </datalist>
             </div>
@@ -1488,7 +1513,7 @@ function ProviderPickerSheet({
   onClose,
 }: {
   prefs: ChatPreferences;
-  providers: Array<{ id: string; label: string; enabled?: boolean }>;
+  providers: Array<{ id: string; label: string; enabled?: boolean; models?: string[] }>;
   onSelect: (pid: string | null) => void;
   onProviderAdded: () => void;
   onClose: () => void;

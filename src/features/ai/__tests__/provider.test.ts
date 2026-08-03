@@ -388,4 +388,35 @@ describe('buildHiddenDefaultConfig', () => {
     expect(cfg!.hidden).toBe(true);
     expect(cfg!.enabled).toBe(true);
   });
+
+  it('parses a comma-separated model list and keeps the first as default', () => {
+    const cfg = buildHiddenDefaultConfig({
+      VITE_DEFAULT_AI_BASE_URL: 'https://example.com/v1',
+      VITE_DEFAULT_AI_API_KEY: 'secret',
+      VITE_DEFAULT_AI_MODELS: 'model-b, model-a, model-b',
+    });
+    expect(cfg!.model).toBe('model-b');
+    expect(cfg!.models).toEqual(['model-b', 'model-a']);
+  });
+
+  it('exposes no model picker list for a single configured model', () => {
+    const cfg = buildHiddenDefaultConfig({
+      VITE_DEFAULT_AI_BASE_URL: 'https://example.com/v1',
+      VITE_DEFAULT_AI_API_KEY: 'secret',
+      VITE_DEFAULT_AI_MODEL: 'internal-model',
+    });
+    expect(cfg!.model).toBe('internal-model');
+    expect(cfg!.models).toBeUndefined();
+  });
+
+  it('keeps VITE_DEFAULT_AI_MODEL first when both vars are set', () => {
+    const cfg = buildHiddenDefaultConfig({
+      VITE_DEFAULT_AI_BASE_URL: 'https://example.com/v1',
+      VITE_DEFAULT_AI_API_KEY: 'secret',
+      VITE_DEFAULT_AI_MODEL: 'primary',
+      VITE_DEFAULT_AI_MODELS: 'secondary, tertiary',
+    });
+    expect(cfg!.model).toBe('primary');
+    expect(cfg!.models).toEqual(['primary', 'secondary', 'tertiary']);
+  });
 });
