@@ -61,6 +61,26 @@ export class ProviderSettingsService {
     return this.hiddenDefault !== null;
   }
 
+  /**
+   * Raw hidden default config (WITH secrets) — the settings UI renders it as a
+   * full provider card (API key, base URL, model, /models catalog, test) just
+   * like any other provider. Only the settings screen calls this; pickers and
+   * chat flows keep using the stripped public views.
+   */
+  getHiddenDefaultFull(): ProviderConfig | null {
+    return this.hiddenDefault;
+  }
+
+  /**
+   * Applies UI edits to the hidden default (model/baseUrl/apiKey changes made
+   * from the provider card). The update is transient — env vars stay the
+   * source of truth and re-apply on restart/login.
+   */
+  updateHiddenDefault(config: ProviderConfig): void {
+    if (!this.hiddenDefault) return;
+    this.hiddenDefault = { ...this.hiddenDefault, ...config, hidden: true };
+  }
+
   isAiEnabled(): boolean {
     return this.state.get().aiSettings.aiEnabled && this.getActiveProvider() !== null;
   }
@@ -96,12 +116,15 @@ export class ProviderSettingsService {
   configureServerAuth(baseUrl: string, apiKey: string): void {
     if (!baseUrl || !apiKey) return;
     const existing = this.hiddenDefault;
+    // Model is env-driven (VITE_DEFAULT_AI_MODEL), exactly like the base URL —
+    // the build packs whatever value is set (default: 'levelup' group id).
+    const envModel = (import.meta.env as Record<string, string | undefined>).VITE_DEFAULT_AI_MODEL?.trim();
     this.hiddenDefault = {
       id: existing?.id ?? 'custom',
       label: existing?.label ?? 'Default',
       baseUrl,
       apiKey,
-      model: existing?.model ?? 'gemini-2.5-flash',
+      model: existing?.model ?? envModel ?? 'gemini-2.5-flash',
       models: existing?.models,
       temperature: existing?.temperature ?? 0.7,
       maxTokens: existing?.maxTokens ?? 4096,

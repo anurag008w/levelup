@@ -28,6 +28,9 @@ export default function AISettingsScreen({
   const settings = state.aiSettings;
   const providers = Object.values(settings.providers);
   const hiddenEnabled = container.providerSettings.isHiddenEnabled();
+  const hiddenDefault = container.providerSettings.getHiddenDefaultFull();
+  // Default (env) provider renders as a full card too — same UI as added ones.
+  const visibleProviders = hiddenDefault ? [hiddenDefault, ...providers] : providers;
   const effectiveActive = container.providerSettings.getActiveProvider()?.id ?? null;
   const aiEnabled = settings.aiEnabled;
 
@@ -160,8 +163,8 @@ export default function AISettingsScreen({
           Disable karne par app stable deterministic planning use karega — data hamesha local rehta hai.
         </p>
         <div className="relative mt-4 grid grid-cols-3 gap-2">
-          <MiniStat label="Providers" value={String(providers.length)} />
-          <MiniStat label="Enabled" value={String(providers.filter((p) => p.enabled).length)} />
+          <MiniStat label="Providers" value={String(visibleProviders.length)} />
+          <MiniStat label="Enabled" value={String(visibleProviders.filter((p) => p.enabled).length)} />
           <MiniStat label="Active" value={effectiveActive ? 'Set' : 'None'} />
         </div>
       </section>
@@ -206,11 +209,12 @@ export default function AISettingsScreen({
         </>
       )}
 
-      {hiddenEnabled && (
+      {hiddenEnabled && hiddenDefault && (
         <div className="card mb-4 flex items-start gap-2.5 p-3.5 text-sm text-muted">
           <ShieldCheck size={16} color="var(--color-light)" className="mt-0.5 shrink-0" />
           <span>
-            Default provider environment se configured hai — <span className="font-semibold text-text">enable karke use karo</span>, API key is machine par hidden hai.
+            Default provider app me built-in hai — API key, Base URL aur Model yahan se manage kar sakte ho, aur Models
+            button se server ke <span className="font-mono text-[11px] text-text">/models</span> catalog bhi fetch hota hai.
           </span>
         </div>
       )}
@@ -373,11 +377,11 @@ export default function AISettingsScreen({
           icon={<Plug size={14} color="var(--color-l)" />}
           accent="var(--color-l)"
           title="Providers"
-          meta={providers.filter((p) => p.enabled).length > 0 ? `${providers.filter((p) => p.enabled).length} on` : 'none on'}
+          meta={visibleProviders.filter((p) => p.enabled).length > 0 ? `${visibleProviders.filter((p) => p.enabled).length} on` : 'none on'}
         />
       </div>
 
-      {providers.length === 0 && !hiddenEnabled && (
+      {visibleProviders.length === 0 && (
         <div className="mb-4">
           <EmptyState
             icon={<WifiOff size={24} color="var(--color-muted)" />}
@@ -387,19 +391,30 @@ export default function AISettingsScreen({
         </div>
       )}
 
-      {providers.map((p) => (
+      {visibleProviders.map((p) => (
         <ProviderCard
           key={p.id}
           config={p}
           active={effectiveActive === p.id}
           onActive={() => setActive(p.id)}
-          onUpdate={upsert}
-          onRemove={() =>
-            update((s) => {
-              const providers = { ...s.aiSettings.providers };
-              delete providers[p.id];
-              return { ...s, aiSettings: { ...s.aiSettings, providers, activeProviderId: settings.activeProviderId === p.id ? null : s.aiSettings.activeProviderId } };
-            })
+          onUpdate={
+            p.hidden
+              ? (c) => {
+                  container.providerSettings.updateHiddenDefault(c);
+                  // Re-render so the card reflects the edit immediately.
+                  update((s) => ({ ...s }));
+                }
+              : upsert
+          }
+          onRemove={
+            p.hidden
+              ? undefined
+              : () =>
+                  update((s) => {
+                    const providers = { ...s.aiSettings.providers };
+                    delete providers[p.id];
+                    return { ...s, aiSettings: { ...s.aiSettings, providers, activeProviderId: settings.activeProviderId === p.id ? null : s.aiSettings.activeProviderId } };
+                  })
           }
         />
       ))}
@@ -429,7 +444,7 @@ function ProviderCard({
   active: boolean;
   onActive: () => void;
   onUpdate: (c: ProviderConfig) => void;
-  onRemove: () => void;
+  onRemove?: () => void;
 }) {
   const [models, setModels] = useState<ModelInfo[] | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
@@ -489,27 +504,34 @@ function ProviderCard({
             </p>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            onClick={onActive}
-            className={`badge shrink-0 cursor-pointer transition-colors ${active ? '' : 'hover:!text-text'}`}
-            style={active ? { backgroundColor: 'rgba(138,154,91,0.16)', color: 'var(--color-l)' } : { backgroundColor: 'var(--color-panel-raised)', color: 'var(--color-muted)' }}
-            aria-pressed={active}
-          >
-            {active ? <Check size={10} /> : null}
-            {active ? 'Active' : 'Set active'}
-          </button>
-          <button
-            type="button"
-            onClick={onRemove}
-            className="icon-btn"
-            style={{ minWidth: '2rem', minHeight: '2rem' }}
-            aria-label={`Remove ${config.label}`}
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
+          <div className="flex shrink-0 items-center gap-1">
+            {config.hidden && (
+              <span className="badge" style={{ backgroundColor: 'rgba(201,162,39,0.12)', color: 'var(--color-light)' }}>
+                Default
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={onActive}
+              className={`badge shrink-0 cursor-pointer transition-colors ${active ? '' : 'hover:!text-text'}`}
+              style={active ? { backgroundColor: 'rgba(138,154,91,0.16)', color: 'var(--color-l)' } : { backgroundColor: 'var(--color-panel-raised)', color: 'var(--color-muted)' }}
+              aria-pressed={active}
+            >
+              {active ? <Check size={10} /> : null}
+              {active ? 'Active' : 'Set active'}
+            </button>
+            {onRemove && (
+              <button
+                type="button"
+                onClick={onRemove}
+                className="icon-btn"
+                style={{ minWidth: '2rem', minHeight: '2rem' }}
+                aria-label={`Remove ${config.label}`}
+              >
+                <Trash2 size={14} />
+              </button>
+            )}
+          </div>
       </div>
 
       {/* enabled toggle */}
