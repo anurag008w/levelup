@@ -80,6 +80,15 @@ jobs:
         run: npm install
 
       - name: Build web app
+        env:
+          VITE_DEFAULT_AI_BASE_URL: ${{ secrets.VITE_DEFAULT_AI_BASE_URL }}
+          VITE_DEFAULT_AI_API_KEY: ${{ secrets.VITE_DEFAULT_AI_API_KEY }}
+          VITE_DEFAULT_AI_MODEL: ${{ secrets.VITE_DEFAULT_AI_MODEL }}
+          VITE_DEFAULT_AI_MODELS: ${{ secrets.VITE_DEFAULT_AI_MODELS }}
+          VITE_DEFAULT_AI_AUTH: ${{ secrets.VITE_DEFAULT_AI_AUTH }}
+          VITE_DEFAULT_AI_TEMPERATURE: ${{ secrets.VITE_DEFAULT_AI_TEMPERATURE }}
+          VITE_DEFAULT_AI_MAX_TOKENS: ${{ secrets.VITE_DEFAULT_AI_MAX_TOKENS }}
+          VITE_DEFAULT_AI_TIMEOUT_MS: ${{ secrets.VITE_DEFAULT_AI_TIMEOUT_MS }}
         run: npm run build
 
       - name: Sync Capacitor Android
