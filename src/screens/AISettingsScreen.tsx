@@ -172,7 +172,7 @@ export default function AISettingsScreen({
             <SectionHeader
               icon={<ShieldCheck size={14} color="var(--color-l)" />}
               accent="var(--color-l)"
-              title="My Server"
+              title="Account"
               meta="signed in"
             />
           </div>
@@ -192,8 +192,6 @@ export default function AISettingsScreen({
                       </span>
                     )}
                   </p>
-                  <p className="mt-0.5 break-all text-xs text-muted">{session.serverUrl}</p>
-                  <p className="mt-1 font-mono text-[10px] text-muted-dim">api key · {maskKey(session.apiKey)}</p>
                 </div>
               </div>
               <button type="button" onClick={onLogout} className="btn btn-ghost min-h-9 shrink-0 gap-1.5 px-3 text-xs">
@@ -201,7 +199,7 @@ export default function AISettingsScreen({
               </button>
             </div>
             <p className="mt-3 text-[11px] leading-relaxed text-muted-dim">
-              Chat "My Server" provider se chal rahi hai — per-user daily quota server pe track hoti hai. Logout karne pe
+              Chat tumhare server se chal rahi hai — per-user daily quota server pe track hoti hai. Logout karne pe
               login screen par wapas aa jayenge (app data local hi rahega).
             </p>
           </div>
@@ -663,12 +661,6 @@ function shortError(err: unknown): string {
     return msg.length > 140 ? `${msg.slice(0, 140)}…` : msg;
   }
   return String(err);
-}
-
-function maskKey(key: string): string {
-  if (!key) return '(missing)';
-  if (key.length <= 8) return '••••••••';
-  return `${key.slice(0, 4)}••••${key.slice(-4)}`;
 }
 
 function downloadTextFile(text: string, filename: string) {

@@ -4,7 +4,8 @@ import TabBar, { type Tab } from './components/TabBar';
 import TodayScreen from './screens/TodayScreen';
 import LoginScreen from './screens/LoginScreen';
 import { useAppState } from './lib/useAppState';
-import { buildServerProvider, clearSession, loadSession, saveSession, type AuthSession } from './lib/auth';
+import { clearSession, ensureV1Base, loadSession, saveSession, type AuthSession } from './lib/auth';
+import { container } from './di/container';
 import ScreenSkeleton from './components/ScreenSkeleton';
 
 const LevelsScreen = lazy(() => import('./screens/LevelsScreen'));
@@ -29,28 +30,13 @@ export default function App() {
     if (tab === 'chat') setChatVisited(true);
   }, [tab]);
 
-  // Auto-wire the server provider ("My Server") after login: the app's chat
-  // routes through the gateway with the user's own sk- key, so the server can
-  // enforce per-user quotas. Self-healing on restart — a removed provider is
-  // re-created as long as a session exists.
+  // Auto-wire the app's DEFAULT (hidden) provider to the logged-in server:
+  // baseUrl = server/v1, apiKey = the user's own sk- key, so the gateway can
+  // enforce per-user quotas. The provider stays hidden — no visible card, no
+  // URL or key anywhere in the UI. Runs on login and on restart (self-healing).
   useEffect(() => {
     if (!session) return;
-    update((s) => {
-      const provider = buildServerProvider(session);
-      const existing = s.aiSettings.providers.rotator;
-      if (existing && existing.baseUrl === provider.baseUrl && existing.apiKey === provider.apiKey && existing.enabled) {
-        return s;
-      }
-      return {
-        ...s,
-        aiSettings: {
-          ...s.aiSettings,
-          aiEnabled: true,
-          activeProviderId: 'rotator',
-          providers: { ...s.aiSettings.providers, rotator: provider },
-        },
-      };
-    });
+    container.providerSettings.configureServerAuth(ensureV1Base(session.serverUrl), session.apiKey);
   }, [session]);
 
   function handleLoggedIn(next: AuthSession) {

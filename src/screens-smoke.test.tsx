@@ -73,12 +73,15 @@ describe('screen smoke tests', () => {
     expect(screen.getByText('Custom blocks & mastery levels')).toBeTruthy();
   });
 
-  it('LoginScreen renders the app-start auth gate with server + credentials fields', () => {
-    render(React.createElement(LoginScreen, { onLoggedIn: noop, defaultServerUrl: 'https://smartrotator.onrender.com' }));
+  it('LoginScreen renders the app-start auth gate with credentials fields (server URL stays hidden)', () => {
+    render(React.createElement(LoginScreen, { onLoggedIn: noop }));
     expect(screen.getByText('LevelUp')).toBeTruthy();
     expect(screen.getByText('Login / Continue')).toBeTruthy();
     expect(screen.getByText('Register')).toBeTruthy();
-    expect(screen.getByPlaceholderText('https://smartrotator.onrender.com')).toBeTruthy();
     expect(screen.getByPlaceholderText('aapka username')).toBeTruthy();
+    expect(screen.getByPlaceholderText('min 6 characters')).toBeTruthy();
+    // The server URL must never appear — it is baked in via env.
+    expect(screen.queryByPlaceholderText(/smartrotator\.onrender\.com/)).toBeNull();
+    expect(screen.queryByText(/smartrotator\.onrender\.com/)).toBeNull();
   });
 });
