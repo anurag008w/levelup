@@ -52,6 +52,11 @@ describe('splitReplyIntoBubbles', () => {
     expect(splitReplyIntoBubbles(text)).toEqual(['Part one', 'Part two']);
   });
 
+  it('drops a standalone horizontal-rule paragraph instead of giving it its own bubble', () => {
+    const text = ['Step 1: karo yeh.', '', '---', '', 'Step 2: fir yeh karo.', '', '***', '', 'Step 3: aakhri step.'].join('\n');
+    expect(splitReplyIntoBubbles(text)).toEqual(['Step 1: karo yeh.', 'Step 2: fir yeh karo.', 'Step 3: aakhri step.']);
+  });
+
   it('returns an empty array for empty or whitespace-only text', () => {
     expect(splitReplyIntoBubbles('')).toEqual([]);
     expect(splitReplyIntoBubbles('   \n\n  ')).toEqual([]);

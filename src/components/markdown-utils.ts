@@ -36,6 +36,26 @@ export function unwrapMarkdownFence(text: string): string {
   return m && m[1] ? m[1] : normalized;
 }
 
+/**
+ * remark-math only recognizes `$...$` / `$$...$$`. Many LLMs (including the
+ * ones this app targets) default to `\( ... \)` / `\[ ... \]` notation — and
+ * the app's own suggestion chips demonstrate that exact format — so without
+ * this conversion, valid LaTeX from the model renders as literal backslash
+ * text instead of a formula. Code fences/inline code are left untouched so a
+ * literal `\(` inside a code sample is never rewritten.
+ */
+export function normalizeLatexDelimiters(text: string): string {
+  const segments = text.split(/(```[\s\S]*?```|`[^`\n]*`)/g);
+  return segments
+    .map((seg, i) => {
+      if (i % 2 === 1) return seg; // inside a code fence/inline code — leave as-is
+      return seg
+        .replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner: string) => `$$${inner}$$`)
+        .replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner: string) => `$${inner}$`);
+    })
+    .join('');
+}
+
 export interface FileDocInfo {
   name: string;
   extension: string;
@@ -49,13 +69,17 @@ export interface FileDocInfo {
  */
 export function detectFileDoc(text: string): FileDocInfo | null {
   const src = text.trim();
-  if (src.length < 120) return null;
-  if (!/^#{1,6}\s+/m.test(src)) return null;
+  if (src.length < 500) return null;
+  // A real standalone document opens with a title (H1), not a mid-conversation
+  // subheading — a step-by-step chat answer that merely uses ## / ### for
+  // structure should never be treated as a downloadable file.
+  const titleMatch = /^#\s+(.+)$/m.exec(src);
+  if (!titleMatch) return null;
+  if (src.indexOf(titleMatch[0]) > 40) return null; // title must be near the top
   const sections = src.match(/^#{1,6}\s+/gm)?.length ?? 0;
   const hasTable = /^\s{0,3}\|.*\|\s*$/m.test(src);
-  if (sections < 2 && !hasTable) return null;
-  const firstHeading = /^#{1,6}\s+(.+)$/m.exec(src)?.[1] ?? '';
-  const base = slugify(firstHeading) || 'document';
+  if (sections < 3 && !hasTable) return null;
+  const base = slugify(titleMatch[1]) || 'document';
   return { name: `${base}.md`, extension: 'md', sizeLabel: formatDocSize(src.length) };
 }
 

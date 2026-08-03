@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Activity, Brain, Flame, Medal, TrendingDown, TrendingUp, Trophy, Zap } from 'lucide-react';
 import { LEVELS } from '../data/curriculum';
 import type { AppState } from '../types';
@@ -21,6 +22,8 @@ const XP_PER_TASK = 10;
 const XP_PER_LEVEL = 250;
 
 export default function ProgressScreen({ state, today }: { state: AppState; today: string }) {
+  const [trendView, setTrendView] = useState<'weekly' | 'monthly'>('weekly');
+
   if (!state.startDateISO) {
     return (
       <div className="screen">
@@ -95,7 +98,7 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
       />
 
       {/* XP + consistency hero */}
-      <div className="gradient-border mb-4 rounded-[1.25rem] p-px">
+      <div className="gradient-border mb-4 rounded-[1.25rem] p-px" data-tone="gold">
         <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -137,20 +140,31 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
         <Legend />
       </div>
 
-      {/* Weekly chart */}
+      {/* Weekly / Monthly chart */}
       <div className="card mb-4 p-4">
-        <SectionHeader icon={<Activity size={14} color="var(--color-l)" />} accent="var(--color-l)" title="Weekly Activity" meta="last 8 weeks" />
-        <WeeklyChart dayInfos={dayInfos} />
-      </div>
-
-      {/* Monthly chart */}
-      <div className="card mb-4 p-4">
-        <SectionHeader icon={<Zap size={14} color="var(--color-peak)" />} accent="var(--color-peak)" title="This Month" meta={monthLabel(today)} />
-        <MonthlyChart dayInfos={dayInfos} today={today} />
+        <div className="flex items-center justify-between gap-2">
+          <SectionHeader
+            icon={trendView === 'weekly' ? <Activity size={14} color="var(--color-l)" /> : <Zap size={14} color="var(--color-peak)" />}
+            accent={trendView === 'weekly' ? 'var(--color-l)' : 'var(--color-peak)'}
+            title="Activity Trends"
+            meta={trendView === 'weekly' ? 'last 8 weeks' : monthLabel(today)}
+          />
+          <div className="segment shrink-0" role="tablist" aria-label="Chart period">
+            <button type="button" role="tab" className="segment-btn" aria-pressed={trendView === 'weekly'} onClick={() => setTrendView('weekly')}>
+              Weekly
+            </button>
+            <button type="button" role="tab" className="segment-btn" aria-pressed={trendView === 'monthly'} onClick={() => setTrendView('monthly')}>
+              Monthly
+            </button>
+          </div>
+        </div>
+        <div className="mt-3">
+          {trendView === 'weekly' ? <WeeklyChart dayInfos={dayInfos} /> : <MonthlyChart dayInfos={dayInfos} today={today} />}
+        </div>
       </div>
 
       {/* Insights */}
-      <div className="card mb-4 p-4">
+      <div className="card mb-5 p-4">
         <SectionHeader icon={<Brain size={14} color="var(--color-peak)" />} accent="var(--color-peak)" title="Insights" />
         <div className="space-y-2.5 text-sm">
           {best && (
@@ -189,28 +203,30 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
             </span>
           ))}
         </div>
+
+        {latest && (
+          <>
+            <div className="divider my-4" />
+            <SectionHeader icon={<Activity size={14} color="var(--color-l)" />} accent="var(--color-l)" title="Latest Day Snapshot" meta={latest.dateISO} />
+            <div className="mt-2 grid grid-cols-2 gap-2.5 text-center">
+              <div className="rounded-xl border border-border bg-bg p-3">
+                <p className="font-display text-xl font-bold" style={{ color: 'var(--color-l)' }}>{latest.productivityScore}%</p>
+                <p className="text-[11px] text-muted">Productivity</p>
+              </div>
+              <div className="rounded-xl border border-border bg-bg p-3">
+                <p className="font-display text-xl font-bold" style={{ color: 'var(--color-peak)' }}>{latest.thinkingScore}%</p>
+                <p className="text-[11px] text-muted">Thinking</p>
+              </div>
+            </div>
+            {latest.aiObservations.length > 0 && (
+              <p className="mt-3 border-l-2 pl-2.5 text-sm leading-relaxed text-muted" style={{ borderColor: 'var(--color-l-dim)' }}>
+                {latest.aiObservations[0]}
+              </p>
+            )}
+          </>
+        )}
       </div>
 
-      {latest && (
-        <div className="card mb-5 p-4">
-          <SectionHeader icon={<Activity size={14} color="var(--color-l)" />} accent="var(--color-l)" title="Latest Day Snapshot" meta={latest.dateISO} />
-          <div className="mt-2 grid grid-cols-2 gap-2.5 text-center">
-            <div className="rounded-xl border border-border bg-bg p-3">
-              <p className="font-display text-xl font-bold" style={{ color: 'var(--color-l)' }}>{latest.productivityScore}%</p>
-              <p className="text-[11px] text-muted">Productivity</p>
-            </div>
-            <div className="rounded-xl border border-border bg-bg p-3">
-              <p className="font-display text-xl font-bold" style={{ color: 'var(--color-peak)' }}>{latest.thinkingScore}%</p>
-              <p className="text-[11px] text-muted">Thinking</p>
-            </div>
-          </div>
-          {latest.aiObservations.length > 0 && (
-            <p className="mt-3 border-l-2 pl-2.5 text-sm leading-relaxed text-muted" style={{ borderColor: 'var(--color-l-dim)' }}>
-              {latest.aiObservations[0]}
-            </p>
-          )}
-        </div>
-      )}
 
       {habits.length === 0 && (
         <EmptyState icon={<Brain size={28} color="var(--color-muted)" />} title="Abhi koi habit unlock nahi hui" hint="Levels complete karte jaoge toh habits unlock hoti jayengi." />
@@ -275,11 +291,11 @@ function intensity(done: number): number {
 function cellColor(level: number): string {
   switch (level) {
     case 3:
-      return '#3fd9cb';
+      return 'var(--color-l)';
     case 2:
-      return 'rgba(79,209,197,0.55)';
+      return 'rgba(138,154,91,0.55)';
     case 1:
-      return 'rgba(79,209,197,0.25)';
+      return 'rgba(138,154,91,0.28)';
     default:
       return 'var(--color-grid)';
   }
@@ -337,7 +353,7 @@ function WeeklyChart({ dayInfos }: { dayInfos: DayInfo[] }) {
                 className="bar-grow w-full max-w-6 rounded-md"
                 style={{
                   height: `${Math.max(pct, 4)}%`,
-                  backgroundColor: pct >= 60 ? 'var(--color-l)' : pct >= 30 ? 'rgba(79,209,197,0.5)' : 'var(--color-grid)',
+                  backgroundColor: pct >= 60 ? 'var(--color-l)' : pct >= 30 ? 'rgba(138,154,91,0.5)' : 'var(--color-grid)',
                   animationDelay: `${i * 70}ms`,
                 }}
               />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { motion } from 'framer-motion';
 import {
   Archive,
@@ -601,7 +601,7 @@ export default function ChatScreen() {
           className="flex h-full min-w-0 flex-1 items-center gap-2 px-1 text-left"
           aria-label="Open chat history"
         >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-l/10 text-l"><Sparkles size={16} /></span>
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-danger/12 text-danger"><Sparkles size={16} /></span>
           <span className="min-w-0">
             <span className="block truncate font-display text-[15px] font-bold leading-none">{active?.title || 'Misa'}</span>
           </span>
@@ -755,7 +755,7 @@ export default function ChatScreen() {
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-l transition-transform active:scale-90"
                 aria-label={editing ? 'Send edited message' : 'Send message'}
               >
-                <Send size={17} color="#06201e" />
+                <Send size={17} color="var(--color-ink)" />
               </button>
             )}
           </div>
@@ -852,12 +852,12 @@ function EmptyChat({ onPick }: { onPick: (prompt: string) => void }) {
       <span
         className="flex h-16 w-16 items-center justify-center rounded-3xl"
         style={{
-          background: 'linear-gradient(145deg, rgba(79,209,197,0.24), rgba(96,165,250,0.14))',
-          border: '1px solid rgba(79,209,197,0.35)',
-          boxShadow: '0 0 42px -8px rgba(79,209,197,0.4)',
+          background: 'linear-gradient(145deg, rgba(179,55,47,0.22), rgba(201,162,39,0.1))',
+          border: '1px solid rgba(179,55,47,0.35)',
+          boxShadow: '0 0 42px -10px rgba(179,55,47,0.4)',
         }}
       >
-        <Sparkles size={30} color="var(--color-l)" />
+        <Sparkles size={30} color="var(--color-danger)" />
       </span>
       <h2 className="mt-5 font-display text-2xl font-bold tracking-tight">{greeting()}! I’m Misa</h2>
       <p className="mt-1 max-w-sm text-sm leading-relaxed text-muted">JEE doubts, maths & notes — sab yahan, tension mat lo.</p>
@@ -1111,7 +1111,7 @@ function BubbleAction({ label, onClick, children }: { label: string; onClick: ()
         haptic();
         onClick();
       }}
-      className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-black/15 hover:text-text"
+      className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-white/8 hover:text-text active:scale-90"
       aria-label={label}
       title={label}
     >
@@ -1314,7 +1314,8 @@ function SettingsSheet({
                 step={0.05}
                 value={prefs.temperature}
                 onChange={(e) => onChange({ temperature: Number(e.target.value) })}
-                className="w-full accent-[var(--color-light)]"
+                className="slider w-full"
+                style={{ '--slider-fill': `${prefs.temperature * 100}%` } as CSSProperties}
               />
               <p className="mt-0.5 text-[10px] text-muted">Kam = precise, zyada = creative</p>
             </div>
@@ -1653,7 +1654,7 @@ function AttachmentSheet({ onPick, onClose }: { onPick: (id: string) => void; on
           >
             <span
               className="flex h-11 w-11 items-center justify-center rounded-xl"
-              style={{ background: 'rgba(79,209,197,0.12)', color: 'var(--color-l)' }}
+              style={{ background: 'rgba(138,154,91,0.12)', color: 'var(--color-l)' }}
             >
               {t.icon}
             </span>

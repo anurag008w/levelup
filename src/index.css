@@ -24,17 +24,17 @@
 
 @theme {
   /* ---- Brand + semantic colors (names kept for backward compat) ---- */
-  --color-bg: #0d0d0d;
-  --color-panel: #161512;
-  --color-panel-raised: #1c1a16;
-  --color-surface-1: #161512;
-  --color-surface-2: #1c1a16;
-  --color-surface-3: #221f1a;
+  --color-bg: #08080a;
+  --color-panel: #16140f;
+  --color-panel-raised: #1c1a15;
+  --color-surface-1: #16140f;
+  --color-surface-2: #1c1a15;
+  --color-surface-3: #221f19;
   --color-grid: #232019;
-  --color-border: #33312b;
-  --color-border-strong: #4a463e;
+  --color-border: #322f28;
+  --color-border-strong: #48453a;
 
-  --color-text: #e8e4d8;
+  --color-text: #ece7d9;
   --color-muted: #a39d8c;
   --color-muted-dim: #6b6659;
 
@@ -43,15 +43,29 @@
   --color-light: #c9a227;
   --color-light-dim: #6b5716;
   --color-success: #8a9a5b;
-  --color-danger: #c95757;
-  --color-warning: #c95757;
+  --color-danger: #b3372f;
+  --color-danger-dim: #4f231f;
+  --color-warning: #c9a227;
   --color-peak: #c9a227;
   --color-gold: #c9a227;
+  --color-blood: #8f1f1a;
+  --color-blood-bright: #c0392b;
   --color-blue: #8a8578;
   --color-sky: #8a8578;
-  --color-ink: #0d0d0d;
+  --color-slate: #7f93a6;
+  --color-ink: #08080a;
   --color-user-bubble: #262418;
-  --color-user-bubble-text: #e8e4d8;
+  --color-user-bubble-text: #ece7d9;
+
+  /* ---- Subject / block-type tags — muted, palette-native (no candy colors) ---- */
+  --color-tag-physics: #7d97a3;
+  --color-tag-chemistry: #7d9a72;
+  --color-tag-maths: #c9a227;
+  --color-tag-revision: #9b8aa8;
+  --color-tag-mock: #b3372f;
+  --color-tag-concept: #6fa3a0;
+  --color-tag-problem: #8a9a5b;
+  --color-tag-default: #a39d8c;
 
   /* ---- Typography (Apple-style scale: 24/20/18/17/15/13/12) ---- */
   --font-display: "Spectral", "IBM Plex Sans", serif;
@@ -67,7 +81,7 @@
   --text-3xl: 1.75rem;
   --text-4xl: 2rem;
 
-  /* ---- Radius scale ---- */
+  /* ---- Radius scale (kept tight + square — notebook-ruled, not bubbly) ---- */
   --radius-sm: 0.15rem;
   --radius-md: 0.2rem;
   --radius-lg: 0.25rem;
@@ -76,10 +90,12 @@
   --radius-3xl: 0.4rem;
 
   /* ---- Elevation ---- */
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-raised: 0 12px 28px -14px rgba(0, 0, 0, 0.85);
-  --shadow-fab: none;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.55);
+  --shadow-raised: 0 14px 32px -16px rgba(0, 0, 0, 0.9);
+  --shadow-fab: 0 10px 24px -8px rgba(0, 0, 0, 0.75);
   --shadow-glow: 0 0 0 1px rgba(138, 154, 91, 0.35);
+  --shadow-glow-gold: 0 0 0 1px rgba(201, 162, 39, 0.4);
+  --shadow-glow-blood: 0 0 0 1px rgba(179, 55, 47, 0.45);
 
   /* ---- Motion ---- */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
@@ -172,7 +188,7 @@ body {
    ===================================================================== */
 
 .card {
-  border: 1px solid var(--color-border);
+  border: 1px solid rgba(255, 255, 255, 0.055);
   background: var(--color-panel);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
@@ -195,9 +211,56 @@ body {
 }
 
 .glass {
-  background: rgba(16, 27, 49, 0.72);
+  background: rgba(22, 20, 15, 0.72);
   backdrop-filter: blur(18px) saturate(1.4);
   -webkit-backdrop-filter: blur(18px) saturate(1.4);
+}
+
+/* Faint paper-grain, used on hero/feature surfaces only (Today gauge card,
+   settings hero, etc.) — never on dense list rows, to avoid visual noise. */
+.paper-grain {
+  position: relative;
+}
+.paper-grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: 0.5;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.035) 0.5px, transparent 0.5px);
+  background-size: 3px 3px;
+  mix-blend-mode: overlay;
+}
+.paper-grain > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Faint ruled notebook lines — a quiet nod to the app's "field notebook"
+   identity. Used behind eyebrow/heading blocks only. */
+.notebook-rule {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 1.55rem,
+    rgba(255, 255, 255, 0.035) 1.55rem,
+    rgba(255, 255, 255, 0.035) calc(1.55rem + 1px)
+  );
+}
+
+/* Left "margin rule" accent — a single hairline in the accent color, like a
+   ruled notebook margin. Pairs with card-feature for emphasis blocks. */
+.card-feature {
+  position: relative;
+  border-left: 2px solid var(--color-l-dim);
+}
+.card-feature[data-tone='gold'] {
+  border-left-color: var(--color-light-dim);
+}
+.card-feature[data-tone='blood'] {
+  border-left-color: var(--color-danger-dim);
 }
 
 
@@ -324,6 +387,58 @@ body {
   background: var(--color-l);
   box-shadow: none;
 }
+
+.side-nav-item[data-tone='gold']:hover,
+.side-nav-item[data-tone='gold'][aria-current='page'] {
+  border-color: var(--color-light-dim);
+  background: rgba(201, 162, 39, 0.08);
+}
+.side-nav-item[data-tone='gold'] .side-nav-icon[data-active='true'] {
+  border-color: var(--color-light);
+  color: var(--color-light);
+}
+.side-nav-item[data-tone='gold'] .side-nav-dot {
+  background: var(--color-light);
+}
+
+.side-nav-item[data-tone='blood']:hover,
+.side-nav-item[data-tone='blood'][aria-current='page'] {
+  border-color: var(--color-danger-dim);
+  background: rgba(179, 55, 47, 0.08);
+}
+.side-nav-item[data-tone='blood'] .side-nav-icon[data-active='true'] {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+.side-nav-item[data-tone='blood'] .side-nav-dot {
+  background: var(--color-danger);
+}
+
+.side-nav-item[data-tone='slate']:hover,
+.side-nav-item[data-tone='slate'][aria-current='page'] {
+  border-color: var(--color-slate);
+  background: rgba(127, 147, 166, 0.08);
+}
+.side-nav-item[data-tone='slate'] .side-nav-icon[data-active='true'] {
+  border-color: var(--color-slate);
+  color: var(--color-slate);
+}
+.side-nav-item[data-tone='slate'] .side-nav-dot {
+  background: var(--color-slate);
+}
+
+.side-nav-item[data-tone='neutral']:hover,
+.side-nav-item[data-tone='neutral'][aria-current='page'] {
+  border-color: var(--color-border-strong);
+  background: rgba(255, 255, 255, 0.035);
+}
+.side-nav-item[data-tone='neutral'] .side-nav-icon[data-active='true'] {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+.side-nav-item[data-tone='neutral'] .side-nav-dot {
+  background: var(--color-text);
+}
 .side-nav-foot {
   margin-top: auto;
   border: 1px solid var(--color-border);
@@ -416,20 +531,6 @@ body {
 .btn-primary:hover {
   filter: brightness(1.07);
 }
-.btn-teal {
-  background: var(--color-l);
-  color: var(--color-ink);
-}
-.btn-teal:hover {
-  filter: brightness(1.07);
-}
-.btn-blue {
-  background: var(--color-blue);
-  color: var(--color-ink);
-}
-.btn-blue:hover {
-  filter: brightness(1.07);
-}
 .btn-ghost {
   border: 1px solid var(--color-border);
   background: var(--color-panel-raised);
@@ -444,6 +545,29 @@ body {
 }
 .btn-soft:hover {
   background: rgba(138, 154, 91, 0.2);
+}
+.btn-gold {
+  background: var(--color-light);
+  color: var(--color-ink);
+}
+.btn-gold:hover {
+  filter: brightness(1.08);
+}
+.btn-danger {
+  background: var(--color-danger);
+  color: #f4ece7;
+}
+.btn-danger:hover {
+  filter: brightness(1.1);
+}
+.btn-danger-ghost {
+  border: 1px solid var(--color-danger-dim);
+  background: rgba(179, 55, 47, 0.08);
+  color: var(--color-danger);
+}
+.btn-danger-ghost:hover {
+  background: rgba(179, 55, 47, 0.16);
+  border-color: var(--color-danger);
 }
 
 /* Compact inline icon button (≥40px target) */
@@ -517,6 +641,36 @@ body {
   background: rgba(138, 154, 91, 0.14);
   border-color: var(--color-l);
   color: var(--color-l);
+}
+
+/* =====================================================================
+   Segmented control (Tabs)
+   ===================================================================== */
+
+.segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-panel-raised);
+  padding: 0.1875rem;
+}
+.segment-btn {
+  border-radius: calc(var(--radius-sm) - 1px);
+  padding: 0.3rem 0.7rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--color-muted);
+  transition: background-color 0.18s var(--ease-standard), color 0.18s var(--ease-standard);
+  white-space: nowrap;
+  min-height: 1.75rem;
+}
+.segment-btn[aria-pressed="true"] {
+  background: var(--color-panel);
+  color: var(--color-text);
+  box-shadow: var(--shadow-card);
 }
 
 /* =====================================================================
@@ -633,6 +787,74 @@ label.field-label {
 }
 
 /* =====================================================================
+   Range slider (temperature, tokens, history length, etc.)
+   ===================================================================== */
+
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 1.5rem;
+  background: transparent;
+  cursor: pointer;
+  touch-action: pan-y;
+}
+.slider::-webkit-slider-runnable-track {
+  height: 0.375rem;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(to right, var(--color-l) var(--slider-fill, 50%), var(--color-grid) var(--slider-fill, 50%));
+  border: 1px solid var(--color-border);
+}
+.slider::-moz-range-track {
+  height: 0.375rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-grid);
+  border: 1px solid var(--color-border);
+}
+.slider::-moz-range-progress {
+  height: 0.375rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-l);
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -0.5625rem;
+  height: 1.375rem;
+  width: 1.375rem;
+  border-radius: 999px;
+  background: var(--color-l);
+  border: 3px solid var(--color-bg);
+  box-shadow: 0 0 0 1px var(--color-l), var(--shadow-card);
+  transition: transform 0.15s var(--ease-pop), box-shadow 0.15s var(--ease-standard);
+}
+.slider::-moz-range-thumb {
+  height: 1.375rem;
+  width: 1.375rem;
+  border-radius: 999px;
+  background: var(--color-l);
+  border: 3px solid var(--color-bg);
+  box-shadow: 0 0 0 1px var(--color-l), var(--shadow-card);
+  transition: transform 0.15s var(--ease-pop), box-shadow 0.15s var(--ease-standard);
+}
+.slider:active::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+.slider:active::-moz-range-thumb {
+  transform: scale(1.12);
+}
+.slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 1px var(--color-l), 0 0 0 4px rgba(138, 154, 91, 0.28);
+}
+.slider:focus-visible {
+  outline: none;
+}
+.slider:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* =====================================================================
    Feedback: toast, skeletons, empty
    ===================================================================== */
 
@@ -663,10 +885,29 @@ label.field-label {
 
 .gradient-border {
   position: relative;
-  background:
-    linear-gradient(var(--color-panel), var(--color-panel)) padding-box,
-    linear-gradient(135deg, rgba(138, 154, 91, 0.5), rgba(201, 162, 39, 0.35)) border-box;
-  border: 1px solid transparent;
+  background: transparent;
+  border: none;
+}
+.gradient-border::before {
+  content: "";
+  position: absolute;
+  left: 1rem;
+  right: 1rem;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, var(--color-l), var(--color-light) 65%, transparent);
+  opacity: 0.55;
+}
+/* Opt-in accent variants, so different tabs/sections can read as visually
+   distinct instead of every hero using the same L→Light hairline. */
+.gradient-border[data-tone='gold']::before {
+  background: linear-gradient(90deg, var(--color-light), transparent);
+}
+.gradient-border[data-tone='blood']::before {
+  background: linear-gradient(90deg, var(--color-blood-bright), transparent);
+}
+.gradient-border[data-tone='slate']::before {
+  background: linear-gradient(90deg, var(--color-slate), transparent);
 }
 
 .glow-l {
@@ -974,7 +1215,7 @@ label.field-label {
   height: 6px;
   margin-right: 3px;
   border-radius: 1px;
-  background: var(--color-l);
+  background: var(--color-danger);
   animation: typingBounce 1.2s var(--ease-standard) infinite;
 }
 .typing-dots span:nth-child(2) {
@@ -1098,8 +1339,8 @@ label.field-label {
   flex-shrink: 0;
   align-items: center;
   gap: 0.35rem;
-  border-bottom: 1px solid rgba(36, 51, 78, 0.72);
-  background: linear-gradient(180deg, rgba(10, 17, 32, 0.92), rgba(10, 17, 32, 0.72));
+  border-bottom: 1px solid rgba(50, 47, 40, 0.85);
+  background: linear-gradient(180deg, rgba(8, 8, 10, 0.94), rgba(8, 8, 10, 0.78));
   padding: 0.45rem 0.75rem;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -1120,7 +1361,7 @@ label.field-label {
 .chat-composer-wrap {
   flex-shrink: 0;
   padding: 0.5rem clamp(0.75rem, 3vw, 1.25rem) 0;
-  background: linear-gradient(180deg, rgba(10, 17, 32, 0), rgba(10, 17, 32, 0.94) 22%);
+  background: linear-gradient(180deg, rgba(8, 8, 10, 0), rgba(8, 8, 10, 0.96) 22%);
 }
 .chat-composer {
   max-width: 48rem;
@@ -1326,7 +1567,7 @@ label.field-label {
   margin: 0;
   padding: 0.75rem 0.875rem;
   overflow-x: auto;
-  background: #0a1224;
+  background: #060504;
   border-radius: 0 0 0.6rem 0.6rem;
   font-size: 0.72rem;
   line-height: 1.6;
@@ -1344,7 +1585,7 @@ label.field-label {
   margin: 0.6rem 0;
   border: 1px solid var(--color-border-strong);
   border-radius: 0.6rem;
-  background: #0a1224;
+  background: #060504;
   overflow: hidden;
 }
 .codeblock-head {
@@ -1488,25 +1729,25 @@ label.field-label {
   color: var(--color-light);
 }
 .bubble-user .md .md-code {
-  background: rgba(0, 20, 18, 0.35);
+  background: rgba(0, 0, 0, 0.28);
   color: var(--color-text);
 }
 .bubble-user .md .md-quote {
-  color: rgba(228, 255, 251, 0.85);
-  background: rgba(0, 20, 18, 0.18);
-  border-left-color: rgba(182, 255, 247, 0.6);
+  color: rgba(236, 231, 217, 0.85);
+  background: rgba(0, 0, 0, 0.15);
+  border-left-color: rgba(201, 162, 39, 0.55);
 }
 .bubble-user .md .md-table-wrap,
 .bubble-user .md .codeblock,
 .bubble-user .md .katex-display {
-  border-color: rgba(0, 20, 18, 0.4);
-  background: rgba(0, 20, 18, 0.22);
+  border-color: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.18);
 }
 .bubble-user .md .md-pre {
-  background: rgba(0, 20, 18, 0.55);
+  background: rgba(0, 0, 0, 0.45);
 }
 .bubble-user .md .md-th {
-  background: rgba(0, 20, 18, 0.35);
+  background: rgba(0, 0, 0, 0.28);
 }
 
 /* =====================================================================

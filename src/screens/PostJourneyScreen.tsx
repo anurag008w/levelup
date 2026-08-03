@@ -22,26 +22,26 @@ interface PostJourneyScreenProps {
 
 const MASTERY_CONFIG: Record<MasteryLevel, { label: string; color: string; bgColor: string; icon: typeof Zap }> = {
   beginner: { label: 'Beginner', color: 'text-muted', bgColor: 'bg-muted/20', icon: Target },
-  intermediate: { label: 'Intermediate', color: 'text-blue-400', bgColor: 'bg-blue-500/20', icon: TrendingUp },
+  intermediate: { label: 'Intermediate', color: 'text-tag-concept', bgColor: 'bg-tag-concept/20', icon: TrendingUp },
   advanced: { label: 'Advanced', color: 'text-l', bgColor: 'bg-l/20', icon: Zap },
-  expert: { label: 'Expert', color: 'text-yellow-400', bgColor: 'bg-yellow-500/20', icon: Trophy },
+  expert: { label: 'Expert', color: 'text-gold', bgColor: 'bg-gold/20', icon: Trophy },
 };
 
 const BLOCK_TYPES = [
-  { id: 'physics', name: 'Physics', icon: Atom, color: '#4FC3F7' },
-  { id: 'chemistry', name: 'Chemistry', icon: FlaskConical, color: '#81C784' },
-  { id: 'maths', name: 'Maths', icon: Calculator, color: '#FFB74D' },
-  { id: 'revision', name: 'Revision', icon: BookOpen, color: '#BA68C8' },
-  { id: 'mock', name: 'Mock Test', icon: Brain, color: '#EF5350' },
-  { id: 'concept', name: 'Concept Building', icon: Lightbulb, color: '#4DD0E1' },
-  { id: 'problem', name: 'Problem Solving', icon: Beaker, color: '#AED581' },
+  { id: 'physics', name: 'Physics', icon: Atom, color: 'var(--color-tag-physics)' },
+  { id: 'chemistry', name: 'Chemistry', icon: FlaskConical, color: 'var(--color-tag-chemistry)' },
+  { id: 'maths', name: 'Maths', icon: Calculator, color: 'var(--color-tag-maths)' },
+  { id: 'revision', name: 'Revision', icon: BookOpen, color: 'var(--color-tag-revision)' },
+  { id: 'mock', name: 'Mock Test', icon: Brain, color: 'var(--color-tag-mock)' },
+  { id: 'concept', name: 'Concept Building', icon: Lightbulb, color: 'var(--color-tag-concept)' },
+  { id: 'problem', name: 'Problem Solving', icon: Beaker, color: 'var(--color-tag-problem)' },
 ];
 
 const DIFFICULTY_COLORS = {
-  easy: { bg: 'bg-green-500/15', text: 'text-green-400', border: 'border-green-500/30' },
-  medium: { bg: 'bg-yellow-500/15', text: 'text-yellow-400', border: 'border-yellow-500/30' },
-  hard: { bg: 'bg-orange-500/15', text: 'text-orange-400', border: 'border-orange-500/30' },
-  extreme: { bg: 'bg-red-500/15', text: 'text-red-400', border: 'border-red-500/30' },
+  easy: { bg: 'bg-l/15', text: 'text-l', border: 'border-l/30' },
+  medium: { bg: 'bg-gold/15', text: 'text-gold', border: 'border-gold/30' },
+  hard: { bg: 'bg-danger/15', text: 'text-danger', border: 'border-danger/30' },
+  extreme: { bg: 'bg-danger/25', text: 'text-danger', border: 'border-danger/50' },
 };
 
 export default function PostJourneyScreen({ state, update, onBack }: PostJourneyScreenProps) {
@@ -255,7 +255,7 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
 
       {/* Journey Complete Button */}
       {!postJourney.journeyComplete && (
-        <div className="gradient-border mb-6 rounded-[1.25rem] p-px">
+        <div className="gradient-border mb-6 rounded-[1.25rem] p-px" data-tone="gold">
           <div className="rounded-[calc(1.25rem-1px)] bg-panel p-5 text-center">
             <div className="mx-auto mb-3 inline-flex rotate-[-7deg] border-2 border-light px-3 py-2 font-mono text-xs font-semibold uppercase tracking-[0.22em] text-light">Complete</div>
             <h2 className="mb-2 font-display text-xl font-bold">90 days complete</h2>
@@ -280,7 +280,7 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
             accent="var(--color-light)"
             title="Journey complete"
           />
-          <div className="gradient-border rounded-[1.25rem] p-px">
+          <div className="gradient-border rounded-[1.25rem] p-px" data-tone="gold">
             <div className="grid grid-cols-3 gap-3 rounded-[calc(1.25rem-1px)] bg-panel p-4">
               <StatCard icon={<Target size={16} />} label="Tasks" value={postJourney.finalStats.totalTasksCompleted} />
               <StatCard icon={<TrendingUp size={16} />} label="Accuracy" value={`${postJourney.finalStats.averageAccuracy}%`} />
@@ -301,7 +301,7 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
             accent="var(--color-l)"
             title="Mastery Level"
           />
-          <div className="gradient-border rounded-[1.25rem] p-px">
+          <div className="gradient-border rounded-[1.25rem] p-px" data-tone="gold">
             <div className="flex items-center justify-between rounded-[calc(1.25rem-1px)] bg-panel p-4">
               <div className="flex items-center gap-3">
                 <span className={`flex h-12 w-12 items-center justify-center rounded-xl ${masteryConfig.bgColor}`}>
@@ -353,8 +353,8 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
         <div className="mb-6">
           <div className="mb-3 flex items-center justify-between">
             <SectionHeader
-              icon={<Wand2 size={14} color="var(--color-m)" />}
-              accent="var(--color-m)"
+              icon={<Wand2 size={14} color="var(--color-light)" />}
+              accent="var(--color-light)"
               title="AI Block Generator"
             />
             {!showGenerator && (
@@ -371,7 +371,7 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
 
           {/* Generator Wizard */}
           {showGenerator && (
-            <div className="gradient-border rounded-[1.25rem] p-px slide-up">
+            <div className="gradient-border rounded-[1.25rem] p-px slide-up" data-tone="gold">
               <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4">
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="font-display font-bold">Create Custom Block</h3>
@@ -556,14 +556,14 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
       {postJourney.journeyComplete && (
         <div className="mb-6">
           <SectionHeader
-            icon={<ListChecks size={14} color="var(--color-m)" />}
-            accent="var(--color-m)"
+            icon={<ListChecks size={14} color="var(--color-l)" />}
+            accent="var(--color-l)"
             title="Custom Blocks"
             meta={`${postJourney.customPhases.length} blocks`}
           />
 
           {postJourney.customPhases.length === 0 ? (
-            <div className="gradient-border rounded-[1.25rem] p-px">
+            <div className="gradient-border rounded-[1.25rem] p-px" data-tone="gold">
               <div className="flex flex-col items-center rounded-[calc(1.25rem-1px)] bg-panel p-6 text-center">
                 <BookOpen size={32} className="mb-2 text-muted" />
                 <p className="mb-1 font-medium">No custom blocks yet</p>
@@ -645,8 +645,8 @@ function PhaseCard({
           isActive ? 'ring-2 ring-l/30' : ''
         }`}
         style={{
-          borderColor: isActive ? 'rgba(79,209,197,0.5)' : 'var(--color-border)',
-          backgroundColor: isActive ? 'rgba(79,209,197,0.05)' : undefined,
+          borderColor: isActive ? 'rgba(138,154,91,0.5)' : 'var(--color-border)',
+          backgroundColor: isActive ? 'rgba(138,154,91,0.05)' : undefined,
         }}
       >
         <button
@@ -656,7 +656,7 @@ function PhaseCard({
         >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <BlockIcon size={16} style={{ color: blockType?.color || 'var(--color-m)' }} />
+              <BlockIcon size={16} style={{ color: blockType?.color || 'var(--color-tag-default)' }} />
               <p className="font-mono text-[10px] tracking-widest text-muted">
                 BLOCK · DAYS {phase.dayStart}–{phase.dayEnd}
               </p>
@@ -668,7 +668,7 @@ function PhaseCard({
               {phase.difficulty}
             </span>
             {isActive && (
-              <span className="badge" style={{ backgroundColor: 'rgba(79,209,197,0.14)', color: 'var(--color-l)' }}>
+              <span className="badge" style={{ backgroundColor: 'rgba(138,154,91,0.14)', color: 'var(--color-l)' }}>
                 Active
               </span>
             )}
@@ -688,7 +688,7 @@ function PhaseCard({
         {phase.habits.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1">
             {phase.habits.slice(0, 4).map((habit, i) => (
-              <span key={i} className="chip" style={{ borderColor: 'var(--color-l)44', color: 'var(--color-l)' }}>
+              <span key={i} className="chip" style={{ borderColor: 'rgba(138,154,91,0.4)', color: 'var(--color-l)' }}>
                 {habit}
               </span>
             ))}
@@ -702,7 +702,7 @@ function PhaseCard({
           <span className="flex items-center gap-1 text-xs text-muted">
             {phase.createdBy === 'ai' ? (
               <>
-                <Sparkles size={12} className="text-purple-400" />
+                <Sparkles size={12} className="text-gold" />
                 AI Generated
               </>
             ) : (
