@@ -5,7 +5,7 @@ import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
 import 'katex/dist/katex.min.css';
 import { Check, Copy } from 'lucide-react';
-import { unwrapMarkdownFence } from './markdown-utils';
+import { unwrapMarkdownFence, normalizeLatexDelimiters } from './markdown-utils';
 
 /* ------------------------------------------------------------------ *
    Production markdown renderer for chat bubbles.
@@ -194,7 +194,7 @@ export default function ChatMarkdown({ text }: { text: string }) {
     return () => { mounted = false; };
   }, []);
 
-  const processed = unwrapMarkdownFence(text);
+  const processed = normalizeLatexDelimiters(unwrapMarkdownFence(text));
   
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const plugins: any[] = [
@@ -202,7 +202,7 @@ export default function ChatMarkdown({ text }: { text: string }) {
   ];
   
   if (rehypeKatex) {
-    plugins.unshift([rehypeKatex, { output: 'html', strict: false, trust: false, maxSize: 100, errorColor: '#7a1e1e' }]);
+    plugins.unshift([rehypeKatex, { output: 'html', strict: false, trust: false, maxSize: 100, errorColor: '#e0645a' }]);
   }
 
   return (

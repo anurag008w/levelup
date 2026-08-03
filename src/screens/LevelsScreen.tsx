@@ -9,20 +9,20 @@ import { haptic } from '../lib/haptics';
 import type { CustomPhase } from '../core/domain/state';
 
 const BLOCK_TYPES: Record<string, { icon: string; color: string }> = {
-  physics: { icon: '⚛️', color: '#4FC3F7' },
-  chemistry: { icon: '🧪', color: '#81C784' },
-  maths: { icon: '🔢', color: '#FFB74D' },
-  revision: { icon: '📖', color: '#BA68C8' },
-  mock: { icon: '🧠', color: '#EF5350' },
-  concept: { icon: '💡', color: '#4DD0E1' },
-  problem: { icon: '🔬', color: '#AED581' },
+  physics: { icon: '⚛️', color: 'var(--color-tag-physics)' },
+  chemistry: { icon: '🧪', color: 'var(--color-tag-chemistry)' },
+  maths: { icon: '🔢', color: 'var(--color-tag-maths)' },
+  revision: { icon: '📖', color: 'var(--color-tag-revision)' },
+  mock: { icon: '🧠', color: 'var(--color-tag-mock)' },
+  concept: { icon: '💡', color: 'var(--color-tag-concept)' },
+  problem: { icon: '🔬', color: 'var(--color-tag-problem)' },
 };
 
 const DIFFICULTY_COLORS: Record<string, { bg: string; text: string }> = {
-  easy: { bg: 'bg-green-500/15', text: 'text-green-400' },
-  medium: { bg: 'bg-yellow-500/15', text: 'text-yellow-400' },
-  hard: { bg: 'bg-orange-500/15', text: 'text-orange-400' },
-  extreme: { bg: 'bg-red-500/15', text: 'text-red-400' },
+  easy: { bg: 'bg-[var(--color-l)]/15', text: 'text-[var(--color-l)]' },
+  medium: { bg: 'bg-[var(--color-light)]/15', text: 'text-[var(--color-light)]' },
+  hard: { bg: 'bg-[var(--color-danger)]/15', text: 'text-[var(--color-danger)]' },
+  extreme: { bg: 'bg-[var(--color-danger)]/25', text: 'text-[var(--color-danger)]' },
 };
 
 export default function LevelsScreen({ state, today }: { state: AppState; today: string }) {
@@ -218,7 +218,7 @@ function CustomBlockCard({
   const blockTypeKey = Object.keys(BLOCK_TYPES).find(k => 
     block.habits.some(h => h.toLowerCase().includes(k)) || block.name.toLowerCase().includes(k)
   );
-  const blockType = blockTypeKey ? BLOCK_TYPES[blockTypeKey] : { icon: '📋', color: '#9E9E9E' };
+  const blockType = blockTypeKey ? BLOCK_TYPES[blockTypeKey] : { icon: '📋', color: 'var(--color-tag-default)' };
   const diffColors = DIFFICULTY_COLORS[block.difficulty] ?? DIFFICULTY_COLORS.medium;
 
   return (
@@ -237,8 +237,8 @@ function CustomBlockCard({
         aria-expanded={isOpen}
         className="card card-press w-full p-3.5 text-left transition-colors"
         style={{
-          borderColor: isCurrentDay ? 'rgba(201,162,39,0.5)' : isActive ? 'rgba(79,209,197,0.5)' : 'var(--color-border)',
-          backgroundColor: isCurrentDay ? 'rgba(201,162,39,0.05)' : isActive ? 'rgba(79,209,197,0.05)' : undefined,
+          borderColor: isCurrentDay ? 'rgba(201,162,39,0.5)' : isActive ? 'rgba(138,154,91,0.5)' : 'var(--color-border)',
+          backgroundColor: isCurrentDay ? 'rgba(201,162,39,0.05)' : isActive ? 'rgba(138,154,91,0.05)' : undefined,
         }}
       >
         <div className="flex items-center justify-between gap-2">
@@ -256,7 +256,7 @@ function CustomBlockCard({
               {block.difficulty}
             </span>
             {isActive && (
-              <span className="badge" style={{ backgroundColor: 'rgba(79,209,197,0.14)', color: 'var(--color-l)' }}>
+              <span className="badge" style={{ backgroundColor: 'rgba(138,154,91,0.14)', color: 'var(--color-l)' }}>
                 <Sparkles size={10} /> Active
               </span>
             )}
@@ -264,7 +264,7 @@ function CustomBlockCard({
         </div>
 
         <div className="mt-2 flex items-center gap-1.5">
-          <span className="chip" style={{ color: 'var(--color-purple)', borderColor: 'rgba(156,39,176,0.44)', backgroundColor: 'rgba(156,39,176,0.14)' }}>
+          <span className="chip" style={{ color: 'var(--color-tag-revision)', borderColor: 'rgba(155,138,168,0.4)', backgroundColor: 'rgba(155,138,168,0.14)' }}>
             {block.createdBy === 'ai' ? <><Wand2 size={10} className="mr-1" />AI Generated</> : <><User size={10} className="mr-1" />Custom</>}
           </span>
         </div>
@@ -272,7 +272,7 @@ function CustomBlockCard({
         {block.habits.length > 0 && (
           <div className="mt-2.5 flex flex-wrap gap-1.5">
             {block.habits.slice(0, 3).map((habit, i) => (
-              <span key={i} className="chip" style={{ borderColor: 'var(--color-l)44', color: 'var(--color-l)' }}>{habit}</span>
+              <span key={i} className="chip" style={{ borderColor: 'rgba(138,154,91,0.4)', color: 'var(--color-l)' }}>{habit}</span>
             ))}
             {block.habits.length > 3 && <span className="chip">+{block.habits.length - 3}</span>}
           </div>
@@ -293,7 +293,7 @@ function CustomBlockCard({
 
       {isOpen && (
         <div className="card mt-2.5 p-4 text-sm slide-up" style={{ backgroundColor: 'var(--color-panel-raised)' }}>
-          <DetailBlock title="Description" icon={<Lightbulb size={15} color="var(--color-m)" />}>
+          <DetailBlock title="Description" icon={<Lightbulb size={15} color="var(--color-light)" />}>
             <p className="leading-relaxed text-muted">{block.description}</p>
           </DetailBlock>
           
@@ -345,10 +345,10 @@ function DetailBlock({ title, icon, children }: { title: string; icon: React.Rea
 
 function statusColor(status: LevelStatus): string {
   switch (status) {
-    case 'cleared': return 'var(--color-success)';
-    case 'active': return 'var(--color-light)';
-    case 'needs-recovery': return 'var(--color-danger)';
-    default: return 'var(--color-border-strong)';
+    case 'cleared': return '#8a9a5b';
+    case 'active': return '#c9a227';
+    case 'needs-recovery': return '#b3372f';
+    default: return '#48453a';
   }
 }
 

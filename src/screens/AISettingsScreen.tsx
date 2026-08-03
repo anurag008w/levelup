@@ -58,29 +58,27 @@ export default function AISettingsScreen({ state, update }: { state: AppState; u
 
   return (
     <div className="screen fade-up">
-      <ScreenHeader
-        eyebrow="CONTROL CENTER"
-        title="Settings"
-        subtitle="AI planning, chat memory aur provider connections ek premium command center mein."
-      />
+      <ScreenHeader eyebrow="CONTROL CENTER" title="Settings" subtitle="AI planning, chat memory aur provider connections — sab yahan." />
 
-      <section className="relative mb-4 overflow-hidden rounded-[1.7rem] border border-border bg-panel p-4 shadow-raised">
-        <div className="absolute -right-16 -top-20 h-44 w-44 rounded-full bg-l/10 blur-3xl" aria-hidden="true" />
+      <section className="relative mb-5 overflow-hidden">
+        <div className="pointer-events-none absolute -right-16 -top-24 h-44 w-44 rounded-full bg-l/10 blur-3xl" aria-hidden="true" />
         <div className="relative flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <span className="badge mb-3" style={{ backgroundColor: aiEnabled ? 'rgba(138,154,91,0.13)' : 'rgba(92,88,78,0.18)', color: aiEnabled ? 'var(--color-success)' : 'var(--color-muted)' }}>
-              <Sparkles size={11} /> {aiEnabled ? 'AI online' : 'Manual mode'}
-            </span>
-            <h2 className="font-display text-2xl font-bold leading-tight">Personalization that stays in your control.</h2>
-            <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted">Provider, model, memory aur chat behavior ko tune karo. Disable karne par app stable deterministic planning use karega.</p>
-          </div>
-          <label className="toggle mt-1" title="Toggle AI planning">
+          <span
+            className="badge"
+            style={{ backgroundColor: aiEnabled ? 'rgba(138,154,91,0.13)' : 'rgba(92,88,78,0.18)', color: aiEnabled ? 'var(--color-success)' : 'var(--color-muted)' }}
+          >
+            <Sparkles size={11} /> {aiEnabled ? 'AI online' : 'Manual mode'}
+          </span>
+          <label className="toggle" title="Toggle AI planning">
             <input type="checkbox" checked={aiEnabled} onChange={(e) => setAiEnabled(e.target.checked)} aria-label="Toggle AI planning" />
             <span className="track">
               <span className="thumb" />
             </span>
           </label>
         </div>
+        <p className="relative mt-2.5 max-w-sm text-sm leading-relaxed text-muted">
+          Disable karne par app stable deterministic planning use karega — data hamesha local rehta hai.
+        </p>
         <div className="relative mt-4 grid grid-cols-3 gap-2">
           <MiniStat label="Providers" value={String(providers.length)} />
           <MiniStat label="Enabled" value={String(providers.filter((p) => p.enabled).length)} />
@@ -211,7 +209,7 @@ function ProviderCard({
         <div className="flex min-w-0 items-center gap-2.5">
           <span
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-            style={{ backgroundColor: active ? 'rgba(79,209,197,0.14)' : 'var(--color-panel-raised)' }}
+            style={{ backgroundColor: active ? 'rgba(138,154,91,0.14)' : 'var(--color-panel-raised)' }}
           >
             {active ? <Sparkles size={16} color="var(--color-l)" /> : <KeyRound size={16} color="var(--color-muted)" />}
           </span>
@@ -236,7 +234,7 @@ function ProviderCard({
             type="button"
             onClick={onActive}
             className={`badge shrink-0 cursor-pointer transition-colors ${active ? '' : 'hover:!text-text'}`}
-            style={active ? { backgroundColor: 'rgba(79,209,197,0.16)', color: 'var(--color-l)' } : { backgroundColor: 'var(--color-panel-raised)', color: 'var(--color-muted)' }}
+            style={active ? { backgroundColor: 'rgba(138,154,91,0.16)', color: 'var(--color-l)' } : { backgroundColor: 'var(--color-panel-raised)', color: 'var(--color-muted)' }}
             aria-pressed={active}
           >
             {active ? <Check size={10} /> : null}

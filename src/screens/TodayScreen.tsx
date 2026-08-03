@@ -627,7 +627,7 @@ const TaskRow = memo(function TaskRow({
         <button type="button" className="icon-btn" onClick={onStartEdit} aria-label="Edit task">
           <Pencil size={15} />
         </button>
-        <button type="button" className="icon-btn text-red-400/70 hover:bg-danger/10 hover:text-danger" onClick={onDelete} aria-label="Delete task">
+        <button type="button" className="icon-btn text-danger/60 hover:bg-danger/10 hover:text-danger" onClick={onDelete} aria-label="Delete task">
           <Trash2 size={15} />
         </button>
       </div>
@@ -645,10 +645,23 @@ function uid(prefix: string): string {
 }
 
 function StartScreen({ onStart }: { onStart: () => void }) {
+  const features = [
+    { icon: <Target size={17} color="var(--color-l)" />, label: 'Task Bank', tint: 'rgba(138,154,91,0.14)' },
+    { icon: <Flame size={17} color="var(--color-light)" />, label: 'Streaks', tint: 'rgba(201,162,39,0.14)' },
+    { icon: <Zap size={17} color="var(--color-peak)" />, label: 'Misa AI', tint: 'rgba(201,162,39,0.14)' },
+  ];
+
   return (
-    <div className="screen screen-start flex flex-col items-center justify-start text-center">
-      <div className="fade-up">
-        <div className="gradient-border mb-6 rounded-full p-px">
+    <div className="screen screen-start relative flex flex-col items-center justify-start overflow-hidden text-center">
+      {/* Ambient backdrop glow — quiet, not a gimmick */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-0 h-72 w-72 -translate-x-1/2 -translate-y-1/3 rounded-full opacity-60"
+        style={{ background: 'radial-gradient(circle, rgba(201,162,39,0.14), rgba(138,154,91,0.06) 45%, transparent 72%)' }}
+      />
+
+      <div className="fade-up relative w-full max-w-xs">
+        <div className="gradient-border mx-auto mb-6 w-fit rounded-full p-px" style={{ boxShadow: '0 0 32px -6px rgba(201,162,39,0.35)' }}>
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-panel">
             <Flame size={26} color="var(--color-light)" />
           </div>
@@ -661,20 +674,30 @@ function StartScreen({ onStart }: { onStart: () => void }) {
           90 din. 30 levels. 130+ habits ek-ek karke build honge — har din ek clear plan, streak aur AI coach ke saath.
         </p>
 
-        <div className="mt-7 grid w-full max-w-xs grid-cols-3 gap-2.5">
-          {[
-            { icon: <Target size={16} color="var(--color-l)" />, label: 'Task Bank' },
-            { icon: <Flame size={16} color="var(--color-light)" />, label: 'Streaks' },
-            { icon: <Zap size={16} color="var(--color-peak)" />, label: 'Misa' },
-          ].map((f) => (
-            <div key={f.label} className="card flex flex-col items-center gap-1.5 px-2 py-3.5">
-              {f.icon}
-              <span className="text-[11px] text-muted">{f.label}</span>
+        <div className="mt-7 grid w-full grid-cols-3 gap-2.5">
+          {features.map((f, i) => (
+            <div
+              key={f.label}
+              className="card card-hover fade-up flex flex-col items-center gap-2 px-2 py-4"
+              style={{ animationDelay: `${90 + i * 70}ms` }}
+            >
+              <span
+                className="flex h-8 w-8 items-center justify-center rounded-full"
+                style={{ background: f.tint }}
+              >
+                {f.icon}
+              </span>
+              <span className="text-[11px] font-medium text-muted">{f.label}</span>
             </div>
           ))}
         </div>
 
-        <button onClick={onStart} className="btn btn-primary mt-8 px-8 font-display text-base font-bold">
+        <button
+          onClick={onStart}
+          className="btn btn-primary mt-8 w-full gap-2 px-8 font-display text-base font-bold"
+          style={{ boxShadow: '0 16px 36px -16px rgba(138,154,91,0.55)' }}
+        >
+          <Flame size={17} />
           Mission Start — Day 1
         </button>
         <p className="mt-3 text-[11px] leading-relaxed text-muted-dim">
