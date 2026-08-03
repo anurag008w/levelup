@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, type CSSProperties } from 'react';
 import { Brain, ChevronLeft, Clock, MessageSquare, Save, Sparkles, Type } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ChatSettings } from '../core/domain/state';
@@ -97,7 +97,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
           title="Response Quality"
         />
 
-        <div className="gradient-border rounded-[1.25rem] p-px">
+        <div className="gradient-border rounded-[1.25rem] p-px" data-tone="blood">
           <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-5">
             {/* Temperature */}
             <div>
@@ -113,6 +113,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                 value={chat.temperature}
                 onChange={(e) => updateChat({ temperature: parseFloat(e.target.value) })}
                 className="slider w-full"
+                style={{ '--slider-fill': `${chat.temperature * 100}%` } as CSSProperties}
               />
               <div className="mt-1 flex justify-between text-[10px] text-muted">
                 <span>Precise</span>
@@ -134,6 +135,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                 value={chat.maxTokens}
                 onChange={(e) => updateChat({ maxTokens: parseInt(e.target.value) })}
                 className="slider w-full"
+                style={{ '--slider-fill': `${((chat.maxTokens - 256) / (32768 - 256)) * 100}%` } as CSSProperties}
               />
               <div className="mt-1 flex justify-between text-[10px] text-muted">
                 <span>Short</span>
@@ -172,7 +174,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
           title="Memory & Context"
         />
 
-        <div className="gradient-border rounded-[1.25rem] p-px">
+        <div className="gradient-border rounded-[1.25rem] p-px" data-tone="blood">
           <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-4">
             {/* Memory Toggle */}
             <Toggle
@@ -209,6 +211,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                 value={chat.conversationHistoryLength}
                 onChange={(e) => updateChat({ conversationHistoryLength: parseInt(e.target.value) })}
                 className="slider w-full"
+                style={{ '--slider-fill': `${(chat.conversationHistoryLength / 50) * 100}%` } as CSSProperties}
               />
               <p className="mt-1 text-[10px] text-muted">0 = full conversation memory (koi trimming nahi); 5/10/... = sirf last N messages</p>
             </div>
@@ -219,12 +222,12 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
       {/* Chat Behavior */}
       <div className="mb-6">
         <SectionHeader
-          icon={<MessageSquare size={14} color="var(--color-m)" />}
-          accent="var(--color-m)"
+          icon={<MessageSquare size={14} color="var(--color-light)" />}
+          accent="var(--color-light)"
           title="Chat Behavior"
         />
 
-        <div className="gradient-border rounded-[1.25rem] p-px">
+        <div className="gradient-border rounded-[1.25rem] p-px" data-tone="blood">
           <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-4">
             {/* Auto Save */}
             <Toggle
@@ -250,12 +253,12 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
       {/* Time zone */}
       <div className="mb-6">
         <SectionHeader
-          icon={<Clock size={14} color="var(--color-w)" />}
-          accent="var(--color-w)"
+          icon={<Clock size={14} color="var(--color-slate)" />}
+          accent="var(--color-slate)"
           title="Time zone"
         />
 
-        <div className="gradient-border rounded-[1.25rem] p-px">
+        <div className="gradient-border rounded-[1.25rem] p-px" data-tone="blood">
           <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-4">
             <div>
               <label className="field-label">Day boundary timezone</label>
@@ -291,7 +294,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
           title="Persona"
         />
 
-        <div className="gradient-border rounded-[1.25rem] p-px">
+        <div className="gradient-border rounded-[1.25rem] p-px" data-tone="blood">
           <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-4">
             <div>
               <label className="field-label">User persona / custom instructions</label>

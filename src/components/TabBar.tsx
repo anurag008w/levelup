@@ -9,14 +9,14 @@ import MemorySummaryPanel from './MemorySummaryPanel';
 
 export type Tab = 'today' | 'levels' | 'progress' | 'review' | 'task-bank' | 'ai' | 'chat';
 
-const TABS: { id: Tab; label: string; hint: string; icon: typeof CalendarCheck }[] = [
-  { id: 'today', label: 'Today', hint: 'Daily mission', icon: CalendarCheck },
-  { id: 'levels', label: 'Levels', hint: 'Growth map', icon: LayoutList },
-  { id: 'progress', label: 'Progress', hint: 'Analytics', icon: LineChart },
-  { id: 'review', label: 'Review', hint: 'Reflect', icon: NotebookPen },
-  { id: 'task-bank', label: 'Tasks', hint: 'Bank', icon: ListTodo },
-  { id: 'chat', label: 'Misa', hint: 'Doubts & maths', icon: MessageCircle },
-  { id: 'ai', label: 'Settings', hint: 'App & AI', icon: Settings },
+const TABS: { id: Tab; label: string; hint: string; icon: typeof CalendarCheck; tone: 'l' | 'gold' | 'blood' | 'slate' | 'neutral' }[] = [
+  { id: 'today', label: 'Today', hint: 'Daily mission', icon: CalendarCheck, tone: 'l' },
+  { id: 'levels', label: 'Levels', hint: 'Growth map', icon: LayoutList, tone: 'gold' },
+  { id: 'progress', label: 'Progress', hint: 'Analytics', icon: LineChart, tone: 'gold' },
+  { id: 'review', label: 'Review', hint: 'Reflect', icon: NotebookPen, tone: 'slate' },
+  { id: 'task-bank', label: 'Tasks', hint: 'Bank', icon: ListTodo, tone: 'l' },
+  { id: 'chat', label: 'Misa', hint: 'Doubts & maths', icon: MessageCircle, tone: 'blood' },
+  { id: 'ai', label: 'Settings', hint: 'App & AI', icon: Settings, tone: 'neutral' },
 ];
 
 const sidebarSpring = { type: 'tween', duration: 0.32, ease: [0.2, 0, 0, 1] } as const;
@@ -274,7 +274,7 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
               </div>
 
               <div className="side-nav-list">
-                {TABS.map(({ id, label, hint, icon: Icon }) => {
+                {TABS.map(({ id, label, hint, icon: Icon, tone }) => {
                   const isActive = active === id;
                   return (
                     <button
@@ -282,6 +282,7 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
                       type="button"
                       onClick={() => selectTab(id)}
                       aria-current={isActive ? 'page' : undefined}
+                      data-tone={tone}
                       className="side-nav-item"
                     >
                       <span className="side-nav-icon" data-active={isActive}>

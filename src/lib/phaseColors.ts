@@ -3,12 +3,12 @@ import type { Phase } from '../types';
 export function phaseAccent(color: Phase['color']): string {
   switch (color) {
     case 'l':
-      return 'var(--color-l)';
+      return '#8a9a5b';
     case 'light':
-      return 'var(--color-light)';
+      return '#c9a227';
     case 'peak':
-      return 'var(--color-peak)';
+      return '#c9a227';
     default:
-      return 'var(--color-success)';
+      return '#8a9a5b';
   }
 }

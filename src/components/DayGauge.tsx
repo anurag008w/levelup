@@ -68,8 +68,8 @@ export default function DayGauge({ dayNumber, totalDays, todayPct, levelCode }: 
         <defs>
           <linearGradient id="journeyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor="var(--color-l)" />
-            <stop offset="55%" stopColor="var(--color-blue)" />
-            <stop offset="100%" stopColor="var(--color-sky)" />
+            <stop offset="60%" stopColor="var(--color-l)" />
+            <stop offset="100%" stopColor="var(--color-light)" />
           </linearGradient>
         </defs>
       </svg>
