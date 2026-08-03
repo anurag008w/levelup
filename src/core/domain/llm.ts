@@ -18,6 +18,9 @@ export interface ProviderConfig {
   baseUrl?: string;
   apiKey?: string;
   model?: string;
+  /** Extra model ids (hidden default multi-model). Exposed to the UI picker
+   *  only when there are 2+; never includes the base URL or API key. */
+  models?: string[];
   fallbackModel?: string;
   temperature?: number;
   maxTokens?: number;
