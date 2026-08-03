@@ -3,6 +3,7 @@ import type { DailySummary } from './summary';
 import type { DailyPlan } from './progress';
 import type { ProviderConfig, ModelInfo, ThinkingLevel } from './llm';
 import type { TaskBankEntry } from './task-bank';
+import type { Habit } from './habit';
 import type { AiActionHistoryState } from './ai-actions';
 import { emptyAiActionHistory } from './ai-actions';
 import { INTERNAL_SYSTEM_PROMPT } from './chat';
@@ -91,6 +92,15 @@ export interface MasteryConfig {
   unlockedAt: string | null;
 }
 
+export interface CustomLevel {
+  id: string;
+  title: string;
+  dayStart: number;
+  dayEnd: number;
+  goals: string[];
+  habits: string[];
+}
+
 export interface CustomPhase {
   id: string;
   name: string;
@@ -102,6 +112,12 @@ export interface CustomPhase {
   difficulty: 'easy' | 'medium' | 'hard' | 'extreme';
   createdBy: 'ai' | 'user';
   createdAt: string;
+  /**
+   * Optional sub-levels inside this block. When present the Levels screen
+   * renders the block as a group header followed by its levels (styled like
+   * the built-in journey levels). Absent = legacy single-card block.
+   */
+  levels?: CustomLevel[];
 }
 
 export interface PostJourneyState {
@@ -191,6 +207,10 @@ export interface AppState {
   userProfile: UserProfile;
   /** IANA timezone for the app's day boundary (null = auto/device timezone). */
   timeZone: string | null;
+  /** User-created / edited habits. Overrides seed habits by id (same pattern as dynamicTaskBank). */
+  customHabits: Habit[];
+  /** Advanced curriculum controls (add/edit/delete/import/export). */
+  curriculumEditing: boolean;
 }
 
 export function defaultAiSettings(): AiSettings {
@@ -226,5 +246,7 @@ export function emptyAppState(): AppState {
     postJourney: defaultPostJourney(),
     userProfile: defaultUserProfile(),
     timeZone: null,
+    customHabits: [],
+    curriculumEditing: true,
   };
 }

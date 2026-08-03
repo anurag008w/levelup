@@ -10,7 +10,17 @@ const TIMESTAMP_PATTERN = /\[\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:[AaPp]\.?\s?[Mm]?\
 const PARTIAL_TIMESTAMP_PREFIX = /^\[\s*\d{0,2}(?::\d{0,2})?(?::\d{0,2})?\s*(?:[AaPp]\.?\s?[Mm]?\.?)?\s*$/;
 
 /** Raw internal tool traces that should never appear in assistant messages. */
-const TOOL_TRACE_LINE_PATTERN = /^\s*(?:tool\s*:\s*[\w-]+|call_plan_manager_[\w-]+\s*\(|plan_manager\.[\w-]+\s*\(|<tool_call>|<\/tool_call>|```\s*(?:tool|json)?\s*$)/i;
+const TOOL_TRACE_LINE_PATTERN = /^\s*(?:tool\s*:\s*[\w-]+(?:,[\w-]+)*|call_plan_manager_[\w-]+\s*\(|plan_manager\.[\w-]+\s*\(|<tool_call>|<\/tool_call>|```\s*(?:tool|json)?\s*$)/i;
+
+/** Whole-line function-call echoes such as `/add_tasks(tasks=[...])` (OpenAI-style slash call). */
+const SLASH_TOOL_CALL_LINE_PATTERN = /^\s*\/[a-zA-Z_][\w-]*\s*\([\s\S]*?\)\s*$/gim;
+
+/** Inline `/name(args)` calls with a simple (single-paren) argument list. */
+const SLASH_TOOL_CALL_INLINE_PATTERN = /\/[a-zA-Z_][\w-]*\s*\([^)\n]*\)/g;
+
+/** Fabricated `[Tool Execution: ...]`, `[Tool call: ...]`, `[Tool-result: ...]`, `[System: ...]` marker lines. */
+const TOOL_MARKER_LINE_PATTERN = /^\s*\[\s*(?:tool(?:\s+execut\w*|\s+call\w*|\s+run\w*)?|tool-result|tool-result-text|system)\s*:?[^\]]*\]\s*$/gim;
+
 const TOOL_CALL_OBJECT_PATTERN = /^\s*(?:call_plan_manager_[\w-]+|plan_manager\.[\w-]+)\s*\([\s\S]*?\)\s*;?\s*$/gim;
 const TOOL_JSON_ACTION_PATTERN = /^\s*\{\s*"action"\s*:\s*"(?:getPlan|getRange|addTask|bulkAddTasks|removeTask|bulkRemoveTasks|setDayMode|editTask|markDone|bulkMarkDone|getAllTasks|getTaskBank|editAnyTask|deleteAnyTask|createBlock|deleteBlock|activateBlock|editBlock|listBlocks|extendBlock)"[\s\S]*?\}\s*,?\s*$/gim;
 const TOOL_JSON_BATCH_PATTERN = /^\s*\{\s*"actions"\s*:\s*\[[\s\S]*?\]\s*\}\s*,?\s*$/gim;
@@ -36,12 +46,18 @@ export function sanitizeTimestampLeaks(text: string): string {
 
 export function sanitizeToolLeaks(text: string): string {
   const withoutCallObjects = text
+    .replace(SLASH_TOOL_CALL_INLINE_PATTERN, '')
     .replace(TOOL_CALL_OBJECT_PATTERN, '')
     .replace(TOOL_JSON_BATCH_PATTERN, '')
     .replace(TOOL_JSON_ACTION_PATTERN, '');
   return withoutCallObjects
     .split('\n')
-    .filter((line) => !TOOL_TRACE_LINE_PATTERN.test(line))
+    .filter(
+      (line) =>
+        !TOOL_TRACE_LINE_PATTERN.test(line) &&
+        !SLASH_TOOL_CALL_LINE_PATTERN.test(line) &&
+        !TOOL_MARKER_LINE_PATTERN.test(line),
+    )
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/^\n+|\n+$/g, '');
@@ -60,8 +76,15 @@ export interface StreamSanitizer {
 function isPartialToolTracePrefix(text: string): boolean {
   const trimmed = text.trimStart().toLowerCase();
   if (trimmed.length < 2) return false;
-  const prefixes = ['tool:', 'call_plan_manager_', 'plan_manager.'];
-  return prefixes.some((prefix) => prefix.startsWith(trimmed));
+  // Growing partial of a known trace prefix (e.g. 'to' -> 'tool:', '[tool exec' -> '[tool execution:').
+  const tracePrefixes = ['tool:', 'tool execution', 'tool call', 'tool-result', 'tool-result-text', '[system', 'call_plan_manager_', 'plan_manager.'];
+  if (tracePrefixes.some((prefix) => prefix.startsWith(trimmed))) return true;
+  // Any line that begins like a bracketed tool/system marker stays held until it
+  // resolves into a strippable line or a newline ends it.
+  const markerStarts = ['[tool ', '[tool:', '[tool-result', '[system'];
+  if (markerStarts.some((prefix) => trimmed.startsWith(prefix))) return true;
+  // Slash-style tool calls being typed, e.g. "/add_tasks(" or "/add".
+  return /^\/[a-z_][\w-]*\s*\(?\s*$/.test(trimmed);
 }
 
 export function createStreamSanitizer(): StreamSanitizer {

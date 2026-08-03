@@ -41,7 +41,7 @@ export default function App() {
           />
         );
       case 'levels':
-        return <LevelsScreen state={state} today={today} />;
+        return <LevelsScreen state={state} today={today} update={update} />;
       case 'progress':
         return <ProgressScreen state={state} today={today} />;
       case 'review':

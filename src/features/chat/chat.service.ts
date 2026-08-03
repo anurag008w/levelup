@@ -120,6 +120,28 @@ export class ChatService {
     return [...Array.from(this.ephemeral.values()).reverse().map(cloneSession), ...this.state().sessions.map(cloneSession)];
   }
 
+  /**
+   * Replaces ALL sessions (backup import). Invalidates the cached store and
+   * clears any ephemeral sessions so a restored history is the only history.
+   * Sessions are normalized and capped to the same limits the app enforces.
+   */
+  replaceStore(sessions: ChatSession[]): void {
+    const normalized: ChatSession[] = sessions.slice(0, MAX_SESSIONS).map((s) => ({
+      id: s.id,
+      title: s.title ?? '',
+      messages: Array.isArray(s.messages) ? s.messages.slice(0, MAX_MESSAGES_PER_SESSION) : [],
+      prefs: normalizePrefs(s.prefs ?? {}),
+      createdAt: s.createdAt ?? new Date(0).toISOString(),
+      updatedAt: s.updatedAt ?? new Date(0).toISOString(),
+      ...(s.memorySummarizedAt ? { memorySummarizedAt: s.memorySummarizedAt } : {}),
+      ...(s.aiSummarizedAt ? { aiSummarizedAt: s.aiSummarizedAt } : {}),
+    }));
+    const state: ChatStoreState = { version: 1, sessions: normalized };
+    this.cache = state;
+    this.ephemeral.clear();
+    this.repo.save(state);
+  }
+
   getSession(id: string): ChatSession | null {
     return this.state().sessions.find((s) => s.id === id) ?? this.ephemeral.get(id) ?? null;
   }
@@ -628,7 +650,8 @@ export class ChatService {
   ): Promise<LLMRequest> {
     const system =
       `A plan tool executed and returned:\n${toolSummary}\n\n` +
-      `Reply to the user's request in concise Hinglish. Tell them what was done (or why it failed).`;
+      `Reply to the user's request in concise Hinglish. Tell them what was done (or why it failed).\n` +
+      `Rules: never echo tool calls, JSON, "/add_tasks(...)" or any protocol text; never add "Tool Execution", "[Tool ...]" or similar headers; never introduce yourself or say your name; if the tool blocked a duplicate task, say plainly that it already exists and was not re-added.`;
     const thinking = this.resolveThinking(session);
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),

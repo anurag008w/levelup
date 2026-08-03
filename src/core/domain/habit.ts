@@ -20,6 +20,8 @@ export interface Habit {
   isCore: boolean;
   /** Thinking skills this habit trains. */
   thinkingSkills: ThinkingSkill[];
+  /** False hides the habit (user deleted a seed habit). Absent = active. */
+  active?: boolean;
 }
 
 export type PhaseColor = 'l' | 'light' | 'core' | 'peak';

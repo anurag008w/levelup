@@ -53,7 +53,7 @@ describe('screen smoke tests', () => {
   });
 
   it('LevelsScreen renders level content on day 1', () => {
-    render(React.createElement(LevelsScreen, { state: populated(), today }));
+    render(React.createElement(LevelsScreen, { state: populated(), today, update: noop }));
     expect(screen.getByText('Daily Tasks')).toBeTruthy();
   });
 

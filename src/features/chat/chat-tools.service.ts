@@ -84,6 +84,19 @@ const METADATA_KEYS: Array<keyof TaskMetadataPatch> = [
 ];
 
 /**
+ * Normalizes a task title for duplicate detection: lowercase + punctuation/
+ * whitespace collapsed, so "Kinematics revision!", " Kinematics revision " and
+ * "Kinematics revision" all count as the same task on a day.
+ */
+function normalizeTaskTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[.,!?;:()[\]{}"']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Executes the deterministic chat tools against the app store. Mutations go
  * through the StateStore so the UI snapshot and every service stay in sync.
  */
@@ -673,6 +686,13 @@ export class ChatToolsService {
   private async addTask(state: AppState, action: Extract<ChatToolAction, { action: 'addTask' }>): Promise<ChatToolResult> {
     const d = clamp(action.day);
     if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
+    const existingTitles = this.dayTaskTitles(state, d);
+    if (existingTitles.has(normalizeTaskTitle(action.intent))) {
+      return {
+        ok: false,
+        summary: `Day ${d}: "${action.intent}" is already on this day's plan — duplicate add blocked, kuch nahi badla.`,
+      };
+    }
     let entry: TaskBankEntry;
     try {
       const result = await this.taskGeneration.generate(state, {
@@ -686,6 +706,12 @@ export class ChatToolsService {
       );
     } catch {
       entry = createLocalTask(action.intent, d, action.durationMin, action);
+    }
+    if (existingTitles.has(normalizeTaskTitle(entry.title))) {
+      return {
+        ok: false,
+        summary: `Day ${d}: "${entry.title}" is already on this day's plan — duplicate add blocked, kuch nahi badla.`,
+      };
     }
     const next = state.dynamicTaskBank.some((e) => e.id === entry.id)
       ? state.dynamicTaskBank.map((e) => (e.id === entry.id ? entry : e))
@@ -710,9 +736,17 @@ export class ChatToolsService {
   private async bulkAddTasks(state: AppState, action: Extract<ChatToolAction, { action: 'bulkAddTasks' }>): Promise<ChatToolResult> {
     const d = clamp(action.day);
     if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
+    const existingTitles = this.dayTaskTitles(state, d);
     const added: TaskBankEntry[] = [];
     const failed: string[] = [];
+    const skipped: string[] = [];
     for (const intent of action.intents.slice(0, 100)) {
+      // Duplicate guard: same task already on this day (or just added in this
+      // batch) is skipped instead of re-added.
+      if (existingTitles.has(normalizeTaskTitle(intent))) {
+        skipped.push(intent);
+        continue;
+      }
       try {
         const result = await this.taskGeneration.generate(state, {
           intent,
@@ -723,16 +757,25 @@ export class ChatToolsService {
           result.source === 'bank' ? cloneBankTask(result.entry, d) : scheduleForDay(result.entry, d),
           action,
         );
+        if (existingTitles.has(normalizeTaskTitle(entry.title))) {
+          skipped.push(intent);
+          continue;
+        }
         added.push(entry);
+        existingTitles.add(normalizeTaskTitle(entry.title));
       } catch {
         // Provider/model failure must not make a user-visible add fail. Keep
         // the batch moving with a deterministic local task.
         added.push(createLocalTask(intent, d, action.durationMin, action));
+        existingTitles.add(normalizeTaskTitle(intent));
         failed.push(intent);
       }
     }
     if (added.length === 0) {
-      return { ok: false, summary: `Day ${d}: koi task add nahi ho saka${failed.length ? ` (fail hua: ${failed.join('; ')})` : ''}.` };
+      return {
+        ok: false,
+        summary: `Day ${d}: koi naya task add nahi hua${skipped.length ? ` — already exist: ${skipped.join('; ')}` : ''}${failed.length ? ` (fail hua: ${failed.join('; ')})` : ''}.`,
+      };
     }
     let next = [...state.dynamicTaskBank];
     for (const entry of added) {
@@ -749,10 +792,11 @@ export class ChatToolsService {
     });
     this.store.save(resultAction.state);
     const failedNote = failed.length > 0 ? `\n${failed.length} task(s) AI se generate nahi hue, local fallback se add kar diye: ${failed.join('; ')}.` : '';
+    const skippedNote = skipped.length > 0 ? `\n${skipped.length} task(s) already exist, duplicate avoid karne ke liye skip kar diye: ${skipped.join('; ')}.` : '';
     return {
       ok: true,
       versionId: resultAction.versionId,
-      summary: `${resultAction.summary}${failedNote} All added tasks scheduled ONLY for Day ${d}. ${this.planPreview(resultAction.state, d)}`,
+      summary: `${resultAction.summary}${failedNote}${skippedNote} All added tasks scheduled ONLY for Day ${d}. ${this.planPreview(resultAction.state, d)}`,
     };
   }
 
@@ -960,6 +1004,11 @@ export class ChatToolsService {
   private planForDay(state: AppState, day: number): DailyPlan {
     const dateISO = this.dateForDay(state, day);
     return this.planner.buildPlan(state, dateISO, this.config);
+  }
+
+  /** Normalized titles already scheduled on a day (used to block duplicate adds). */
+  private dayTaskTitles(state: AppState, day: number): Set<string> {
+    return new Set(this.planForDay(state, day).tasks.map((item) => normalizeTaskTitle(item.entry.title)));
   }
 
   /**
