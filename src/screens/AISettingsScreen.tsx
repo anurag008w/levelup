@@ -275,21 +275,16 @@ function ProviderCard({
             className="field"
             value={config.apiKey ?? ''}
             placeholder="sk-..."
-            onChange={(e) => onUpdate({ ...config, apiKey: e.target.value })}
+            onChange={(e) => onUpdate({ ...config, apiKey: e.target.value || undefined })}
           />
         </Field>
         <Field label="Base URL">
-          <div className="space-y-1.5">
-            <input
-              className="field"
-              value={config.baseUrl ?? ''}
-              placeholder={placeholderFor(config.id)}
-              onChange={(e) => onUpdate({ ...config, baseUrl: e.target.value })}
-            />
-            <button className="btn btn-ghost min-h-8 px-2.5 py-1 text-xs" onClick={() => onUpdate({ ...config, baseUrl: undefined })}>
-              Default URL use karo
-            </button>
-          </div>
+          <input
+            className="field"
+            value={config.baseUrl ?? ''}
+            placeholder={placeholderFor(config.id)}
+            onChange={(e) => onUpdate({ ...config, baseUrl: e.target.value || undefined })}
+          />
         </Field>
         <Field label="Model">
           <div className="space-y-1.5">
@@ -297,10 +292,10 @@ function ProviderCard({
               className="field"
               value={config.model ?? ''}
               placeholder="e.g. gpt-4o-mini"
-              onChange={(e) => onUpdate({ ...config, model: e.target.value })}
+              onChange={(e) => onUpdate({ ...config, model: e.target.value || undefined })}
             />
             {sorted && sorted.length > 0 && (
-              <select className="field" value={config.model ?? ''} onChange={(e) => onUpdate({ ...config, model: e.target.value })}>
+              <select className="field" value={config.model ?? ''} onChange={(e) => onUpdate({ ...config, model: e.target.value || undefined })}>
                 <option value="">— pick from catalog —</option>
                 {sorted.map((m) => (
                   <option key={m.id} value={m.id}>
