@@ -86,6 +86,8 @@ export function normalizeState(raw: unknown): AppState {
         }
       : base.userProfile,
     timeZone: typeof r.timeZone === 'string' && r.timeZone.length > 0 ? r.timeZone : null,
+    customHabits: Array.isArray(r.customHabits) ? r.customHabits : [],
+    curriculumEditing: typeof r.curriculumEditing === 'boolean' ? r.curriculumEditing : true,
   };
 }
 

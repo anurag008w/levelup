@@ -6,10 +6,10 @@ import {
   computeHabitScore,
   computeHabitStreak,
   computeOverallStreak,
-  getCumulativeHabits,
   getCurrentDayNumber,
   getLevelStatus,
 } from '../lib/engine';
+import { container } from '../di/container';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import Stat from '../components/ui/Stat';
 import SectionHeader from '../components/ui/SectionHeader';
@@ -38,7 +38,8 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
   }
 
   const dayNumber = getCurrentDayNumber(state, today);
-  const habits = getCumulativeHabits(dayNumber);
+  // Merged (seed + custom) habits so user-created habits also score/streak here.
+  const habits = container.habitBank.getAllHabits().filter((h) => h.dayStart <= dayNumber);
   const overallStreak = computeOverallStreak(state, today);
   const clearedCount = LEVELS.filter((l) => l.authored && getLevelStatus(l, state, dayNumber) === 'cleared').length;
   const recoveryCount = LEVELS.filter((l) => l.authored && getLevelStatus(l, state, dayNumber) === 'needs-recovery').length;

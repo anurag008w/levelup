@@ -38,6 +38,20 @@ export class TaskBankRepositoryImpl implements TaskBankRepository, HabitReposito
     return this.stateRepository.load().dynamicTaskBank;
   }
 
+  /** Seed habits overridden by user/AI edits (customHabits win by id). */
+  private allHabits(): Habit[] {
+    const byId = new Map<string, Habit>();
+    for (const habit of this.seed.habits) {
+      if (habit.active === false) continue;
+      byId.set(habit.id, habit);
+    }
+    for (const habit of this.stateRepository.load().customHabits ?? []) {
+      if (habit.active === false) continue;
+      byId.set(habit.id, habit);
+    }
+    return [...byId.values()];
+  }
+
   getAll(): TaskBankEntry[] {
     const byId = new Map<string, TaskBankEntry>();
     for (const entry of this.seed.tasks) byId.set(entry.id, entry);
@@ -62,14 +76,14 @@ export class TaskBankRepositoryImpl implements TaskBankRepository, HabitReposito
   }
 
   getAllHabits(): Habit[] {
-    return this.seed.habits;
+    return this.allHabits();
   }
 
   getHabitById(id: string): Habit | undefined {
-    return this.seed.habits.find((h) => h.id === id);
+    return this.allHabits().find((h) => h.id === id);
   }
 
   getHabitsByLevel(levelId: number): Habit[] {
-    return this.seed.habits.filter((h) => h.levelId === levelId);
+    return this.allHabits().filter((h) => h.levelId === levelId);
   }
 }

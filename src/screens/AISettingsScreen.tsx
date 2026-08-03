@@ -1,5 +1,5 @@
-import { Suspense, useState, lazy } from 'react';
-import { Check, ChevronRight, KeyRound, Plug, RefreshCw, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Wifi, WifiOff } from 'lucide-react';
+import { Suspense, useRef, useState, lazy } from 'react';
+import { Check, ChevronRight, Database, Download, KeyRound, ListChecks, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ProviderConfig, ModelInfo } from '../core/domain/llm';
 import { container } from '../di/container';
@@ -8,6 +8,8 @@ import SectionHeader from '../components/ui/SectionHeader';
 import EmptyState from '../components/ui/EmptyState';
 import AddProviderForm from '../components/AddProviderForm';
 import { haptic } from '../lib/haptics';
+import { formatBytes, normalizeChatSessions, parseBackup, summarizeBackup, type BackupScope, type BackupSummary } from '../features/backup/backup.service';
+import { normalizeState } from '../infra/storage/state-repository';
 
 const ChatSettingsScreen = lazy(() => import('./ChatSettingsScreen'));
 
@@ -20,6 +22,13 @@ export default function AISettingsScreen({ state, update }: { state: AppState; u
 
   // Navigation state for sub-screens
   const [showChatSettings, setShowChatSettings] = useState(false);
+
+  // Data & Backup state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [backupScope, setBackupScope] = useState<BackupScope>('full');
+  const [backupStatus, setBackupStatus] = useState<{ type: 'ok' | 'error' | 'info'; text: string } | null>(null);
+  const [pendingImport, setPendingImport] = useState<{ json: string; fileName: string; preview: BackupSummary } | null>(null);
+  const [importing, setImporting] = useState(false);
 
   // Chat Settings sub-screen
   if (showChatSettings) {
@@ -54,6 +63,66 @@ export default function AISettingsScreen({ state, update }: { state: AppState; u
   function setActive(id: string | null) {
     haptic();
     update((s) => ({ ...s, aiSettings: { ...s.aiSettings, activeProviderId: id } }));
+  }
+
+  function handleExport() {
+    haptic();
+    try {
+      const json = container.backup.export(backupScope);
+      const fileName = `levelup-backup-${backupScope === 'full' ? '' : `${backupScope}-`}${new Date().toISOString().slice(0, 10)}.json`;
+      downloadTextFile(json, fileName);
+      const payload = parseBackup(json);
+      const preview = summarizeBackup(
+        normalizeState(payload.data.state),
+        payload.scope === 'full' ? container.chat.listSessions() : [],
+        json.length,
+        payload.scope,
+      );
+      setBackupStatus({ type: 'ok', text: `Backup download ho gaya — ${formatBytes(preview.bytes)} · ${describeSummary(preview)}` });
+    } catch (err) {
+      setBackupStatus({ type: 'error', text: shortError(err) });
+    }
+  }
+
+  async function onFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    haptic();
+    try {
+      const text = await file.text();
+      const payload = parseBackup(text);
+      const preview = summarizeBackup(
+        normalizeState(payload.data.state),
+        payload.scope === 'full' ? normalizeChatSessions(payload.data.chat) : [],
+        text.length,
+        payload.scope,
+      );
+      setPendingImport({ json: text, fileName: file.name, preview });
+      setBackupStatus(null);
+    } catch (err) {
+      setPendingImport(null);
+      setBackupStatus({ type: 'error', text: shortError(err) });
+    }
+  }
+
+  function confirmImport() {
+    if (!pendingImport) return;
+    setImporting(true);
+    try {
+      const summary = container.backup.import(pendingImport.json);
+      // Re-read the freshly restored state so every mounted screen re-renders,
+      // and let the chat screen swap in the restored sessions too (full only —
+      // scoped imports never touch chat, so the event is harmless either way).
+      update(() => container.store.get());
+      window.dispatchEvent(new Event('levelup:backup-imported'));
+      setBackupStatus({ type: 'ok', text: `Backup restore ho gaya — ${describeSummary(summary)}` });
+      setPendingImport(null);
+    } catch (err) {
+      setBackupStatus({ type: 'error', text: shortError(err) });
+    } finally {
+      setImporting(false);
+    }
   }
 
   return (
@@ -107,6 +176,146 @@ export default function AISettingsScreen({ state, update }: { state: AppState; u
         </div>
         <ChevronRight size={18} className="text-muted" />
       </button>
+
+      <div className="mb-2.5">
+        <SectionHeader
+          icon={<ListChecks size={14} color="var(--color-l)" />}
+          accent="var(--color-l)"
+          title="Curriculum"
+          meta="customization"
+        />
+      </div>
+
+      <div className="card mb-4 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
+              <ListChecks size={19} />
+            </span>
+            <div className="min-w-0">
+              <p className="font-display text-[15px] font-bold">Advanced curriculum controls</p>
+              <p className="text-xs leading-snug text-muted">
+                ON rahne par Levels tab mein Add Block, Export, Import aur saare add/edit/delete buttons dikhte hain — tasks,
+                habits aur blocks apne hisaab se customize kar sakte ho. OFF karne par Levels tab simple read-only view ban
+                jata hai (normal user ke liye clean).
+              </p>
+            </div>
+          </div>
+          <label className="toggle mt-1 shrink-0" title="Toggle advanced curriculum controls">
+            <input
+              type="checkbox"
+              checked={state.curriculumEditing}
+              onChange={(e) => {
+                haptic();
+                update((s) => ({ ...s, curriculumEditing: e.target.checked }));
+              }}
+              aria-label="Toggle advanced curriculum controls"
+            />
+            <span className="track">
+              <span className="thumb" />
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div className="mb-2.5">
+        <SectionHeader
+          icon={<Database size={14} color="var(--color-l)" />}
+          accent="var(--color-l)"
+          title="Data & Backup"
+          meta="export / import"
+        />
+      </div>
+
+      <div className="card mb-4 p-4">
+        <div className="mb-3 flex items-start gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
+            <Database size={19} />
+          </span>
+          <div className="min-w-0">
+            <p className="font-display text-[15px] font-bold">Sab data, ek file mein</p>
+            <p className="text-xs leading-snug text-muted">Full backup mein plan, tasks, progress, logs, memory, chat sessions aur providers sab aata hai. Tasks / Levels options sirf wohi data export karte hain.</p>
+          </div>
+        </div>
+
+        <div className="mb-3 grid grid-cols-3 gap-1.5">
+          {([
+            { id: 'full', label: 'Full', hint: 'sab kuch' },
+            { id: 'tasks', label: 'Tasks', hint: 'tasks + habits + plans' },
+            { id: 'levels', label: 'Levels', hint: 'levels + reviews' },
+          ] as { id: BackupScope; label: string; hint: string }[]).map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => {
+                haptic(6);
+                setBackupScope(opt.id);
+              }}
+              className="min-h-12 rounded-xl border px-2 py-1.5 text-center transition-colors"
+              style={
+                backupScope === opt.id
+                  ? { borderColor: 'var(--color-l)', backgroundColor: 'rgba(138,154,91,0.12)' }
+                  : { borderColor: 'var(--color-border)', backgroundColor: 'transparent' }
+              }
+            >
+              <span className="block text-xs font-bold text-text">{opt.label}</span>
+              <span className="block text-[10px] text-muted">{opt.hint}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <button type="button" onClick={handleExport} className="btn btn-primary min-h-10 gap-2">
+            <Download size={15} /> Export
+          </button>
+          <button type="button" onClick={() => fileInputRef.current?.click()} className="btn btn-ghost min-h-10 gap-2">
+            <Upload size={15} /> Import
+          </button>
+          <input ref={fileInputRef} type="file" accept=".json,application/json" className="hidden" onChange={onFileSelected} aria-label="Import backup file" />
+        </div>
+
+        <p className="mt-3 text-[11px] leading-relaxed text-muted-dim">
+          Full backup file mein API keys bhi hongi (providers section) — file ko safe jagah rakhna. Model catalog cache (API se refetch hota hai) export mein nahi aata. Env-based provider machine-specific hai, wo export nahi hota.
+        </p>
+
+        {backupStatus && (
+          <p
+            className="mt-3 rounded-xl px-3 py-2 text-xs"
+            style={
+              backupStatus.type === 'error'
+                ? { backgroundColor: 'rgba(201,87,87,0.12)', color: 'var(--color-danger)' }
+                : backupStatus.type === 'ok'
+                  ? { backgroundColor: 'rgba(138,154,91,0.13)', color: 'var(--color-success)' }
+                  : { backgroundColor: 'rgba(79,209,197,0.13)', color: 'var(--color-l)' }
+            }
+          >
+            {backupStatus.text}
+          </p>
+        )}
+
+        {pendingImport && (
+          <div className="mt-3 rounded-xl border border-border bg-bg/60 p-3">
+            <p className="flex items-start gap-2 text-xs font-semibold text-text">
+              <ShieldAlert size={14} className="mt-0.5 shrink-0 text-warning" />
+              "{pendingImport.fileName}" restore karna hai?
+              {pendingImport.preview.scope === 'full'
+                ? ' Abhi ka saara data replace ho jayega.'
+                : pendingImport.preview.scope === 'tasks'
+                  ? ' Sirf tasks/habits/plans ka data merge hoga — baaki sab waisa hi rahega.'
+                  : ' Sirf levels/reviews ka data merge hoga — baaki sab waisa hi rahega.'}
+            </p>
+            <p className="mt-1 text-[11px] text-muted">{describeSummary(pendingImport.preview)}</p>
+            <div className="mt-2.5 flex gap-2">
+              <button type="button" onClick={() => setPendingImport(null)} className="btn btn-ghost min-h-9 flex-1 text-xs">
+                Cancel
+              </button>
+              <button type="button" onClick={confirmImport} disabled={importing} className="btn min-h-9 flex-1 border border-danger/40 text-xs text-danger" style={{ backgroundColor: 'rgba(201,87,87,0.1)' }}>
+                {importing ? 'Restoring…' : 'Confirm Import'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="mb-2.5">
         <SectionHeader
@@ -401,4 +610,45 @@ function shortError(err: unknown): string {
     return msg.length > 140 ? `${msg.slice(0, 140)}…` : msg;
   }
   return String(err);
+}
+
+function downloadTextFile(text: string, filename: string) {
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function describeSummary(s: BackupSummary): string {
+  if (s.scope === 'tasks') {
+    return [
+      `Tasks · ${s.state.dynamicTasks} custom tasks`,
+      `${s.state.totalDone} tasks done`,
+      `${s.state.planDays} din ke plans`,
+      s.state.dynamicPhases.length > 0 ? `phases: ${s.state.dynamicPhases.join(', ')}` : '',
+    ].filter(Boolean).join(' · ');
+  }
+  if (s.scope === 'levels') {
+    return [
+      `Levels · ${s.state.clearedLevels} cleared`,
+      `${s.state.weeklyReviews} weekly reviews`,
+      `${s.state.monthlyAssessments} monthly assessments`,
+    ].filter(Boolean).join(' · ');
+  }
+  const parts = [
+    s.state.journeyStarted ? 'journey active' : 'journey abhi nahi',
+    `${s.state.totalDone} tasks done`,
+    `${s.state.dynamicTasks} custom tasks`,
+    `${s.state.planDays} din ke plans`,
+    s.state.dynamicPhases.length > 0 ? `phases: ${s.state.dynamicPhases.join(', ')}` : '',
+    `${s.state.clearedLevels} levels cleared`,
+    `${s.state.memoryEntries} memory entries`,
+    `${s.chat.sessions} chats (${s.chat.messages} msgs)`,
+  ];
+  return parts.filter(Boolean).join(' · ');
 }

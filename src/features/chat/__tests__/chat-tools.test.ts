@@ -172,7 +172,9 @@ describe('ChatToolsService', () => {
   it('addTask clones bank matches into editable dynamic tasks', async () => {
     const store = makeStore();
     const { tools, taskGeneration } = makeTools(store);
-    taskGeneration.generate = async () => ({ entry: buildSeed().tasks[0], source: 'bank' });
+    // Use a late-unlock seed task so it is NOT already scheduled on Day 4 (the
+    // duplicate guard must not block this legitimate clone).
+    taskGeneration.generate = async () => ({ entry: buildSeed().tasks.find((t) => t.id === 'd11_t1')!, source: 'bank' });
     const result = await tools.run({ action: 'addTask', day: 4, intent: 'existing bank task', durationMin: 20 });
     expect(result.ok).toBe(true);
     const added = store.get().dynamicTaskBank[0];

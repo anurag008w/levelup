@@ -1,6 +1,6 @@
 import { LEVELS, TOTAL_DAYS } from '../data/curriculum';
 import { DEFAULT_PROGRESSION_CONFIG } from '../core/domain/progress';
-import type { StateRepository, StateStore } from '../core/ports/repositories';
+import type { StateRepository, StateStore, HabitRepository } from '../core/ports/repositories';
 import { deviceTimeZone, SystemClock, type Clock, todayISO } from '../core/ports/clock';
 import { BrowserStorage, persistentStore } from '../infra/storage/local-storage';
 import { CachedStateStore, LocalStateRepository } from '../infra/storage/state-repository';
@@ -18,6 +18,7 @@ import { ChatToolsService } from '../features/chat/chat-tools.service';
 import { MemoryToolsService } from '../features/chat/memory-tools.service';
 import { extractFileText } from '../lib/fileText';
 import { LocalChatRepository } from '../infra/storage/chat-repository';
+import { buildBackupPayload, parseBackup, serializeBackup, applyBackup, type BackupScope, type BackupSummary } from '../features/backup/backup.service';
 import { TaskBankRepositoryImpl } from '../features/task-bank/task-bank.repository';
 import { TaskBankServiceImpl, type TaskBankService } from '../features/task-bank/task-bank.service';
 import { HabitProgressionService } from '../features/habit-engine/planner';
@@ -39,11 +40,18 @@ export interface AppContainer {
   llm: LLMService;
   memory: MemoryService;
   taskBank: TaskBankService;
+  /** Read handle for habits (seed merged with user edits). */
+  habitBank: HabitRepository;
   planner: HabitProgressionService;
   summaries: DailySummaryService;
   taskGeneration: TaskGenerationService;
   chat: ChatService;
   chatTools: ChatToolsService;
+  /** Versioned export/import of ALL user data (state + chat). */
+  backup: {
+    export(scope?: BackupScope): string;
+    import(json: string): BackupSummary;
+  };
 }
 /**
  * Composition root. Wires infrastructure + features once at startup; the
@@ -84,8 +92,9 @@ export function createContainer(): AppContainer {
   const taskGeneration = new TaskGenerationService(llm, taskBank, taskBankRepo);
   const chatTools = new ChatToolsService(store, planner, taskBank, taskGeneration);
   const memoryTools = new MemoryToolsService(store, memory);
+  const chatRepo = new LocalChatRepository(storage);
   const chat = new ChatService(
-    new LocalChatRepository(storage),
+    chatRepo,
     llm,
     providerSettings,
     () => {
@@ -130,6 +139,21 @@ export function createContainer(): AppContainer {
     },
     memoryTools,
   );
+
+  const backup = {
+    export(scope: BackupScope = 'full'): string {
+      const chat = scope === 'full' ? chatRepo.load() : null;
+      return serializeBackup(buildBackupPayload(store.get(), chat, scope));
+    },
+    import(json: string): BackupSummary {
+      const payload = parseBackup(json);
+      return applyBackup(payload, {
+        store,
+        chat: { replaceStore: (sessions) => chat.replaceStore(sessions) },
+      });
+    },
+  };
+
   return {
     stateRepository,
     store,
@@ -140,11 +164,13 @@ export function createContainer(): AppContainer {
     llm,
     memory,
     taskBank,
+    habitBank: taskBankRepo,
     planner,
     summaries,
     taskGeneration,
     chat,
     chatTools,
+    backup,
   };
 }
 

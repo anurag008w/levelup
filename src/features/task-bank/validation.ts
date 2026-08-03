@@ -82,6 +82,7 @@ export const habitSchema = z.object({
   prerequisites: z.array(z.string()),
   isCore: z.boolean().default(true),
   thinkingSkills: z.array(thinkingEnum),
+  active: z.boolean().default(true),
 });
 
 function parseEntry(raw: unknown): TaskBankEntry {
