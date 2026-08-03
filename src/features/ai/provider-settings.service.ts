@@ -135,11 +135,14 @@ export class ProviderSettingsService {
   private publicView(config: ProviderConfig): ProviderConfig {
     return {
       id: config.id,
-      label: providerLabel(config.id),
+      // Keep the provider's own label (e.g. "Default") so every screen shows
+      // the same name — don't fall back to the generic provider type label.
+      label: config.label || providerLabel(config.id),
       enabled: config.enabled,
       hidden: true,
       // Model ids are not secrets — they only power the optional model picker.
       models: config.models,
+      model: config.model,
     };
   }
 }

@@ -110,7 +110,7 @@ export default function ChatScreen() {
   const [showMemoryChatId, setShowMemoryChatId] = useState<string | null>(null);
   const [memoryChats, setMemoryChats] = useState<ArchivedConversation[]>([]);
   const [catalog, setCatalog] = useState<ModelInfo[]>([]);
-  const [providerCount, setProviderCount] = useState(container.providerSettings.listStoredProviders().length);
+  const [providerSig, setProviderSig] = useState(() => providerSigOf(container.providerSettings.listStoredProviders()));
   const [menu, setMenu] = useState<MenuState | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -119,8 +119,8 @@ export default function ChatScreen() {
 
   const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? null, [sessions, activeId]);
   const providers = useMemo(
-    () => (void providerCount, container.providerSettings.listStoredProviders()),
-    [providerCount],
+    () => (void providerSig, container.providerSettings.listStoredProviders()),
+    [providerSig],
   );
   const messages = active?.messages ?? [];
   const hasMessages = active !== null && messages.length > 0;
@@ -128,6 +128,19 @@ export default function ChatScreen() {
   const showThinking = container.store.get().aiSettings.chat.showThinking;
   // Stable identity so the reveal effect never restarts from its callback.
   const handleRevealDone = useCallback(() => setRevealId(null), []);
+
+  // This screen stays mounted across tab switches (chatVisited), so provider
+  // changes made in AI Settings would never show here. Poll the store so the
+  // provider + model lists stay in sync with Settings.
+  useEffect(() => {
+    const id = setInterval(() => {
+      setProviderSig((prev) => {
+        const next = providerSigOf(container.providerSettings.listStoredProviders());
+        return next === prev ? prev : next;
+      });
+    }, 300);
+    return () => clearInterval(id);
+  }, []);
 
   const modelChip = useMemo(() => {
     const pid = active?.prefs.providerId ?? null;
@@ -781,9 +794,9 @@ export default function ChatScreen() {
           onReset={resetPrefs}
           onLoadCatalog={() => void loadCatalog()}
           onOpenProviderPicker={() => setShowProviderPicker(true)}
-          onProviderAdded={() => setProviderCount((c) => c + 1)}
+          onProviderAdded={() => setProviderSig((s) => `${s}-added`)}
           onHistoryChanged={() => {
-            setProviderCount((c) => c + 1);
+            setProviderSig((s) => `${s}-hist`);
             refresh();
           }}
           onExport={exportChat}
@@ -800,7 +813,7 @@ export default function ChatScreen() {
             updatePrefs({ providerId: pid });
             setShowProviderPicker(false);
           }}
-          onProviderAdded={() => setProviderCount((c) => c + 1)}
+          onProviderAdded={() => setProviderSig((s) => `${s}-added`)}
           onClose={() => setShowProviderPicker(false)}
         />
       )}
@@ -1236,7 +1249,7 @@ function SettingsSheet({
   onClose,
 }: {
   prefs: ChatPreferences;
-  providers: Array<{ id: string; label: string; enabled?: boolean; models?: string[] }>;
+  providers: Array<{ id: string; label: string; enabled?: boolean; models?: string[]; model?: string }>;
   catalog: ModelInfo[];
   onChange: (patch: Partial<ChatPreferences>) => void;
   onReset: () => void;
@@ -1249,7 +1262,10 @@ function SettingsSheet({
   onClose: () => void;
 }) {
   const providerLabel = providers.find((p) => p.id === prefs.providerId)?.label ?? 'App default';
-  const presetModels = providers.find((p) => p.id === prefs.providerId)?.models ?? [];
+  const presetModels = (() => {
+    const provider = providers.find((p) => p.id === prefs.providerId);
+    return [...new Set([...(provider?.models ?? []), ...(provider?.model ? [provider.model] : [])])];
+  })();
   return (
     <Sheet open onClose={onClose} title="Chat settings" icon={<Settings2 size={16} />}>
       <div className="space-y-6 pb-2">
@@ -1513,7 +1529,7 @@ function ProviderPickerSheet({
   onClose,
 }: {
   prefs: ChatPreferences;
-  providers: Array<{ id: string; label: string; enabled?: boolean; models?: string[] }>;
+  providers: Array<{ id: string; label: string; enabled?: boolean; models?: string[]; model?: string }>;
   onSelect: (pid: string | null) => void;
   onProviderAdded: () => void;
   onClose: () => void;
@@ -1947,4 +1963,11 @@ function uid(prefix: string): string {
 function clampTokens(value: number): number {
   if (!Number.isFinite(value)) return 8192;
   return Math.max(1, Math.min(Math.round(value), 32768));
+}
+
+/** Cheap fingerprint of the provider list (id + label + models + model). */
+function providerSigOf(providers: { id: string; label: string; enabled?: boolean; models?: string[]; model?: string }[]): string {
+  return providers
+    .map((p) => `${p.id}|${p.label}|${p.enabled ? 1 : 0}|${(p.models ?? []).join(',')}|${p.model ?? ''}`)
+    .join(';;');
 }

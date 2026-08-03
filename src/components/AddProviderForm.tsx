@@ -22,6 +22,8 @@ export default function AddProviderForm({ onAdd }: { onAdd: (c: ProviderConfig) 
   const [open, setOpen] = useState(false);
   const [id, setId] = useState<ProviderId>('openrouter');
   const [model, setModel] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
   const [thinking, setThinking] = useState<ThinkingLevel | ''>('');
 
   if (!open) {
@@ -88,6 +90,29 @@ export default function AddProviderForm({ onAdd }: { onAdd: (c: ProviderConfig) 
         </div>
 
         <label className="block">
+          <span className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-muted">API key</span>
+          <input
+            className="field text-sm"
+            type="password"
+            value={apiKey}
+            placeholder={id === 'gemini' ? 'AIza...' : 'sk-...'}
+            onChange={(e) => setApiKey(e.target.value)}
+          />
+        </label>
+
+        {id === 'openai-compatible' && (
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-muted">Base URL</span>
+            <input
+              className="field text-sm"
+              value={baseUrl}
+              placeholder="https://your-endpoint.com/v1"
+              onChange={(e) => setBaseUrl(e.target.value)}
+            />
+          </label>
+        )}
+
+        <label className="block">
           <span className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-muted">Default model (optional)</span>
           <input className="field text-sm" value={model} placeholder="gpt-4o-mini" onChange={(e) => setModel(e.target.value)} />
         </label>
@@ -116,9 +141,19 @@ export default function AddProviderForm({ onAdd }: { onAdd: (c: ProviderConfig) 
           <button
             className="btn btn-primary flex-1 justify-center text-sm font-bold"
             onClick={() => {
-              onAdd({ id, label: providerLabel(id), model: model || undefined, thinking: thinking || undefined, enabled: true });
+              onAdd({
+                id,
+                label: providerLabel(id),
+                baseUrl: baseUrl || undefined,
+                apiKey: apiKey || undefined,
+                model: model || undefined,
+                thinking: thinking || undefined,
+                enabled: true,
+              });
               setOpen(false);
               setModel('');
+              setApiKey('');
+              setBaseUrl('');
               setThinking('');
             }}
           >
