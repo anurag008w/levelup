@@ -19,6 +19,9 @@ const FENCE_RE = /```[\s\S]*?```/g;
 // (unlike ASCII control chars) passes the no-control-regex linter rule.
 const FENCE_PLACEHOLDER = (i: number) => `\uE000F${i}\uE000`;
 const RESTORE_RE = /\uE000F(\d+)\uE000/g;
+// A paragraph that is *only* a markdown horizontal rule (---, ***, ___) is a
+// section separator, not content — it should never become its own bubble.
+const HR_ONLY_RE = /^ {0,3}([-*_])( *\1){2,} *$/;
 
 /** Splits a completed reply into bubble texts at paragraph breaks. */
 export function splitReplyIntoBubbles(text: string): string[] {
@@ -34,6 +37,6 @@ export function splitReplyIntoBubbles(text: string): string[] {
     .replace(/\r\n/g, '\n')
     .split(/\n\s*\n/)
     .map((part) => part.trim())
-    .filter((part) => part.length > 0)
+    .filter((part) => part.length > 0 && !HR_ONLY_RE.test(part))
     .map((part) => part.replace(RESTORE_RE, (_, i) => fences[Number(i)] ?? ''));
 }
