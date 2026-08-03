@@ -173,4 +173,53 @@ describe('ProviderSettingsService', () => {
     settings.setAiEnabled(true);
     expect(settings.isAiEnabled()).toBe(false); // no active provider yet -> still off
   });
+
+  it('configureServerAuth points the hidden default at the server and activates it', () => {
+    const settings = build({ providers: {}, activeProviderId: null, aiEnabled: false });
+    settings.configureServerAuth('https://smartrotator.onrender.com/v1', 'sk-user');
+    const active = settings.getActiveProvider();
+    expect(active).not.toBeNull();
+    expect(active?.baseUrl).toBe('https://smartrotator.onrender.com/v1');
+    expect(active?.apiKey).toBe('sk-user');
+    expect(active?.hidden).toBe(true);
+    expect(settings.isAiEnabled()).toBe(true);
+    // Hidden provider is stripped in public views — no URL/key leak, no card.
+    const list = settings.listProviders();
+    expect(list).toHaveLength(1);
+    expect(list[0].hidden).toBe(true);
+    expect(list[0].baseUrl).toBeUndefined();
+    expect(list[0].apiKey).toBeUndefined();
+    const stored = settings.listStoredProviders();
+    expect(stored.find((p) => p.baseUrl || p.apiKey)).toBeUndefined();
+  });
+
+  it('configureServerAuth drops a legacy visible rotator provider', () => {
+    // Simulates what an older build persisted before the hidden-default design.
+    const legacyRotator: ProviderConfig = {
+      id: 'rotator' as unknown as ProviderId,
+      label: 'My Server',
+      baseUrl: 'https://old.example.com/v1',
+      apiKey: 'sk-old',
+      model: 'm',
+      enabled: true,
+    };
+    const settings = build({
+      providers: { rotator: legacyRotator },
+      activeProviderId: 'rotator' as unknown as ProviderId,
+      aiEnabled: true,
+    });
+    settings.configureServerAuth('https://smartrotator.onrender.com/v1', 'sk-user');
+    const providers = settings.listStoredProviders();
+    // Legacy key no longer exists in the typed union — compare as plain string.
+    expect(providers.find((p) => (p.id as string) === 'rotator')).toBeUndefined();
+    expect(settings.getActiveProvider()?.id).not.toBe('rotator');
+  });
+
+  it('configureServerAuth no-ops without a base URL or key', () => {
+    const settings = build({ providers: {}, activeProviderId: null, aiEnabled: false });
+    settings.configureServerAuth('', 'sk-user');
+    expect(settings.getActiveProvider()).toBeNull();
+    settings.configureServerAuth('https://smartrotator.onrender.com/v1', '');
+    expect(settings.getActiveProvider()).toBeNull();
+  });
 });

@@ -10,7 +10,7 @@ import { providerLabel } from '../../infra/ai/provider-factory';
  * returned public views used by the UI.
  */
 export class ProviderSettingsService {
-  private readonly hiddenDefault: ProviderConfig | null;
+  private hiddenDefault: ProviderConfig | null;
   private readonly state: StateStore;
   private readonly factory: ProviderFactory;
 
@@ -81,6 +81,41 @@ export class ProviderSettingsService {
   setActiveProvider(id: ProviderId): void {
     const state = this.state.get();
     state.aiSettings.activeProviderId = id;
+    this.state.save(state);
+  }
+
+  /**
+   * Points the hidden env default at the logged-in gateway server and swaps in
+   * the user's own sk- key (baseUrl = server root + /v1). Called right after a
+   * successful login so the app's default provider routes through the user's
+   * account (per-user quota is enforced server-side). The provider stays
+   * hidden in the UI — no card, no URL, no key — exactly like the env default.
+   * Also drops any legacy visible "My Server" provider persisted by older
+   * builds, so the Providers section stays clean.
+   */
+  configureServerAuth(baseUrl: string, apiKey: string): void {
+    if (!baseUrl || !apiKey) return;
+    const existing = this.hiddenDefault;
+    this.hiddenDefault = {
+      id: existing?.id ?? 'custom',
+      label: existing?.label ?? 'Default',
+      baseUrl,
+      apiKey,
+      model: existing?.model ?? 'gemini-2.5-flash',
+      models: existing?.models,
+      temperature: existing?.temperature ?? 0.7,
+      maxTokens: existing?.maxTokens ?? 4096,
+      timeoutMs: existing?.timeoutMs ?? 120_000,
+      retries: existing?.retries ?? 1,
+      streaming: existing?.streaming ?? true,
+      enabled: true,
+      hidden: true,
+    };
+    const state = this.state.get();
+    // Legacy cleanup: pre-login builds persisted a visible rotator provider.
+    delete state.aiSettings.providers.rotator;
+    state.aiSettings.aiEnabled = true;
+    state.aiSettings.activeProviderId = this.hiddenDefault.id;
     this.state.save(state);
   }
 

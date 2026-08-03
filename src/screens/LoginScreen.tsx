@@ -1,28 +1,23 @@
 import { useState } from 'react';
-import { KeyRound, Loader2, LogIn, Server, Sparkles, User, UserPlus } from 'lucide-react';
+import { KeyRound, Loader2, LogIn, Sparkles, User, UserPlus } from 'lucide-react';
 import type { AuthSession } from '../lib/auth';
-import {
-  loginToServer,
-  registerOnServer,
-  serverRootFromEnv,
-  normalizeServerRoot,
-  friendlyAuthError,
-} from '../lib/auth';
+import { loginToServer, registerOnServer, friendlyAuthError } from '../lib/auth';
 import { haptic } from '../lib/haptics';
 
 interface Props {
   onLoggedIn: (session: AuthSession) => void;
-  /** Overrides the env/server default server URL shown in the field. */
-  defaultServerUrl?: string;
 }
 
 /**
  * Login / Register gate shown at app start. One form, smart flow:
  * "user exists → login, otherwise → register". A failed login surfaces a
  * one-tap "Register karo" action; a failed register offers login instead.
+ *
+ * The server URL is intentionally NOT shown or editable — it is baked into the
+ * build via VITE_DEFAULT_AI_BASE_URL (fallback: the public gateway) and stays
+ * hidden from users.
  */
-export default function LoginScreen({ onLoggedIn, defaultServerUrl }: Props) {
-  const [serverUrl, setServerUrl] = useState(() => defaultServerUrl ?? serverRootFromEnv());
+export default function LoginScreen({ onLoggedIn }: Props) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [registerMode, setRegisterMode] = useState(false);
@@ -31,11 +26,6 @@ export default function LoginScreen({ onLoggedIn, defaultServerUrl }: Props) {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const root = normalizeServerRoot(serverUrl);
-    if (!root) {
-      setError('Server URL daalo — jaise https://smartrotator.onrender.com');
-      return;
-    }
     const user = username.trim();
     if (user.length < 3) {
       setError('Username kam se kam 3 characters ka ho.');
@@ -50,8 +40,8 @@ export default function LoginScreen({ onLoggedIn, defaultServerUrl }: Props) {
     haptic(6);
     try {
       const session = registerMode
-        ? await registerOnServer(root, user, password)
-        : await loginToServer(root, user, password);
+        ? await registerOnServer(user, password)
+        : await loginToServer(user, password);
       onLoggedIn(session);
     } catch (err) {
       setError(friendlyAuthError(err).message);
@@ -68,8 +58,6 @@ export default function LoginScreen({ onLoggedIn, defaultServerUrl }: Props) {
     setError(null);
     setRegisterMode(next);
   }
-
-  const root = normalizeServerRoot(serverUrl);
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-bg px-4 py-10 text-text">
@@ -109,24 +97,6 @@ export default function LoginScreen({ onLoggedIn, defaultServerUrl }: Props) {
         </div>
 
         <div className="space-y-3.5">
-          <label className="block">
-            <span className="field-label">Server URL</span>
-            <div className="relative">
-              <Server size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-dim" />
-              <input
-                className="field pl-9"
-                type="url"
-                value={serverUrl}
-                onChange={(e) => setServerUrl(e.target.value)}
-                placeholder="https://smartrotator.onrender.com"
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-                disabled={busy}
-              />
-            </div>
-          </label>
-
           <label className="block">
             <span className="field-label">Username</span>
             <div className="relative">
@@ -188,7 +158,6 @@ export default function LoginScreen({ onLoggedIn, defaultServerUrl }: Props) {
           {registerMode
             ? 'Pehle user ka account admin ban jata hai. Login ke baad chat apne server se chalegi.'
             : 'Agar account exist nahi karta, Register tab se bana lo — same page, ek click.'}
-          <span className="mt-1 block break-all font-mono text-[10px]">{root || '—'}</span>
         </p>
       </form>
     </div>

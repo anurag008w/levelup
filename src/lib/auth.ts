@@ -6,7 +6,6 @@
 // (no CORS); on web it falls back to fetch (the server must send CORS headers).
 
 import { container } from '../di/container';
-import type { ProviderConfig } from '../core/domain/llm';
 
 export interface AuthSession {
   /** Server root — no trailing slash, no /v1 (e.g. https://smartrotator.onrender.com). */
@@ -22,9 +21,6 @@ export interface AuthSession {
 
 const SESSION_KEY = 'levelup.auth.session';
 export const DEFAULT_SERVER_URL = 'https://smartrotator.onrender.com';
-
-/** Model id the app requests by default; the gateway routes it among providers. */
-export const SERVER_DEFAULT_MODEL = 'gemini-2.5-flash';
 
 export function loadSession(): AuthSession | null {
   try {
@@ -73,37 +69,25 @@ export function ensureV1Base(root: string): string {
   return clean ? `${clean}/v1` : '';
 }
 
-/** Builds the persisted "My Server" provider used by the chat after login. */
-export function buildServerProvider(session: AuthSession): ProviderConfig {
-  return {
-    id: 'rotator',
-    label: 'My Server',
-    baseUrl: ensureV1Base(session.serverUrl),
-    apiKey: session.apiKey,
-    model: SERVER_DEFAULT_MODEL,
-    temperature: 0.7,
-    maxTokens: 4096,
-    timeoutMs: 120_000,
-    retries: 1,
-    streaming: true,
-    enabled: true,
-  };
-}
-
 interface AuthResponse {
   token?: string;
   api_key?: string;
   user?: { username?: string; role?: string };
 }
 
-export async function loginToServer(serverUrl: string, username: string, password: string): Promise<AuthSession> {
-  const root = normalizeServerRoot(serverUrl);
+/**
+ * Login/register always target the build-time server URL
+ * (VITE_DEFAULT_AI_BASE_URL, fallback: the public gateway). The URL is never
+ * user-editable — it is baked into the build and stays hidden in the UI.
+ */
+export async function loginToServer(username: string, password: string): Promise<AuthSession> {
+  const root = serverRootFromEnv();
   const data = await postAuth<AuthResponse>(`${root}/auth/login`, { username, password });
   return toSession(root, username, data);
 }
 
-export async function registerOnServer(serverUrl: string, username: string, password: string): Promise<AuthSession> {
-  const root = normalizeServerRoot(serverUrl);
+export async function registerOnServer(username: string, password: string): Promise<AuthSession> {
+  const root = serverRootFromEnv();
   const data = await postAuth<AuthResponse>(`${root}/auth/register`, { username, password });
   return toSession(root, username, data);
 }
@@ -145,7 +129,7 @@ export function friendlyAuthError(err: unknown): Error {
       return new Error('Username pehle se exist karta hai — "Login" tab se sign in karo.');
     }
     if (/network|failed to fetch|load failed|socket/i.test(msg)) {
-      return new Error('Server se connect nahi hua — Server URL check karo aur internet on hai confirm karo.');
+      return new Error('Server se connect nahi hua — internet on hai aur server up hai confirm karo.');
     }
     if (/404|not found/i.test(msg)) {
       return new Error('Server URL pe /auth/login nahi mila — galat server address hai.');

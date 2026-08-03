@@ -7,8 +7,7 @@ export type ProviderId =
   | 'opencode'
   | 'opencode-zen'
   | 'openai-compatible'
-  | 'custom'
-  | 'rotator';
+  | 'custom';
 
 export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high';
 
