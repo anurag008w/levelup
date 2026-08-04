@@ -32,15 +32,12 @@ export function setupNotificationActions(): void {
       void (async () => {
         try {
           const assistant = await container.chat.send(sessionId, inputValue.trim());
-          // Poora reply notification me jaata hai (largeBody expand karke dikhega) —
-          // 140 char ka purana hard cut yahan se hata diya, ab sirf ek generous
-          // safety limit hai taaki notification bahut zyada bada na ho jaaye.
-          const preview = assistant.content.replace(/\s+/g, ' ').trim().slice(0, 1000);
-          const sessionTitle = container.chat.getSession(sessionId)?.title || 'Chat';
-          // Reply notification se aaya — answer phir se notification me do taaki
-          // user bina app khole hi AI ka jawab dekh sake. WhatsApp jaisa split:
-          // title = chat ka naam, body = "Misa: message".
-          void notifyAiReply(sessionTitle, `Misa: ${preview || 'Naya AI reply aaya'}`, sessionId);
+          // Poora reply notification me jaata hai — largeBody (BigTextStyle)
+          // expand karke poora message dikhata hai, chahe kitna bhi bada ho.
+          const replyBody = assistant.content.trim() || 'Naya AI reply aaya';
+          // Title = "Misa" (sender), body = poora reply. Reply/open actions
+          // same sessionId se hi kaam karte hain — title/body se independent.
+          void notifyAiReply('Misa', replyBody, sessionId);
         } catch {
           // session delete ho gaya ya AI off — chup rehna, koi error nahi dikhana
         } finally {

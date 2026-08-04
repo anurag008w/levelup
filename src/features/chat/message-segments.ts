@@ -40,3 +40,76 @@ export function splitReplyIntoBubbles(text: string): string[] {
     .filter((part) => part.length > 0 && !HR_ONLY_RE.test(part))
     .map((part) => part.replace(RESTORE_RE, (_, i) => fences[Number(i)] ?? ''));
 }
+
+/**
+ * Reveal pacing shared by the chat UI and the AI-reply notification.
+ *
+ * A fresh reply is revealed like a person sending short messages one at a
+ * time: a fixed "thinking" pause before the first paragraph lands, then a
+ * random 3–8s pause before every next paragraph. The notification uses the
+ * SAME schedule: at every bubble's reveal moment it fires an update (same
+ * notification id = merge), so it lands bubble-by-bubble and ends as the full
+ * merged reply — no matter how long the reply is.
+ */
+export const FIRST_BUBBLE_DELAY_MS = 3000;
+/** Fixed thinking pause before the first paragraph lands. */
+export const BUBBLE_GAP_MIN_MS = 3000;
+/** Extra random range on top of BUBBLE_GAP_MIN_MS for between-paragraph pauses. */
+export const BUBBLE_GAP_RANDOM_MS = 5000;
+
+export interface RevealSchedule {
+  /** Thinking pause (ms) before the first paragraph appears. */
+  firstDelay: number;
+  /** Thinking pause (ms) before each subsequent paragraph — one entry per gap. */
+  gapDelays: number[];
+}
+
+/**
+ * Builds the reveal schedule for a reply split into `bubbleCount` bubbles.
+ * `rng` is injectable so tests can pin the between-paragraph pauses; the app
+ * uses Math.random (matching the "no repeating pattern" feel).
+ */
+export function computeRevealSchedule(bubbleCount: number, rng: () => number = Math.random): RevealSchedule {
+  const gapDelays: number[] = [];
+  for (let i = 1; i < bubbleCount; i++) {
+    gapDelays.push(BUBBLE_GAP_MIN_MS + rng() * BUBBLE_GAP_RANDOM_MS);
+  }
+  return { firstDelay: FIRST_BUBBLE_DELAY_MS, gapDelays };
+}
+
+/** Total time (ms) until a fully revealed reply — the moment to fire a notification. */
+export function totalRevealDelay(schedule: RevealSchedule): number {
+  return schedule.firstDelay + schedule.gapDelays.reduce((sum, d) => sum + d, 0);
+}
+
+export interface NotificationStep {
+  /** When (ms after reply completion) this merged update should fire. */
+  delayMs: number;
+  /** Merged reply text so far — bubble 0..i joined, ending with the full reply. */
+  text: string;
+}
+
+/**
+ * Builds the notification updates for a reply: one per bubble, at the exact
+ * reveal moment of that bubble, each carrying the content merged so far. The
+ * last step holds the whole reply. Same sessionId → same notification id on
+ * the native side, so every step updates/merges into one notification.
+ */
+export function buildNotificationSteps(bubbles: string[], schedule: RevealSchedule): NotificationStep[] {
+  const steps: NotificationStep[] = [];
+  let delay = schedule.firstDelay;
+  for (let i = 0; i < bubbles.length; i++) {
+    steps.push({
+      delayMs: delay,
+      text: bubbles
+        .slice(0, i + 1)
+        .map((b) => b.trim())
+        .join('\n\n')
+        .trim(),
+    });
+    if (i + 1 < bubbles.length) {
+      delay += schedule.gapDelays[i];
+    }
+  }
+  return steps;
+}
