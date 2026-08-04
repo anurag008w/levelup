@@ -182,14 +182,25 @@ export async function setNotificationPreference(enabled: boolean): Promise<void>
 }
 
 /**
+ * Maps a string (like sessionId) to a deterministic positive 32-bit integer for Android notifications.
+ * Same sessionId -> same notification ID -> updates existing chat notification instead of cluttering!
+ */
+function sessionToNotificationId(sessionId?: string): number {
+  if (!sessionId) return 1001;
+  let hash = 0;
+  for (let i = 0; i < sessionId.length; i++) {
+    hash = (hash << 5) - hash + sessionId.charCodeAt(i);
+    hash |= 0;
+  }
+  return (Math.abs(hash) % (ANDROID_ID_MAX - 1000)) + 1;
+}
+
+/**
  * AI reply aane par notification dikhata hai — sirf tab jab:
  *  - preference ON ho, aur
  *  - permission granted ho.
- * Native me LocalNotifications.schedule; web me browser Notification
- * (web me sirf jab tab hidden ho, taaki active chat me disturb na ho).
- *
- * `sessionId` native notification ke `extra` me jaata hai — notification pe tap
- * karne par app usi chat ko khol sakti hai, aur inline reply se wahin reply jaata hai.
+ * Native me LocalNotifications.schedule; web me browser Notification.
+ * Same sessionId -> updates existing notification for that chat session (WhatsApp style).
  */
 export async function notifyAiReply(title: string, body: string, sessionId?: string): Promise<void> {
   if (!isNotificationSupported()) return;
@@ -201,14 +212,16 @@ export async function notifyAiReply(title: string, body: string, sessionId?: str
   const perm = await getNotificationPermission();
   if (perm !== 'granted') return;
 
+  const notificationId = sessionToNotificationId(sessionId);
+  const tag = sessionId ? `levelup-chat-${sessionId}` : 'levelup-ai';
+
   if (isNativePlatform()) {
     try {
       await ensureNotificationChannel();
       await LocalNotifications.schedule({
         notifications: [
           {
-            // Android id 32-bit signed int hi chahiye — Date.now() overflow karega.
-            id: Math.floor(Date.now() % ANDROID_ID_MAX),
+            id: notificationId,
             title,
             body,
             channelId: CHANNEL_ID,
@@ -225,18 +238,16 @@ export async function notifyAiReply(title: string, body: string, sessionId?: str
   }
 
   // Web fallback — sirf jab app tab background me ho (active chat me disturb na ho).
-  // Service worker registered ho to wahi dikhata hai (notification center me persist
-  // karta hai, tab band hone pe bhi); nahi to browser Notification constructor.
   if (typeof document !== 'undefined' && document.hidden) {
     try {
       if ('serviceWorker' in navigator) {
         const reg = await navigator.serviceWorker.getRegistration();
         if (reg) {
-          await reg.showNotification(title, { body, tag: 'levelup-ai', icon: '/favicon.svg' });
+          await reg.showNotification(title, { body, tag, icon: '/favicon.svg' });
           return;
         }
       }
-      const n = new Notification(title, { body });
+      const n = new Notification(title, { body, tag });
       setTimeout(() => n.close(), 10_000);
     } catch {
       // ignore
