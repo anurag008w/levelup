@@ -140,6 +140,8 @@ export class SyncCoordinator {
   async syncNow(): Promise<void> {
     if (!this.session) return;
     if (this.inFlight) return;
+    // Force online status refresh on manual user trigger
+    this.online = typeof navigator === 'undefined' || navigator.onLine !== false;
     this.dirty.add('state');
     this.dirty.add('chat');
     await this.flush();
