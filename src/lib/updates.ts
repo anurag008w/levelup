@@ -1,4 +1,4 @@
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { ActivityAction, IntentLauncher } from '@capgo/capacitor-intent-launcher';
@@ -161,15 +161,6 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
   }
 }
 
-function readBlobAsDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(new Error('APK file read fail'));
-    reader.readAsDataURL(blob);
-  });
-}
-
 export async function openExternalUrl(url: string): Promise<void> {
   if (Capacitor.isNativePlatform()) {
     try {
@@ -188,11 +179,21 @@ export async function installUpdate(apkUrl: string): Promise<InstallResult> {
     return { ok: true, message: 'Browser me APK download link khul gaya — wahan se install karo.' };
   }
   try {
-    const response = await fetch(apkUrl);
-    if (!response.ok) throw new Error(`APK download fail (HTTP ${response.status})`);
-    const blob = await response.blob();
-    const dataUrl = await readBlobAsDataUrl(blob);
-    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+    // WebView fetch GitHub release-asset redirect (release-assets.githubusercontent.com)
+    // ko CORS se block kar deta hai ("Failed to fetch"). Native CapacitorHttp
+    // (OkHttp) download karta hai — CORS nahi lagta, redirects khud follow hote hain.
+    const response = await CapacitorHttp.get({
+      url: apkUrl,
+      responseType: 'blob',
+      connectTimeout: 30_000,
+      readTimeout: 120_000,
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`APK download fail (HTTP ${response.status})`);
+    }
+    // responseType 'blob' native pe base64 string return karta hai.
+    const base64 = typeof response.data === 'string' ? response.data : String(response.data ?? '');
+    if (!base64) throw new Error('APK data empty');
     await Filesystem.writeFile({
       path: `${UPDATE_DIR}/${APK_FILE}`,
       data: base64,

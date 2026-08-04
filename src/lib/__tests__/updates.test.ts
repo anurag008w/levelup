@@ -1,5 +1,36 @@
-import { describe, it, expect } from 'vitest';
-import { compareVersions, isUpdateAvailable, parseVersion, pickApkAsset, releaseFromApi, resolveCurrentVersion } from '../updates';
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  compareVersions,
+  installUpdate,
+  isUpdateAvailable,
+  parseVersion,
+  pickApkAsset,
+  releaseFromApi,
+  resolveCurrentVersion,
+} from '../updates';
+
+const { httpGetMock, isNativeMock, writeFileMock, startActivityMock } = vi.hoisted(() => ({
+  httpGetMock: vi.fn(),
+  isNativeMock: vi.fn(() => true),
+  writeFileMock: vi.fn(),
+  startActivityMock: vi.fn(),
+}));
+
+vi.mock('@capacitor/core', () => ({
+  Capacitor: { isNativePlatform: (...args: unknown[]) => isNativeMock(...args) },
+  CapacitorHttp: { get: (...args: unknown[]) => httpGetMock(...args) },
+}));
+
+vi.mock('@capacitor/filesystem', () => ({
+  Directory: { Cache: 'CACHE' },
+  Filesystem: { writeFile: (...args: unknown[]) => writeFileMock(...args) },
+}));
+
+vi.mock('@capgo/capacitor-intent-launcher', () => ({
+  ActivityAction: { VIEW: 'VIEW', MANAGE_UNKNOWN_APP_SOURCES: 'MANAGE_UNKNOWN_APP_SOURCES' },
+  IntentLauncher: { startActivityAsync: (...args: unknown[]) => startActivityMock(...args) },
+}));
 
 describe('resolveCurrentVersion', () => {
   it('prefers a baked-in release version over the native version', () => {
@@ -103,5 +134,57 @@ describe('releaseFromApi', () => {
   it('returns null for a malformed payload', () => {
     expect(releaseFromApi({})).toBeNull();
     expect(releaseFromApi({ tag_name: 42 })).toBeNull();
+  });
+});
+
+describe('installUpdate', () => {
+  beforeEach(() => {
+    isNativeMock.mockReturnValue(true);
+    httpGetMock.mockReset();
+    writeFileMock.mockReset();
+    startActivityMock.mockReset();
+  });
+
+  it('downloads via native CapacitorHttp (blob) and launches the installer', async () => {
+    httpGetMock.mockResolvedValue({ status: 200, data: 'aGVsbG8=', headers: {}, url: 'u' });
+    writeFileMock.mockResolvedValue({ uri: 'file:///cache/updates/levelup.apk' });
+    startActivityMock.mockResolvedValue({});
+
+    const result = await installUpdate('https://github.com/anurag008w/levelup/releases/download/v1/app-signed.apk');
+
+    expect(httpGetMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: 'https://github.com/anurag008w/levelup/releases/download/v1/app-signed.apk',
+        responseType: 'blob',
+      }),
+    );
+    expect(writeFileMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: 'aGVsbG8=', directory: 'CACHE', recursive: true }),
+    );
+    expect(startActivityMock).toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+  });
+
+  it('reports a failed download without writing or launching the installer', async () => {
+    httpGetMock.mockResolvedValue({ status: 500, data: '', headers: {}, url: 'u' });
+
+    const result = await installUpdate('https://x/app.apk');
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('HTTP 500');
+    expect(writeFileMock).not.toHaveBeenCalled();
+    expect(startActivityMock).not.toHaveBeenCalled();
+  });
+
+  it('opens the APK link in the browser on non-native platforms', async () => {
+    isNativeMock.mockReturnValue(false);
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    const result = await installUpdate('https://x/app.apk');
+
+    expect(openSpy).toHaveBeenCalledWith('https://x/app.apk', '_blank');
+    expect(result.ok).toBe(true);
+    expect(httpGetMock).not.toHaveBeenCalled();
+    openSpy.mockRestore();
   });
 });
