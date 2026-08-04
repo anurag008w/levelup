@@ -18,7 +18,7 @@ const { httpGetMock, isNativeMock, writeFileMock, startActivityMock } = vi.hoist
 }));
 
 vi.mock('@capacitor/core', () => ({
-  Capacitor: { isNativePlatform: (...args: unknown[]) => isNativeMock(...args) },
+  Capacitor: { isNativePlatform: () => isNativeMock() },
   CapacitorHttp: { get: (...args: unknown[]) => httpGetMock(...args) },
 }));
 
