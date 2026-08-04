@@ -12,13 +12,14 @@
  * karte) — native APK ka real flow yahi hai.
  */
 import { container } from '../di/container';
-import { notifyAiReply, onNotificationAction, registerNotificationActions } from './notifications';
+import { notifyAiReply, onNotificationAction, registerNotificationActions, trackAppState } from './notifications';
 
 let setup = false;
 
 export function setupNotificationActions(): void {
   if (setup) return;
   setup = true;
+  trackAppState();
   void registerNotificationActions();
   void onNotificationAction(({ actionId, inputValue, sessionId }) => {
     if (!sessionId) return;

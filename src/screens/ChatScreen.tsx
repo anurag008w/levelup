@@ -72,7 +72,6 @@ interface MenuState {
 }
 
 const MAX_TEXT_ATTACHMENT_CHARS = 24_000;
-const VISIBLE_MESSAGES = 40;
 
 const MATH_TEMPLATE =
   'Is maths problem ko step-by-step solve karo, LaTeX me dikhao: \\(\\frac{2}{3} + 3\\times3\\)';
@@ -250,7 +249,6 @@ export default function ChatScreen({
     setEditing(null);
     setAttachments([]);
     setError('');
-    setVisibleFrom(0);
   }, [activeId]);
 
   useEffect(() => {
@@ -499,7 +497,10 @@ export default function ChatScreen({
       // merge hoke naya ban jata hai). Last update me POORA reply hota hai —
       // chahe reply kitna bhi bada ho, koi character cut-off nahi.
       // Title = "Misa" (sender), body = poora reply — reply/open actions same
-      // sessionId se hi kaam karte hain.
+      // sessionId se hi kaam karte hain. Background me bhi wahi bubble-timing
+      // schedule jaata hai — notifyAiReply background me use OS-level
+      // (schedule.at) pe schedule karta hai taaki JS timers pause hone par bhi
+      // fire ho.
       for (const step of buildNotificationSteps(bubbles, schedule)) {
         void notifyAiReply('Misa', step.text || 'Naya AI reply aaya', sessionId, step.delayMs);
       }
@@ -690,10 +691,6 @@ export default function ChatScreen({
     }
   }
 
-  const [visibleFrom, setVisibleFrom] = useState(0);
-  const windowedMessages = messages.length <= VISIBLE_MESSAGES ? messages : messages.slice(-visibleFrom || -VISIBLE_MESSAGES);
-  const showEarlier = messages.length > VISIBLE_MESSAGES;
-
   function openMenu(e: { clientX: number; clientY: number }, message: ChatMessage) {
     setMenu({
       message,
@@ -759,29 +756,11 @@ export default function ChatScreen({
           <EmptyChat onPick={(t) => setDraft(t)} />
         ) : (
           <div className="mx-auto max-w-[48rem] py-4">
-            {showEarlier && (
-              <div className="mb-4 flex justify-center">
-                <button
-                  type="button"
-                  onClick={() => {
-                    haptic();
-                    setVisibleFrom((v) => Math.max(VISIBLE_MESSAGES, (v || VISIBLE_MESSAGES) + VISIBLE_MESSAGES));
-                    requestAnimationFrame(() => {
-                      const el = scrollRef.current;
-                      if (el) el.scrollTop = 0;
-                    });
-                  }}
-                  className="rounded-full border border-border bg-panel px-3.5 py-1.5 text-xs font-semibold text-muted transition-colors hover:text-text"
-                >
-                  Earlier messages
-                </button>
-              </div>
-            )}
-            {windowedMessages.map((m, i) => (
+            {messages.map((m, i) => (
               <MessageBubble
                 key={m.id}
                 message={m}
-                isLast={i === windowedMessages.length - 1}
+                isLast={i === messages.length - 1}
                 showThinking={showThinking}
                 reveal={m.id === revealId}
                 revealSchedule={m.id === revealId ? revealScheduleRef.current : undefined}

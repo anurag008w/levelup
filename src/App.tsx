@@ -7,6 +7,7 @@ import { useAppState } from './lib/useAppState';
 import { clearSession, ensureV1Base, loadSession, saveSession, type AuthSession } from './lib/auth';
 import { container } from './di/container';
 import { setupNotificationActions } from './lib/notification-actions';
+import { setChatTabActive } from './lib/notifications';
 import ScreenSkeleton from './components/ScreenSkeleton';
 
 const LevelsScreen = lazy(() => import('./screens/LevelsScreen'));
@@ -34,6 +35,14 @@ export default function App() {
 
   useEffect(() => {
     if (tab === 'chat') setChatVisited(true);
+  }, [tab]);
+
+  // Tell the notifications service whether the user is looking at the Chat
+  // tab, so AI-reply alerts are suppressed while the chat is the active tab
+  // (they fire again as soon as the user switches to any other tab or the app
+  // goes to the background).
+  useEffect(() => {
+    setChatTabActive(tab === 'chat');
   }, [tab]);
 
   // Notification actions (native): inline reply / tap → chat kholo.
