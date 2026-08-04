@@ -160,11 +160,11 @@ export default function LoginScreen({ onLoggedIn, onSkip }: Props) {
           )}
         </button>
 
-        <p className="mt-4 text-center text-[11px] leading-relaxed text-muted-dim">
-          {registerMode
-            ? 'Pehle user ka account admin ban jata hai. Login ke baad chat apne server se chalegi.'
-            : 'Agar account exist nahi karta, Register tab se bana lo — same page, ek click.'}
-        </p>
+        {!registerMode && (
+          <p className="mt-4 text-center text-[11px] leading-relaxed text-muted-dim">
+            No account? Register on the same page — one tap.
+          </p>
+        )}
 
         <div className="mt-5 border-t border-border pt-4">
           <button

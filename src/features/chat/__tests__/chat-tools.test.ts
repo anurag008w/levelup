@@ -4,7 +4,7 @@ import { emptyAppState } from '../../../core/domain/state';
 import { LEVELS, TOTAL_DAYS } from '../../../data/curriculum';
 import type { ChatRepository, StateStore, StateRepository } from '../../../core/ports/repositories';
 import type { ChatStoreState } from '../../../core/domain/chat';
-import type { LLMProvider, LLMResponse, LLMRequest, HealthCheckResult, ModelInfo, ProviderId } from '../../../core/domain/llm';
+import type { LLMProvider, LLMResponse, LLMRequest, HealthCheckResult, ModelInfo, ProviderId, ContentPart } from '../../../core/domain/llm';
 import type { ProviderFactory } from '../../../infra/ai/provider-factory';
 import { buildSeed, TaskBankRepositoryImpl } from '../../task-bank/task-bank.repository';
 import { TaskBankServiceImpl } from '../../task-bank/task-bank.service';
@@ -105,13 +105,48 @@ function providerWith(completeText: string, streamText: string): LLMProvider {
   };
 }
 
+/** Stubs FileReader + fetch so blobToDataUrl resolves to a fake PDF data URL. */
+function stubBlobUtils(): () => void {
+  const g = globalThis as Record<string, unknown>;
+  const originalReader = g.FileReader;
+  const originalFetch = g.fetch;
+  g.FileReader = class {
+    result: string | ArrayBuffer | null = null;
+    onloadend: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    readAsDataURL(blob: Blob): void {
+      blob
+        .arrayBuffer()
+        .then((buf) => {
+          const base64 = Buffer.from(buf).toString('base64');
+          this.result = `data:${blob.type || 'application/octet-stream'};base64,${base64}`;
+          this.onloadend?.();
+        })
+        .catch(() => this.onerror?.());
+    }
+  };
+  g.fetch = async () => new Response(new Blob([new Uint8Array([1, 2, 3])], { type: 'application/pdf' }));
+  return () => {
+    g.FileReader = originalReader;
+    g.fetch = originalFetch;
+  };
+}
+
 describe('ChatToolsService', () => {
   it('detects task-related queries and parses valid tool actions', () => {
     const store = makeStore();
     const { tools } = makeTools(store);
     expect(tools.isTaskQuery('kal ke tasks kya hain?')).toBe(true);
     expect(tools.isTaskQuery('day 30 ka plan batao')).toBe(true);
-    expect(tools.isTaskQuery('concept samjhao')).toBe(true); // concept is now a valid query word for blocks
+    // General concept questions stay on the normal chat path — they must NOT
+    // consume a tool hop (this was the wrong-tool-pick bug).
+    expect(tools.isTaskQuery('concept samjhao')).toBe(false);
+    expect(tools.isTaskQuery('is problem ka solution batao')).toBe(false);
+    expect(tools.isTaskQuery('physics kaise padhein')).toBe(false);
+    // Custom-block commands still route to tools thanks to the block anchor.
+    expect(tools.isTaskQuery('concept building block banao')).toBe(true);
+    expect(tools.isTaskQuery('physics block create karo')).toBe(true);
+    expect(tools.isTaskQuery('block-bogus ko extend karo')).toBe(true);
     expect(tools.parseTool('{"action":"getPlan","day":15}')).toEqual({ action: 'getPlan', day: 15 });
     expect(tools.parseTool('sure! {"action":"markDone","day":2,"taskId":"x"} ok')).toEqual({ action: 'markDone', day: 2, taskId: 'x' });
     expect(tools.parseTool('no json here')).toBeNull();
@@ -549,6 +584,55 @@ describe('ChatService with tools', () => {
     expect(reply.content).toContain('konse din');
     expect(streamCalled).toBe(false);
   });
+
+  it('sends file attachments straight to the model — skips the tool decision hop', async () => {
+    const restore = stubBlobUtils();
+    try {
+      const store = makeStore();
+      const { tools } = makeTools(store);
+      let completeCalled = false;
+      let streamCalled = false;
+      let lastRequest: LLMRequest | null = null;
+      const provider: LLMProvider = {
+        id: 'openrouter' as ProviderId,
+        label: 'OpenRouter',
+        isConfigured: () => true,
+        complete: async (): Promise<LLMResponse> => {
+          completeCalled = true;
+          return { text: '', model: 'a' };
+        },
+        stream: async (req: LLMRequest): Promise<LLMResponse> => {
+          streamCalled = true;
+          lastRequest = req;
+          return { text: 'PDF ka analysis:', model: 'a' };
+        },
+        fetchModels: async (): Promise<ModelInfo[]> => [],
+        healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+      };
+      const chat = makeChat(store, provider, tools);
+      const session = chat.createSession();
+      // "concept" is a TASK_QUERY_WORD — without the routing fix this message
+      // would hit the JSON tool decision hop (complete) instead of the real
+      // chat completion (stream), and a PDF could never reach the model.
+      const reply = await chat.send(
+        session.id,
+        'Is PDF ka concept samjhao',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        [{ id: 'a1', name: 'notes.pdf', kind: 'file', previewUrl: 'blob:fake-pdf' }],
+      );
+      expect(completeCalled).toBe(false);
+      expect(streamCalled).toBe(true);
+      expect(reply.content).toBe('PDF ka analysis:');
+      const lastUser = lastRequest!.messages.filter((m) => m.role === 'user').pop()!;
+      const parts = lastUser.content as ContentPart[];
+      expect(parts.some((p) => p.type === 'file')).toBe(true);
+    } finally {
+      restore();
+    }
+  });
 });
 
 describe('ChatService tool retry + reasoning', () => {
@@ -578,6 +662,9 @@ describe('ChatService tool retry + reasoning', () => {
     expect(calls).toBe(2);
     expect(reply.content).toBe('Hata diya.');
     expect(reply.tool).toBe('removeTask');
+    expect(reply.toolCalls).toHaveLength(1);
+    expect(reply.toolCalls?.[0]).toMatchObject({ action: 'removeTask', ok: true });
+    expect(typeof reply.toolCalls?.[0]?.message).toBe('string');
   });
 
   it('auto-fetches the day plan and replans when the model guesses a wrong task id', async () => {
@@ -636,6 +723,66 @@ describe('ChatService tool retry + reasoning', () => {
     expect(reply.content).toBe('Nahi ho paya.');
     // The addTask that succeeded before the guessed-id failure stays applied.
     expect(store.get().dynamicTaskBank.some((e) => e.id === 'ai-chat-test')).toBe(true);
+  });
+
+  it('feeds a retryable non-id tool error back so the model can fix and re-emit', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    let calls = 0;
+    let sawErrorFeedback = false;
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (req: LLMRequest): Promise<LLMResponse> => {
+        calls += 1;
+        if (calls === 1) return { text: '{"action":"editBlock","blockId":"block-bogus","days":5}', model: 'a' };
+        const lastUser = req.messages.filter((m) => m.role === 'user').pop();
+        const content = typeof lastUser?.content === 'string' ? lastUser.content : '';
+        if (content.includes('Failed actions and errors')) sawErrorFeedback = true;
+        return { text: '{"action":"listBlocks"}', model: 'a' };
+      },
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        req.onDelta?.('Dekh rahe hain.');
+        return { text: 'Dekh rahe hain.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    const reply = await chat.send(session.id, 'block-bogus ko 5 din extend karo');
+    expect(calls).toBe(2);
+    expect(sawErrorFeedback).toBe(true);
+    expect(reply.content).toBe('Dekh rahe hain.');
+    expect(reply.tool).toBe('listBlocks');
+  });
+
+  it('stops retrying when the error-feedback hop also fails to emit JSON', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    let calls = 0;
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => {
+        calls += 1;
+        if (calls === 1) return { text: '{"action":"editBlock","blockId":"block-bogus","days":5}', model: 'a' };
+        return { text: 'mujhe nahi pata, prose hi bhej raha hoon', model: 'a' };
+      },
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        req.onDelta?.('Nahi ho paya.');
+        return { text: 'Nahi ho paya.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    const reply = await chat.send(session.id, 'block-bogus ko 5 din extend karo');
+    expect(calls).toBe(2);
+    expect(reply.content).toBe('Nahi ho paya.');
   });
 
   it('captures reasoning on the assistant message and forwards deltas', async () => {

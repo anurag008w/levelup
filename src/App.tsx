@@ -6,6 +6,7 @@ import LoginScreen from './screens/LoginScreen';
 import { useAppState } from './lib/useAppState';
 import { clearSession, ensureV1Base, loadSession, saveSession, type AuthSession } from './lib/auth';
 import { container } from './di/container';
+import { setupNotificationActions } from './lib/notification-actions';
 import ScreenSkeleton from './components/ScreenSkeleton';
 
 const LevelsScreen = lazy(() => import('./screens/LevelsScreen'));
@@ -26,10 +27,28 @@ export default function App() {
   const [chatVisited, setChatVisited] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(() => loadSession());
   const [guest, setGuest] = useState(() => localStorage.getItem('levelup:guest') === 'true');
+  // Notification tap/reply se aaya target session — ChatScreen isse activeId
+  // bana leta hai aur App value clear kar deta hai (onTargetConsumed).
+  const [targetChatSessionId, setTargetChatSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     if (tab === 'chat') setChatVisited(true);
   }, [tab]);
+
+  // Notification actions (native): inline reply / tap → chat kholo.
+  // Listen `levelup:open-chat` from notification-actions and jump to Chat tab.
+  useEffect(() => {
+    setupNotificationActions();
+    const onOpenChat = (e: Event) => {
+      const detail = (e as CustomEvent<{ sessionId: string }>).detail;
+      if (!detail?.sessionId) return;
+      setTargetChatSessionId(detail.sessionId);
+      setChatVisited(true);
+      setTab('chat');
+    };
+    window.addEventListener('levelup:open-chat', onOpenChat);
+    return () => window.removeEventListener('levelup:open-chat', onOpenChat);
+  }, []);
 
   // Auto-wire the app's DEFAULT (hidden) provider to the logged-in server:
   // baseUrl = server/v1, apiKey = the user's own sk- key, so the gateway can
@@ -122,7 +141,10 @@ export default function App() {
       </AnimatePresence>
       {(chatVisited || tab === 'chat') && (
         <div style={{ display: tab === 'chat' ? undefined : 'none' }} aria-hidden={tab !== 'chat'}>
-          <ChatScreen />
+          <ChatScreen
+            targetSessionId={targetChatSessionId}
+            onTargetConsumed={() => setTargetChatSessionId(null)}
+          />
         </div>
       )}
       <TabBar

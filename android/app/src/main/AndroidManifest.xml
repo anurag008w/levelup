@@ -37,6 +37,10 @@
     </application>
 
     <!-- Permissions -->
-
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 13+ (API 33) ke liye runtime notification permission — bina iske
+         dialog kabhi nahi dikhta aur notifications silently block ho jati hain. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Scheduled notifications ko device reboot ke baad bhi fire karne ke liye. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 </manifest>
