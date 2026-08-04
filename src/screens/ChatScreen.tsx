@@ -123,8 +123,6 @@ export default function ChatScreen({
   const [catalog, setCatalog] = useState<ModelInfo[]>([]);
   const [providerSig, setProviderSig] = useState(() => providerSigOf(container.providerSettings.listStoredProviders()));
   const [menu, setMenu] = useState<MenuState | null>(null);
-  /** Live tool/status text while the AI collects a reply (shown near composer). */
-  const [toolStatus, setToolStatus] = useState<string | null>(null);
   /** Pending "Copy this chat to memory?" prompt shown when switching away from an unarchived chat. */
   const [memoryPrompt, setMemoryPrompt] = useState<{ sessionId: string; title: string; onConfirm: () => void } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -455,7 +453,7 @@ export default function ChatScreen({
       text,
       undefined, // onDelta — intentionally not shown live
       controller.signal,
-      (s) => setToolStatus(s), // onStatus — live tool activity near the composer
+      undefined, // onStatus — intentionally unused; no live tool-status box in the composer
       undefined, // reasoning delta — collected and stored on the message
       chatAttachments,
     );
@@ -481,7 +479,6 @@ export default function ChatScreen({
       if (sent) revokeAttachmentUrls(pendingAttachments);
       abortRef.current = null;
       setStreaming(false);
-      setToolStatus(null);
       refresh();
       // Only the message we just generated gets the reveal effect; reopening
       // an old chat must never replay it.
@@ -762,21 +759,6 @@ export default function ChatScreen({
 
       {/* Composer */}
       <div className="chat-composer-wrap">
-        {streaming && toolStatus && (
-          <div className="mb-2 flex justify-center" role="status">
-            <div className="flex items-center gap-2 rounded-full border border-peak/25 bg-peak/8 px-3 py-1.5 text-[11px] font-semibold text-peak">
-              <span className="pulse-dot" aria-hidden="true">
-                <Wrench size={12} />
-              </span>
-              <span>{toolStatus}</span>
-              <span className="typing-dots" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </span>
-            </div>
-          </div>
-        )}
         {(error || notice) && (
           <div
             className={`mb-2 flex justify-center text-center ${error ? 'text-danger' : 'text-muted'}`}
