@@ -89,6 +89,7 @@ jobs:
 
       - name: Build web app
         env:
+          VITE_APP_VERSION: ${{ steps.version.outputs.VERSION_NAME }}
           VITE_DEFAULT_AI_BASE_URL: ${{ secrets.VITE_DEFAULT_AI_BASE_URL }}
           VITE_DEFAULT_AI_API_KEY: ${{ secrets.VITE_DEFAULT_AI_API_KEY }}
           VITE_DEFAULT_AI_MODEL: ${{ secrets.VITE_DEFAULT_AI_MODEL }}
@@ -123,11 +124,19 @@ jobs:
 
       - name: Build release APK
         if: steps.setup_signing.outputs.SIGNED == 'true'
-        run: cd android && ./gradlew assembleRelease --no-daemon
+        run: |
+          cd android
+          ./gradlew assembleRelease --no-daemon \
+            -PversionName="${{ steps.version.outputs.VERSION_NAME }}" \
+            -PversionCode="$(echo "${{ steps.version.outputs.VERSION_NAME }}" | tr -d '.')"
 
       - name: Build debug APK
         if: steps.setup_signing.outputs.SIGNED != 'true'
-        run: cd android && ./gradlew assembleDebug --no-daemon
+        run: |
+          cd android
+          ./gradlew assembleDebug --no-daemon \
+            -PversionName="${{ steps.version.outputs.VERSION_NAME }}" \
+            -PversionCode="$(echo "${{ steps.version.outputs.VERSION_NAME }}" | tr -d '.')"
 
       - name: Prepare APK
         id: prepare
