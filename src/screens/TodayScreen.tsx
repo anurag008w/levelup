@@ -267,7 +267,7 @@ export default function TodayScreen({
       {!level?.authored && (
         <div className="card mb-4 flex items-start gap-2.5 p-3.5 text-sm text-muted">
           <SparkleIcon />
-          <p>Is level ka detailed content agle update mein add hoga. Tab tak pichle levels ke habits continue rakho — wahi list neeche dikh rahi hai.</p>
+          <p>Detailed content coming soon. Keep continuing previous level habits (listed below).</p>
         </div>
       )}
 

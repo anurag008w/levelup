@@ -53,38 +53,41 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
   // Auto-hide the floating hamburger while scrolling down, reveal it when the
   // user scrolls back up or returns to the top. Works for both the document
   // scroller and inner scroll containers (e.g. the chat thread).
+  //
+  // Each scroll target keeps its OWN last position: nested scrollers (the
+  // chat's horizontal attachment strip fires scroll events with scrollTop 0)
+  // must never reset another scroller's baseline, or a scroll-up on the main
+  // thread computes a wrong delta and the handle stays hidden forever.
   useEffect(() => {
-    let lastTarget: EventTarget | null = null;
-    let lastScrollTop = 0;
-    let ticking = false;
+    const positions = new Map<EventTarget, number>();
 
     function scrollTopOf(target: EventTarget | null): number {
       if (!target || target === document) {
         return window.scrollY || document.documentElement.scrollTop || 0;
       }
+      return (target as HTMLElement).scrollTop ?? 0;
+    }
+
+    /** Horizontal-only strips/textareas scroll too — they must not move the handle. */
+    function canScrollY(target: EventTarget | null): boolean {
+      if (!target || target === document) return true;
       const el = target as HTMLElement;
-      return el.scrollTop ?? 0;
+      return el.scrollHeight > el.clientHeight + 1;
     }
 
     function onScroll(event: Event) {
       const target = event.target;
+      if (!canScrollY(target)) return;
+      const key: EventTarget = target ?? document;
       const scrollTop = scrollTopOf(target);
-      if (target !== lastTarget) {
-        lastTarget = target;
-        lastScrollTop = scrollTop;
-      }
-      if (ticking) return;
-      ticking = true;
-      requestAnimationFrame(() => {
-        ticking = false;
-        const delta = scrollTop - lastScrollTop;
-        lastScrollTop = scrollTop;
-        setHandleVisible((visible) => {
-          if (scrollTop <= 2) return true;
-          if (delta > 4) return false;
-          if (delta < -4) return true;
-          return visible;
-        });
+      const prev = positions.get(key) ?? scrollTop;
+      positions.set(key, scrollTop);
+      const delta = scrollTop - prev;
+      setHandleVisible((visible) => {
+        if (scrollTop <= 2) return true;
+        if (delta > 4) return false;
+        if (delta < -4) return true;
+        return visible;
       });
     }
 
@@ -356,8 +359,8 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
                   <span className="font-mono text-[10px] text-muted">{state.memory.entries.length + state.memory.summaries.length} items</span>
                 </div>
                 <p className="mb-2 text-[11px] leading-relaxed text-muted">
-                  Purani chats yahan memory me archive hoti hain (read-only chat history). Ek click se saari unread
-                  chats AI se ek saath condense ho jaati hain — blocks edit, delete ya pin kar sakte ho.
+                  Old chats archive here as read-only transcripts. One click summarizes all unread
+                  chats — edit, delete or pin blocks.
                 </p>
                 <div className="mb-3">
                   <MemorySummaryPanel />

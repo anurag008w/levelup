@@ -104,9 +104,8 @@ export default function MemorySummaryPanel() {
         </span>
       </div>
       <p className="mb-3 text-[11px] leading-relaxed text-muted">
-        AI ek hi baar mein saari unread chats padhega, purani 7-din ki memory ko continuity ke liye dekhega,
-        aur chhote-chhote blocks (max 8 lines, '----' se alag) mein condense karega. Jo chat abhi kholi hai woh
-        internal rehti hai — summarize nahi hoti. Ek baar ho jaye toh wahi chat dobara kabhi nahi padhi jaati.
+        Reads all unread chats in one pass, checks last 7 days of memory, saves small blocks
+        (max 8 lines, '----' separated). Open chat stays internal. Each chat is read once only.
       </p>
 
       <button
