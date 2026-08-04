@@ -496,16 +496,21 @@ export class ChatService {
           partial += streamTail;
           onDelta?.(streamTail);
         }
-        if (!summary.text && !summary.reasoning) {
+        let finalSummary = summary;
+        if (!finalSummary.text && !finalSummary.reasoning) {
+          const fallbackReq = { ...summaryRequest, thinking: 'off' as const, maxTokens: 16384 };
+          finalSummary = await this.llm.stream(fallbackReq);
+        }
+        if (!finalSummary.text && !finalSummary.reasoning) {
           throw new Error('AI ka reply khaali aaya — max tokens barhao ya thinking off karo.');
         }
         const assistant: ChatMessage = {
           id: uid(),
           role: 'assistant',
-          content: sanitizeAssistantLeaks(summary.text),
+          content: sanitizeAssistantLeaks(finalSummary.text),
           createdAt: this.clock.now().toISOString(),
-          model: summary.model,
-          reasoning: (summary.reasoning ?? reasoning) || undefined,
+          model: finalSummary.model,
+          reasoning: (finalSummary.reasoning ?? reasoning) || undefined,
           tool: actions.map((a) => a.action).join(','),
           toolCalls: (toolResult.results ?? []).map((r) => ({
             action: r.action,
@@ -560,16 +565,23 @@ export class ChatService {
         reasoning = '';
         resp = await runStream();
       }
-      if (!resp.text && !resp.reasoning) {
+      let finalResp = resp;
+      if (!finalResp.text && !finalResp.reasoning) {
+        const fallbackReq = await this.buildRequest(session, undefined, signal);
+        fallbackReq.thinking = 'off';
+        fallbackReq.maxTokens = 16384;
+        finalResp = await this.llm.stream(fallbackReq);
+      }
+      if (!finalResp.text && !finalResp.reasoning) {
         throw new Error('AI ka reply khaali aaya — max tokens barhao ya thinking off karo.');
       }
       const assistant: ChatMessage = {
         id: uid(),
         role: 'assistant',
-        content: sanitizeAssistantLeaks(resp.text),
+        content: sanitizeAssistantLeaks(finalResp.text),
         createdAt: this.clock.now().toISOString(),
-        model: resp.model,
-        reasoning: (resp.reasoning ?? reasoning) || undefined,
+        model: finalResp.model,
+        reasoning: (finalResp.reasoning ?? reasoning) || undefined,
       };
       this.appendAssistant(session, assistant);
       return assistant;
