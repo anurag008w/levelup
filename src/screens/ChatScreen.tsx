@@ -468,11 +468,13 @@ export default function ChatScreen({
 
       // AI reply complete — native/web notification (sirf jab user ne Settings me ON kiya ho).
       // sessionId notification ke extra me jaata hai — tap/reply se usi chat pe khulega.
-      const sessionTitle = sessions.find((s) => s.id === sessionId)?.title ?? 'Chat';
+      const sessionTitle = sessions.find((s) => s.id === sessionId)?.title || 'Chat';
       // Poora reply notification me jaata hai — largeBody (BigTextStyle) expand
       // karne par pura message dikhata hai. Sirf ek generous safety cap.
       const preview = assistant.content.replace(/\s+/g, ' ').trim().slice(0, 1000);
-      void notifyAiReply(`Misa — ${sessionTitle}`, preview || 'Naya AI reply aaya', sessionId);
+      // WhatsApp jaisa split: title = chat ka naam, body me "Sender: message" —
+      // isse pata chalta hai kisne bheja, aur alag-alag chats clutter nahi karte.
+      void notifyAiReply(sessionTitle, `Misa: ${preview || 'Naya AI reply aaya'}`, sessionId);
     } catch (err) {
       setDraft(pendingDraft);
       setAttachments(pendingAttachments);
