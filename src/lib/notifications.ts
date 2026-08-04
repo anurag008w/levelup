@@ -9,6 +9,7 @@
  * Preference persistentStorage me rehti hai (Android pe app update ke baad bhi survive karti hai).
  */
 import { Capacitor, type PermissionState } from '@capacitor/core';
+import { App } from '@capacitor/app';
 import { LocalNotifications, type PendingLocalNotificationSchema } from '@capacitor/local-notifications';
 import { IntentLauncher, ActivityAction } from '@capgo/capacitor-intent-launcher';
 import { persistentStorage } from '../infra/storage/persistent-storage';
@@ -35,6 +36,57 @@ const ANDROID_ID_MAX = 2_147_483_647;
 const CHANNEL_ID = 'levelup-ai-replies';
 /** Notification action type — inline reply + open chat actions. */
 const ACTION_TYPE_ID = 'levelup-ai-reply';
+
+/**
+ * Whether the Chat tab is currently the active (visible) tab — set by App.tsx
+ * whenever the user switches tabs. Combined with document visibility it lets
+ * notifyAiReply skip alerts while the user is already watching the chat, so a
+ * reply landing right in front of them never double-fires as a notification.
+ * The flag is deliberately module-level (not per-session): while the user is
+ * on the Chat tab no chat's reply should interrupt them.
+ */
+let chatTabActive = false;
+
+export function setChatTabActive(active: boolean): void {
+  chatTabActive = active;
+}
+
+export function isChatTabActive(): boolean {
+  return chatTabActive;
+}
+
+/**
+ * App foreground/background tracking. Android WebView background me JS timers
+ * ko throttle/pause kar deta hai — isliye `setTimeout`-based notification
+ * delays kabhi nahi chalti jab app background me ho. Is flag se hum background
+ * ko detect karke native OS-level scheduling (`schedule.at`) use kar sakte
+ * hain, jo timers par depend nahi karta.
+ */
+let appActive = true;
+
+export function isAppActive(): boolean {
+  return appActive;
+}
+
+/** App ke foreground/background state ko track karta hai. App start pe ek baar call karo. */
+export function trackAppState(): void {
+  if (typeof document !== 'undefined') {
+    const syncFromVisibility = () => {
+      appActive = !document.hidden;
+    };
+    document.addEventListener('visibilitychange', syncFromVisibility);
+    syncFromVisibility();
+  }
+  if (isNativePlatform()) {
+    try {
+      App.addListener('appStateChange', ({ isActive }) => {
+        appActive = isActive;
+      });
+    } catch {
+      // visibilitychange fallback kafi hai
+    }
+  }
+}
 
 export function isNativePlatform(): boolean {
   return Capacitor.isNativePlatform();
@@ -208,11 +260,19 @@ function sessionToNotificationId(sessionId?: string): number {
  * karta hai. Same sessionId = same notification id = har update purani ko merge
  * kar deta hai, last me poora reply ek hi notification me.
  *
- * Note: delay native pe bhi JS setTimeout se manage hota hai (na ki
- * schedule.at) — kyunki Android plugin same id ke pending schedule ko cancel
+ * Note: foreground me delay native pe bhi JS setTimeout se manage hota hai (na
+ * ki schedule.at) — kyunki Android plugin same id ke pending schedule ko cancel
  * kar deta hai, isliye multiple future updates pre-schedule nahi ho sakte.
  * Chat reveal bhi JS timers se chalta hai, isliye dono sath-sath sync rehte
- * hain (app background hote huye dono pause/fire hote hain).
+ * hain.
+ *
+ * BACKGROUND (native): Android WebView JS timers ko pause/throttle kar deta
+ * hai, isliye setTimeout-based delay kabhi fire nahi hoti — reply complete hone
+ * par bhi notification nahi aati. Isliye jab app background me ho to
+ * notification ko OS-level absolute time pe schedule karte hain
+ * (schedule.at + allowWhileIdle) — lock screen / Doze me bhi fire hoti hai.
+ * Same id ka matlab plugin purani pending schedule ko cancel kar deta hai,
+ * isliye multiple bubble updates me se sirf aakhri (poora reply) bachegi.
  */
 export async function notifyAiReply(title: string, body: string, sessionId?: string, delayMs = 0): Promise<void> {
   if (!isNotificationSupported()) return;
@@ -227,7 +287,43 @@ export async function notifyAiReply(title: string, body: string, sessionId?: str
   const notificationId = sessionToNotificationId(sessionId);
   const tag = sessionId ? `levelup-chat-${sessionId}` : 'levelup-ai';
 
+  // Background + delayed notification: JS timers throttled hote hain, isliye
+  // setTimeout se kabhi fire nahi hogi. OS ko absolute time de do — Android
+  // isse alarm ki tarah schedule karta hai aur app background/locked ho tab
+  // bhi dikhata hai.
+  if (isNativePlatform() && !appActive && delayMs > 0) {
+    try {
+      await ensureNotificationChannel();
+      await LocalNotifications.schedule({
+        notifications: [
+          {
+            id: notificationId,
+            title,
+            body,
+            largeBody: body,
+            summaryText: title,
+            channelId: CHANNEL_ID,
+            actionTypeId: ACTION_TYPE_ID,
+            extra: { sessionId },
+            schedule: { at: new Date(Date.now() + delayMs), allowWhileIdle: true },
+          },
+        ],
+      });
+    } catch {
+      // koi UI error nahi — notification best-effort hai
+    }
+    return;
+  }
+
   const fire = async () => {
+    // Chat tab active + app foreground = user is already watching the reply
+    // bubble-by-bubble — don't push a notification on top of it. Jab app
+    // background me ho (appActive false) to hamesha aati hai, kyunki user chat
+    // nahi dekh raha. Ye check fire-time pe hota hai, isliye agar user reveal
+    // ke beech me tab switch kare to agle bubbles ki notifications turant
+    // chalu ho jaati hain.
+    if (chatTabActive && appActive) return;
+
     if (isNativePlatform()) {
       try {
         await ensureNotificationChannel();
