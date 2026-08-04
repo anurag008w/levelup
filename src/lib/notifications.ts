@@ -223,7 +223,13 @@ export async function notifyAiReply(title: string, body: string, sessionId?: str
           {
             id: notificationId,
             title,
+            // Collapsed (single-line) view ke liye short body — Android khud
+            // ellipsize kar deta hai agar lamba ho.
             body,
+            // largeBody = BigTextStyle — expand/swipe-down karne par poora
+            // (multi-line) message dikhta hai instead of cut-off single line.
+            largeBody: body,
+            summaryText: title,
             channelId: CHANNEL_ID,
             // Reply/Open actions + session id — tap/reply se app usi chat pe khule.
             actionTypeId: ACTION_TYPE_ID,
