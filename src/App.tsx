@@ -14,6 +14,7 @@ const ProgressScreen = lazy(() => import('./screens/ProgressScreen'));
 const ReviewScreen = lazy(() => import('./screens/ReviewScreen'));
 const TaskBankScreen = lazy(() => import('./screens/TaskBankScreen'));
 const AISettingsScreen = lazy(() => import('./screens/AISettingsScreen'));
+const UpdatesScreen = lazy(() => import('./screens/UpdatesScreen'));
 const ChatScreen = lazy(() => import('./screens/ChatScreen'));
 
 const pageSpring = { type: 'tween', duration: 0.32, ease: [0.2, 0, 0, 1] } as const;
@@ -118,6 +119,8 @@ export default function App() {
         return <TaskBankScreen state={state} update={update} />;
       case 'ai':
         return <AISettingsScreen state={state} update={update} session={session} onLogout={handleLogout} />;
+      case 'updates':
+        return <UpdatesScreen />;
       case 'chat':
         // Rendered separately below so it never unmounts on tab switch.
         return null;

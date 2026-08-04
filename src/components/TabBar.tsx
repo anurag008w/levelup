@@ -7,7 +7,7 @@ import { container } from '../di/container';
 import { haptic } from '../lib/haptics';
 import MemorySummaryPanel from './MemorySummaryPanel';
 
-export type Tab = 'today' | 'levels' | 'progress' | 'review' | 'task-bank' | 'ai' | 'chat';
+export type Tab = 'today' | 'levels' | 'progress' | 'review' | 'task-bank' | 'ai' | 'chat' | 'updates';
 
 const TABS: { id: Tab; label: string; hint: string; icon: typeof CalendarCheck; tone: 'l' | 'gold' | 'blood' | 'slate' | 'neutral' }[] = [
   { id: 'today', label: 'Today', hint: 'Daily mission', icon: CalendarCheck, tone: 'l' },
@@ -17,6 +17,7 @@ const TABS: { id: Tab; label: string; hint: string; icon: typeof CalendarCheck; 
   { id: 'task-bank', label: 'Tasks', hint: 'Bank', icon: ListTodo, tone: 'l' },
   { id: 'chat', label: 'Misa', hint: 'Doubts & maths', icon: MessageCircle, tone: 'blood' },
   { id: 'ai', label: 'Settings', hint: 'App & AI', icon: Settings, tone: 'neutral' },
+  { id: 'updates', label: 'Updates', hint: 'Install new version', icon: Download, tone: 'l' },
 ];
 
 const sidebarSpring = { type: 'tween', duration: 0.32, ease: [0.2, 0, 0, 1] } as const;
