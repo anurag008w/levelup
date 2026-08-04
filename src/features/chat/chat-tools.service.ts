@@ -39,6 +39,13 @@ const TASK_QUERY_WORDS = [
   'mark', 'done', 'complete', 'delete', 'remove', 'hata', 'hatao', 'add', 'badlo', 'badal',
   'schedule', 'change', 'edit', 'update', 'replan', 'reschedule', 'shift', 'increase',
   'decrease', 'reduce', 'goal', 'target', 'revision', 'padhai', 'tasks', 'saare', 'all', 'bulk',
+  // Hinglish & Action triggers
+  'karo', 'karna', 'banao', 'bana', 'dikhao', 'show', 'check', 'status', 'progress',
+  'score', 'streak', 'history', 'backup', 'sync', 'reset', 'clear', 'uncomplete',
+  'pending', 'todo', 'audit', 'analyze', 'summary', 'report',
+  // Study workflow triggers
+  'study', 'padhna', 'syllabus', 'chapter', 'mock',
+  'test', 'questions', 'problems', 'notes', 'formula', 'jee', 'exam', 'rank', 'percentile',
   // Block-related anchors
   'block', 'phase', 'activate', 'extend', 'list',
 ];
