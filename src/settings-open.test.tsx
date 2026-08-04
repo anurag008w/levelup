@@ -32,4 +32,28 @@ describe('settings open smoke', () => {
     fireEvent.click(btn);
     await waitFor(() => expect(screen.getByText('Response Quality')).toBeTruthy());
   });
+
+  it('AISettingsScreen Delete all data shows a Yes/No confirm dialog', async () => {
+    const session = {
+      serverUrl: 'https://sync.test',
+      username: 'testuser',
+      role: 'user' as const,
+      apiKey: 'sk-test',
+      token: 'jwt-test',
+      loggedInAt: '2026-01-01T00:00:00.000Z',
+    };
+    render(
+      React.createElement(AISettingsScreen, {
+        state: container.store.get(),
+        update: () => {},
+        session,
+        onLogout: () => {},
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Delete all/i }));
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Delete all data' })).toBeTruthy());
+    // Yes and No are both present.
+    expect(screen.getByRole('button', { name: /Yes, delete all/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /No, cancel/i })).toBeTruthy();
+  });
 });

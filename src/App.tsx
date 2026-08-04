@@ -25,6 +25,7 @@ export default function App() {
   // because the user peeked at another tab). Hidden screens keep running.
   const [chatVisited, setChatVisited] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(() => loadSession());
+  const [guest, setGuest] = useState(() => localStorage.getItem('levelup:guest') === 'true');
 
   useEffect(() => {
     if (tab === 'chat') setChatVisited(true);
@@ -37,23 +38,39 @@ export default function App() {
   useEffect(() => {
     if (!session) return;
     container.providerSettings.configureServerAuth(ensureV1Base(session.serverUrl), session.apiKey);
+    container.syncCoordinator.attach(session);
   }, [session]);
 
   function handleLoggedIn(next: AuthSession) {
     saveSession(next);
+    localStorage.removeItem('levelup:guest');
+    setGuest(false);
     setSession(next);
     setTab('today');
   }
 
-  function handleLogout() {
-    clearSession();
-    setSession(null);
+  // Guest (skipped login): app runs fully offline — data stays in localStorage,
+  // no server model, no sync. Server auth is disabled so nothing leaks.
+  function handleGuestMode() {
+    container.providerSettings.disableServerAuth();
+    localStorage.setItem('levelup:guest', 'true');
+    setGuest(true);
     setTab('today');
   }
 
-  // App-start login gate: levelup content only appears after authentication.
-  if (!session) {
-    return <LoginScreen onLoggedIn={handleLoggedIn} />;
+  function handleLogout() {
+    container.syncCoordinator.detach();
+    clearSession();
+    localStorage.removeItem('levelup:guest');
+    setSession(null);
+    setGuest(false);
+    setTab('today');
+  }
+
+  // App-start login gate: levelup content only appears after authentication
+  // (or after the user explicitly skips into offline/guest mode).
+  if (!session && !guest) {
+    return <LoginScreen onLoggedIn={handleLoggedIn} onSkip={handleGuestMode} />;
   }
 
   function renderScreen() {

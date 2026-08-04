@@ -247,6 +247,6 @@ export function emptyAppState(): AppState {
     userProfile: defaultUserProfile(),
     timeZone: null,
     customHabits: [],
-    curriculumEditing: true,
+    curriculumEditing: false,
   };
 }

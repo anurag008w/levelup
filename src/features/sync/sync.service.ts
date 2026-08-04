@@ -1,0 +1,200 @@
+// SyncService — offline-first backup to the SmartRotator gateway.
+//
+// The app is push-authoritative: every mutation (state, chat, memory,
+// settings, providers) is pushed to the server under the logged-in user's own
+// folder (data/sync/<user>/<scope>.json on the server). The server never
+// overwrites app data — it only stores the latest push (last-write-wins).
+//
+// Fresh-install / new-device recovery happens on login: the app pulls what the
+// server has for the user and merges it (server data wins only when the local
+// store is empty, i.e. a brand-new install).
+//
+// Auth: the user's own JWT token (kept in the AuthSession) — the same
+// credential used for every gateway call. On mobile it goes through the
+// native HTTP stack (no CORS); on web it falls back to fetch.
+//
+// Scopes mirror the server layout:
+//   state    → whole AppState (plan, tasks, logs, memory, profile, providers…)
+//   chat     → chat sessions + messages
+//   settings → AI/chat preferences (kept separate so re-login can restore
+//              prefs without clobbering live progress)
+
+import type { HttpClient } from '../../infra/ai/http';
+import type { AuthSession } from '../../lib/auth';
+import type { AppState } from '../../core/domain/state';
+import type { ChatStoreState } from '../../core/domain/chat';
+import { normalizeState } from '../../infra/storage/state-repository';
+import { normalizeChatSessions } from '../backup/backup.service';
+
+export type SyncScope = 'state' | 'chat' | 'settings';
+
+export interface SyncStatus {
+  exists: boolean;
+  updatedAt: string;
+  bytes: number;
+}
+
+export interface SyncPushResult {
+  ok: boolean;
+  updatedAt: string;
+  status?: number;
+  message?: string;
+}
+
+/** What a scope is syncing right now — surfaced in the Settings UI. */
+export type SyncState = 'idle' | 'syncing' | 'online' | 'offline' | 'error';
+
+export interface SyncScopeState {
+  scope: SyncScope;
+  state: SyncState;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+}
+
+interface SyncStatusResponse {
+  username?: string;
+  exists?: boolean;
+  scope?: string;
+  updated_at?: string;
+  bytes?: number;
+}
+
+interface SyncGetResponse {
+  username?: string;
+  scope?: string;
+  exists?: boolean;
+  updated_at?: string;
+  state?: unknown;
+}
+
+interface SyncPutResponse {
+  username?: string;
+  scope?: string;
+  updated_at?: string;
+  ok?: boolean;
+}
+
+interface SyncDeleteResponse {
+  username?: string;
+  scope?: string;
+  deleted?: boolean;
+}
+
+export class SyncService {
+  private readonly http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.http = http;
+  }
+
+  private headers(session: AuthSession): Record<string, string> {
+    return { Authorization: `Bearer ${session.token || session.apiKey}`, 'Content-Type': 'application/json' };
+  }
+
+  /** Server status for one scope (exists / updated_at / size). */
+  async status(session: AuthSession, scope: SyncScope): Promise<SyncStatus> {
+    try {
+      const res = await this.http.requestJson<SyncStatusResponse>({
+        url: `${session.serverUrl}/sync/status?scope=${scope}`,
+        method: 'GET',
+        headers: this.headers(session),
+        timeoutMs: 10_000,
+        retries: 1,
+      });
+      return { exists: res.exists === true, updatedAt: res.updated_at ?? '', bytes: res.bytes ?? 0 };
+    } catch {
+      return { exists: false, updatedAt: '', bytes: 0 };
+    }
+  }
+
+  /** Which scopes the server has for this user (fresh install pull hint). */
+  async scopes(session: AuthSession): Promise<SyncScope[]> {
+    try {
+      const res = await this.http.requestJson<{ scopes?: string[] }>({
+        url: `${session.serverUrl}/sync/scopes`,
+        method: 'GET',
+        headers: this.headers(session),
+        timeoutMs: 10_000,
+        retries: 1,
+      });
+      const known: SyncScope[] = ['state', 'chat', 'settings'];
+      return (res.scopes ?? []).filter((s): s is SyncScope => (known as string[]).includes(s));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Pull one scope from the server. Returns the raw payload (null when absent). */
+  async pull(session: AuthSession, scope: SyncScope): Promise<{ updatedAt: string; state: unknown } | null> {
+    try {
+      const res = await this.http.requestJson<SyncGetResponse>({
+        url: `${session.serverUrl}/sync/state?scope=${scope}`,
+        method: 'GET',
+        headers: this.headers(session),
+        timeoutMs: 15_000,
+        retries: 1,
+      });
+      if (!res.exists) return null;
+      return { updatedAt: res.updated_at ?? '', state: res.state ?? {} };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Push one scope to the server (push-authoritative, last-write-wins). */
+  async push(session: AuthSession, scope: SyncScope, state: unknown, updatedAt: string): Promise<SyncPushResult> {
+    try {
+      const res = await this.http.requestJson<SyncPutResponse>({
+        url: `${session.serverUrl}/sync/state?scope=${scope}`,
+        method: 'PUT',
+        headers: this.headers(session),
+        body: { state, updated_at: updatedAt },
+        timeoutMs: 15_000,
+        retries: 1,
+      });
+      return { ok: res.ok === true, updatedAt: res.updated_at ?? updatedAt };
+    } catch (err) {
+      return {
+        ok: false,
+        updatedAt: updatedAt,
+        status: err instanceof Error ? 0 : undefined,
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /** Delete the user's whole sync folder on the server (logout wipe). */
+  async wipe(session: AuthSession): Promise<boolean> {
+    try {
+      const res = await this.http.requestJson<SyncDeleteResponse>({
+        url: `${session.serverUrl}/sync/state?scope=*`,
+        method: 'DELETE',
+        headers: this.headers(session),
+        timeoutMs: 15_000,
+        retries: 1,
+      });
+      return res.deleted === true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/** Builds the normalized payload pushed for the `state` scope. */
+export function stateSyncPayload(state: AppState): unknown {
+  const full = normalizeState(state);
+  // The model catalog is an API cache, not user data — re-fetched on demand.
+  // Stripping it removes ~75% of the file size for most real backups.
+  return { ...full, aiSettings: { ...full.aiSettings, modelCache: {} } };
+}
+
+/** Builds the payload pushed for the `chat` scope. */
+export function chatSyncPayload(chat: ChatStoreState): unknown {
+  return { version: 1, sessions: normalizeChatSessions({ sessions: chat.sessions }) };
+}
+
+/** Normalizes a server chat payload back into a chat store. */
+export function chatFromSync(raw: unknown): ChatStoreState {
+  const sessions = normalizeChatSessions(raw);
+  return { version: 1, sessions };
+}
