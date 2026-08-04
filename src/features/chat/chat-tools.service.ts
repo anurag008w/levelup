@@ -3,7 +3,7 @@ import { defaultPostJourney, type AppState, type CustomPhase, type PostJourneySt
 import type { Difficulty, EnergyLevel, JeeRelevance, PhaseId, TaskBankEntry, TaskType, ThinkingSkill } from '../../core/domain/task-bank';
 import type { DailyPlan, ProgressionConfig } from '../../core/domain/progress';
 import { DEFAULT_PROGRESSION_CONFIG } from '../../core/domain/progress';
-import type { ChatToolAction, ChatToolResult } from '../../core/domain/chat-tools';
+import type { ChatToolAction, ChatToolActionResult, ChatToolResult } from '../../core/domain/chat-tools';
 import { AiActionRegistry, executeAiAction } from '../../core/domain/ai-actions';
 import { chatToolActionSchema, chatToolBatchSchema } from '../../core/domain/chat-tools';
 import type { HabitProgressionService } from '../habit-engine/planner';
@@ -32,15 +32,21 @@ ACTIONS.register({ id: 'createBlock', label: 'Create custom block', description:
 ACTIONS.register({ id: 'deleteBlock', label: 'Delete block', description: 'Delete a custom study block.', entityType: 'customBlocks', permissions: ['delete'], confirmationRequired: true });
 ACTIONS.register({ id: 'activateBlock', label: 'Activate block', description: 'Set a custom block as active.', entityType: 'customBlocks', permissions: ['edit'] });
 
+// Strong plan/block action words. A message containing any of these is
+// clearly about the plan, task bank or custom blocks.
 const TASK_QUERY_WORDS = [
   'task', 'plan', 'din', 'day', 'aaj', 'kal', 'parso', 'week', 'hafta', 'month', 'mahina',
   'mark', 'done', 'complete', 'delete', 'remove', 'hata', 'hatao', 'add', 'badlo', 'badal',
   'schedule', 'change', 'edit', 'update', 'replan', 'reschedule', 'shift', 'increase',
   'decrease', 'reduce', 'goal', 'target', 'revision', 'padhai', 'tasks', 'saare', 'all', 'bulk',
-  // Block-related words
-  'block', 'phase', 'physics', 'chemistry', 'maths', 'revision', 'mock', 'concept', 'problem',
-  'create', 'banao', 'bana', 'hatao', 'activate', 'shuru', 'custom',
+  // Block-related anchors
+  'block', 'phase', 'activate', 'extend', 'list',
 ];
+
+// Words that look like plan words but are ALSO general-chat subjects
+// ("concept samjhao", "is problem ka solution"). They only route to tools when
+// they appear inside a custom-block command (anchored by block/phase + verb).
+const BLOCK_COMMAND_WORDS = ['banao', 'bana', 'create', 'delete', 'remove', 'hatao', 'activate', 'extend', 'shuru', 'custom'];
 
 // Block type configurations
 const BLOCK_TYPES: Record<string, { name: string; icon: string; habits: Record<string, string[]> }> = {
@@ -121,10 +127,16 @@ export class ChatToolsService {
     this.config = config;
   }
 
-  /** Cheap heuristic: does this message plausibly ask about the plan/tasks? */
+  /** Cheap heuristic: does this message plausibly ask about the plan/tasks?
+   *  General concept questions ("concept samjhao", "physics kaise padhein")
+   *  deliberately do NOT route to tools — only concrete plan/task/block
+   *  commands do. "concept building block banao" still works because it is
+   *  anchored on block + a command verb. */
   isTaskQuery(text: string): boolean {
     const t = text.toLowerCase();
-    return TASK_QUERY_WORDS.some((w) => t.includes(w));
+    if (TASK_QUERY_WORDS.some((w) => t.includes(w))) return true;
+    if (!t.includes('block') && !t.includes('phase')) return false;
+    return BLOCK_COMMAND_WORDS.some((w) => t.includes(w));
   }
 
   /** Extracts and validates a single tool action from the model reply. */
@@ -210,18 +222,28 @@ export class ChatToolsService {
     let anyOk = false;
     let confirmationPending = false;
     const missingDays = new Set<number>();
+    const results: ChatToolActionResult[] = [];
     for (const a of actions) {
       const r = await this.run(a);
       summaries.push(r.summary);
       if (r.ok) anyOk = true;
       else if (r.requiresConfirmation) confirmationPending = true;
       for (const d of r.missingTaskIdDays ?? []) missingDays.add(d);
+      results.push({
+        action: a.action,
+        ok: r.ok,
+        summary: r.summary,
+        requiresConfirmation: r.requiresConfirmation,
+        missingTaskIdDays: r.missingTaskIdDays,
+        retryable: r.retryable,
+      });
     }
     return {
       ok: anyOk && !confirmationPending,
       requiresConfirmation: confirmationPending || undefined,
       summary: summaries.join('\n'),
       missingTaskIdDays: missingDays.size > 0 ? [...missingDays] : undefined,
+      results,
     };
   }
 
@@ -333,7 +355,7 @@ export class ChatToolsService {
     const blocks = sortBlocks(state.postJourney?.customPhases ?? []);
     const block = blocks.find(b => b.id === blockId);
 
-    if (!block) return { ok: false, summary: `Block "${blockId}" not found. Use listBlocks to get valid block IDs.` };
+    if (!block) return { ok: false, retryable: true, summary: `Block "${blockId}" not found. Use listBlocks to get valid block IDs.` };
 
     if (!confirmed) {
       return {
@@ -358,7 +380,7 @@ export class ChatToolsService {
     const blocks = sortBlocks(state.postJourney?.customPhases ?? []);
     const block = blocks.find(b => b.id === blockId);
 
-    if (!block) return { ok: false, summary: `Block "${blockId}" not found. Use listBlocks to get valid block IDs.` };
+    if (!block) return { ok: false, retryable: true, summary: `Block "${blockId}" not found. Use listBlocks to get valid block IDs.` };
 
     this.store.save(withPostJourney(state, { activeCustomPhaseId: blockId, journeyComplete: true }));
 
@@ -389,12 +411,12 @@ export class ChatToolsService {
     const blocks = sortBlocks(state.postJourney?.customPhases ?? []);
     const block = blocks.find(b => b.id === blockId);
 
-    if (!block) return { ok: false, summary: `Block "${blockId}" not found. Use listBlocks first, then retry with the exact id.` };
-    if (!hasBlockEdit(action)) return { ok: false, summary: `Block "${blockId}": edit ke liye name, description, difficulty, days/dayStart/dayEnd, goals ya habits field chahiye. Use listBlocks first, then retry.` };
+    if (!block) return { ok: false, retryable: true, summary: `Block "${blockId}" not found. Use listBlocks first, then retry with the exact id.` };
+    if (!hasBlockEdit(action)) return { ok: false, retryable: true, summary: `Block "${blockId}": edit ke liye name, description, difficulty, days/dayStart/dayEnd, goals ya habits field chahiye. Use listBlocks first, then retry.` };
 
     const nextStart = dayStart ?? block.dayStart;
     const nextEnd = days !== undefined ? nextStart + clampBlockDays(days) - 1 : (dayEnd ?? block.dayEnd);
-    if (nextEnd < nextStart) return { ok: false, summary: `Block "${blockId}": dayEnd (${nextEnd}) dayStart (${nextStart}) se pehle nahi ho sakta.` };
+    if (nextEnd < nextStart) return { ok: false, retryable: true, summary: `Block "${blockId}": dayEnd (${nextEnd}) dayStart (${nextStart}) se pehle nahi ho sakta.` };
 
     const updated: typeof block = {
       ...block,
@@ -425,7 +447,7 @@ export class ChatToolsService {
     const blocks = sortBlocks(state.postJourney?.customPhases ?? []);
     const block = blocks.find(b => b.id === blockId);
 
-    if (!block) return { ok: false, summary: `Block "${blockId}" not found. Use listBlocks to get valid block IDs.` };
+    if (!block) return { ok: false, retryable: true, summary: `Block "${blockId}" not found. Use listBlocks to get valid block IDs.` };
 
     const extra = clampBlockDays(daysToAdd, 30);
     const updatedBlocks = blocks.map(b => {
@@ -537,7 +559,7 @@ export class ChatToolsService {
       // Check in base task bank
       const baseTask = this.taskBank.getById(taskId);
       if (!baseTask) {
-        return { ok: false, summary: `Task "${taskId}" not found in any task bank.` };
+        return { ok: false, retryable: true, summary: `Task "${taskId}" not found in any task bank. Pehle getTaskBank/getAllTasks se valid task id dekh lo, phir retry karo.` };
       }
       return { 
         ok: false, 
@@ -547,7 +569,7 @@ export class ChatToolsService {
     
     const task = state.dynamicTaskBank[dynamicIdx];
     if (!hasTaskEdit(action) && !category) {
-      return { ok: false, summary: `Task "${taskId}": edit ke liye title, durationMin, category ya metadata field chahiye. Pehle getTaskBank/getAllTasks se full info dekho, phir retry karo.` };
+      return { ok: false, retryable: true, summary: `Task "${taskId}": edit ke liye title, durationMin, category ya metadata field chahiye. Pehle getTaskBank/getAllTasks se full info dekho, phir retry karo.` };
     }
     const updated = applyTaskMetadata(
       {
@@ -578,7 +600,7 @@ export class ChatToolsService {
     const task = state.dynamicTaskBank.find(t => t.id === taskId);
     
     if (!task) {
-      return { ok: false, summary: `Task "${taskId}" not found in dynamic task bank.` };
+      return { ok: false, retryable: true, summary: `Task "${taskId}" not found in dynamic task bank. Pehle getTaskBank se valid task id dekho, phir retry karo.` };
     }
     
     if (!confirmed) {
@@ -805,9 +827,9 @@ export class ChatToolsService {
     const plan = this.planForDay(state, d);
     const visible = new Map(plan.tasks.map((item) => [item.entry.id, item.entry]));
     const ids = taskIds ?? [];
-    if (ids.length === 0) return { ok: false, summary: `Day ${d}: task id(s) chahiye (plan se).` };
+    if (ids.length === 0) return { ok: false, retryable: true, summary: `Day ${d}: task id(s) chahiye (plan se).` };
     const invalid = ids.filter((id) => !visible.has(id));
-    if (invalid.length > 0) return { ok: false, summary: `Day ${d}: task id(s) planned list mein nahi mile: ${invalid.join(', ')}.`, missingTaskIdDays: [d] };
+    if (invalid.length > 0) return { ok: false, retryable: true, summary: `Day ${d}: task id(s) planned list mein nahi mile: ${invalid.join(', ')}.`, missingTaskIdDays: [d] };
 
     let next = [...state.dynamicTaskBank];
     for (const id of ids) {
@@ -839,8 +861,8 @@ export class ChatToolsService {
     const planned = plan.tasks.find((t) => t.entry.id === taskId);
     if (!planned) {
       const known = state.dynamicTaskBank.find((e) => e.id === taskId) ?? this.taskBank.getById(taskId);
-      if (!known) return { ok: false, summary: `Day ${d}: task id "${taskId}" nahi mila.`, missingTaskIdDays: [d] };
-      return { ok: false, summary: `Day ${d}: "${known.title}" is day ke plan mein nahi hai (shayad kisi aur din ke liye scheduled). Pehle getPlan bhejo.`, missingTaskIdDays: [d] };
+      if (!known) return { ok: false, retryable: true, summary: `Day ${d}: task id "${taskId}" nahi mila.`, missingTaskIdDays: [d] };
+      return { ok: false, retryable: true, summary: `Day ${d}: "${known.title}" is day ke plan mein nahi hai (shayad kisi aur din ke liye scheduled). Pehle getPlan bhejo.`, missingTaskIdDays: [d] };
     }
     const next = applyDayRemoval([...state.dynamicTaskBank], planned.entry, d);
     const resultAction = executeAiAction({
@@ -892,9 +914,9 @@ export class ChatToolsService {
     const d = clamp(action.day);
     const dynamic = state.dynamicTaskBank.find((e) => e.id === action.taskId);
     const entry = dynamic ?? this.taskBank.getById(action.taskId);
-    if (!entry) return { ok: false, summary: `Day ${d}: task id "${action.taskId}" nahi mila.`, missingTaskIdDays: [d] };
+    if (!entry) return { ok: false, retryable: true, summary: `Day ${d}: task id "${action.taskId}" nahi mila.`, missingTaskIdDays: [d] };
     if (!hasTaskEdit(action)) {
-      return { ok: false, summary: `Day ${d}: edit ke liye title, durationMin, dayTo ya metadata field chahiye. Pehle getPlan/getAllTasks se task info dekho, phir exact field ke saath retry karo.`, missingTaskIdDays: [d] };
+      return { ok: false, retryable: true, summary: `Day ${d}: edit ke liye title, durationMin, dayTo ya metadata field chahiye. Pehle getPlan/getAllTasks se task info dekho, phir exact field ke saath retry karo.`, missingTaskIdDays: [d] };
     }
     const edited: typeof entry = applyTaskMetadata(
       {
@@ -931,7 +953,7 @@ export class ChatToolsService {
     const d = clamp(day);
     const dateISO = this.dateForDay(state, d);
     const logKey = this.logKeyForTask(state, d, taskId);
-    if (!logKey) return { ok: false, summary: `Day ${d}: task id "${taskId}" nahi mila.`, missingTaskIdDays: [d] };
+    if (!logKey) return { ok: false, retryable: true, summary: `Day ${d}: task id "${taskId}" nahi mila.`, missingTaskIdDays: [d] };
     const log = { ...(state.taskLogs[logKey] ?? {}) };
     log[taskId] = true;
     const nextLogs = { ...state.taskLogs, [logKey]: log };
@@ -956,8 +978,8 @@ export class ChatToolsService {
     const visible = new Map(plan.tasks.map((item) => [item.entry.id, item.logKey]));
     const ids = taskIds && taskIds.length > 0 ? taskIds : [...visible.keys()];
     const invalid = ids.filter((id) => !visible.has(id));
-    if (ids.length === 0) return { ok: false, summary: `Day ${d}: koi tasks planned nahi hain.` };
-    if (invalid.length > 0) return { ok: false, summary: `Day ${d}: task id(s) planned list mein nahi mile: ${invalid.join(', ')}.`, missingTaskIdDays: [d] };
+    if (ids.length === 0) return { ok: false, retryable: true, summary: `Day ${d}: koi tasks planned nahi hain.` };
+    if (invalid.length > 0) return { ok: false, retryable: true, summary: `Day ${d}: task id(s) planned list mein nahi mile: ${invalid.join(', ')}.`, missingTaskIdDays: [d] };
 
     const nextLogs = { ...state.taskLogs };
     for (const id of ids) {

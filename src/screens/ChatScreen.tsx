@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Archive,
@@ -29,19 +29,22 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import type { ChatAttachment, ChatMessage, ChatPreferences, ChatSession } from '../core/domain/chat';
+import type { ChatAttachment, ChatMessage, ChatPreferences, ChatSession, ChatToolCallRecord } from '../core/domain/chat';
 import type { ArchivedConversation } from '../core/domain/chat-transcript';
-import type { ModelInfo, ThinkingLevel } from '../core/domain/llm';
-import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, defaultChatPrefs, globalChatPrefsFromSettings } from '../core/domain/chat';
+import type { ModelInfo } from '../core/domain/llm';
+import { defaultChatPrefs, globalChatPrefsFromSettings } from '../core/domain/chat';
 import { container } from '../di/container';
 import { redoLastAiAction, undoLastAiAction } from '../core/domain/ai-actions';
 import ChatMarkdown from '../components/ChatMarkdown';
 import FileCard from '../components/FileCard';
+import FileKindBadge from '../components/FileKindBadge';
+import { fileKindOf, shortFileName } from '../lib/file-kind';
 import AddProviderForm from '../components/AddProviderForm';
 import ReadOnlyChatViewer from '../components/ReadOnlyChatViewer';
 import { detectFileDoc, looksLikeMarkdown } from '../components/markdown-utils';
 import { haptic, hapticError, hapticSuccess } from '../lib/haptics';
 import { extractFileText } from '../lib/fileText';
+import { notifyAiReply } from '../lib/notifications';
 import { timeAgo } from '../lib/relative-time';
 import { splitReplyIntoBubbles } from '../features/chat/message-segments';
 
@@ -91,7 +94,15 @@ const ATTACH_TOOLS: { id: string; label: string; hint: string; icon: React.React
   { id: 'notes', label: 'Notes', hint: 'Text files', icon: <StickyNote size={20} /> },
 ];
 
-export default function ChatScreen() {
+export default function ChatScreen({
+  targetSessionId,
+  onTargetConsumed,
+}: {
+  /** Notification tap/reply se khula jaane wala session (App.tsx se). */
+  targetSessionId?: string | null;
+  /** ChatScreen ne target consume kar liya — App value clear kar de. */
+  onTargetConsumed?: () => void;
+}) {
   const [sessions, setSessions] = useState<ChatSession[]>(() => container.chat.listSessions());
   const [activeId, setActiveId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -112,6 +123,10 @@ export default function ChatScreen() {
   const [catalog, setCatalog] = useState<ModelInfo[]>([]);
   const [providerSig, setProviderSig] = useState(() => providerSigOf(container.providerSettings.listStoredProviders()));
   const [menu, setMenu] = useState<MenuState | null>(null);
+  /** Live tool/status text while the AI collects a reply (shown near composer). */
+  const [toolStatus, setToolStatus] = useState<string | null>(null);
+  /** Pending "Copy this chat to memory?" prompt shown when switching away from an unarchived chat. */
+  const [memoryPrompt, setMemoryPrompt] = useState<{ sessionId: string; title: string; onConfirm: () => void } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -153,11 +168,33 @@ export default function ChatScreen() {
     if (!activeId && sessions.length > 0) setActiveId(sessions[0].id);
   }, [activeId, sessions]);
 
+  // Notification tap/reply se target session aaya — usi ko kholo aur App ko
+  // batado ki value consume ho gayi (taaki dobara-trigger na ho).
+  useEffect(() => {
+    if (!targetSessionId) return;
+    setActiveId(targetSessionId);
+    onTargetConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetSessionId]);
+
+  // Notification inline reply se messages directly repo me add ho sakte hain —
+  // event aaye to sessions list refresh karo (bina active chat ko disturb kiye).
+  useEffect(() => {
+    const onUpdated = () => setSessions(container.chat.listSessions());
+    window.addEventListener('levelup:chat-updated', onUpdated);
+    return () => window.removeEventListener('levelup:chat-updated', onUpdated);
+  }, []);
+
   // Keep every session's shared prefs in line with the global chat settings
   // (Settings tab -> Chat Experience) whenever the coach screen mounts.
   useEffect(() => {
     container.chat.applyGlobalPrefs(globalChatPrefsFromSettings(container.store.get().aiSettings.chat));
     setSessions(container.chat.listSessions());
+    // Mark the session the user lands on as active BEFORE the fallback dump, so
+    // the currently-open chat is never silently archived — it is only copied to
+    // memory when the user says so via the switch prompt.
+    const landingId = activeId ?? container.chat.listSessions()[0]?.id ?? null;
+    container.chat.setActiveSessionId(landingId);
     // Persist any unread chats into memory as raw transcripts — cheap and
     // safe to rerun (sessions already stored are skipped). Only the
     // deterministic fallback; when AI is on the summarizer button owns this.
@@ -246,23 +283,36 @@ export default function ChatScreen() {
       s = container.chat.createSession('', globalChatPrefs());
       refresh();
       setActiveId(s.id);
-      maybeAutoDumpChats();
     }
     return s;
   }
 
+  /**
+   * Switching away from a chat that still has unsaved messages asks once whether
+   * to copy it into memory ("Copy to memory") or leave it and just switch.
+   * Already-copied or empty chats switch immediately without asking.
+   */
+  function switchAway(action: () => void) {
+    if (active && active.messages.length > 0 && !container.chat.isChatArchived(active.id)) {
+      setMemoryPrompt({ sessionId: active.id, title: active.title || 'Yeh chat', onConfirm: action });
+      return;
+    }
+    action();
+  }
+
   function newChat() {
     haptic();
-    const session = container.chat.createSession('', globalChatPrefs());
-    refresh();
-    setActiveId(session.id);
-    setDraft('');
-    revokeAttachmentUrls(attachments);
-    setAttachments([]);
-    setError('');
     setShowHistory(false);
-    maybeAutoDumpChats();
-    focusComposer();
+    switchAway(() => {
+      const session = container.chat.createSession('', globalChatPrefs());
+      refresh();
+      setActiveId(session.id);
+      setDraft('');
+      revokeAttachmentUrls(attachments);
+      setAttachments([]);
+      setError('');
+      focusComposer();
+    });
   }
 
   /** Opens the chat settings sheet, creating a session first when none exists. */
@@ -272,8 +322,11 @@ export default function ChatScreen() {
   }
 
   function openSession(id: string) {
-    setActiveId(id);
-    setError('');
+    if (id === activeId) return;
+    switchAway(() => {
+      setActiveId(id);
+      setError('');
+    });
   }
 
   function removeSession(id: string) {
@@ -393,7 +446,7 @@ export default function ChatScreen() {
       text,
       undefined, // onDelta — intentionally not shown live
       controller.signal,
-      undefined, // onStatus — no premature thinking/typing during collection
+      (s) => setToolStatus(s), // onStatus — live tool activity near the composer
       undefined, // reasoning delta — collected and stored on the message
       chatAttachments,
     );
@@ -405,6 +458,12 @@ export default function ChatScreen() {
       const assistant = await pending;
       sent = true;
       lastAssistantId = assistant.id;
+
+      // AI reply complete — native/web notification (sirf jab user ne Settings me ON kiya ho).
+      // sessionId notification ke extra me jaata hai — tap/reply se usi chat pe khulega.
+      const sessionTitle = sessions.find((s) => s.id === sessionId)?.title ?? 'Chat';
+      const preview = assistant.content.replace(/\s+/g, ' ').trim().slice(0, 140);
+      void notifyAiReply(`Misa — ${sessionTitle}`, preview || 'Naya AI reply aaya', sessionId);
     } catch (err) {
       setDraft(pendingDraft);
       setAttachments(pendingAttachments);
@@ -413,6 +472,7 @@ export default function ChatScreen() {
       if (sent) revokeAttachmentUrls(pendingAttachments);
       abortRef.current = null;
       setStreaming(false);
+      setToolStatus(null);
       refresh();
       // Only the message we just generated gets the reveal effect; reopening
       // an old chat must never replay it.
@@ -693,6 +753,21 @@ export default function ChatScreen() {
 
       {/* Composer */}
       <div className="chat-composer-wrap">
+        {streaming && toolStatus && (
+          <div className="mb-2 flex justify-center" role="status">
+            <div className="flex items-center gap-2 rounded-full border border-peak/25 bg-peak/8 px-3 py-1.5 text-[11px] font-semibold text-peak">
+              <span className="pulse-dot" aria-hidden="true">
+                <Wrench size={12} />
+              </span>
+              <span>{toolStatus}</span>
+              <span className="typing-dots" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+            </div>
+          </div>
+        )}
         {(error || notice) && (
           <div
             className={`mb-2 flex justify-center text-center ${error ? 'text-danger' : 'text-muted'}`}
@@ -828,6 +903,31 @@ export default function ChatScreen() {
           onDelete={removeSession}
           onOpenMemory={openMemoryChat}
           onClose={() => setShowHistory(false)}
+        />
+      )}
+
+      {memoryPrompt && (
+        <MemoryPromptSheet
+          title={memoryPrompt.title}
+          onCopy={() => {
+            const { sessionId, onConfirm } = memoryPrompt;
+            setMemoryPrompt(null);
+            const ok = container.chat.archiveSessionToMemory(sessionId);
+            refresh();
+            if (ok) {
+              hapticSuccess();
+              setNotice('Chat memory me copy ho gayi — ab dobara store nahi hogi');
+            } else {
+              hapticError();
+              setNotice('Chat memory me copy nahi ho payi');
+            }
+            onConfirm();
+          }}
+          onSkip={() => {
+            const { onConfirm } = memoryPrompt;
+            setMemoryPrompt(null);
+            onConfirm();
+          }}
         />
       )}
 
@@ -1036,7 +1136,7 @@ function MessageBubble({
     >
       {isUser ? (
         <div className="message-card relative rounded-3xl rounded-br-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-user">
-          <UserMessageContent content={message.content} />
+          <UserMessageContent content={message.content} attachments={message.attachments} />
           <div className="mt-2 flex items-center justify-end gap-0.5">
             {message.stopped && <span className="rounded bg-black/20 px-1.5 py-0.5 text-[9px]">stopped</span>}
             <BubbleAction label="Edit" onClick={() => actions.onEdit(message)}>
@@ -1055,7 +1155,11 @@ function MessageBubble({
           {(message.reasoning && showThinking !== false) || message.tool ? (
             <div className="message-card relative rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-ai">
               {message.reasoning && showThinking !== false && <ThinkingBlock text={message.reasoning} />}
-              {message.tool && <ToolBadge tool={message.tool} />}
+              {message.toolCalls && message.toolCalls.length > 0 ? (
+                <ToolCallsBlock calls={message.toolCalls} />
+              ) : (
+                message.tool && <ToolBadge tool={message.tool} />
+              )}
             </div>
           ) : null}
           {doc && (
@@ -1157,14 +1261,90 @@ function ThinkingBlock({ text }: { text: string }) {
   );
 }
 
-function ToolBadge({ tool }: { tool: string }) {
+/**
+ * Collapsible "thinking"-style block for executed tool calls. Collapsed by
+ * default — click to reveal each tool as a readable result message, never raw
+ * JSON.
+ */
+function ToolCallsBlock({ calls }: { calls: ChatToolCallRecord[] }) {
+  const [open, setOpen] = useState(false);
+  const okCount = calls.filter((c) => c.ok).length;
   return (
-    <span className="mb-1.5 inline-flex items-center gap-1 rounded-md border border-l/40 bg-l/10 px-1.5 py-0.5 text-[9px] font-semibold text-l">
-      <Wrench size={10} />
-      tool: {tool}
-    </span>
+    <div className="mb-2 overflow-hidden rounded-lg border border-peak/20 bg-peak/5">
+      <button
+        type="button"
+        onClick={() => {
+          haptic();
+          setOpen((v) => !v);
+        }}
+        className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-[10px] font-semibold text-muted transition-colors hover:text-text"
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Wrench size={11} className="shrink-0 text-peak" />
+          <span className="truncate">
+            {calls.length} tool{calls.length > 1 ? 's' : ''} use kiye
+            {okCount !== calls.length ? ` — ${calls.length - okCount} fail` : ''}
+          </span>
+        </span>
+        <ChevronDown size={11} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="max-h-72 overflow-y-auto border-t border-peak/15 px-2.5 py-2 text-[11px] leading-relaxed">
+          {calls.map((c, i) => (
+            <div key={i} className="mb-2 last:mb-0">
+              <div className="flex items-center gap-1.5 font-semibold text-text">
+                <span className="shrink-0">{c.ok ? '✅' : '❌'}</span>
+                <span className="truncate">{TOOL_LABELS[c.action] ?? c.action}</span>
+              </div>
+              <p className="mt-0.5 pl-5 text-muted">{c.message}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
+
+function ToolBadge({ tool }: { tool: string }) {
+  const tools = tool.split(',').map((t) => t.trim()).filter(Boolean);
+  if (tools.length === 0) return null;
+  return (
+    <div className="mb-1.5 flex flex-wrap items-center gap-1" aria-label={`Tools used: ${tools.join(', ')}`}>
+      {tools.map((t) => (
+        <span
+          key={t}
+          className="inline-flex items-center gap-1 rounded-full border border-peak/20 bg-peak/8 px-2 py-0.5 text-[10px] font-medium leading-tight text-peak"
+        >
+          <Wrench size={10} className="shrink-0 opacity-70" />
+          {TOOL_LABELS[t] ?? t}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+const TOOL_LABELS: Record<string, string> = {
+  getPlan: 'Plan dekha',
+  getRange: 'Range dekhi',
+  addTask: 'Task add kiya',
+  bulkAddTasks: 'Tasks add kiye',
+  removeTask: 'Task hata diya',
+  bulkRemoveTasks: 'Tasks hata diye',
+  setDayMode: 'Din mode badla',
+  editTask: 'Task edit kiya',
+  markDone: 'Task done kiya',
+  bulkMarkDone: 'Tasks done kiye',
+  getAllTasks: 'Tasks dekhe',
+  getTaskBank: 'Task bank dekha',
+  editAnyTask: 'Task bank edit kiya',
+  deleteAnyTask: 'Task bank delete kiya',
+  createBlock: 'Block banaya',
+  deleteBlock: 'Block delete kiya',
+  activateBlock: 'Block activate kiya',
+  editBlock: 'Block edit kiya',
+  listBlocks: 'Blocks dekhe',
+  extendBlock: 'Block extend kiya',
+};
 
 /* =====================================================================
    Attachments
@@ -1172,19 +1352,18 @@ function ToolBadge({ tool }: { tool: string }) {
 
 function AttachmentChip({ attachment, onRemove }: { attachment: DraftAttachment; onRemove: () => void }) {
   const isImage = attachment.kind === 'image';
+  const kind = fileKindOf(attachment.name, attachment.type);
   return (
-    <div className="flex min-w-0 shrink-0 items-center gap-2 rounded-xl border border-border bg-bg px-2 py-1.5 text-[10px]">
+    <div className="flex min-w-0 shrink-0 items-center gap-2 rounded-xl border border-border bg-bg px-2 py-1.5">
       {isImage && attachment.previewUrl ? (
-        <img src={attachment.previewUrl} alt="" className="h-7 w-7 rounded-lg object-cover" />
-      ) : isImage ? (
-        <Image size={15} color="var(--color-light)" />
+        <img src={attachment.previewUrl} alt="" className="h-9 w-9 rounded-lg object-cover" />
       ) : (
-        <FileText size={15} color="var(--color-l)" />
+        <FileKindBadge name={attachment.name} mimeType={attachment.type} />
       )}
-      <div className="max-w-32 min-w-0">
-        <p className="truncate font-semibold text-text">{attachment.name}</p>
-        <p className="text-muted">
-          {formatBytes(attachment.size)} · {attachment.kind}
+      <div className="min-w-0 max-w-28">
+        <p className="truncate text-[10px] font-semibold leading-tight text-text">{shortFileName(attachment.name)}</p>
+        <p className="text-[9px] text-muted">
+          {kind.ext} · {formatBytes(attachment.size)}
         </p>
       </div>
       <button type="button" onClick={onRemove} className="rounded-full p-0.5 text-muted hover:bg-danger/10 hover:text-danger" aria-label="Remove attachment">
@@ -1336,142 +1515,6 @@ function SettingsSheet({
                 onProviderAdded();
               }}
             />
-          </div>
-        </section>
-
-        {/* Generation */}
-        <section>
-          <p className="section-label mb-2">Generation</p>
-          <div className="divide-y divide-border/70 overflow-hidden rounded-2xl border border-border bg-panel">
-            <div className="px-4 py-3.5">
-              <label className="field-label flex items-center justify-between">
-                <span>Temperature</span>
-                <span className="font-mono text-light">{prefs.temperature.toFixed(2)}</span>
-              </label>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={prefs.temperature}
-                onChange={(e) => onChange({ temperature: Number(e.target.value) })}
-                className="slider w-full"
-                style={{ '--slider-fill': `${prefs.temperature * 100}%` } as CSSProperties}
-              />
-              <p className="mt-0.5 text-[10px] text-muted">Kam = precise, zyada = creative</p>
-            </div>
-            <div className="px-4 py-3.5">
-              <label className="field-label flex items-center justify-between">
-                <span>Max tokens</span>
-                <span className="font-mono text-light">{prefs.maxTokens ?? 8192}</span>
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={32768}
-                step={128}
-                value={prefs.maxTokens ?? 8192}
-                onChange={(e) => {
-                  // An empty field parses as Number('') === 0 and would snap
-                  // the value to the 1-token floor while the user is typing.
-                  // Let the field stay empty instead of fighting the input.
-                  const raw = e.target.value;
-                  if (raw === '') return;
-                  onChange({ maxTokens: clampTokens(Number(raw)) });
-                }}
-                className="field"
-              />
-              <p className="mt-0.5 text-[10px] text-muted">Response budget; 1 se 32768 tokens tak.</p>
-            </div>
-            <div className="px-4 py-3.5">
-              <label className="field-label">Thinking / reasoning</label>
-              <select
-                className="field"
-                value={prefs.thinking ?? ''}
-                onChange={(e) => onChange({ thinking: (e.target.value || undefined) as ThinkingLevel | undefined })}
-              >
-                <option value="">Provider default</option>
-                <option value="off">Off</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-              </select>
-            </div>
-          </div>
-        </section>
-
-        {/* Context */}
-        <section>
-          <p className="section-label mb-2">Context</p>
-          <div className="rounded-2xl border border-border bg-panel">
-            <label className="flex items-center justify-between gap-2 px-4 py-3.5">
-              <div>
-                <p className="text-sm font-medium text-text">Aaj ka plan context</p>
-                <p className="mt-0.5 text-[10px] leading-relaxed text-muted">
-                  AI ko aaj ke tasks, streak aur progress (REFERENCE ONLY).
-                </p>
-              </div>
-              <span className="toggle">
-                <input
-                  type="checkbox"
-                  checked={prefs.includeContext}
-                  onChange={(e) => onChange({ includeContext: e.target.checked })}
-                  aria-label="Include today's context"
-                />
-                <span className="track">
-                  <span className="thumb" />
-                </span>
-              </span>
-            </label>
-          </div>
-        </section>
-
-        {/* System */}
-        <section>
-          <p className="section-label mb-2">Persona</p>
-          <div className="overflow-hidden rounded-2xl border border-border bg-panel">
-            <div className="px-4 py-3.5">
-              <label className="field-label">User persona / custom instructions</label>
-              <textarea
-                rows={3}
-                value={prefs.userPersona ?? DEFAULT_USER_PERSONA}
-                onChange={(e) => onChange({ userPersona: e.target.value })}
-                placeholder="Blank by default — optional personal instructions yahan likho."
-                className="field resize-none"
-              />
-              <button
-                type="button"
-                onClick={() => onChange({ userPersona: DEFAULT_USER_PERSONA })}
-                className="mt-1.5 text-xs text-muted underline-offset-2 hover:text-text hover:underline"
-              >
-                Clear user persona
-              </button>
-            </div>
-            <details className="border-t border-border/70 px-4 py-3.5">
-              <summary className="cursor-pointer select-none text-xs font-semibold text-muted marker:text-muted-dim">
-                Advanced settings · system persona
-              </summary>
-              <div className="mt-3">
-                <label className="field-label">System persona (hidden)</label>
-                <textarea
-                  rows={5}
-                  value={prefs.systemPrompt}
-                  onChange={(e) => onChange({ systemPrompt: e.target.value })}
-                  placeholder="Misa persona, tone, Markdown/LaTeX rules..."
-                  className="field resize-none"
-                />
-                <div className="mt-1.5 flex items-center justify-between gap-2">
-                  <span className="text-[10px] text-muted">{prefs.systemPrompt.length} characters</span>
-                  <button
-                    type="button"
-                    onClick={() => onChange({ systemPrompt: INTERNAL_SYSTEM_PROMPT })}
-                    className="text-xs text-muted underline-offset-2 hover:text-text hover:underline"
-                  >
-                    Reset Misa persona
-                  </button>
-                </div>
-              </div>
-            </details>
           </div>
         </section>
 
@@ -1708,6 +1751,48 @@ function AttachmentSheet({ onPick, onClose }: { onPick: (id: string) => void; on
   );
 }
 
+/**
+ * Shown when the user switches away from a chat that was never copied to
+ * memory. Copying keeps the chat in history AND stores a read-only transcript
+ * in memory (marked once, so it is never stored again); "just switching"
+ * leaves it untouched and the prompt will ask again next time.
+ */
+function MemoryPromptSheet({ title, onCopy, onSkip }: { title: string; onCopy: () => void; onSkip: () => void }) {
+  return (
+    <>
+      <div className="sheet-backdrop" onClick={onSkip} aria-hidden="true" />
+      <div role="dialog" aria-modal="true" aria-label="Chat ko memory me copy karein?" className="sheet">
+        <div className="sheet-handle" aria-hidden="true" />
+        <div className="px-5 pb-2 pt-1">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-l/10 text-l">
+              <Archive size={16} />
+            </span>
+            <div className="min-w-0">
+              <h2 className="font-display text-base font-bold leading-tight">Chat ko memory me copy karein?</h2>
+              <p className="truncate text-[11px] text-muted">{title}</p>
+            </div>
+          </div>
+        </div>
+        <div className="px-5 pb-[calc(1.5rem_+_env(safe-area-inset-bottom,0px))]">
+          <p className="text-[13px] leading-relaxed text-muted">
+            Copy hone ke baad is chat ki memory <span className="font-semibold text-text">dobara store nahi hogi</span>.
+          </p>
+          <div className="mt-4 grid gap-2">
+            <button type="button" onClick={onCopy} className="btn btn-primary min-h-11 w-full gap-2">
+              <Archive size={15} />
+              Copy to memory
+            </button>
+            <button type="button" onClick={onSkip} className="btn btn-ghost min-h-11 w-full">
+              Sirf switch karo
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function AiActivityPanel({ onHistoryChanged }: { onHistoryChanged: () => void }) {
   const history = container.store.get().aiActionHistory;
   const latest = history.versions.at(-1);
@@ -1834,7 +1919,21 @@ async function readAttachment(file: File): Promise<DraftAttachment> {
   // model accepts them; client-side text extraction only kicks in as a
   // fallback if that direct send fails.
   if (isPdf || isOffice) {
-    return { id: uid('att'), name: file.name, type: file.type || extension || 'file', size: file.size, kind: 'file', previewUrl: URL.createObjectURL(file) };
+    // Pre-extract text at attach time so the fallback path AND follow-up
+    // messages in the same session can still use the content: the raw file's
+    // blob URL is revoked after the first send (and never survives an app
+    // restart), so without this the document context would silently vanish.
+    let content: string | undefined;
+    try {
+      const extracted = await extractFileText(file);
+      if (extracted) {
+        const truncated = extracted.length > MAX_TEXT_ATTACHMENT_CHARS;
+        content = truncated ? `${extracted.slice(0, MAX_TEXT_ATTACHMENT_CHARS)}\n\n[Attachment truncated after ${MAX_TEXT_ATTACHMENT_CHARS} characters]` : extracted;
+      }
+    } catch {
+      content = undefined;
+    }
+    return { id: uid('att'), name: file.name, type: file.type || extension || 'file', size: file.size, kind: 'file', previewUrl: URL.createObjectURL(file), content };
   }
 
   const raw = await extractFileText(file);
@@ -1907,9 +2006,27 @@ function parseUserMessageContent(content: string): { text: string; files: { name
   return { text, files, hasImage };
 }
 
-function UserMessageContent({ content }: { content: string }) {
+function UserMessageContent({ content, attachments }: { content: string; attachments?: ChatAttachment[] }) {
   const { text, files, hasImage } = parseUserMessageContent(content);
   const renderMarkdown = !hasImage && looksLikeMarkdown(text);
+
+  // Attached files render as compact type chips (icon + short name + type).
+  // New messages carry durable `attachments`; legacy/imported messages fall
+  // back to the descriptors parsed out of the content blocks. Images show a
+  // small thumbnail whenever a preview URL is available (same-session blobs).
+  const chips: Array<{ id: string; name: string; kind: ChatAttachment['kind']; previewUrl?: string; label: string }> =
+    attachments && attachments.length > 0
+      ? attachments.map((a) => ({ id: a.id, name: a.name, kind: a.kind, previewUrl: a.previewUrl, label: fileKindOf(a.name).ext }))
+      : files.map((f, i) => {
+          const sizeLabel = f.meta.match(/([\d.]+)\s*(?:KB|MB|GB|B)/)?.[0];
+          return {
+            id: `f-${i}-${f.name}`,
+            name: f.name,
+            kind: 'file' as const,
+            label: sizeLabel ? `${fileKindOf(f.name).ext} · ${sizeLabel}` : fileKindOf(f.name).ext,
+          };
+        });
+
   return (
     <div className={renderMarkdown ? '' : 'whitespace-pre-wrap break-words font-medium'}>
       {renderMarkdown ? (
@@ -1919,18 +2036,27 @@ function UserMessageContent({ content }: { content: string }) {
       ) : (
         text || '—'
       )}
-      {files.length > 0 && (
+      {chips.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {files.map((f, i) => (
-            <span
-              key={i}
-              className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-black/15 bg-black/10 px-2 py-1 text-[10px] font-semibold"
-            >
-              <Paperclip size={10} className="shrink-0" />
-              <span className="truncate">{f.name}</span>
-              {f.meta && <span className="shrink-0 font-normal opacity-60">({f.meta})</span>}
-            </span>
-          ))}
+          {chips.map((c) => {
+            const isImage = c.kind === 'image' && c.previewUrl;
+            return (
+              <span
+                key={c.id}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-black/15 bg-black/10 px-1.5 py-1 text-[10px]"
+              >
+                {isImage ? (
+                  <img src={c.previewUrl} alt="" className="h-7 w-7 rounded-md object-cover" />
+                ) : (
+                  <FileKindBadge name={c.name} size="sm" />
+                )}
+                <span className="min-w-0">
+                  <span className="block max-w-24 truncate font-semibold">{shortFileName(c.name, 16)}</span>
+                  <span className="block text-[8px] font-normal opacity-60">{c.label}</span>
+                </span>
+              </span>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1958,11 +2084,6 @@ function formatBytes(bytes: number): string {
 function uid(prefix: string): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-}
-
-function clampTokens(value: number): number {
-  if (!Number.isFinite(value)) return 8192;
-  return Math.max(1, Math.min(Math.round(value), 32768));
 }
 
 /** Cheap fingerprint of the provider list (id + label + models + model). */

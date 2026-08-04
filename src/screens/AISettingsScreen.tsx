@@ -1,5 +1,5 @@
-import { Suspense, useRef, useState, lazy } from 'react';
-import { Check, ChevronRight, Database, Download, KeyRound, ListChecks, LogOut, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff } from 'lucide-react';
+import { Suspense, useEffect, useRef, useState, lazy } from 'react';
+import { Bell, BellOff, Check, ChevronRight, Database, Download, ExternalLink, KeyRound, ListChecks, LogOut, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff, X } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ProviderConfig, ModelInfo } from '../core/domain/llm';
 import type { AuthSession } from '../lib/auth';
@@ -9,6 +9,18 @@ import SectionHeader from '../components/ui/SectionHeader';
 import EmptyState from '../components/ui/EmptyState';
 import AddProviderForm from '../components/AddProviderForm';
 import { haptic } from '../lib/haptics';
+import {
+  getNotificationPermission,
+  getNotificationPreference,
+  getNotificationSupport,
+  isNativePlatform,
+  notifyTest,
+  openNotificationSettings,
+  requestNotificationPermission,
+  setNotificationPreference,
+  type NotificationPermissionStatus,
+  type NotificationUnsupportedReason,
+} from '../lib/notifications';
 import { formatBytes, normalizeChatSessions, parseBackup, summarizeBackup, type BackupScope, type BackupSummary } from '../features/backup/backup.service';
 import { normalizeState } from '../infra/storage/state-repository';
 
@@ -36,6 +48,75 @@ export default function AISettingsScreen({
 
   // Navigation state for sub-screens
   const [showChatSettings, setShowChatSettings] = useState(false);
+
+  // Notifications state
+  const [notifEnabled, setNotifEnabled] = useState(false);
+  const [notifSupported, setNotifSupported] = useState(false);
+  const [notifReason, setNotifReason] = useState<NotificationUnsupportedReason | undefined>(undefined);
+  const [notifPermission, setNotifPermission] = useState<NotificationPermissionStatus>('prompt');
+  const [notifPopup, setNotifPopup] = useState(false);
+  const [notifBusy, setNotifBusy] = useState(false);
+  const [notifTesting, setNotifTesting] = useState(false);
+  const [notifMessage, setNotifMessage] = useState<{ type: 'ok' | 'error' | 'info'; text: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const support = getNotificationSupport();
+      if (cancelled) return;
+      setNotifSupported(support.supported);
+      setNotifReason(support.reason);
+      if (!support.supported) return;
+      const [pref, perm] = await Promise.all([getNotificationPreference(), getNotificationPermission()]);
+      if (cancelled) return;
+      setNotifEnabled(pref);
+      setNotifPermission(perm);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function onToggleNotifications(checked: boolean) {
+    haptic();
+    if (checked) {
+      // Consent popup pehle — "100% chalu" flow: popup → system dialog → (deny pe) Settings redirect
+      setNotifPopup(true);
+      return;
+    }
+    await setNotificationPreference(false);
+    setNotifEnabled(false);
+    setNotifMessage({ type: 'info', text: 'Notifications band kar di hain.' });
+  }
+
+  async function confirmEnableNotifications() {
+    setNotifPopup(false);
+    setNotifBusy(true);
+    try {
+      const perm = await requestNotificationPermission();
+      setNotifPermission(perm);
+      if (perm === 'granted') {
+        await setNotificationPreference(true);
+        setNotifEnabled(true);
+        setNotifMessage({ type: 'ok', text: 'Notifications ON — AI reply aate hi alert milega.' });
+      } else if (perm === 'unsupported') {
+        setNotifEnabled(false);
+        setNotifMessage({ type: 'error', text: 'Is device pe notifications supported nahi hain.' });
+      } else {
+        await setNotificationPreference(false);
+        setNotifEnabled(false);
+        setNotifMessage({ type: 'error', text: 'Permission nahi mili — neeche diye steps se Settings se ON karo.' });
+      }
+    } finally {
+      setNotifBusy(false);
+    }
+  }
+
+  async function openSettingsFromApp() {
+    haptic();
+    const ok = await openNotificationSettings();
+    if (!ok) setNotifMessage({ type: 'info', text: 'Settings khul nahi payi — upar diye steps manually follow karo.' });
+  }
 
   // Data & Backup state
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -160,7 +241,7 @@ export default function AISettingsScreen({
           </label>
         </div>
         <p className="relative mt-2.5 max-w-sm text-sm leading-relaxed text-muted">
-          Disable karne par app stable deterministic planning use karega — data hamesha local rehta hai.
+          Off = stable deterministic planning. Data stays local.
         </p>
         <div className="relative mt-4 grid grid-cols-3 gap-2">
           <MiniStat label="Providers" value={String(visibleProviders.length)} />
@@ -202,8 +283,7 @@ export default function AISettingsScreen({
               </button>
             </div>
             <p className="mt-3 text-[11px] leading-relaxed text-muted-dim">
-              Chat tumhare server se chal rahi hai — per-user daily quota server pe track hoti hai. Logout karne pe
-              login screen par wapas aa jayenge (app data local hi rahega).
+              Chat runs on your server (daily quota tracked there). Logout returns to login; app data stays local.
             </p>
           </div>
         </>
@@ -213,8 +293,8 @@ export default function AISettingsScreen({
         <div className="card mb-4 flex items-start gap-2.5 p-3.5 text-sm text-muted">
           <ShieldCheck size={16} color="var(--color-light)" className="mt-0.5 shrink-0" />
           <span>
-            Default provider app me built-in hai — API key, Base URL aur Model yahan se manage kar sakte ho, aur Models
-            button se server ke <span className="font-mono text-[11px] text-text">/models</span> catalog bhi fetch hota hai.
+            Built-in default provider. Manage API key, Base URL, Model here — Models button fetches the server
+            <span className="font-mono text-[11px] text-text">/models</span> catalog.
           </span>
         </div>
       )}
@@ -234,6 +314,114 @@ export default function AISettingsScreen({
 
       <div className="mb-2.5">
         <SectionHeader
+          icon={<Bell size={14} color="var(--color-l)" />}
+          accent="var(--color-l)"
+          title="Notifications"
+          meta={notifEnabled ? 'on' : 'off'}
+        />
+      </div>
+
+      <div className="card mb-4 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
+              {notifEnabled ? <Bell size={19} /> : <BellOff size={19} />}
+            </span>
+            <div className="min-w-0">
+              <p className="font-display text-[15px] font-bold">AI reply notifications</p>
+              <p className="text-xs leading-snug text-muted">
+                Alert on every AI reply — even when locked or in background.
+              </p>
+            </div>
+          </div>
+          <label className="toggle mt-1 shrink-0" title="Toggle AI reply notifications">
+            <input
+              type="checkbox"
+              checked={notifEnabled}
+              disabled={!notifSupported || notifBusy}
+              onChange={(e) => void onToggleNotifications(e.target.checked)}
+              aria-label="Toggle AI reply notifications"
+            />
+            <span className="track">
+              <span className="thumb" />
+            </span>
+          </label>
+        </div>
+
+        {!notifSupported && (
+          <p className="mt-3 rounded-xl px-3 py-2 text-xs" style={{ backgroundColor: 'rgba(201,87,87,0.1)', color: 'var(--color-danger)' }}>
+            {notifReason === 'insecure'
+              ? 'Browser notifications ke liye secure connection chahiye — app ko localhost ya HTTPS se kholo (http://192.168.x.x jaise LAN address pe browser ye feature band kar deta hai).'
+              : 'Is browser/device pe notifications supported nahi hain — best experience ke liye Android app (APK) use karo.'}
+          </p>
+        )}
+
+        {notifMessage && (
+          <p
+            className="mt-3 rounded-xl px-3 py-2 text-xs"
+            style={
+              notifMessage.type === 'error'
+                ? { backgroundColor: 'rgba(201,87,87,0.12)', color: 'var(--color-danger)' }
+                : notifMessage.type === 'ok'
+                  ? { backgroundColor: 'rgba(138,154,91,0.13)', color: 'var(--color-success)' }
+                  : { backgroundColor: 'rgba(79,209,197,0.13)', color: 'var(--color-l)' }
+            }
+          >
+            {notifMessage.text}
+          </p>
+        )}
+
+        {notifPermission === 'denied' && (
+          <div className="mt-3 rounded-xl border border-border bg-bg/60 p-3">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-danger">
+              <ShieldAlert size={14} /> Permission denied
+            </p>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-muted">Android Settings se manually ON karni padegi:</p>
+            <ol className="mt-1.5 list-decimal space-y-1 pl-4 text-[11px] leading-relaxed text-muted">
+              <li>Settings → Apps → LevelUp kholo</li>
+              <li>Notifications par tap karo</li>
+              <li>"Allow notifications" (ya "Show notifications") ko ON karo</li>
+            </ol>
+            {isNativePlatform() && (
+              <button type="button" onClick={() => void openSettingsFromApp()} className="btn btn-primary mt-3 min-h-10 w-full gap-2 text-xs">
+                <ExternalLink size={13} /> Open Settings
+              </button>
+            )}
+          </div>
+        )}
+
+        {notifEnabled && notifPermission === 'granted' && (
+          <div className="mt-3">
+            <p className="flex items-center gap-1.5 text-xs text-success">
+              <Check size={13} /> Notifications chalu hain — AI reply aate hi alert milega.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                haptic();
+                setNotifTesting(true);
+                setNotifMessage(null);
+                void notifyTest()
+                  .then((ok) =>
+                    setNotifMessage(
+                      ok
+                        ? { type: 'ok', text: 'Test notification bhej di — phone pe check karo! Notification me "Reply" se seedha Misa ko likh sakte ho.' }
+                        : { type: 'error', text: 'Test notification nahi bhej paye — permission ya channel check karo.' },
+                    ),
+                  )
+                  .finally(() => setNotifTesting(false));
+              }}
+              disabled={notifTesting}
+              className="btn btn-ghost mt-2 min-h-9 gap-1.5 px-3 text-xs"
+            >
+              <Bell size={13} /> {notifTesting ? 'Bhej rahe…' : 'Test notification bhejo'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="mb-2.5">
+        <SectionHeader
           icon={<ListChecks size={14} color="var(--color-l)" />}
           accent="var(--color-l)"
           title="Curriculum"
@@ -250,9 +438,7 @@ export default function AISettingsScreen({
             <div className="min-w-0">
               <p className="font-display text-[15px] font-bold">Advanced curriculum controls</p>
               <p className="text-xs leading-snug text-muted">
-                ON rahne par Levels tab mein Add Block, Export, Import aur saare add/edit/delete buttons dikhte hain — tasks,
-                habits aur blocks apne hisaab se customize kar sakte ho. OFF karne par Levels tab simple read-only view ban
-                jata hai (normal user ke liye clean).
+                ON: full edit controls on Levels tab (add/edit/delete blocks, tasks, habits). OFF: clean read-only view.
               </p>
             </div>
           </div>
@@ -289,7 +475,7 @@ export default function AISettingsScreen({
           </span>
           <div className="min-w-0">
             <p className="font-display text-[15px] font-bold">Sab data, ek file mein</p>
-            <p className="text-xs leading-snug text-muted">Full backup mein plan, tasks, progress, logs, memory, chat sessions aur providers sab aata hai. Tasks / Levels options sirf wohi data export karte hain.</p>
+            <p className="text-xs leading-snug text-muted">Full backup = everything (plan, tasks, progress, memory, chats, providers). Tasks/Levels export only that data.</p>
           </div>
         </div>
 
@@ -330,7 +516,7 @@ export default function AISettingsScreen({
         </div>
 
         <p className="mt-3 text-[11px] leading-relaxed text-muted-dim">
-          Full backup file mein API keys bhi hongi (providers section) — file ko safe jagah rakhna. Model catalog cache (API se refetch hota hai) export mein nahi aata. Env-based provider machine-specific hai, wo export nahi hota.
+          Full backup includes API keys — keep it safe. Model cache and env provider are not exported.
         </p>
 
         {backupStatus && (
@@ -420,6 +606,44 @@ export default function AISettingsScreen({
       ))}
 
       <AddProviderForm onAdd={(config) => upsert(config)} />
+
+      {notifPopup && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-5">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setNotifPopup(false)} aria-hidden="true" />
+          <div role="dialog" aria-modal="true" aria-label="Enable notifications" className="gradient-border w-full max-w-sm rounded-[1.25rem] p-px">
+            <div className="rounded-[calc(1.25rem-1px)] bg-panel p-5">
+              <div className="mb-4 flex items-start justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(201,162,39,0.15)', color: 'var(--color-peak)' }}>
+                    <Bell size={17} />
+                  </div>
+                  <div>
+                    <p className="font-display text-[15px] font-bold">Notifications chalu karein?</p>
+                    <p className="text-xs text-muted">AI replies ka alert</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setNotifPopup(false)} aria-label="Close" className="icon-btn">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <p className="text-sm leading-relaxed text-muted">
+                Jab Misa ka naya reply aayega, phone pe notification milega — app background me ho ya phone locked, tab
+                bhi pata chal jayega.
+              </p>
+
+              <div className="mt-4 flex gap-2">
+                <button type="button" className="btn btn-ghost min-h-10 flex-1 text-xs" onClick={() => setNotifPopup(false)}>
+                  Abhi nahi
+                </button>
+                <button type="button" className="btn btn-primary min-h-10 flex-1 gap-2 text-xs" onClick={() => void confirmEnableNotifications()}>
+                  <Bell size={14} /> Haan, chalu karo
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

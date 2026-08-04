@@ -871,7 +871,7 @@ function BlockForm({
           </div>
 
           {d.levels.length === 0 ? (
-            <p className="text-muted">Abhi koi level nahi — "Add level" se ek banao. Levels ke bina save karoge to 1 level khud ban jayega.</p>
+            <p className="text-muted">Koi level nahi — 'Add level' se banao. Save par 1 auto-banega.</p>
           ) : (
             <ul className="space-y-2.5">
               {d.levels.map((l, i) => (
@@ -964,7 +964,7 @@ function HabitForm({
             Core habit
           </label>
         </div>
-        <p className="text-[11px] text-muted-dim">Ye habit Level {levelId} (Day {LEVELS.find((l) => l.id === levelId)?.dayStart}) se active hogi.</p>
+        <p className="text-[11px] text-muted-dim">Level {levelId} (Day {LEVELS.find((l) => l.id === levelId)?.dayStart}) se active.</p>
         <div className="flex gap-2">
           <button type="button" className="btn btn-primary btn-sm flex-1" onClick={onSave}>
             <Check size={14} /> Save
