@@ -1,9 +1,9 @@
 import { LEVELS, TOTAL_DAYS } from '../data/curriculum';
 import { DEFAULT_PROGRESSION_CONFIG } from '../core/domain/progress';
-import type { StateRepository, StateStore, HabitRepository } from '../core/ports/repositories';
+import type { StateRepository, StateStore, HabitRepository, ChatRepository } from '../core/ports/repositories';
 import { deviceTimeZone, SystemClock, type Clock, todayISO } from '../core/ports/clock';
 import { BrowserStorage, persistentStore } from '../infra/storage/local-storage';
-import { CachedStateStore, LocalStateRepository } from '../infra/storage/state-repository';
+import { CachedStateStore, LocalStateRepository, normalizeState } from '../infra/storage/state-repository';
 import { FetchHttpClient, type HttpClient } from '../infra/ai/http';
 import { CapacitorHttpClient, isNativePlatform } from '../infra/ai/http-native';
 import { ProviderFactory } from '../infra/ai/provider-factory';
@@ -18,6 +18,8 @@ import { ChatToolsService } from '../features/chat/chat-tools.service';
 import { MemoryToolsService } from '../features/chat/memory-tools.service';
 import { extractFileText } from '../lib/fileText';
 import { LocalChatRepository } from '../infra/storage/chat-repository';
+import { SyncService } from '../features/sync/sync.service';
+import { SyncCoordinator } from '../features/sync/sync-coordinator';
 import { buildBackupPayload, parseBackup, serializeBackup, applyBackup, type BackupScope, type BackupSummary } from '../features/backup/backup.service';
 import { TaskBankRepositoryImpl } from '../features/task-bank/task-bank.repository';
 import { TaskBankServiceImpl, type TaskBankService } from '../features/task-bank/task-bank.service';
@@ -52,23 +54,56 @@ export interface AppContainer {
     export(scope?: BackupScope): string;
     import(json: string): BackupSummary;
   };
+  /** Server-side offline-first backup of user data (state + chat). */
+  sync: SyncService;
+  /** Debounced push + fresh-install pull orchestration (attach on login). */
+  syncCoordinator: SyncCoordinator;
 }
 /**
  * Composition root. Wires infrastructure + features once at startup; the
  * browser views read from this container instead of building services.
  */
-export function createContainer(): AppContainer {
+export function createContainer(
+  httpOverride?: HttpClient,
+  opts: { syncDebounceMs?: number } = {},
+): AppContainer {
   // Use persistent storage for native apps (survives updates)
   // Falls back to BrowserStorage for web
   const useNativeStorage = isNativePlatform();
   const storage = useNativeStorage ? persistentStore : new BrowserStorage();
   
   const stateRepository = new LocalStateRepository(storage);
-  const store = new CachedStateStore(stateRepository);
-  const http: HttpClient = isNativePlatform() ? new CapacitorHttpClient() : new FetchHttpClient();
+  const innerStore = new CachedStateStore(stateRepository);
+  const http: HttpClient = httpOverride ?? (isNativePlatform() ? new CapacitorHttpClient() : new FetchHttpClient());
   const factory = new ProviderFactory(http);
   const clock = new SystemClock();
   const memory = new MemoryService(clock);
+
+  // Server-side backup (offline-first). `chat` is assigned below — the
+  // coordinator only touches it at runtime (after login), so a lazy closure is
+  // safe here. The state store is wrapped so every save marks the state scope
+  // dirty (debounced push); the coordinator's own restore writes bypass the
+  // wrapper via innerStore to avoid pushing back what it just pulled.
+  const sync = new SyncService(http);
+  let chatRef: ChatService | null = null;
+  const syncCoordinator = new SyncCoordinator(
+    sync,
+    {
+      getState: () => innerStore.get(),
+      getChatSessions: () => (chatRef ? chatRef.listSessions() : []),
+      replaceStore: (sessions) => chatRef?.replaceStore(sessions),
+      replaceState: (state) => innerStore.save(normalizeState(state)),
+    },
+    { debounceMs: opts.syncDebounceMs },
+  );
+
+  const store: StateStore = {
+    get: () => innerStore.get(),
+    save: (s) => {
+      innerStore.save(s);
+      syncCoordinator.markDirty('state');
+    },
+  };
   const providerSettings = new ProviderSettingsService(store, factory);
   const modelCache = new ModelCacheService(factory, store, () => store.save(store.get()));
   const llm = new LLMService(factory, providerSettings);
@@ -80,6 +115,7 @@ export function createContainer(): AppContainer {
     levels: LEVELS,
     totalDays: TOTAL_DAYS,
   });
+
   const summaries = new DailySummaryService({
     planner,
     habits: taskBankRepo,
@@ -92,7 +128,14 @@ export function createContainer(): AppContainer {
   const taskGeneration = new TaskGenerationService(llm, taskBank, taskBankRepo);
   const chatTools = new ChatToolsService(store, planner, taskBank, taskGeneration);
   const memoryTools = new MemoryToolsService(store, memory);
-  const chatRepo = new LocalChatRepository(storage);
+  const rawChatRepo = new LocalChatRepository(storage);
+  const chatRepo: ChatRepository = {
+    load: () => rawChatRepo.load(),
+    save: (s) => {
+      rawChatRepo.save(s);
+      syncCoordinator.markDirty('chat');
+    },
+  };
   const chat = new ChatService(
     chatRepo,
     llm,
@@ -139,6 +182,7 @@ export function createContainer(): AppContainer {
     },
     memoryTools,
   );
+  chatRef = chat;
 
   const backup = {
     export(scope: BackupScope = 'full'): string {
@@ -171,6 +215,8 @@ export function createContainer(): AppContainer {
     chat,
     chatTools,
     backup,
+    sync,
+    syncCoordinator,
   };
 }
 

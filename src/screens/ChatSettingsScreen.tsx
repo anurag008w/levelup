@@ -213,7 +213,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                 className="slider w-full"
                 style={{ '--slider-fill': `${(chat.conversationHistoryLength / 50) * 100}%` } as CSSProperties}
               />
-              <p className="mt-1 text-[10px] text-muted">0 = full conversation memory (koi trimming nahi); 5/10/... = sirf last N messages</p>
+              <p className="mt-1 text-[10px] text-muted">0 = full memory; 5/10/... = sirf last N messages</p>
             </div>
           </div>
         </div>
@@ -277,10 +277,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                   </option>
                 ))}
               </select>
-              <p className="mt-1 text-[10px] text-muted">
-                Journey ka "aaj" kis timezone ke hisaab se roll hota hai. India ke liye Asia/Kolkata — raat
-                12 baje naya day shuru hota hai.
-              </p>
+              <p className="mt-1 text-[10px] text-muted">"Aaj" ka din is timezone ke hisaab se roll hota hai — India: Asia/Kolkata.</p>
             </div>
           </div>
         </div>

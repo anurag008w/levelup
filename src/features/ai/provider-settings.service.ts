@@ -149,6 +149,20 @@ export class ProviderSettingsService {
     this.state.save(state);
   }
 
+  /**
+   * Guest (skipped-login) mode: drop the hidden server default so no gateway
+   * traffic happens — the app works fully offline, data stays in localStorage.
+   * On the next login configureServerAuth() re-creates the hidden default.
+   */
+  disableServerAuth(): void {
+    this.hiddenDefault = null;
+    const state = this.state.get();
+    if (state.aiSettings.activeProviderId === null || state.aiSettings.activeProviderId === 'custom') {
+      state.aiSettings.activeProviderId = null;
+    }
+    this.state.save(state);
+  }
+
   /** Live connectivity + latency probe for a config (used by the settings UI). */
   healthCheck(config: ProviderConfig): Promise<HealthCheckResult> {
     return this.factory.create(config).healthCheck();

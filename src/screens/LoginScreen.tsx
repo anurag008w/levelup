@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { KeyRound, Loader2, LogIn, Sparkles, User, UserPlus } from 'lucide-react';
+import { KeyRound, Loader2, LogIn, Sparkles, User, UserPlus, X } from 'lucide-react';
 import type { AuthSession } from '../lib/auth';
 import { loginToServer, registerOnServer, friendlyAuthError } from '../lib/auth';
 import { haptic } from '../lib/haptics';
 
 interface Props {
   onLoggedIn: (session: AuthSession) => void;
+  onSkip?: () => void;
 }
 
 /**
@@ -13,16 +14,21 @@ interface Props {
  * "user exists → login, otherwise → register". A failed login surfaces a
  * one-tap "Register karo" action; a failed register offers login instead.
  *
+ * "Skip" enters offline guest mode — the app runs on local data only, no
+ * server model and no sync. A later login enables both.
+ *
  * The server URL is intentionally NOT shown or editable — it is baked into the
  * build via VITE_DEFAULT_AI_BASE_URL (fallback: the public gateway) and stays
  * hidden from users.
  */
-export default function LoginScreen({ onLoggedIn }: Props) {
+export default function LoginScreen({ onLoggedIn, onSkip }: Props) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [registerMode, setRegisterMode] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const skipEnabled = Boolean(onSkip);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -159,6 +165,23 @@ export default function LoginScreen({ onLoggedIn }: Props) {
             ? 'Pehle user ka account admin ban jata hai. Login ke baad chat apne server se chalegi.'
             : 'Agar account exist nahi karta, Register tab se bana lo — same page, ek click.'}
         </p>
+
+        <div className="mt-5 border-t border-border pt-4">
+          <button
+            type="button"
+            disabled={!skipEnabled}
+            onClick={() => {
+              haptic();
+              onSkip?.();
+            }}
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl py-2 text-xs text-muted transition-colors hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <X size={13} /> Skip — offline mode me chalein
+          </button>
+          <p className="mt-1.5 text-center text-[11px] leading-relaxed text-muted-dim">
+            Login kiye bina app use karo. Data sirf is device pe — AI server aur backup band.
+          </p>
+        </div>
       </form>
     </div>
   );

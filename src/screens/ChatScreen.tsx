@@ -165,6 +165,15 @@ export default function ChatScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Full backup imports and "Delete all data" replace the whole chat history
+  // from Settings while this screen stays mounted (chatVisited). Re-read the
+  // sessions so the restored / cleared history shows up immediately.
+  useEffect(() => {
+    const onDataReplaced = () => setSessions(container.chat.listSessions());
+    window.addEventListener('levelup:backup-imported', onDataReplaced);
+    return () => window.removeEventListener('levelup:backup-imported', onDataReplaced);
+  }, []);
+
   useEffect(() => {
     // The session the user is actively chatting in stays internal to the AI —
     // it is never included in the one-click memory summarization.

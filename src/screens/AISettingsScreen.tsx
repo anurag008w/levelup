@@ -1,5 +1,5 @@
-import { Suspense, useRef, useState, lazy } from 'react';
-import { Check, ChevronRight, Database, Download, KeyRound, ListChecks, LogOut, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff } from 'lucide-react';
+import { Suspense, useEffect, useRef, useState, lazy } from 'react';
+import { Check, ChevronRight, Database, Download, KeyRound, ListChecks, LogIn, LogOut, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff, X } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ProviderConfig, ModelInfo } from '../core/domain/llm';
 import type { AuthSession } from '../lib/auth';
@@ -11,6 +11,7 @@ import AddProviderForm from '../components/AddProviderForm';
 import { haptic } from '../lib/haptics';
 import { formatBytes, normalizeChatSessions, parseBackup, summarizeBackup, type BackupScope, type BackupSummary } from '../features/backup/backup.service';
 import { normalizeState } from '../infra/storage/state-repository';
+import { deleteAllData } from '../features/sync/delete-all';
 
 const ChatSettingsScreen = lazy(() => import('./ChatSettingsScreen'));
 
@@ -43,6 +44,72 @@ export default function AISettingsScreen({
   const [backupStatus, setBackupStatus] = useState<{ type: 'ok' | 'error' | 'info'; text: string } | null>(null);
   const [pendingImport, setPendingImport] = useState<{ json: string; fileName: string; preview: BackupSummary } | null>(null);
   const [importing, setImporting] = useState(false);
+
+  // Sync status (offline-first backup to server)
+  const [_syncVersion, setSyncVersion] = useState(0);
+  const [syncingNow, setSyncingNow] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
+  useEffect(() => container.syncCoordinator.subscribe(() => setSyncVersion((v) => v + 1)), []);
+  const syncState = (scope: 'state' | 'chat') => container.syncCoordinator.getScopeState(scope);
+  const syncOnline = container.syncCoordinator.isOnline();
+  const syncAttached = container.syncCoordinator.isAttached;
+
+  async function handleSyncNow() {
+    setSyncingNow(true);
+    try {
+      await container.syncCoordinator.syncNow();
+    } finally {
+      setSyncingNow(false);
+      setSyncVersion((v) => v + 1);
+    }
+  }
+
+  function handleLogoutClick() {
+    if (!session) {
+      onLogout();
+      return;
+    }
+    const wipe = window.confirm('Logout pe server ka backup bhi delete karein? "OK" = delete, "Cancel" = backup rehne de.');
+    setLogoutBusy(true);
+    void (async () => {
+      if (wipe) {
+        try {
+          await container.sync.wipe(session);
+        } catch {
+          // Wipe is best-effort — logout must still proceed even offline.
+        }
+      }
+      container.syncCoordinator.detach();
+      setLogoutBusy(false);
+      onLogout();
+    })();
+  }
+
+  /**
+   * "Delete all data": wipes progress, chat, memory, providers and settings —
+   * locally and on the server — then returns the app to its default stage.
+   * The login session and default server AI credentials are preserved, so the
+   * user stays signed in and the hidden provider keeps working.
+   */
+  async function handleDeleteAllData() {
+    if (!confirmDeleteAll) return;
+    setDeletingAll(true);
+    try {
+      await deleteAllData(container, session);
+      // Re-read the freshly restored state so every mounted screen re-renders,
+      // and let the chat screen swap in the (now empty) session list too.
+      update(() => container.store.get());
+      window.dispatchEvent(new Event('levelup:backup-imported'));
+      setBackupStatus({ type: 'ok', text: 'Sab data delete ho gaya — app default stage pe wapas aa gaya.' });
+    } catch (err) {
+      setBackupStatus({ type: 'error', text: shortError(err) });
+    } finally {
+      setDeletingAll(false);
+      setConfirmDeleteAll(false);
+    }
+  }
 
   // Chat Settings sub-screen
   if (showChatSettings) {
@@ -159,8 +226,8 @@ export default function AISettingsScreen({
             </span>
           </label>
         </div>
-        <p className="relative mt-2.5 max-w-sm text-sm leading-relaxed text-muted">
-          Disable karne par app stable deterministic planning use karega — data hamesha local rehta hai.
+        <p className="mt-2.5 max-w-sm text-sm leading-relaxed text-muted">
+          OFF: deterministic local planning. ON: AI-generated plans.
         </p>
         <div className="relative mt-4 grid grid-cols-3 gap-2">
           <MiniStat label="Providers" value={String(visibleProviders.length)} />
@@ -169,7 +236,7 @@ export default function AISettingsScreen({
         </div>
       </section>
 
-      {session && (
+      {session ? (
         <>
           <div className="mb-2.5">
             <SectionHeader
@@ -197,13 +264,87 @@ export default function AISettingsScreen({
                   </p>
                 </div>
               </div>
-              <button type="button" onClick={onLogout} className="btn btn-ghost min-h-9 shrink-0 gap-1.5 px-3 text-xs">
-                <LogOut size={13} /> Logout
+              <button type="button" onClick={handleLogoutClick} disabled={logoutBusy} className="btn btn-ghost min-h-9 shrink-0 gap-1.5 px-3 text-xs">
+                <LogOut size={13} /> {logoutBusy ? 'Logging out…' : 'Logout'}
               </button>
             </div>
             <p className="mt-3 text-[11px] leading-relaxed text-muted-dim">
-              Chat tumhare server se chal rahi hai — per-user daily quota server pe track hoti hai. Logout karne pe
-              login screen par wapas aa jayenge (app data local hi rahega).
+              Chat server se chalti hai — per-user quota server pe track hoti hai.
+            </p>
+          </div>
+
+          <div className="mb-2.5">
+            <SectionHeader
+              icon={<RefreshCw size={14} color="var(--color-l)" />}
+              accent="var(--color-l)"
+              title="Data Sync"
+              meta="offline-first backup"
+            />
+          </div>
+
+          <div className="card mb-4 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
+                  {syncOnline ? <Wifi size={19} /> : <WifiOff size={19} />}
+                </span>
+                <div className="min-w-0">
+                  <p className="font-display text-[15px] font-bold">{syncOnline ? 'Synced' : 'Offline'}</p>
+                  <p className="text-xs leading-snug text-muted">
+                    {!syncOnline
+                      ? 'Internet nahi hai — badla hua data push hone ka wait kar raha hai.'
+                      : !syncAttached
+                        ? 'Sync ready.'
+                        : `State: ${describeSyncState(syncState('state').state)} · Chat: ${describeSyncState(syncState('chat').state)}`}
+                  </p>
+                  {syncAttached && (syncState('state').lastSyncedAt || syncState('chat').lastSyncedAt) && (
+                    <p className="mt-1 text-[11px] text-muted-dim">
+                      Last sync: {syncState('state').lastSyncedAt ?? syncState('chat').lastSyncedAt}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleSyncNow}
+                disabled={syncingNow || !syncOnline || !syncAttached}
+                className="btn btn-ghost min-h-9 shrink-0 gap-1.5 px-3 text-xs"
+              >
+                <RefreshCw size={13} className={syncingNow ? 'animate-spin' : ''} /> {syncingNow ? 'Syncing…' : 'Sync now'}
+              </button>
+            </div>
+            <p className="mt-3 text-[11px] leading-relaxed text-muted-dim">
+              Server pe encrypted backup — login karke naye device pe restore karo.
+            </p>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="mb-2.5">
+            <SectionHeader
+              icon={<ShieldCheck size={14} color="var(--color-l)" />}
+              accent="var(--color-l)"
+              title="Account"
+              meta="offline mode"
+            />
+          </div>
+
+          <div className="card mb-4 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
+                  <WifiOff size={19} />
+                </span>
+                <div className="min-w-0">
+                  <p className="font-display text-[15px] font-bold">Offline mode</p>
+                </div>
+              </div>
+              <button type="button" onClick={handleLogoutClick} className="btn btn-ghost min-h-9 shrink-0 gap-1.5 px-3 text-xs">
+                <LogIn size={13} /> Login
+              </button>
+            </div>
+            <p className="mt-3 text-[11px] leading-relaxed text-muted-dim">
+              Login skip — data sirf is device pe, AI server model aur backup band hain.
             </p>
           </div>
         </>
@@ -213,8 +354,7 @@ export default function AISettingsScreen({
         <div className="card mb-4 flex items-start gap-2.5 p-3.5 text-sm text-muted">
           <ShieldCheck size={16} color="var(--color-light)" className="mt-0.5 shrink-0" />
           <span>
-            Default provider app me built-in hai — API key, Base URL aur Model yahan se manage kar sakte ho, aur Models
-            button se server ke <span className="font-mono text-[11px] text-text">/models</span> catalog bhi fetch hota hai.
+            Default provider built-in — API key, Base URL, Model yahan manage karo.
           </span>
         </div>
       )}
@@ -249,11 +389,7 @@ export default function AISettingsScreen({
             </span>
             <div className="min-w-0">
               <p className="font-display text-[15px] font-bold">Advanced curriculum controls</p>
-              <p className="text-xs leading-snug text-muted">
-                ON rahne par Levels tab mein Add Block, Export, Import aur saare add/edit/delete buttons dikhte hain — tasks,
-                habits aur blocks apne hisaab se customize kar sakte ho. OFF karne par Levels tab simple read-only view ban
-                jata hai (normal user ke liye clean).
-              </p>
+              <p className="text-xs leading-snug text-muted">ON: add/edit/delete + import/export. OFF: read-only.</p>
             </div>
           </div>
           <label className="toggle mt-1 shrink-0" title="Toggle advanced curriculum controls">
@@ -289,7 +425,7 @@ export default function AISettingsScreen({
           </span>
           <div className="min-w-0">
             <p className="font-display text-[15px] font-bold">Sab data, ek file mein</p>
-            <p className="text-xs leading-snug text-muted">Full backup mein plan, tasks, progress, logs, memory, chat sessions aur providers sab aata hai. Tasks / Levels options sirf wohi data export karte hain.</p>
+            <p className="text-xs leading-snug text-muted">Full: sab kuch. Tasks/Levels: sirf apna data.</p>
           </div>
         </div>
 
@@ -330,7 +466,7 @@ export default function AISettingsScreen({
         </div>
 
         <p className="mt-3 text-[11px] leading-relaxed text-muted-dim">
-          Full backup file mein API keys bhi hongi (providers section) — file ko safe jagah rakhna. Model catalog cache (API se refetch hota hai) export mein nahi aata. Env-based provider machine-specific hai, wo export nahi hota.
+          Full backup file mein API keys hongi — file safe jagah rakhna.
         </p>
 
         {backupStatus && (
@@ -370,6 +506,28 @@ export default function AISettingsScreen({
             </div>
           </div>
         )}
+      </div>
+
+      <div className="card mb-4 p-4">
+        <div className="flex items-start gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-danger/10 text-danger">
+            <Trash2 size={19} />
+          </span>
+          <div className="min-w-0">
+            <p className="font-display text-[15px] font-bold">Delete all data</p>
+            <p className="text-xs leading-snug text-muted">
+              Sab data delete + server backup. Login aur default AI credentials safe.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setConfirmDeleteAll(true)}
+            disabled={deletingAll}
+            className="btn btn-ghost min-h-9 shrink-0 gap-1.5 px-3 text-xs text-danger"
+          >
+            <Trash2 size={13} /> Delete all
+          </button>
+        </div>
       </div>
 
       <div className="mb-2.5">
@@ -420,6 +578,42 @@ export default function AISettingsScreen({
       ))}
 
       <AddProviderForm onAdd={(config) => upsert(config)} />
+
+      {confirmDeleteAll && (
+        <div className="settings-modal-layer" role="dialog" aria-modal="true" aria-label="Delete all data">
+          <button type="button" className="settings-modal-scrim" aria-label="Close" onClick={() => setConfirmDeleteAll(false)} />
+          <div className="settings-modal">
+            <header className="settings-modal-head">
+              <div>
+                <p className="eyebrow">Danger zone</p>
+                <h2 className="font-display text-xl font-bold text-text">Sab data delete karna hai?</h2>
+              </div>
+              <button type="button" className="icon-btn" aria-label="Close" onClick={() => setConfirmDeleteAll(false)}>
+                <X size={18} />
+              </button>
+            </header>
+            <div className="settings-modal-body">
+              <p className="text-sm leading-relaxed text-muted">
+                Sab data + server backup delete. Login aur default AI credentials safe. Undo nahi.
+              </p>
+              <div className="mt-4 flex gap-2">
+                <button type="button" onClick={() => setConfirmDeleteAll(false)} disabled={deletingAll} className="btn btn-ghost min-h-10 flex-1 text-xs">
+                  No, cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteAllData()}
+                  disabled={deletingAll}
+                  className="btn min-h-10 flex-1 border border-danger/40 text-xs text-danger"
+                  style={{ backgroundColor: 'rgba(201,87,87,0.1)' }}
+                >
+                  {deletingAll ? 'Deleting…' : 'Yes, delete all'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -618,8 +812,7 @@ function ProviderCard({
 
         {zenCorsHint && (
           <p className="text-xs leading-relaxed text-light">
-            OpenCode Zen browser mein direct nahi chalta (uske server par browser-CORS support nahi hai) — isliye preview
-            mein fail hoga. Mobile app (APK) mein native HTTP se chalega. Preview ke liye OpenRouter ya Gemini use karo.
+            Zen browser me CORS se fail hoga; APK me chalega. Preview me OpenRouter/Gemini use karo.
           </p>
         )}
         {modelsError && <p className="break-words text-xs text-danger">models: {modelsError}</p>}
@@ -683,6 +876,21 @@ function shortError(err: unknown): string {
     return msg.length > 140 ? `${msg.slice(0, 140)}…` : msg;
   }
   return String(err);
+}
+
+function describeSyncState(s: string): string {
+  switch (s) {
+    case 'syncing':
+      return 'syncing…';
+    case 'offline':
+      return 'offline';
+    case 'error':
+      return 'error';
+    case 'online':
+      return 'synced';
+    default:
+      return 'idle';
+  }
 }
 
 function downloadTextFile(text: string, filename: string) {
