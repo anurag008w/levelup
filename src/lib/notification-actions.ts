@@ -42,8 +42,10 @@ export function setupNotificationActions(): void {
         } catch {
           // session delete ho gaya ya AI off — chup rehna, koi error nahi dikhana
         } finally {
-          // User ko usi chat pe le jao taaki exchange dikhe.
-          window.dispatchEvent(new CustomEvent('levelup:open-chat', { detail: { sessionId } }));
+          // App ko force-open NAHI karte — notification se reply par app band
+          // hi rehna chahiye (AI ka reply notification me hi aa jata hai, tap
+          // karne par hi chat khulti hai). Sirf chat UI agar khula ho to
+          // refresh ho jaye.
           window.dispatchEvent(new Event('levelup:chat-updated'));
         }
       })();
