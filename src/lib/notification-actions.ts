@@ -32,7 +32,10 @@ export function setupNotificationActions(): void {
       void (async () => {
         try {
           const assistant = await container.chat.send(sessionId, inputValue.trim());
-          const preview = assistant.content.replace(/\s+/g, ' ').trim().slice(0, 140);
+          // Poora reply notification me jaata hai (largeBody expand karke dikhega) —
+          // 140 char ka purana hard cut yahan se hata diya, ab sirf ek generous
+          // safety limit hai taaki notification bahut zyada bada na ho jaaye.
+          const preview = assistant.content.replace(/\s+/g, ' ').trim().slice(0, 1000);
           // Reply notification se aaya — answer phir se notification me do taaki
           // user bina app khole hi AI ka jawab dekh sake.
           void notifyAiReply('Misa — reply bhej diya', preview || 'Naya AI reply aaya', sessionId);
