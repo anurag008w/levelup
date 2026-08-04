@@ -201,8 +201,20 @@ function sessionToNotificationId(sessionId?: string): number {
  *  - permission granted ho.
  * Native me LocalNotifications.schedule; web me browser Notification.
  * Same sessionId -> updates existing notification for that chat session (WhatsApp style).
+ *
+ * `delayMs` (optional): notification ko itne milliseconds baad dikhao. Chat UI
+ * reply ko bubble-by-bubble reveal karta hai (pehla bubble 3s baad, phir har
+ * paragraph ke beech 3–8s) — doSend har bubble ke reveal moment pe isse call
+ * karta hai. Same sessionId = same notification id = har update purani ko merge
+ * kar deta hai, last me poora reply ek hi notification me.
+ *
+ * Note: delay native pe bhi JS setTimeout se manage hota hai (na ki
+ * schedule.at) — kyunki Android plugin same id ke pending schedule ko cancel
+ * kar deta hai, isliye multiple future updates pre-schedule nahi ho sakte.
+ * Chat reveal bhi JS timers se chalta hai, isliye dono sath-sath sync rehte
+ * hain (app background hote huye dono pause/fire hote hain).
  */
-export async function notifyAiReply(title: string, body: string, sessionId?: string): Promise<void> {
+export async function notifyAiReply(title: string, body: string, sessionId?: string, delayMs = 0): Promise<void> {
   if (!isNotificationSupported()) return;
   try {
     if (!(await getNotificationPreference())) return;
@@ -215,49 +227,66 @@ export async function notifyAiReply(title: string, body: string, sessionId?: str
   const notificationId = sessionToNotificationId(sessionId);
   const tag = sessionId ? `levelup-chat-${sessionId}` : 'levelup-ai';
 
-  if (isNativePlatform()) {
-    try {
-      await ensureNotificationChannel();
-      await LocalNotifications.schedule({
-        notifications: [
-          {
-            id: notificationId,
-            title,
-            // Collapsed (single-line) view ke liye short body — Android khud
-            // ellipsize kar deta hai agar lamba ho.
-            body,
-            // largeBody = BigTextStyle — expand/swipe-down karne par poora
-            // (multi-line) message dikhta hai instead of cut-off single line.
-            largeBody: body,
-            summaryText: title,
-            channelId: CHANNEL_ID,
-            // Reply/Open actions + session id — tap/reply se app usi chat pe khule.
-            actionTypeId: ACTION_TYPE_ID,
-            extra: { sessionId },
-          },
-        ],
-      });
-    } catch {
-      // koi UI error nahi — notification best-effort hai
+  const fire = async () => {
+    if (isNativePlatform()) {
+      try {
+        await ensureNotificationChannel();
+        await LocalNotifications.schedule({
+          notifications: [
+            {
+              id: notificationId,
+              title,
+              // Collapsed (single-line) view ke liye body — Android khud
+              // ellipsize kar deta hai agar lamba ho.
+              body,
+              // largeBody = BigTextStyle — expand/swipe-down karne par poora
+              // (multi-line) message dikhta hai instead of cut-off single line.
+              largeBody: body,
+              summaryText: title,
+              channelId: CHANNEL_ID,
+              // Reply/Open actions + session id — tap/reply se app usi chat pe khule.
+              actionTypeId: ACTION_TYPE_ID,
+              extra: { sessionId },
+            },
+          ],
+        });
+      } catch {
+        // koi UI error nahi — notification best-effort hai
+      }
+      return;
     }
-    return;
-  }
 
-  // Web fallback — sirf jab app tab background me ho (active chat me disturb na ho).
-  if (typeof document !== 'undefined' && document.hidden) {
-    try {
-      if ('serviceWorker' in navigator) {
-        const reg = await navigator.serviceWorker.getRegistration();
-        if (reg) {
-          await reg.showNotification(title, { body, tag, icon: '/favicon.svg' });
+    // Web fallback — sirf jab app tab background me ho (active chat me disturb na ho).
+    if (typeof document !== 'undefined' && document.hidden) {
+      try {
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker
+            .getRegistration()
+            .then((reg) => {
+              if (reg) {
+                void reg.showNotification(title, { body, tag, icon: '/favicon.svg' });
+              } else if (typeof Notification !== 'undefined') {
+                const n = new Notification(title, { body, tag });
+                setTimeout(() => n.close(), 10_000);
+              }
+            })
+            .catch(() => {});
           return;
         }
+        if (typeof Notification !== 'undefined') {
+          const n = new Notification(title, { body, tag });
+          setTimeout(() => n.close(), 10_000);
+        }
+      } catch {
+        // ignore
       }
-      const n = new Notification(title, { body, tag });
-      setTimeout(() => n.close(), 10_000);
-    } catch {
-      // ignore
     }
+  };
+
+  if (delayMs > 0) {
+    setTimeout(() => void fire(), delayMs);
+  } else {
+    void fire();
   }
 }
 

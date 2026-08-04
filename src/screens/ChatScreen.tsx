@@ -46,7 +46,14 @@ import { haptic, hapticError, hapticSuccess } from '../lib/haptics';
 import { extractFileText } from '../lib/fileText';
 import { notifyAiReply } from '../lib/notifications';
 import { timeAgo } from '../lib/relative-time';
-import { splitReplyIntoBubbles } from '../features/chat/message-segments';
+import {
+  BUBBLE_GAP_MIN_MS,
+  BUBBLE_GAP_RANDOM_MS,
+  buildNotificationSteps,
+  computeRevealSchedule,
+  splitReplyIntoBubbles,
+  type RevealSchedule,
+} from '../features/chat/message-segments';
 
 interface DraftAttachment {
   id: string;
@@ -129,6 +136,12 @@ export default function ChatScreen({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // The reveal schedule for the freshly generated reply. Set in doSend, consumed
+  // by the revealing MessageBubble and by the notification delay — both share
+  // the SAME schedule so the notification lands exactly when the chat finishes
+  // showing the whole reply. Only one reply reveals at a time (composer is
+  // locked while streaming), so a single slot is enough.
+  const revealScheduleRef = useRef<RevealSchedule | null>(null);
 
   const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? null, [sessions, activeId]);
   const providers = useMemo(
@@ -140,7 +153,11 @@ export default function ChatScreen({
   const aiEnabled = container.providerSettings.isAiEnabled();
   const showThinking = container.store.get().aiSettings.chat.showThinking;
   // Stable identity so the reveal effect never restarts from its callback.
-  const handleRevealDone = useCallback(() => setRevealId(null), []);
+  const handleRevealDone = useCallback(() => {
+    // Reveal khatam — shared schedule ab waste hai, slot khaali karo.
+    revealScheduleRef.current = null;
+    setRevealId(null);
+  }, []);
 
   // This screen stays mounted across tab switches (chatVisited), so provider
   // changes made in AI Settings would never show here. Poll the store so the
@@ -468,13 +485,33 @@ export default function ChatScreen({
 
       // AI reply complete — native/web notification (sirf jab user ne Settings me ON kiya ho).
       // sessionId notification ke extra me jaata hai — tap/reply se usi chat pe khulega.
-      const sessionTitle = sessions.find((s) => s.id === sessionId)?.title || 'Chat';
-      // Poora reply notification me jaata hai — largeBody (BigTextStyle) expand
-      // karne par pura message dikhata hai. Sirf ek generous safety cap.
-      const preview = assistant.content.replace(/\s+/g, ' ').trim().slice(0, 1000);
-      // WhatsApp jaisa split: title = chat ka naam, body me "Sender: message" —
-      // isse pata chalta hai kisne bheja, aur alag-alag chats clutter nahi karte.
-      void notifyAiReply(sessionTitle, `Misa: ${preview || 'Naya AI reply aaya'}`, sessionId);
+      // Chat reply ko bubble-by-bubble reveal karta hai: pehla bubble 3s ke
+      // thinking pause ke baad, phir har paragraph ke beech random 3–8s. Wohi
+      // schedule notification ko bhi mile (revealScheduleRef), taaki notification
+      // bhi har bubble ke aate hi update ho.
+      const bubbles = splitReplyIntoBubbles(assistant.content);
+      const schedule = computeRevealSchedule(bubbles.length);
+      if (bubbles.length > 0) {
+        revealScheduleRef.current = schedule;
+      }
+      // Notification me bhi wahi WhatsApp-style merging: same sessionId = same
+      // notification id, har bubble ke reveal moment pe update hoti hai (purana
+      // merge hoke naya ban jata hai). Last update me POORA reply hota hai —
+      // chahe reply kitna bhi bada ho, koi character cut-off nahi.
+      // Title = "Misa" (sender), body = poora reply — reply/open actions same
+      // sessionId se hi kaam karte hain.
+      for (const step of buildNotificationSteps(bubbles, schedule)) {
+        void notifyAiReply('Misa', step.text || 'Naya AI reply aaya', sessionId, step.delayMs);
+      }
+      // Koi visible bubble nahi (sirf whitespace reply) — ek turant notification.
+      if (bubbles.length === 0) {
+        void notifyAiReply(
+          'Misa',
+          assistant.content.trim() || 'Naya AI reply aaya',
+          sessionId,
+          0,
+        );
+      }
     } catch (err) {
       setDraft(pendingDraft);
       setAttachments(pendingAttachments);
@@ -747,6 +784,7 @@ export default function ChatScreen({
                 isLast={i === windowedMessages.length - 1}
                 showThinking={showThinking}
                 reveal={m.id === revealId}
+                revealSchedule={m.id === revealId ? revealScheduleRef.current : undefined}
                 onRevealDone={handleRevealDone}
                 onMenu={openMenu}
                 onCopy={(msg) => void copyMessage(msg)}
@@ -1014,6 +1052,7 @@ function MessageBubble({
   isLast,
   showThinking,
   reveal = false,
+  revealSchedule,
   onRevealDone,
   ...actions
 }: MessageActions & {
@@ -1021,6 +1060,7 @@ function MessageBubble({
   isLast: boolean;
   showThinking?: boolean;
   reveal?: boolean;
+  revealSchedule?: RevealSchedule | null;
   onRevealDone?: () => void;
 }) {
   const isUser = message.role === 'user';
@@ -1033,7 +1073,13 @@ function MessageBubble({
   // Fresh replies reveal their bubbles like a person sending short messages:
   // a fixed 3s thinking pause with dots, the first paragraph, then a random
   // 3-8s thinking pause before every next paragraph (no repeating pattern).
-  // Reopened chats skip this entirely.
+  // Reopened chats skip this entirely. The freshly generated reply carries the
+  // SAME schedule used to delay its notification (revealSchedule), so both stay
+  // perfectly in sync; everything else falls back to its own schedule.
+  const schedule = useMemo(
+    () => revealSchedule ?? computeRevealSchedule(bubbleTexts.length),
+    [revealSchedule, bubbleTexts.length],
+  );
   const [revealed, setRevealed] = useState(0);
   const [thinking, setThinking] = useState(() => reveal && bubbleTexts.length > 0);
   const onRevealDoneRef = useRef(onRevealDone);
@@ -1066,17 +1112,17 @@ function MessageBubble({
       }
       // Thinking pause before the next paragraph: dots for a random 3-8s.
       setThinking(true);
-      wait(3000 + Math.random() * 5000, () => showBubble(i + 1));
+      wait(schedule.gapDelays[i] ?? BUBBLE_GAP_MIN_MS + Math.random() * BUBBLE_GAP_RANDOM_MS, () => showBubble(i + 1));
     };
     // After the reply is collected, Misa "thinks" for a fixed 3s before her
     // first paragraph lands.
     setThinking(true);
-    wait(3000, () => showBubble(0));
+    wait(schedule.firstDelay, () => showBubble(0));
     return () => {
       cancelled = true;
       for (const t of timers) clearTimeout(t);
     };
-  }, [reveal, isUser, bubbleTexts.length]);
+  }, [reveal, isUser, bubbleTexts.length, schedule]);
 
   // Keep the freshly revealed message in view as its bubbles grow.
   useEffect(() => {
