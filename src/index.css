@@ -711,6 +711,15 @@ select.field {
   padding-right: 1.7rem;
 }
 
+/* Icon-padded fields: .field sets padding, so Tailwind utilities (layered)
+   can't override it — unlayered compound rules win here. */
+.field.pl-9 {
+  padding-left: 2.25rem;
+}
+.field.pl-10 {
+  padding-left: 2.5rem;
+}
+
 label.field-label {
   display: block;
   font-size: 0.75rem;

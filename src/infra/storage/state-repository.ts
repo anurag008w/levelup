@@ -2,6 +2,7 @@ import type { KeyValueRepository, StateRepository, StateStore } from '../../core
 import type { AppState } from '../../core/domain/state';
 import { defaultUserProfile, emptyAppState, STATE_SCHEMA_VERSION } from '../../core/domain/state';
 import { MEMORY_BYTES_BUDGET, normalizeMemoryStore, pruneMemoryToBudget } from '../../core/domain/memory';
+import { INTERNAL_SYSTEM_PROMPT, LEGACY_MISA_SYSTEM_PROMPT } from '../../core/domain/chat';
 import { migrateV1toV2 } from './migration';
 
 export const STATE_KEY_V1 = 'levelup-state-v1';
@@ -53,7 +54,15 @@ export function normalizeState(raw: unknown): AppState {
             ...base.aiSettings,
             ...(r.aiSettings as Partial<AppState['aiSettings']>),
             chat: isRecord((r.aiSettings as { chat?: unknown }).chat)
-              ? { ...base.aiSettings.chat, ...((r.aiSettings as { chat: unknown }).chat as Partial<AppState['aiSettings']['chat']>) }
+              ? (() => {
+                  const storedChat = (r.aiSettings as { chat: unknown }).chat as Partial<AppState['aiSettings']['chat']>;
+                  // Sessions/global settings still carrying the old longer Misa
+                  // default are upgraded to the compressed persona on load;
+                  // user-edited text is never touched (exact match only).
+                  const systemPrompt =
+                    storedChat.systemPrompt === LEGACY_MISA_SYSTEM_PROMPT ? INTERNAL_SYSTEM_PROMPT : storedChat.systemPrompt;
+                  return { ...base.aiSettings.chat, ...storedChat, systemPrompt: systemPrompt ?? base.aiSettings.chat.systemPrompt };
+                })()
               : base.aiSettings.chat,
           }
         : base.aiSettings,

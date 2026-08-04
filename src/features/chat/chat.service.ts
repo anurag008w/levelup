@@ -2,6 +2,7 @@ import {
   DEFAULT_USER_PERSONA,
   INTERNAL_SYSTEM_PROMPT,
   LEGACY_DIVYA_SYSTEM_PROMPT,
+  LEGACY_MISA_SYSTEM_PROMPT,
   MISA_IDENTITY_GUARD,
 } from '../../core/domain/chat';
 import type { ChatMessage, ChatSession, ChatPreferences, ChatStoreState, ChatAttachment, GlobalChatPrefs } from '../../core/domain/chat';
@@ -14,7 +15,7 @@ import {
 import type { LLMMessage, LLMRequest, LLMResponse, ThinkingLevel, ContentPart } from '../../core/domain/llm';
 import { isAbortError } from '../../core/domain/llm';
 import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY } from '../../core/domain/chat-tools';
-import type { ChatToolResult } from '../../core/domain/chat-tools';
+import type { ChatToolActionResult, ChatToolResult } from '../../core/domain/chat-tools';
 import { createStreamSanitizer, sanitizeAssistantLeaks } from './leak-sanitizer';
 import { MEMORY_SUMMARY_INSTRUCTIONS, parseMemoryBlocks, shouldPinMemoryBlock, type MemoryBlock } from '../../core/domain/memory-summary';
 import {
@@ -301,6 +302,15 @@ export class ChatService {
     let partial = '';
 
     try {
+      // File attachments always go straight to the real chat completion.
+      // Routing a PDF/Office upload into the memory/task decision hops is
+      // wrong for two reasons: the JSON decision request (thinking off, 1024
+      // tokens) produces a stunted reply instead of real document analysis,
+      // and a file-part rejection there fails BEFORE applyFileFallback runs,
+      // so the extracted text never gets a chance. With files attached the
+      // user wants "ye content dekh ke jawab do" — skip the hops entirely.
+      const hasAttachments = (attachments?.length ?? 0) > 0;
+
       // A destructive memory action is waiting for the user's explicit "haan".
       // Consent is decided DETERMINISTICALLY from the user's own words — no
       // model round-trip, so a deletion can never happen on the model's guess.
@@ -328,7 +338,7 @@ export class ChatService {
       // Memory tool decision hop — the AI can read/edit/delete/pin its memory
       // on command ("memory mein kya hai", "ye delete karo", "yaad rakho").
       // Skipped entirely when AI memory is turned off in settings.
-      if (this.memoryTools && this.memoryEnabled() && this.memoryTools.isMemoryQuery(text)) {
+      if (!hasAttachments && this.memoryTools && this.memoryEnabled() && this.memoryTools.isMemoryQuery(text)) {
         onStatus?.('AI memory soch raha hai…');
         const decision = await this.llm.complete(await this.buildMemoryDecisionRequest(session, signal));
         let actions = this.memoryTools.parseTools(decision.text);
@@ -385,8 +395,10 @@ export class ChatService {
         return memoryAssistant;
       }
 
-      // Tool decision hop for plan/task queries.
-      if (this.tools && this.tools.isTaskQuery(text)) {
+      // Tool decision hop for plan/task queries. Skipped when files are
+      // attached — document analysis must reach the model directly (see the
+      // hasAttachments comment above).
+      if (!hasAttachments && this.tools && this.tools.isTaskQuery(text)) {
         onStatus?.('AI soch raha hai…');
         const decision = await this.llm.complete(await this.buildDecisionRequest(session, signal));
         let actions = this.tools.parseTools(decision.text);
@@ -418,37 +430,55 @@ export class ChatService {
             ? `${actions.length} tools chala raha hai…`
             : `Tool chala raha hai: ${actions[0].action}`,
         );
-        // Tool agent loop: if the model guessed task ids that aren't in a
-        // day's plan, fetch that day's plan deterministically and let the model
-        // retry with the REAL ids — "pehle plan dekho, phir edit karo" without
-        // the user having to show the plan first. The failed attempt is rolled
-        // back before re-running so the corrected batch never double-applies;
-        // if the model gives up, the partial mutations are kept so the summary
-        // below matches the real state.
+        // Tool agent loop: if a tool call fails in a FIXABLE way (guessed task
+        // ids, a block/task id not found, a missing edit field), feed the exact
+        // error back and let the model re-emit corrected JSON.
+        // - Task-id misses get the strongest feedback: the day's plan is fetched
+        //   deterministically with the REAL ids ("pehle plan dekho, phir edit
+        //   karo") and the model retries against those.
+        // - Other recoverable failures get the raw error + guidance
+        //   (e.g. "use listBlocks first") so the model can look the id up and
+        //   retry instead of silently reporting a false success.
+        // The failed attempt is rolled back before re-running so the corrected
+        // batch never double-applies; if the model gives up, the partial
+        // mutations are kept so the summary below matches the real state.
         let toolResult: ChatToolResult | null = null;
         for (let hop = 0; hop < MAX_TOOL_HOPS; hop++) {
           const preRun = this.store?.get();
           toolResult = await this.tools.runMany(actions);
           const postRun = this.store?.get();
+          const retryable = (toolResult.results ?? []).filter((r) => !r.ok && r.retryable);
+          if (retryable.length === 0) break;
           const missing = toolResult.missingTaskIdDays ?? [];
           const canReplan = missing.length > 0 && !toolResult.requiresConfirmation && this.store !== null && preRun !== undefined && postRun !== undefined;
-          if (!canReplan) break;
-          onStatus?.('Pehle plan fetch kar raha hai…');
-          const plans = this.tools.renderPlans(missing);
-          const replan = await this.llm.complete(await this.buildReplanRequest(session, plans, toolResult.summary, signal));
-          const next = this.tools.parseTools(replan.text);
+          if (canReplan) {
+            onStatus?.('Pehle plan fetch kar raha hai…');
+            const plans = this.tools.renderPlans(missing);
+            const replan = await this.llm.complete(await this.buildReplanRequest(session, plans, toolResult.summary, signal));
+            const next = this.tools.parseTools(replan.text);
+            if (next.length === 0) {
+              this.store!.save(postRun);
+              break;
+            }
+            this.store!.save(preRun);
+            actions = next;
+            continue;
+          }
+          onStatus?.(`${retryable.length} tool fix kar raha hai…`);
+          const fixed = await this.llm.complete(await this.buildErrorRetryRequest(session, toolResult.summary, retryable, signal));
+          const next = this.tools.parseTools(fixed.text);
           if (next.length === 0) {
-            this.store!.save(postRun);
+            if (postRun !== undefined && this.store) this.store.save(postRun);
             break;
           }
-          this.store!.save(preRun);
+          if (preRun !== undefined && this.store) this.store.save(preRun);
           actions = next;
         }
         if (!toolResult) throw new Error('Tool execution failed');
         onStatus?.('Jawab likh raha hai…');
         let reasoning = '';
         const streamSani = createStreamSanitizer();
-        const summaryRequest = await this.buildSummaryRequest(session, toolResult.summary, (delta) => {
+        const summaryRequest = await this.buildSummaryRequest(session, this.formatToolResultSummary(toolResult), (delta) => {
           const clean = streamSani.push(delta);
           if (clean) {
             partial += clean;
@@ -477,6 +507,11 @@ export class ChatService {
           model: summary.model,
           reasoning: (summary.reasoning ?? reasoning) || undefined,
           tool: actions.map((a) => a.action).join(','),
+          toolCalls: (toolResult.results ?? []).map((r) => ({
+            action: r.action,
+            ok: r.ok,
+            message: r.summary,
+          })),
         };
         this.appendAssistant(session, assistant);
         return assistant;
@@ -567,7 +602,7 @@ export class ChatService {
   private async buildDecisionRequest(session: ChatSession, signal?: AbortSignal): Promise<LLMRequest> {
     const request: LLMRequest = {
       messages: await this.buildMessages(session, CHAT_TOOL_INSTRUCTIONS),
-      temperature: session.prefs.temperature,
+      temperature: this.decisionTemperature(session),
       maxTokens: 1024,
       providerId: session.prefs.providerId,
       signal,
@@ -587,7 +622,7 @@ export class ChatService {
     const system = `${MEMORY_TOOL_INSTRUCTIONS}\n\nRead the student's question above and decide the single best action.${extra}`;
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),
-      temperature: session.prefs.temperature,
+      temperature: this.decisionTemperature(session),
       maxTokens: 1024,
       providerId: session.prefs.providerId,
       signal,
@@ -604,7 +639,7 @@ export class ChatService {
       `Your previous reply was:\n${previousReply}\n\nReplace it with exactly one JSON object now.`;
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),
-      temperature: session.prefs.temperature,
+      temperature: this.decisionTemperature(session),
       maxTokens: 1024,
       providerId: session.prefs.providerId,
       signal,
@@ -613,6 +648,55 @@ export class ChatService {
     const model = this.resolveModel(session);
     if (model) request.model = model;
     return request;
+  }
+
+  /**
+   * Decision-hop follow-up after a tool call failed for a FIXABLE reason that
+   * is not a missing task id (wrong block id, missing edit field, block not
+   * found, ...). Shows the model exactly which actions failed and why, and
+   * asks it to look the real id up (listBlocks / getTaskBank / getPlan) and
+   * re-emit ONLY the failed actions. Successful actions are never re-emitted,
+   * so the corrected batch cannot double-apply anything.
+   */
+  private async buildErrorRetryRequest(
+    session: ChatSession,
+    toolSummary: string,
+    failed: ChatToolActionResult[],
+    signal?: AbortSignal,
+  ): Promise<LLMRequest> {
+    const failedText = failed.map((f) => `- ${f.action}: ${f.summary}`).join('\n');
+    const system =
+      `${CHAT_TOOL_INSTRUCTIONS}\n\n` +
+      `Your previous tool call partially failed. The errors below are FIXABLE — ` +
+      `look the real id up first if needed (listBlocks / getTaskBank / getAllTasks / getPlan), ` +
+      `then re-emit the corrected action.\n` +
+      `Rules:\n` +
+      `- Re-emit ONLY the actions that failed, as exactly one JSON object (single action or {"actions":[...]}).\n` +
+      `- Never repeat actions that already succeeded.\n` +
+      `- Do NOT explain, refuse or apologize — just the corrected JSON.\n` +
+      `- If the request is genuinely impossible, reply with a short normal-text message in Hinglish instead of JSON.`;
+    const messages = await this.buildMessages(session, system);
+    messages.push({ role: 'user', content: `Previous tool results:\n${toolSummary}\n\nFailed actions and errors:\n${failedText}` });
+    const request: LLMRequest = {
+      messages,
+      temperature: this.decisionTemperature(session),
+      maxTokens: 1024,
+      providerId: session.prefs.providerId,
+      signal,
+      thinking: 'off',
+    };
+    const model = this.resolveModel(session);
+    if (model) request.model = model;
+    return request;
+  }
+
+  /**
+   * JSON decision hops must be fast and deterministic — high temperature makes
+   * weaker models drift out of the schema. Clamp to a low ceiling regardless
+   * of the user's chat temperature.
+   */
+  private decisionTemperature(session: ChatSession): number {
+    return Math.min(session.prefs.temperature ?? 0.7, 0.4);
   }
 
   /**
@@ -630,7 +714,7 @@ export class ChatService {
     messages.push({ role: 'user', content: `Previous tool result:\n${failure}\n\nPlan with task ids:\n${plans}` });
     const request: LLMRequest = {
       messages,
-      temperature: session.prefs.temperature,
+      temperature: this.decisionTemperature(session),
       maxTokens: 1024,
       providerId: session.prefs.providerId,
       signal,
@@ -639,6 +723,22 @@ export class ChatService {
     const model = this.resolveModel(session);
     if (model) request.model = model;
     return request;
+  }
+
+  /**
+   * Prefixes every executed tool action with a ✅/⚠️/❌ status so the summary
+   * model cannot silently gloss over partial failures ("2 tasks add hue, 1
+   * fail hua" — NOT "sab ho gaya"). Falls back to the raw joined summary when
+   * per-action results are unavailable.
+   */
+  private formatToolResultSummary(result: ChatToolResult): string {
+    if (!result.results || result.results.length === 0) return result.summary;
+    return result.results
+      .map((r) => {
+        const mark = r.ok ? '✅' : r.requiresConfirmation ? '⚠️' : '❌';
+        return `${mark} ${r.action}: ${r.summary}`;
+      })
+      .join('\n');
   }
 
   private async buildSummaryRequest(
@@ -651,7 +751,8 @@ export class ChatService {
     const system =
       `A plan tool executed and returned:\n${toolSummary}\n\n` +
       `Reply to the user's request in concise Hinglish. Tell them what was done (or why it failed).\n` +
-      `Rules: never echo tool calls, JSON, "/add_tasks(...)" or any protocol text; never add "Tool Execution", "[Tool ...]" or similar headers; never introduce yourself or say your name; if the tool blocked a duplicate task, say plainly that it already exists and was not re-added.`;
+      `Rules: never echo tool calls, JSON, "/add_tasks(...)" or any protocol text; never add "Tool Execution", "[Tool ...]" or similar headers; never introduce yourself or say your name; if the tool blocked a duplicate task, say plainly that it already exists and was not re-added.\n` +
+      `If ANY action is marked ❌ in the tool result, explicitly tell the user which change failed and why — NEVER claim everything succeeded when some actions failed.`;
     const thinking = this.resolveThinking(session);
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),
@@ -702,10 +803,17 @@ export class ChatService {
               const dataUrl = await this.blobToDataUrl(att.previewUrl);
               if (dataUrl) {
                 parts.push({ type: 'file', file: { filename: att.name, file_data: dataUrl } });
+              } else if (att.content) {
+                // Blob URL was revoked after the first send (or the app
+                // restarted) — the raw file bytes are gone, but the text
+                // extracted at attach time still carries the content. Without
+                // this fallback the file part would be silently dropped and
+                // follow-up messages would answer with zero document context.
+                parts.push({ type: 'text', text: `\n[Attached file: ${att.name}]\n${att.content}` });
               }
             }
           } else if (att.kind === 'text') {
-            parts.push({ type: 'text', text: `\n[Attached file: ${att.name}]\n` });
+            parts.push({ type: 'text', text: `\n[Attached file: ${att.name}]\n${att.content ?? ''}` });
           }
         }
         history.push({ role: m.role, content: parts });
@@ -847,7 +955,12 @@ export class ChatService {
   async summarizePriorChats(): Promise<number> {
     if (!this.store || !this.memory || !this.memoryEnabled()) return 0;
     if (this.pendingSummary) return this.pendingSummary;
-    const targets = this.state().sessions.filter((s) => s.messages.length > 0 && !s.memorySummarizedAt);
+    const targets = this.state().sessions.filter(
+      // The session the user is actively chatting in is never auto-dumped — it
+      // is only archived when the user explicitly chooses to (the "Copy to
+      // memory" prompt on chat switch). Everything else is a safe fallback.
+      (s) => s.id !== this.activeSessionId && s.messages.length > 0 && !s.memorySummarizedAt,
+    );
     if (targets.length === 0) return 0;
     const task = (async () => {
       let done = 0;
@@ -873,6 +986,29 @@ export class ChatService {
   /** Marks the session the user is currently chatting in (kept out of AI summarization). */
   setActiveSessionId(id: string | null): void {
     this.activeSessionId = id;
+  }
+
+  /** Whether a session's transcript is already stored in memory (copied once). */
+  isChatArchived(sessionId: string): boolean {
+    return Boolean(this.state().sessions.find((s) => s.id === sessionId)?.memorySummarizedAt);
+  }
+
+  /**
+   * Copies ONE finished chat into memory as a read-only transcript and marks it,
+   * so it is never stored again. Returns false when memory is off, the session
+   * is empty/unknown, or it was already copied — the chat itself always stays
+   * in the normal history (it's a copy, not a move).
+   */
+  archiveSessionToMemory(sessionId: string): boolean {
+    if (!this.store || !this.memory || !this.memoryEnabled()) return false;
+    const session = this.state().sessions.find((s) => s.id === sessionId);
+    if (!session || session.messages.length === 0 || session.memorySummarizedAt) return false;
+    try {
+      this.persistSessionToMemory(session);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   getActiveSessionId(): string | null {
@@ -1309,6 +1445,12 @@ function normalizePrefs(prefs: Partial<ChatPreferences>): ChatPreferences {
   // Upgrade sessions that still carry the exact pre-Misa Divya default persona;
   // anything the user edited themselves is preserved.
   if (merged.systemPrompt === LEGACY_DIVYA_SYSTEM_PROMPT) {
+    merged.systemPrompt = INTERNAL_SYSTEM_PROMPT;
+  }
+
+  // Upgrade sessions still carrying the old (longer) Misa default persona to
+  // the compressed one. Exact match only — user-edited text stays untouched.
+  if (merged.systemPrompt === LEGACY_MISA_SYSTEM_PROMPT) {
     merged.systemPrompt = INTERNAL_SYSTEM_PROMPT;
   }
 

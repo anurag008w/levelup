@@ -139,7 +139,7 @@ export default function ReviewScreen({
             <Siren size={17} color="var(--color-danger)" />
           </span>
           <p className="text-sm leading-relaxed text-muted">
-            JEE Main date set karo — attempt se 30 din pehle app automatically exam month mode mein switch ho jayega.
+            Set JEE Main date — Exam Month mode auto-activates 30 days before.
           </p>
         </div>
       )}
@@ -189,7 +189,7 @@ export default function ReviewScreen({
             <Check size={16} color="var(--color-success)" />
           </span>
           <p className="text-sm leading-relaxed text-muted">
-            Koi review abhi due nahi hai. Weekly Day 7, 14, 21… aur Monthly Day 30, 60, 90 par unlock hota hai.
+            No review due. Weekly unlocks Day 7, 14, 21…; monthly Day 30, 60, 90.
           </p>
         </div>
       )}

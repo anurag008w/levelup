@@ -94,6 +94,25 @@ export interface ChatToolResult {
    *  plan. Lets the chat service auto-fetch the day's plan and retry once with
    *  the real ids — the "pehle plan dekho, phir edit karo" chaining. */
   missingTaskIdDays?: number[];
+  /** True when this failure is FIXABLE by the model re-emitting better JSON —
+   *  e.g. a wrong/guessed id, a missing edit field, or a block not found. Lets
+   *  the chat service feed the exact error back and let the model retry. */
+  retryable?: boolean;
+  /** Per-action execution results — lets the chat service show the model
+   *  exactly which actions succeeded and which failed, so a retry only
+   *  re-emits the failures instead of double-applying the batch. */
+  results?: ChatToolActionResult[];
+}
+
+/** Per-action outcome recorded by runMany. */
+export interface ChatToolActionResult {
+  action: string;
+  ok: boolean;
+  summary: string;
+  requiresConfirmation?: boolean;
+  missingTaskIdDays?: number[];
+  /** Same semantics as ChatToolResult.retryable. */
+  retryable?: boolean;
 }
 
 /** Description of the tool protocol embedded in the system prompt. */
