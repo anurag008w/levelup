@@ -1,0 +1,139 @@
+diff --git a/node_modules/@capacitor/local-notifications/android/src/main/AndroidManifest.xml b/node_modules/@capacitor/local-notifications/android/src/main/AndroidManifest.xml
+index 04e785d..b19c861 100644
+--- a/node_modules/@capacitor/local-notifications/android/src/main/AndroidManifest.xml
++++ b/node_modules/@capacitor/local-notifications/android/src/main/AndroidManifest.xml
+@@ -2,6 +2,9 @@
+ 
+     <application>
+         <receiver android:name="com.capacitorjs.plugins.localnotifications.TimedNotificationPublisher" />
++        <receiver
++            android:name="com.capacitorjs.plugins.localnotifications.NotificationActionReceiver"
++            android:exported="false" />
+         <receiver android:name="com.capacitorjs.plugins.localnotifications.NotificationDismissReceiver" />
+         <receiver
+             android:name="com.capacitorjs.plugins.localnotifications.LocalNotificationRestoreReceiver"
+diff --git a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
+index 0b826a5..dccbe04 100644
+--- a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
++++ b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
+@@ -261,6 +261,29 @@ public class LocalNotificationManager {
+             for (NotificationAction notificationAction : actionGroup) {
+                 // TODO Add custom icons to actions
+                 Intent actionIntent = buildIntent(localNotification, notificationAction.getId());
++                // Inline Reply: broadcast to NotificationActionReceiver instead of
++                // launching the Activity — replying must NOT pull the app to the
++                // foreground. Non-input actions ("open chat" etc.) keep the
++                // activity launch.
++                if (notificationAction.isInput()) {
++                    PendingIntent actionPendingIntent = PendingIntent.getBroadcast(
++                        context,
++                        localNotification.getId() + notificationAction.getId().hashCode(),
++                        actionIntent,
++                        flags
++                    );
++                    NotificationCompat.Action.Builder actionBuilder = new NotificationCompat.Action.Builder(
++                        R.drawable.ic_transparent,
++                        notificationAction.getTitle(),
++                        actionPendingIntent
++                    );
++                    if (notificationAction.isInput()) {
++                        RemoteInput remoteInput = new RemoteInput.Builder(REMOTE_INPUT_KEY).setLabel(notificationAction.getTitle()).build();
++                        actionBuilder.addRemoteInput(remoteInput);
++                    }
++                    mBuilder.addAction(actionBuilder.build());
++                    continue;
++                }
+                 PendingIntent actionPendingIntent = PendingIntent.getActivity(
+                     context,
+                     localNotification.getId() + notificationAction.getId().hashCode(),
+diff --git a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationsPlugin.java b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationsPlugin.java
+index 197de4a..ed5dbde 100644
+--- a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationsPlugin.java
++++ b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationsPlugin.java
+@@ -287,6 +287,18 @@ public class LocalNotificationsPlugin extends Plugin {
+         }
+     }
+ 
++    /**
++     * Fires `localNotificationActionPerformed` to the JS bridge. Called by
++     * NotificationActionReceiver for inline reply actions (which run as a
++     * broadcast so the app stays closed) and by the activity-tap path.
++     */
++    public static void fireActionPerformed(JSObject data) {
++        LocalNotificationsPlugin localNotificationsPlugin = LocalNotificationsPlugin.getLocalNotificationsInstance();
++        if (localNotificationsPlugin != null) {
++            localNotificationsPlugin.notifyListeners("localNotificationActionPerformed", data, true);
++        }
++    }
++
+     public static LocalNotificationsPlugin getLocalNotificationsInstance() {
+         if (staticBridge != null && staticBridge.getWebView() != null) {
+             PluginHandle handle = staticBridge.getPlugin("LocalNotifications");
+diff --git a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/NotificationActionReceiver.java b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/NotificationActionReceiver.java
+new file mode 100644
+index 0000000..f512bb8
+--- /dev/null
++++ b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/NotificationActionReceiver.java
+@@ -0,0 +1,62 @@
++package com.capacitorjs.plugins.localnotifications;
++
++import android.app.NotificationManager;
++import android.content.BroadcastReceiver;
++import android.content.Context;
++import android.content.Intent;
++import android.os.Bundle;
++import androidx.core.app.RemoteInput;
++import com.getcapacitor.JSObject;
++import org.json.JSONException;
++
++/**
++ * Receiver for inline "Reply" actions. The stock plugin launches the Activity
++ * for every action (PendingIntent.getActivity), which pulls the app to the
++ * foreground the moment the user replies from the notification. Using a
++ * broadcast PendingIntent keeps the app closed: the reply text is delivered to
++ * the JS bridge as a `localNotificationActionPerformed` event (same shape the
++ * activity-tap path produces) and the notification is dismissed so the AI's
++ * answer can replace it.
++ */
++public class NotificationActionReceiver extends BroadcastReceiver {
++
++    @Override
++    public void onReceive(Context context, Intent intent) {
++        int notificationId = intent.getIntExtra(LocalNotificationManager.NOTIFICATION_INTENT_KEY, Integer.MIN_VALUE);
++        if (notificationId == Integer.MIN_VALUE) {
++            return;
++        }
++
++        JSObject dataJson = new JSObject();
++
++        Bundle results = RemoteInput.getResultsFromIntent(intent);
++        if (results != null) {
++            CharSequence input = results.getCharSequence(LocalNotificationManager.REMOTE_INPUT_KEY);
++            if (input != null) {
++                dataJson.put("inputValue", input.toString());
++            }
++        }
++        dataJson.put("actionId", intent.getStringExtra(LocalNotificationManager.ACTION_INTENT_KEY));
++
++        String notificationJsonString = intent.getStringExtra(LocalNotificationManager.NOTIFICATION_OBJ_INTENT_KEY);
++        if (notificationJsonString != null) {
++            try {
++                dataJson.put("notification", new JSObject(notificationJsonString));
++            } catch (JSONException ignored) {
++            }
++        }
++
++        boolean isRemovable = intent.getBooleanExtra(LocalNotificationManager.NOTIFICATION_IS_REMOVABLE_KEY, true);
++        NotificationStorage notificationStorage = new NotificationStorage(context);
++        if (isRemovable) {
++            notificationStorage.deleteNotification(Integer.toString(notificationId));
++        }
++
++        NotificationManager notificationManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
++        if (notificationManager != null) {
++            notificationManager.cancel(notificationId);
++        }
++
++        LocalNotificationsPlugin.fireActionPerformed(dataJson);
++    }
++}
