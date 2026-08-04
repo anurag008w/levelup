@@ -115,6 +115,9 @@ export class ProviderSettingsService {
    */
   configureServerAuth(baseUrl: string, apiKey: string): void {
     if (!baseUrl || !apiKey) return;
+    if (this.hiddenDefault && this.hiddenDefault.baseUrl === baseUrl && this.hiddenDefault.apiKey === apiKey) {
+      return; // Already configured with same credentials — prevent flicker / re-creation
+    }
     const existing = this.hiddenDefault;
     // Model is env-driven (VITE_DEFAULT_AI_MODEL), exactly like the base URL —
     // the build packs whatever value is set (default: 'levelup' group id).
