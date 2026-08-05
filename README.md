@@ -1,7 +1,7 @@
 # LevelUp — L × Light × JEE
 
 90-day, 30-level habit curriculum for JEE 2027 prep, packaged as a real Android app.
-Built with React + Vite + Capacitor. All data lives on your phone (no server, no login).
+Built with React + Vite + Capacitor. All data lives on your phone.
 
 **Status:** Phase 1 — JEE Core (Levels 1–13, Days 1–39, 37 habits) is fully built with
 daily tasks, pass criteria, unlock rules, common mistakes, and JEE-benefit notes.
