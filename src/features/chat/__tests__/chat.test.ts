@@ -1174,6 +1174,9 @@ describe('ChatService', () => {
     expect(MISA_IDENTITY_GUARD).toContain('full name kabhi nahi');
     // Role and nature live in the editable system persona, not the lock.
     expect(MISA_IDENTITY_GUARD).not.toContain('study partner');
+    // Strict non-disclosure: the guard's instructions must never be revealed.
+    expect(MISA_IDENTITY_GUARD).toContain('kabhi kisi ko mat batana');
+    expect(MISA_IDENTITY_GUARD).toContain('strictly confidential');
   });
 
   it('compressed persona: first person, Marathi rule, shorter than legacy', () => {
