@@ -24,6 +24,10 @@ export interface ReleaseInfo {
   releaseUrl: string;
   apkUrl: string | null;
   apkSize?: number;
+  /** True for GitHub draft releases — never offered as an update. */
+  draft?: boolean;
+  /** True for GitHub prereleases — never offered as an update. */
+  prerelease?: boolean;
 }
 
 export interface UpdateCheckResult {
@@ -69,13 +73,16 @@ export function getEnvVersion(): string {
   return version ? version : 'dev';
 }
 
-// Priority: bake-time version (VITE_APP_VERSION, set by the release build) →
-// real installed versionName from the OS → unknown ('dev').
+// Priority: real installed versionName from the OS → bake-time version
+// (VITE_APP_VERSION, set by the release build) → unknown ('dev').
+// The native versionName is the ground truth of the installed APK — it is
+// what the OS reports, so it can never go stale the way a baked-in web build
+// constant can. The gradle default "1.0" carries no info, so we skip it.
 export function resolveCurrentVersion(envVersion: string, nativeVersion: string | null): string {
+  const native = nativeVersion?.trim();
+  if (native && native !== '1.0') return native;
   const env = envVersion?.trim();
   if (env && env !== 'dev') return env;
-  const native = nativeVersion?.trim();
-  if (native) return native;
   return 'dev';
 }
 
@@ -95,11 +102,28 @@ export async function getInstalledVersion(): Promise<string> {
 }
 
 export function parseVersion(version: string): number[] {
-  return version
+  const parts = version
     .replace(/^v/i, '')
     .split(/[^0-9]+/)
-    .map((part) => parseInt(part, 10))
-    .filter((n) => !Number.isNaN(n));
+    .filter((p) => p.length > 0);
+  // Date-style release tags are vYYYY.MM.DD or vYYYY.MM.DDSS (same-day
+  // releases carry a 2-digit sequence: v2026.08.0503 = day 05 + seq 03).
+  // As raw numbers "0503" (503) would look NEWER than "06" (6) and break
+  // update detection — so split the last component into day + sequence.
+  const isDateTag = parts.length >= 3 && parts[0].length === 4;
+  const nums: number[] = [];
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i];
+    const n = parseInt(part, 10);
+    if (Number.isNaN(n)) continue;
+    if (isDateTag && i === 2 && part.length > 2) {
+      nums.push(parseInt(part.slice(0, 2), 10));
+      nums.push(parseInt(part.slice(2) || '0', 10));
+    } else {
+      nums.push(n);
+    }
+  }
+  return nums;
 }
 
 export function compareVersions(a: string, b: string): number {
@@ -145,13 +169,20 @@ export function releaseFromApi(payload: Record<string, unknown>): ReleaseInfo | 
       typeof payload.html_url === 'string' ? payload.html_url : `https://github.com/${GITHUB_REPO}/releases/latest`,
     apkUrl: apk?.url ?? null,
     apkSize: apk?.size,
+    draft: payload.draft === true,
+    prerelease: payload.prerelease === true,
   };
 }
 
 export async function checkForUpdates(): Promise<UpdateCheckResult> {
   const currentVersion = await getInstalledVersion();
   try {
-    const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
+    // GitHub's `/releases/latest` returns the most recently *published*
+    // release, which is not always the highest *tag* (a backdated publish, a
+    // stray draft, or a prerelease can throw it off). List every release and
+    // pick the one with the newest tag (vYYYY.MM.DD[SS]) — the app then always
+    // reports the actual latest version, exactly what the tag says.
+    const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100`, {
       headers: { Accept: 'application/vnd.github+json' },
     });
     if (response.status === 404) {
@@ -160,15 +191,16 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
     if (!response.ok) {
       throw new Error(`Update check fail (HTTP ${response.status})`);
     }
-    const payload = (await response.json()) as Record<string, unknown>;
-    const latest = releaseFromApi(payload);
-    if (!latest) {
-      return { currentVersion, latest: null, available: false };
-    }
+    const payload = (await response.json()) as Record<string, unknown>[];
+    const releases = payload
+      .map((item) => releaseFromApi(item))
+      .filter((r): r is ReleaseInfo => r !== null && !r.draft && !r.prerelease);
+    // Highest tag first — stable sort keeps ordering deterministic.
+    const latest = [...releases].sort((a, b) => compareVersions(b.version, a.version))[0] ?? null;
     return {
       currentVersion,
       latest,
-      available: isUpdateAvailable(currentVersion, latest.version),
+      available: latest ? isUpdateAvailable(currentVersion, latest.version) : false,
     };
   } catch (error) {
     return {

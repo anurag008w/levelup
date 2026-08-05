@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  checkForUpdates,
   compareVersions,
   installUpdate,
   isUpdateAvailable,
@@ -24,6 +25,10 @@ vi.mock('@capacitor/core', () => ({
   CapacitorHttp: { get: (...args: unknown[]) => httpGetMock(...args) },
 }));
 
+vi.mock('@capacitor/app', () => ({
+  App: { getInfo: () => Promise.resolve({ version: '1.0', build: '1' }) },
+}));
+
 vi.mock('@capacitor/filesystem', () => ({
   Directory: { Cache: 'CACHE' },
   Filesystem: {
@@ -39,12 +44,12 @@ vi.mock('@capgo/capacitor-intent-launcher', () => ({
 }));
 
 describe('resolveCurrentVersion', () => {
-  it('prefers a baked-in release version over the native version', () => {
-    expect(resolveCurrentVersion('2026.08.01', '1.0')).toBe('2026.08.01');
+  it('prefers the native installed version over a baked-in release version', () => {
+    expect(resolveCurrentVersion('2026.08.02', '2026.08.01')).toBe('2026.08.01');
   });
 
-  it('falls back to the native installed version when not baked in', () => {
-    expect(resolveCurrentVersion('dev', '2026.08.01')).toBe('2026.08.01');
+  it('falls back to the baked-in release version when native is the gradle default', () => {
+    expect(resolveCurrentVersion('2026.08.01', '1.0')).toBe('2026.08.01');
   });
 
   it('falls back to dev when nothing is known', () => {
@@ -57,6 +62,12 @@ describe('parseVersion', () => {
   it('parses date-style versions', () => {
     expect(parseVersion('2026.08.01')).toEqual([2026, 8, 1]);
     expect(parseVersion('v2026.08.01')).toEqual([2026, 8, 1]);
+  });
+
+  it('splits same-day suffixed tags into day + sequence', () => {
+    expect(parseVersion('2026.08.0503')).toEqual([2026, 8, 5, 3]);
+    expect(parseVersion('v2026.08.0501')).toEqual([2026, 8, 5, 1]);
+    expect(parseVersion('2026.08.06')).toEqual([2026, 8, 6]);
   });
 
   it('parses plain numeric versions and ignores junk', () => {
@@ -74,6 +85,16 @@ describe('compareVersions', () => {
     expect(compareVersions('2026.09.01', '2026.08.02')).toBe(1);
   });
 
+  it('orders suffixed same-day tags against base tags by date, not raw digits', () => {
+    // Regression: v2026.08.0503 used to parse as [2026, 8, 503] which looked
+    // newer than v2026.08.06 ([2026, 8, 6]) and hid real updates.
+    expect(compareVersions('2026.08.0503', '2026.08.06')).toBe(-1);
+    expect(compareVersions('2026.08.06', '2026.08.0503')).toBe(1);
+    expect(compareVersions('2026.08.0503', '2026.08.0502')).toBe(1);
+    expect(compareVersions('2026.08.0501', '2026.08.05')).toBe(1);
+    expect(compareVersions('2026.08.0503', '2026.08.0503')).toBe(0);
+  });
+
   it('treats unknown local builds as older than any release', () => {
     expect(compareVersions('dev', '2026.08.01')).toBe(-1);
     expect(compareVersions('dev', 'dev')).toBe(0);
@@ -84,10 +105,18 @@ describe('isUpdateAvailable', () => {
   it('is false when current equals or beats latest', () => {
     expect(isUpdateAvailable('2026.08.01', '2026.08.01')).toBe(false);
     expect(isUpdateAvailable('2026.09.01', '2026.08.01')).toBe(false);
+    expect(isUpdateAvailable('2026.08.06', '2026.08.06')).toBe(false);
   });
 
   it('is true when latest is newer', () => {
     expect(isUpdateAvailable('2026.08.01', '2026.09.01')).toBe(true);
+  });
+
+  it('detects a real update when the installed tag is older than a later release', () => {
+    // Regression: installed v2026.08.0503 must NOT be treated as newer than
+    // v2026.08.06 just because "503" > "6" numerically.
+    expect(isUpdateAvailable('2026.08.0503', '2026.08.06')).toBe(true);
+    expect(isUpdateAvailable('2026.08.05', '2026.08.0501')).toBe(true);
   });
 
   it('always offers the update for local/dev builds', () => {
@@ -134,12 +163,96 @@ describe('releaseFromApi', () => {
       tagName: 'v2026.08.01',
       apkUrl: 'https://x/signed.apk',
       apkSize: 456,
+      draft: false,
+      prerelease: false,
     });
   });
 
   it('returns null for a malformed payload', () => {
     expect(releaseFromApi({})).toBeNull();
     expect(releaseFromApi({ tag_name: 42 })).toBeNull();
+  });
+});
+
+describe('checkForUpdates', () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('picks the highest release tag, ignoring drafts and prereleases', async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => [
+        {
+          tag_name: 'v2026.08.0502',
+          name: 'LevelUp v2026.08.0502',
+          body: '',
+          published_at: '2026-08-04T19:42:00Z',
+          html_url: 'https://x/0502',
+          draft: false,
+          prerelease: false,
+          assets: [{ name: 'levelup-2026.08.0502.apk', browser_download_url: 'https://x/0502.apk' }],
+        },
+        {
+          tag_name: 'v2026.08.06',
+          name: 'LevelUp v2026.08.06',
+          body: '',
+          published_at: '2026-08-05T10:00:00Z',
+          html_url: 'https://x/06',
+          draft: false,
+          prerelease: false,
+          assets: [{ name: 'levelup-2026.08.06-signed.apk', browser_download_url: 'https://x/06-signed.apk' }],
+        },
+        {
+          // Draft with a HIGHER tag — must never be offered as latest.
+          tag_name: 'v2026.08.07',
+          name: 'LevelUp v2026.08.07',
+          body: '',
+          published_at: '2026-08-05T12:00:00Z',
+          html_url: 'https://x/07',
+          draft: true,
+          prerelease: false,
+          assets: [{ name: 'levelup-2026.08.07.apk', browser_download_url: 'https://x/07.apk' }],
+        },
+      ],
+    });
+
+    const result = await checkForUpdates();
+
+    expect(result.error).toBeUndefined();
+    expect(result.latest?.version).toBe('2026.08.06');
+    expect(result.latest?.apkUrl).toBe('https://x/06-signed.apk');
+  });
+
+  it('reports no release when the repository has none', async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => [],
+    });
+
+    const result = await checkForUpdates();
+
+    expect(result.latest).toBeNull();
+    expect(result.available).toBe(false);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('reports an error when the API request fails', async () => {
+    fetchMock.mockResolvedValue({ status: 403, ok: false });
+
+    const result = await checkForUpdates();
+
+    expect(result.latest).toBeNull();
+    expect(result.error).toContain('403');
   });
 });
 
