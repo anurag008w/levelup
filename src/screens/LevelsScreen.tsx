@@ -435,7 +435,7 @@ export default function LevelsScreen({ state, today, update }: { state: AppState
 
   return (
     <div className="screen fade-up">
-      <div className="mb-4">
+      <div className="mb-4 pl-10 sm:pl-0">
         <SectionHeader
           icon={<ListChecks size={15} color="var(--color-l)" />}
           accent="var(--color-l)"
@@ -499,8 +499,8 @@ export default function LevelsScreen({ state, today, update }: { state: AppState
                 aria-expanded={isOpen}
                 className="card card-press w-full p-3.5 text-left transition-colors"
                 style={{
-                  borderColor: activeNow ? 'rgba(201,162,39,0.5)' : clearedLevel ? 'rgba(138,154,91,0.3)' : 'var(--color-border)',
-                  backgroundColor: activeNow ? 'rgba(201,162,39,0.05)' : clearedLevel ? 'rgba(138,154,91,0.04)' : undefined,
+                  borderColor: activeNow ? 'rgba(239,233,223,0.5)' : clearedLevel ? 'rgba(163,19,19,0.3)' : 'var(--color-border)',
+                  backgroundColor: activeNow ? 'rgba(239,233,223,0.05)' : clearedLevel ? 'rgba(163,19,19,0.04)' : undefined,
                   opacity: status === 'locked' ? 0.55 : 1,
                 }}
               >
@@ -524,7 +524,7 @@ export default function LevelsScreen({ state, today, update }: { state: AppState
 
                 {clearedLevel && (
                   <div className="mt-2 flex items-center gap-1.5">
-                    <span className="badge" style={{ backgroundColor: 'rgba(138,154,91,0.14)', color: 'var(--color-success)' }}>
+                    <span className="badge" style={{ backgroundColor: 'rgba(163,19,19,0.14)', color: 'var(--color-success)' }}>
                       <Sparkles size={10} /> Level cleared
                     </span>
                   </div>
@@ -1029,8 +1029,8 @@ function BlockGroup({
         aria-expanded={openHeaderId}
         className="card card-press w-full p-3.5 text-left transition-colors"
         style={{
-          borderColor: isCurrentDay ? 'rgba(201,162,39,0.5)' : isActive ? 'rgba(138,154,91,0.5)' : 'var(--color-border)',
-          backgroundColor: isCurrentDay ? 'rgba(201,162,39,0.05)' : isActive ? 'rgba(138,154,91,0.05)' : undefined,
+          borderColor: isCurrentDay ? 'rgba(239,233,223,0.5)' : isActive ? 'rgba(163,19,19,0.5)' : 'var(--color-border)',
+          backgroundColor: isCurrentDay ? 'rgba(239,233,223,0.05)' : isActive ? 'rgba(163,19,19,0.05)' : undefined,
         }}
       >
         <div className="flex items-center justify-between gap-2">
@@ -1047,7 +1047,7 @@ function BlockGroup({
             <span className={`rounded-lg px-2 py-1 text-xs font-medium ${diffColors.bg} ${diffColors.text}`}>
               {block.difficulty}
             </span>
-            <span className="chip" style={{ color: 'var(--color-l)', borderColor: 'rgba(138,154,91,0.44)', backgroundColor: 'rgba(138,154,91,0.14)' }}>
+            <span className="chip" style={{ color: 'var(--color-l)', borderColor: 'rgba(163,19,19,0.44)', backgroundColor: 'rgba(163,19,19,0.14)' }}>
               {levels.length} level{levels.length === 1 ? '' : 's'}
             </span>
           </div>
@@ -1173,8 +1173,8 @@ function CustomLevelCard({
         aria-expanded={isOpen}
         className="card card-press w-full p-3.5 text-left transition-colors"
         style={{
-          borderColor: isCurrentDay ? 'rgba(201,162,39,0.5)' : 'var(--color-border)',
-          backgroundColor: isCurrentDay ? 'rgba(201,162,39,0.05)' : undefined,
+          borderColor: isCurrentDay ? 'rgba(239,233,223,0.5)' : 'var(--color-border)',
+          backgroundColor: isCurrentDay ? 'rgba(239,233,223,0.05)' : undefined,
         }}
       >
         <div className="flex items-center justify-between gap-2">
@@ -1303,8 +1303,8 @@ function CustomBlockCard({
         aria-expanded={isOpen}
         className="card card-press w-full p-3.5 text-left transition-colors"
         style={{
-          borderColor: isCurrentDay ? 'rgba(201,162,39,0.5)' : isActive ? 'rgba(138,154,91,0.5)' : 'var(--color-border)',
-          backgroundColor: isCurrentDay ? 'rgba(201,162,39,0.05)' : isActive ? 'rgba(138,154,91,0.05)' : undefined,
+          borderColor: isCurrentDay ? 'rgba(239,233,223,0.5)' : isActive ? 'rgba(163,19,19,0.5)' : 'var(--color-border)',
+          backgroundColor: isCurrentDay ? 'rgba(239,233,223,0.05)' : isActive ? 'rgba(163,19,19,0.05)' : undefined,
         }}
       >
         <div className="flex items-center justify-between gap-2">
@@ -1322,7 +1322,7 @@ function CustomBlockCard({
               {block.difficulty}
             </span>
             {isActive && (
-              <span className="badge" style={{ backgroundColor: 'rgba(138,154,91,0.14)', color: 'var(--color-l)' }}>
+              <span className="badge" style={{ backgroundColor: 'rgba(163,19,19,0.14)', color: 'var(--color-l)' }}>
                 <Sparkles size={10} /> Active
               </span>
             )}
@@ -1338,7 +1338,7 @@ function CustomBlockCard({
         {block.habits.length > 0 && (
           <div className="mt-2.5 flex flex-wrap gap-1.5">
             {block.habits.slice(0, 3).map((habit, i) => (
-              <span key={i} className="chip" style={{ borderColor: 'rgba(138,154,91,0.4)', color: 'var(--color-l)' }}>{habit}</span>
+              <span key={i} className="chip" style={{ borderColor: 'rgba(163,19,19,0.4)', color: 'var(--color-l)' }}>{habit}</span>
             ))}
             {block.habits.length > 3 && <span className="chip">+{block.habits.length - 3}</span>}
           </div>
@@ -1423,10 +1423,10 @@ function DetailBlock({ title, icon, action, children }: { title: string; icon: R
 
 function statusColor(status: LevelStatus): string {
   switch (status) {
-    case 'cleared': return '#8a9a5b';
-    case 'active': return '#c9a227';
-    case 'needs-recovery': return '#b3372f';
-    default: return '#48453a';
+    case 'cleared': return '#a31313';
+    case 'active': return '#efe9df';
+    case 'needs-recovery': return '#e34530';
+    default: return '#4a363a';
   }
 }
 

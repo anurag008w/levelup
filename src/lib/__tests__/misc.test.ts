@@ -5,10 +5,10 @@ import { MOCK_TEST_PROTOCOL, EXAM_MONTH_PROTOCOL } from '../../data/protocols';
 
 describe('phaseColors', () => {
   it('maps every phase color to a hex color (call sites append alpha-suffix hex digits, which requires real hex, not var())', () => {
-    expect(phaseAccent('l')).toBe('#8a9a5b');
-    expect(phaseAccent('light')).toBe('#c9a227');
-    expect(phaseAccent('peak')).toBe('#c9a227');
-    expect(phaseAccent('core')).toBe('#8a9a5b');
+    expect(phaseAccent('l')).toBe('#a31313');
+    expect(phaseAccent('light')).toBe('#efe9df');
+    expect(phaseAccent('peak')).toBe('#efe9df');
+    expect(phaseAccent('core')).toBe('#a31313');
   });
 });
 

@@ -296,7 +296,7 @@ export default function AISettingsScreen({
         <div className="relative flex items-start justify-between gap-4">
           <span
             className="badge"
-            style={{ backgroundColor: aiEnabled ? 'rgba(138,154,91,0.13)' : 'rgba(92,88,78,0.18)', color: aiEnabled ? 'var(--color-success)' : 'var(--color-muted)' }}
+            style={{ backgroundColor: aiEnabled ? 'rgba(163,19,19,0.13)' : 'rgba(92,88,78,0.18)', color: aiEnabled ? 'var(--color-success)' : 'var(--color-muted)' }}
           >
             <Sparkles size={11} /> {aiEnabled ? 'AI online' : 'Manual mode'}
           </span>
@@ -310,7 +310,7 @@ export default function AISettingsScreen({
         <p className="relative mt-2.5 max-w-sm text-sm leading-relaxed text-muted">
           Off = stable deterministic planning. Data stays local.
         </p>
-        <div className="relative mt-4 grid grid-cols-3 gap-2">
+        <div className="stat-strip relative mt-4">
           <MiniStat label="Providers" value={String(visibleProviders.length)} />
           <MiniStat label="Enabled" value={String(visibleProviders.filter((p) => p.enabled).length)} />
           <MiniStat label="Active" value={effectiveActive ? 'Set' : 'None'} />
@@ -338,7 +338,7 @@ export default function AISettingsScreen({
                   <p className="flex flex-wrap items-center gap-2 font-display text-[15px] font-bold">
                     {session.username}
                     {session.role === 'admin' && (
-                      <span className="badge" style={{ backgroundColor: 'rgba(201,162,39,0.14)', color: 'var(--color-light)' }}>
+                      <span className="badge" style={{ backgroundColor: 'rgba(239,233,223,0.14)', color: 'var(--color-light)' }}>
                         admin
                       </span>
                     )}
@@ -491,7 +491,7 @@ export default function AISettingsScreen({
         </div>
 
         {!notifSupported && (
-          <p className="mt-3 rounded-xl px-3 py-2 text-xs" style={{ backgroundColor: 'rgba(201,87,87,0.1)', color: 'var(--color-danger)' }}>
+          <p className="mt-3 rounded-xl px-3 py-2 text-xs" style={{ backgroundColor: 'rgba(216,31,20,0.1)', color: 'var(--color-danger)' }}>
             {notifReason === 'insecure'
               ? 'Browser notifications ke liye secure connection chahiye — app ko localhost ya HTTPS se kholo (http://192.168.x.x jaise LAN address pe browser ye feature band kar deta hai).'
               : 'Is browser/device pe notifications supported nahi hain — best experience ke liye Android app (APK) use karo.'}
@@ -503,10 +503,10 @@ export default function AISettingsScreen({
             className="mt-3 rounded-xl px-3 py-2 text-xs"
             style={
               notifMessage.type === 'error'
-                ? { backgroundColor: 'rgba(201,87,87,0.12)', color: 'var(--color-danger)' }
+                ? { backgroundColor: 'rgba(216,31,20,0.12)', color: 'var(--color-danger)' }
                 : notifMessage.type === 'ok'
-                  ? { backgroundColor: 'rgba(138,154,91,0.13)', color: 'var(--color-success)' }
-                  : { backgroundColor: 'rgba(79,209,197,0.13)', color: 'var(--color-l)' }
+                  ? { backgroundColor: 'rgba(163,19,19,0.13)', color: 'var(--color-success)' }
+                  : { backgroundColor: 'rgba(163,19,19,0.13)', color: 'var(--color-l)' }
             }
           >
             {notifMessage.text}
@@ -637,7 +637,7 @@ export default function AISettingsScreen({
               className="min-h-12 rounded-xl border px-2 py-1.5 text-center transition-colors"
               style={
                 backupScope === opt.id
-                  ? { borderColor: 'var(--color-l)', backgroundColor: 'rgba(138,154,91,0.12)' }
+                  ? { borderColor: 'var(--color-l)', backgroundColor: 'rgba(163,19,19,0.12)' }
                   : { borderColor: 'var(--color-border)', backgroundColor: 'transparent' }
               }
             >
@@ -666,10 +666,10 @@ export default function AISettingsScreen({
             className="mt-3 rounded-xl px-3 py-2 text-xs"
             style={
               backupStatus.type === 'error'
-                ? { backgroundColor: 'rgba(201,87,87,0.12)', color: 'var(--color-danger)' }
+                ? { backgroundColor: 'rgba(216,31,20,0.12)', color: 'var(--color-danger)' }
                 : backupStatus.type === 'ok'
-                  ? { backgroundColor: 'rgba(138,154,91,0.13)', color: 'var(--color-success)' }
-                  : { backgroundColor: 'rgba(79,209,197,0.13)', color: 'var(--color-l)' }
+                  ? { backgroundColor: 'rgba(163,19,19,0.13)', color: 'var(--color-success)' }
+                  : { backgroundColor: 'rgba(163,19,19,0.13)', color: 'var(--color-l)' }
             }
           >
             {backupStatus.text}
@@ -692,7 +692,7 @@ export default function AISettingsScreen({
               <button type="button" onClick={() => setPendingImport(null)} className="btn btn-ghost min-h-9 flex-1 text-xs">
                 Cancel
               </button>
-              <button type="button" onClick={confirmImport} disabled={importing} className="btn min-h-9 flex-1 border border-danger/40 text-xs text-danger" style={{ backgroundColor: 'rgba(201,87,87,0.1)' }}>
+              <button type="button" onClick={confirmImport} disabled={importing} className="btn min-h-9 flex-1 border border-danger/40 text-xs text-danger" style={{ backgroundColor: 'rgba(216,31,20,0.1)' }}>
                 {importing ? 'Restoring…' : 'Confirm Import'}
               </button>
             </div>
@@ -797,7 +797,7 @@ export default function AISettingsScreen({
                   onClick={() => void handleDeleteAllData()}
                   disabled={deletingAll}
                   className="btn min-h-10 flex-1 border border-danger/40 text-xs text-danger"
-                  style={{ backgroundColor: 'rgba(201,87,87,0.1)' }}
+                  style={{ backgroundColor: 'rgba(216,31,20,0.1)' }}
                 >
                   {deletingAll ? 'Deleting…' : 'Yes, delete all'}
                 </button>
@@ -810,11 +810,11 @@ export default function AISettingsScreen({
       {notifPopup && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-5">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setNotifPopup(false)} aria-hidden="true" />
-          <div role="dialog" aria-modal="true" aria-label="Enable notifications" className="gradient-border w-full max-w-sm rounded-[1.25rem] p-px">
-            <div className="rounded-[calc(1.25rem-1px)] bg-panel p-5">
+          <div role="dialog" aria-modal="true" aria-label="Enable notifications" className="gradient-border w-full max-w-sm rounded-2xl p-px">
+            <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-5">
               <div className="mb-4 flex items-start justify-between">
                 <div className="flex items-center gap-2.5">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(201,162,39,0.15)', color: 'var(--color-peak)' }}>
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(239,233,223,0.15)', color: 'var(--color-peak)' }}>
                     <Bell size={17} />
                   </div>
                   <div>
@@ -850,7 +850,7 @@ export default function AISettingsScreen({
 
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-bg/50 p-3">
+    <div className="stat-strip-item items-start text-left">
       <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-dim">{label}</p>
       <p className="mt-1 font-display text-lg font-bold">{value}</p>
     </div>
@@ -902,13 +902,13 @@ function ProviderCard({
   const zenCorsHint = isZenId(config.id) && (!!modelsError || healthMsg !== null);
 
   return (
-    <div className="gradient-border mb-3 rounded-[1.35rem] p-px" style={{ background: active ? undefined : 'var(--color-border)' }}>
-      <div className="rounded-[calc(1.35rem-1px)] bg-panel p-4">
+    <div className="gradient-border mb-3 rounded-2xl p-px" style={{ background: active ? undefined : 'var(--color-border)' }}>
+      <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4">
       <div className="mb-4 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2.5">
           <span
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-            style={{ backgroundColor: active ? 'rgba(138,154,91,0.14)' : 'var(--color-panel-raised)' }}
+            style={{ backgroundColor: active ? 'rgba(163,19,19,0.14)' : 'var(--color-panel-raised)' }}
           >
             {active ? <Sparkles size={16} color="var(--color-l)" /> : <KeyRound size={16} color="var(--color-muted)" />}
           </span>
@@ -930,7 +930,7 @@ function ProviderCard({
         </div>
           <div className="flex shrink-0 items-center gap-1">
             {config.hidden && (
-              <span className="badge" style={{ backgroundColor: 'rgba(201,162,39,0.12)', color: 'var(--color-light)' }}>
+              <span className="badge" style={{ backgroundColor: 'rgba(239,233,223,0.12)', color: 'var(--color-light)' }}>
                 Default
               </span>
             )}
@@ -938,7 +938,7 @@ function ProviderCard({
               type="button"
               onClick={onActive}
               className={`badge shrink-0 cursor-pointer transition-colors ${active ? '' : 'hover:!text-text'}`}
-              style={active ? { backgroundColor: 'rgba(138,154,91,0.16)', color: 'var(--color-l)' } : { backgroundColor: 'var(--color-panel-raised)', color: 'var(--color-muted)' }}
+              style={active ? { backgroundColor: 'rgba(163,19,19,0.16)', color: 'var(--color-l)' } : { backgroundColor: 'var(--color-panel-raised)', color: 'var(--color-muted)' }}
               aria-pressed={active}
             >
               {active ? <Check size={10} /> : null}

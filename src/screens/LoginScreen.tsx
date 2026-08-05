@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { KeyRound, Loader2, LogIn, Sparkles, User, UserPlus, X } from 'lucide-react';
+import { KeyRound, Loader2, LogIn, User, UserPlus, X } from 'lucide-react';
 import type { AuthSession } from '../lib/auth';
 import { loginToServer, registerOnServer, friendlyAuthError } from '../lib/auth';
 import { haptic } from '../lib/haptics';
@@ -67,120 +67,137 @@ export default function LoginScreen({ onLoggedIn, onSkip }: Props) {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-bg px-4 py-10 text-text">
-      <div className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-l/10 blur-3xl" aria-hidden="true" />
-      <div className="pointer-events-none absolute -bottom-28 -right-20 h-80 w-80 rounded-full bg-light/10 blur-3xl" aria-hidden="true" />
+      {/* Blood-red ambience — matches the splash/icon glow */}
+      <div className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-blood/25 blur-3xl" aria-hidden="true" />
+      <div className="pointer-events-none absolute -bottom-28 -right-20 h-80 w-80 rounded-full bg-l/15 blur-3xl" aria-hidden="true" />
+      {/* Giant ghost "L" watermark */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 select-none font-display text-[26rem] font-bold leading-none text-l/[0.045]"
+      >
+        L
+      </span>
+      {/* Hairline rule echoing the hero gradient border */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-l/50 to-transparent" aria-hidden="true" />
 
-      <form onSubmit={submit} className="card relative w-full max-w-sm p-6" noValidate>
-        {/* Brand */}
-        <div className="mb-5 flex items-center gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
-            <Sparkles size={20} />
-          </span>
-          <div className="min-w-0">
-            <p className="font-display text-lg font-bold leading-tight">LevelUp</p>
-            <p className="text-xs text-muted">Apne server se connect karo</p>
+      <form onSubmit={submit} className="relative w-full max-w-sm" noValidate>
+        {/* Brand mark — "L" medallion with blood glow */}
+        <div className="mb-6 flex flex-col items-center text-center">
+          <div className="glow-l relative flex h-16 w-16 items-center justify-center rounded-2xl border border-l/40 bg-gradient-to-b from-panel-raised to-bg">
+            <span className="font-display text-4xl font-bold leading-none text-light drop-shadow-[0_0_14px_rgba(216,31,20,0.55)]">
+              L
+            </span>
+            <span className="absolute -bottom-1.5 h-1 w-8 rounded-full bg-l shadow-[0_0_10px_rgba(216,31,20,0.8)]" aria-hidden="true" />
           </div>
+          <h1 className="mt-4 font-display text-2xl font-bold tracking-tight" aria-label="LevelUp">
+            LEVEL<span className="text-l">UP</span>
+          </h1>
+          <p className="mt-1 text-xs tracking-wide text-muted">Premium study discipline — {registerMode ? 'apni identity banao' : 'apni identity wapas lo'}</p>
         </div>
 
-        {/* Login / Register tabs — same page, smart flow */}
-        <div className="mb-5 grid grid-cols-2 gap-1 rounded-xl border border-border bg-bg/60 p-1">
-          <button
-            type="button"
-            onClick={() => switchMode(false)}
-            className={`flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-semibold transition-colors ${!registerMode ? 'bg-panel-raised text-text' : 'text-muted'}`}
-            aria-pressed={!registerMode}
-          >
-            <LogIn size={13} /> Login
-          </button>
-          <button
-            type="button"
-            onClick={() => switchMode(true)}
-            className={`flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-semibold transition-colors ${registerMode ? 'bg-panel-raised text-text' : 'text-muted'}`}
-            aria-pressed={registerMode}
-          >
-            <UserPlus size={13} /> Register
-          </button>
-        </div>
-
-        <div className="space-y-3.5">
-          <label className="block">
-            <span className="field-label">Username</span>
-            <div className="relative">
-              <User size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-dim" />
-              <input
-                className="field pl-9"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="aapka username"
-                autoComplete="username"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                disabled={busy}
-              />
+        <div className="gradient-border rounded-2xl p-px">
+          <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel/95 p-5">
+            {/* Login / Register tabs — same page, smart flow */}
+            <div className="mb-5 grid grid-cols-2 gap-1 rounded-xl border border-border bg-bg/60 p-1">
+              <button
+                type="button"
+                onClick={() => switchMode(false)}
+                className={`flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-semibold transition-colors ${!registerMode ? 'bg-panel-raised text-text' : 'text-muted'}`}
+                aria-pressed={!registerMode}
+              >
+                <LogIn size={13} /> Login
+              </button>
+              <button
+                type="button"
+                onClick={() => switchMode(true)}
+                className={`flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-semibold transition-colors ${registerMode ? 'bg-panel-raised text-text' : 'text-muted'}`}
+                aria-pressed={registerMode}
+              >
+                <UserPlus size={13} /> Register
+              </button>
             </div>
-          </label>
 
-          <label className="block">
-            <span className="field-label">Password</span>
-            <div className="relative">
-              <KeyRound size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-dim" />
-              <input
-                className="field pl-9"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="min 6 characters"
-                autoComplete={registerMode ? 'new-password' : 'current-password'}
-                disabled={busy}
-              />
+            <div className="space-y-3.5">
+              <label className="block">
+                <span className="field-label">Username</span>
+                <div className="relative">
+                  <User size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-dim" />
+                  <input
+                    className="field pl-9"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="aapka username"
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    disabled={busy}
+                  />
+                </div>
+              </label>
+
+              <label className="block">
+                <span className="field-label">Password</span>
+                <div className="relative">
+                  <KeyRound size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-dim" />
+                  <input
+                    className="field pl-9"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="min 6 characters"
+                    autoComplete={registerMode ? 'new-password' : 'current-password'}
+                    disabled={busy}
+                  />
+                </div>
+              </label>
             </div>
-          </label>
-        </div>
 
-        {error && (
-          <p className="mt-3.5 rounded-xl px-3 py-2 text-xs leading-relaxed text-danger" style={{ backgroundColor: 'rgba(201,87,87,0.12)' }}>
-            {error}
-          </p>
-        )}
+            {error && (
+              <p className="mt-3.5 rounded-xl px-3 py-2 text-xs leading-relaxed text-danger" style={{ backgroundColor: 'rgba(163,19,19,0.14)' }}>
+                {error}
+              </p>
+            )}
 
-        <button type="submit" disabled={busy} className="btn btn-primary mt-5 min-h-11 w-full gap-2">
-          {busy ? (
-            <>
-              <Loader2 size={16} className="animate-spin" /> {registerMode ? 'Account bana rahe…' : 'Login ho raha…'}
-            </>
-          ) : registerMode ? (
-            <>
-              <UserPlus size={16} /> Account banao
-            </>
-          ) : (
-            <>
-              <LogIn size={16} /> Login / Continue
-            </>
-          )}
-        </button>
+            <button type="submit" disabled={busy} className="btn btn-primary mt-5 min-h-11 w-full gap-2">
+              {busy ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" /> {registerMode ? 'Account bana rahe…' : 'Login ho raha…'}
+                </>
+              ) : registerMode ? (
+                <>
+                  <UserPlus size={16} /> Account banao
+                </>
+              ) : (
+                <>
+                  <LogIn size={16} /> Login / Continue
+                </>
+              )}
+            </button>
 
-        {!registerMode && (
-          <p className="mt-4 text-center text-[11px] leading-relaxed text-muted-dim">
-            No account? Register on the same page — one tap.
-          </p>
-        )}
+            {!registerMode && (
+              <p className="mt-4 text-center text-[11px] leading-relaxed text-muted-dim">
+                No account? Register on the same page — one tap.
+              </p>
+            )}
 
-        <div className="mt-5 border-t border-border pt-4">
-          <button
-            type="button"
-            disabled={!skipEnabled}
-            onClick={() => {
-              haptic();
-              onSkip?.();
-            }}
-            className="flex w-full items-center justify-center gap-1.5 rounded-xl py-2 text-xs text-muted transition-colors hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <X size={13} /> Skip — offline mode me chalein
-          </button>
-          <p className="mt-1.5 text-center text-[11px] leading-relaxed text-muted-dim">
-            Login kiye bina app use karo. Data sirf is device pe — AI server aur backup band.
-          </p>
+            <div className="mt-5 border-t border-border pt-4">
+              <button
+                type="button"
+                disabled={!skipEnabled}
+                onClick={() => {
+                  haptic();
+                  onSkip?.();
+                }}
+                className="flex w-full items-center justify-center gap-1.5 rounded-xl py-2 text-xs text-muted transition-colors hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <X size={13} /> Skip — offline mode me chalein
+              </button>
+              <p className="mt-1.5 text-center text-[11px] leading-relaxed text-muted-dim">
+                Login kiye bina app use karo. Data sirf is device pe — AI server aur backup band.
+              </p>
+            </div>
+          </div>
         </div>
       </form>
     </div>

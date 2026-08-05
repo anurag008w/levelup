@@ -126,11 +126,11 @@ export default function PlannersScreen({ state, update }: { state: AppState; upd
       />
 
       {/* How it works */}
-      <div className="gradient-border mb-5 rounded-[1.35rem] p-px" data-tone="blood">
-        <div className="rounded-[calc(1.35rem-1px)] bg-panel p-4">
+      <div className="gradient-border mb-5 rounded-2xl p-px" data-tone="blood">
+        <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2.5">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(201,87,87,0.14)', color: 'var(--color-danger)' }}>
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(216,31,20,0.14)', color: 'var(--color-danger)' }}>
                 <Sparkles size={16} />
               </span>
               <div>
@@ -144,15 +144,15 @@ export default function PlannersScreen({ state, update }: { state: AppState; upd
           </div>
           <ol className="space-y-2 text-[12px] leading-relaxed text-muted">
             <li className="flex gap-2">
-              <span className="badge shrink-0" style={{ backgroundColor: 'rgba(201,87,87,0.12)', color: 'var(--color-danger)' }}>1</span>
+              <span className="badge shrink-0" style={{ backgroundColor: 'rgba(216,31,20,0.12)', color: 'var(--color-danger)' }}>1</span>
               <span><b className="text-text">Copy prompt</b> dabao — prompt clipboard mein aa jayega.</span>
             </li>
             <li className="flex gap-2">
-              <span className="badge shrink-0" style={{ backgroundColor: 'rgba(201,87,87,0.12)', color: 'var(--color-danger)' }}>2</span>
+              <span className="badge shrink-0" style={{ backgroundColor: 'rgba(216,31,20,0.12)', color: 'var(--color-danger)' }}>2</span>
               <span>Apni <b className="text-text">poori file</b> (PDF/Excel/screenshot text — lectures + tests + routine sab ek saath) + ye prompt <b className="text-text">kisi bhi external AI</b> (ChatGPT/Claude/Gemini) mein paste karo — wo poora content jaise ka waisa JSON bana dega.</span>
             </li>
             <li className="flex gap-2">
-              <span className="badge shrink-0" style={{ backgroundColor: 'rgba(201,87,87,0.12)', color: 'var(--color-danger)' }}>3</span>
+              <span className="badge shrink-0" style={{ backgroundColor: 'rgba(216,31,20,0.12)', color: 'var(--color-danger)' }}>3</span>
               <span>Wahi JSON <b className="text-text">neeche paste ya upload</b> karo — planner saved. Phir Misa se pucho: <b className="text-text">"physics mein kya kya hai"</b>, <b className="text-text">"AITS-1 mein kya aayega"</b> ya <b className="text-text">"monday ko kya class hai"</b>.</span>
             </li>
           </ol>
@@ -160,7 +160,7 @@ export default function PlannersScreen({ state, update }: { state: AppState; upd
       </div>
 
       {/* Stats */}
-      <div className="mb-5 grid grid-cols-4 gap-2">
+      <div className="stat-strip mb-5">
         <MiniStat label="Planners" value={String(stats.planners)} />
         <MiniStat label="Subjects" value={String(stats.subjects)} />
         <MiniStat label="Tests" value={String(stats.tests)} />
@@ -205,10 +205,10 @@ export default function PlannersScreen({ state, update }: { state: AppState; upd
             className="mt-3 rounded-xl px-3 py-2 text-xs"
             style={
               notice.type === 'error'
-                ? { backgroundColor: 'rgba(201,87,87,0.12)', color: 'var(--color-danger)' }
+                ? { backgroundColor: 'rgba(216,31,20,0.12)', color: 'var(--color-danger)' }
                 : notice.type === 'ok'
-                  ? { backgroundColor: 'rgba(138,154,91,0.13)', color: 'var(--color-success)' }
-                  : { backgroundColor: 'rgba(79,209,197,0.13)', color: 'var(--color-l)' }
+                  ? { backgroundColor: 'rgba(163,19,19,0.13)', color: 'var(--color-success)' }
+                  : { backgroundColor: 'rgba(163,19,19,0.13)', color: 'var(--color-l)' }
             }
           >
             {notice.text}
@@ -254,10 +254,10 @@ export default function PlannersScreen({ state, update }: { state: AppState; upd
               .filter(Boolean)
               .join(' · ');
             return (
-              <section key={subject} className="overflow-hidden rounded-[1.25rem] border border-border bg-panel">
+              <section key={subject} className="overflow-hidden rounded-2xl border border-border bg-panel">
                 <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
                   <div className="flex min-w-0 items-center gap-2.5">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(138,154,91,0.14)', color: 'var(--color-l)' }}>
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(163,19,19,0.14)', color: 'var(--color-l)' }}>
                       {list[0]?.kind === 'test' ? <FlaskConical size={16} /> : list[0]?.kind === 'routine' ? <CalendarDays size={16} /> : <BookOpen size={16} />}
                     </span>
                     <div className="min-w-0">
@@ -309,7 +309,7 @@ function PlannerRow({
           <span className="min-w-0">
             <span className="block truncate text-sm font-semibold text-text">{planner.title}</span>
             <span className="block text-[11px] text-muted">
-              <span className="badge mr-1" style={{ backgroundColor: 'rgba(201,87,87,0.10)', color: 'var(--color-danger)' }}>
+              <span className="badge mr-1" style={{ backgroundColor: 'rgba(216,31,20,0.10)', color: 'var(--color-danger)' }}>
                 {kindLabel(planner.kind)}
               </span>
               {plannerCountLabel(planner)}
@@ -320,7 +320,7 @@ function PlannerRow({
         </button>
         <div className="flex shrink-0 items-center gap-1">
           {planner.kind === 'subject' && doneCount > 0 && (
-            <span className="badge" style={{ backgroundColor: 'rgba(138,154,91,0.13)', color: 'var(--color-success)' }}>
+            <span className="badge" style={{ backgroundColor: 'rgba(163,19,19,0.13)', color: 'var(--color-success)' }}>
               {doneCount}/{planner.items.length}
             </span>
           )}
@@ -433,7 +433,7 @@ function RoutineRows({ rows }: { rows: PlannerRoutineRow[] }) {
 
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-bg/50 p-3">
+    <div className="stat-strip-item">
       <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-dim">{label}</p>
       <p className="mt-1 font-display text-lg font-bold">{value}</p>
     </div>

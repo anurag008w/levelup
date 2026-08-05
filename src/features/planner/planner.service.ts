@@ -126,11 +126,12 @@ function keyOf(p: SubjectPlanner): string {
 
 /** Executes the read-only planner tool actions deterministically. */
 export class PlannerToolsService {
-  private readonly store: StateStore;
   private readonly planner: PlannerService;
 
   constructor(store: StateStore, planner: PlannerService) {
-    this.store = store;
+    // `store` kept in the signature for DI consistency (container passes it);
+    // all read-only tool actions go through PlannerService.
+    void store;
     this.planner = planner;
   }
 

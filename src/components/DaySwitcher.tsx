@@ -42,8 +42,8 @@ export default function DaySwitcher({
   };
 
   return (
-    <div className="card mb-4 overflow-hidden p-0" style={{ borderColor: 'rgba(201,162,39,0.35)' }}>
-      <div className="bg-[rgba(201,162,39,0.12)] px-3.5 py-3">
+    <div className="card mb-4 overflow-hidden p-0" style={{ borderColor: 'rgba(239,233,223,0.35)' }}>
+      <div className="bg-[rgba(239,233,223,0.12)] px-3.5 py-3">
         <div className="mb-1.5 flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--color-peak)' }}>
           <CalendarDays size={13} /> Admin view
@@ -65,7 +65,7 @@ export default function DaySwitcher({
           <ChevronLeft size={18} />
         </button>
 
-        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-2" style={{ backgroundColor: 'rgba(201,162,39,0.1)' }}>
+        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-2" style={{ backgroundColor: 'rgba(239,233,223,0.1)' }}>
           <input
             type="number"
             inputMode="numeric"

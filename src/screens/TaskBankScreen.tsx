@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Check, ChevronDown, ListTodo, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import { Check, ListTodo, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import type { AppState } from '../types';
 import type { EnergyLevel, TaskBankEntry, TaskType } from '../core/domain/task-bank';
 import { TASK_TYPES } from '../core/domain/task-bank';
@@ -9,16 +9,16 @@ import ScreenHeader from '../components/ui/ScreenHeader';
 import { haptic } from '../lib/haptics';
 
 const ENERGY_LEVELS: EnergyLevel[] = ['low', 'medium', 'high'];
+const ENERGY_LABEL: Record<EnergyLevel, string> = { low: 'Light', medium: 'Balanced', high: 'Intense' };
 const MAX_CUSTOM_DAY = 365;
 const EMPTY_FORM = { title: '', description: '', day: 1, durationMin: 30, energyLevel: 'medium' as EnergyLevel, taskType: 'Beginner' as TaskType };
 
 type SourceFilter = 'all' | 'built-in' | 'user';
 
-export default function TaskBankScreen({ state, update }: { state: AppState; update: (fn: (s: AppState) => AppState) => void }) {
+export default function TaskBankScreen({ state: _state, update }: { state: AppState; update: (fn: (s: AppState) => AppState) => void }) {
   const allTasks = container.taskBank.getAll().filter((entry) => entry.active);
   const seedCount = allTasks.filter((entry) => entry.legacy).length;
   const customCount = allTasks.length - seedCount;
-  const hiddenOverrideCount = state.dynamicTaskBank.filter((entry) => !entry.active).length;
 
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -27,6 +27,21 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
   const [notice, setNotice] = useState('');
   const [query, setQuery] = useState('');
   const [source, setSource] = useState<SourceFilter>('all');
+  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; entry: TaskBankEntry } | null>(null);
+  const holdTimer = useRef<number | null>(null);
+  const firedRef = useRef(false);
+
+  function openRowMenu(entry: TaskBankEntry, x: number, y: number) {
+    haptic(20);
+    setRowMenu({ x, y, entry });
+  }
+
+  function clearHold() {
+    if (holdTimer.current) {
+      window.clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    }
+  }
 
   const sorted = useMemo(() => [...allTasks].sort((a, b) => unlockDay(a) - unlockDay(b) || a.id.localeCompare(b.id)), [allTasks]);
 
@@ -39,6 +54,18 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
       return true;
     });
   }, [sorted, query, source]);
+
+  // Group by unlock day so browsing feels organised instead of a flat wall.
+  const grouped = useMemo(() => {
+    const groups = new Map<number, TaskBankEntry[]>();
+    for (const entry of filtered) {
+      const day = unlockDay(entry);
+      const list = groups.get(day) ?? [];
+      list.push(entry);
+      groups.set(day, list);
+    }
+    return [...groups.entries()].sort((a, b) => a[0] - b[0]);
+  }, [filtered]);
 
   function flash(msg: string) {
     setNotice(msg);
@@ -148,15 +175,17 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
       />
 
       <div className="card mb-4 flex items-center gap-3 p-3.5">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(245,179,103,0.12)' }}>
-          <ListTodo size={18} color="var(--color-light)" />
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(111,163,157,0.14)', color: '#6fa39d' }}>
+          <ListTodo size={18} />
         </span>
         <div className="min-w-0 flex-1">
           <p className="font-display text-[15px] font-bold">
-            {allTasks.length} task{allTasks.length === 1 ? '' : 's'}
+            {allTasks.length} study task{allTasks.length === 1 ? '' : 's'}
           </p>
           <p className="text-xs text-muted">
-            {seedCount} built-in · {customCount} user/AI · {hiddenOverrideCount} hidden
+            {customCount > 0
+              ? `${customCount} tumhare banaye hue · baaki suggested tasks`
+              : 'Suggested tasks — yahan se ya chat mein bolke apne bana sakte ho'}
           </p>
         </div>
       </div>
@@ -189,7 +218,7 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
                 <span className="field-label">Energy</span>
                 <select className="field" value={form.energyLevel} onChange={(e) => setForm({ ...form, energyLevel: e.target.value as EnergyLevel })}>
                   {ENERGY_LEVELS.map((l) => (
-                    <option key={l} value={l}>{l}</option>
+                    <option key={l} value={l}>{ENERGY_LABEL[l]}</option>
                   ))}
                 </select>
               </label>
@@ -224,9 +253,9 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
         <div className="flex gap-2 overflow-x-auto pb-0.5">
           {(
             [
-              { id: 'all', label: `All · ${allTasks.length}` },
-              { id: 'built-in', label: `Built-in · ${seedCount}` },
-              { id: 'user', label: `User/AI · ${customCount}` },
+              { id: 'all', label: 'All' },
+              { id: 'user', label: 'Mine' },
+              { id: 'built-in', label: 'Suggested' },
             ] as Array<{ id: SourceFilter; label: string }>
           ).map((f) => (
             <button
@@ -252,81 +281,136 @@ export default function TaskBankScreen({ state, update }: { state: AppState; upd
           </p>
         </div>
       ) : (
-        <div className="space-y-2.5">
-          {filtered.map((entry) => {
-            const isEditing = editingId === entry.id;
-            const day = unlockDay(entry);
-            return (
-              <div key={entry.id} className="card p-3.5 text-sm">
-                {isEditing && editDraft ? (
-                  <div className="space-y-2.5">
-                    <input className="field" aria-label="Task title" value={editDraft.title} onChange={(e) => setEditDraft({ ...editDraft, title: e.target.value })} />
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <input className="field" type="number" min={1} max={MAX_CUSTOM_DAY} aria-label="Day" value={editDraft.day} onChange={(e) => setEditDraft({ ...editDraft, day: Number(e.target.value) || 1 })} />
-                      <input className="field" type="number" min={5} max={180} aria-label="Duration" value={editDraft.durationMin} onChange={(e) => setEditDraft({ ...editDraft, durationMin: Number(e.target.value) || 30 })} />
-                    </div>
-                    <div className="flex gap-2">
-                      <button className="btn btn-primary flex-1 py-2 text-sm font-bold" onClick={saveEdit}>
-                        <Check size={15} /> Save
-                      </button>
-                      <button className="btn btn-ghost px-4" onClick={() => { setEditingId(null); setEditDraft(null); }}>
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="font-semibold leading-snug">{entry.title}</p>
-                        {entry.description && <p className="mt-0.5 text-xs leading-relaxed text-muted">{entry.description}</p>}
-                      </div>
-                      <div className="flex shrink-0 items-center gap-0.5">
-                        <button type="button" className="icon-btn" onClick={() => startEdit(entry)} aria-label="Edit task">
-                          <Pencil size={15} />
-                        </button>
-                        <button type="button" className="icon-btn text-danger/60 hover:bg-danger/10 hover:text-danger" onClick={() => deleteTask(entry)} aria-label="Delete task">
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <span className="badge" style={{ backgroundColor: 'rgba(138,154,91,0.12)', color: 'var(--color-l)' }}>
-                        Day {day}
-                      </span>
-                      <span className="badge" style={{ backgroundColor: 'var(--color-panel-raised)', color: 'var(--color-muted)' }}>
-                        {entry.estimatedDurationMin} min
-                      </span>
-                      <EnergyBadge level={entry.energyLevel} />
-                      <span className="badge" style={{ backgroundColor: 'var(--color-panel-raised)', color: 'var(--color-peak)' }}>
-                        {entry.taskType}
-                      </span>
-                      <span className="badge" style={{ backgroundColor: 'var(--color-panel-raised)', color: 'var(--color-muted-dim)' }}>
-                        {entry.legacy ? 'built-in' : 'user/AI'}
-                      </span>
-                    </div>
-                  </>
-                )}
+        <div className="space-y-4">
+          {grouped.map(([day, tasks]) => (
+            <section key={day}>
+              <div className="mb-1.5 flex items-baseline justify-between px-0.5">
+                <h3 className="font-display text-sm font-bold tracking-tight">Day {day}</h3>
+                <span className="font-mono text-[11px] text-muted">
+                  {tasks.length} task{tasks.length === 1 ? '' : 's'}
+                </span>
               </div>
-            );
-          })}
-          {filtered.length > 8 && (
-            <p className="flex items-center justify-center gap-1 pt-1 text-center text-xs text-muted-dim">
-              <ChevronDown size={13} /> {filtered.length} tasks total
-            </p>
-          )}
+              <div className="space-y-2">
+                {tasks.map((entry) => {
+                  const isEditing = editingId === entry.id;
+                  return (
+                    <div
+                      key={entry.id}
+                      className="card p-3 text-sm"
+                      onContextMenu={(e) => {
+                        if (isEditing) return;
+                        e.preventDefault();
+                        if (!firedRef.current) openRowMenu(entry, e.clientX, e.clientY);
+                      }}
+                      onPointerDown={(e) => {
+                        if (isEditing || e.pointerType !== 'touch') return;
+                        firedRef.current = false;
+                        holdTimer.current = window.setTimeout(() => {
+                          firedRef.current = true;
+                          openRowMenu(entry, e.clientX, e.clientY);
+                        }, 450);
+                      }}
+                      onPointerUp={clearHold}
+                      onPointerMove={clearHold}
+                      onPointerLeave={clearHold}
+                    >
+                      {isEditing && editDraft ? (
+                        <div className="space-y-2.5">
+                          <input className="field" aria-label="Task title" value={editDraft.title} onChange={(e) => setEditDraft({ ...editDraft, title: e.target.value })} />
+                          <div className="grid grid-cols-2 gap-2.5">
+                            <input className="field" type="number" min={1} max={MAX_CUSTOM_DAY} aria-label="Day" value={editDraft.day} onChange={(e) => setEditDraft({ ...editDraft, day: Number(e.target.value) || 1 })} />
+                            <input className="field" type="number" min={5} max={180} aria-label="Duration" value={editDraft.durationMin} onChange={(e) => setEditDraft({ ...editDraft, durationMin: Number(e.target.value) || 30 })} />
+                          </div>
+                          <div className="flex gap-2">
+                            <button className="btn btn-primary flex-1 py-2 text-sm font-bold" onClick={saveEdit}>
+                              <Check size={15} /> Save
+                            </button>
+                            <button className="btn btn-ghost px-4" onClick={() => { setEditingId(null); setEditDraft(null); }}>
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-3">
+                            <span
+                              className="flex h-10 w-12 shrink-0 flex-col items-center justify-center rounded-lg font-mono leading-none"
+                              style={{ backgroundColor: 'rgba(163,19,19,0.1)', color: 'var(--color-l)' }}
+                            >
+                              <span className="text-sm font-bold">{entry.estimatedDurationMin}</span>
+                              <span className="text-[9px] uppercase tracking-wider opacity-80">min</span>
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-semibold leading-snug">{entry.title}</p>
+                              {entry.description && (
+                                <p className="mt-0.5 text-xs leading-relaxed text-muted line-clamp-2">{entry.description}</p>
+                              )}
+                            </div>
+                            {!entry.legacy && (
+                              <span className="badge shrink-0" style={{ backgroundColor: 'rgba(111,163,157,0.14)', color: '#6fa39d' }}>
+                                Mine
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                            <span className="badge" style={{ backgroundColor: 'var(--color-panel-raised)', color: 'var(--color-peak)' }}>
+                              {entry.taskType}
+                            </span>
+                            <EnergyBadge level={entry.energyLevel} />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
         </div>
+      )}
+      {rowMenu && (
+        <>
+          <div className="fixed inset-0 z-[59]" onClick={() => setRowMenu(null)} aria-hidden="true" />
+          <div role="menu" className="ctx-menu" style={{ left: rowMenu.x, top: rowMenu.y }}>
+            <button
+              type="button"
+              role="menuitem"
+              className="ctx-item"
+              onClick={() => {
+                haptic();
+                startEdit(rowMenu.entry);
+                setRowMenu(null);
+              }}
+            >
+              <Pencil size={15} />
+              Edit
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="ctx-item danger"
+              onClick={() => {
+                haptic();
+                deleteTask(rowMenu.entry);
+                setRowMenu(null);
+              }}
+            >
+              <Trash2 size={15} />
+              Delete
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
 }
 
 function EnergyBadge({ level }: { level: EnergyLevel }) {
-  const color = level === 'low' ? '#8a9a5b' : level === 'medium' ? '#c9a227' : '#b3372f';
+  const color = level === 'low' ? '#a31313' : level === 'medium' ? '#efe9df' : '#e34530';
   return (
     <span className="badge" style={{ backgroundColor: `${color}1a`, color }}>
       <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
-      {level}
+      {ENERGY_LABEL[level]}
     </span>
   );
 }

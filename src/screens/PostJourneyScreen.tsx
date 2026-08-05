@@ -255,8 +255,8 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
 
       {/* Journey Complete Button */}
       {!postJourney.journeyComplete && (
-        <div className="gradient-border mb-6 rounded-[1.25rem] p-px" data-tone="gold">
-          <div className="rounded-[calc(1.25rem-1px)] bg-panel p-5 text-center">
+        <div className="gradient-border mb-6 rounded-2xl p-px" data-tone="gold">
+          <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-5 text-center">
             <div className="mx-auto mb-3 inline-flex rotate-[-7deg] border-2 border-light px-3 py-2 font-mono text-xs font-semibold uppercase tracking-[0.22em] text-light">Complete</div>
             <h2 className="mb-2 font-display text-xl font-bold">90 days complete</h2>
             <p className="mb-4 text-sm text-muted">Claim your journey and unlock post-journey mode.</p>
@@ -280,8 +280,8 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
             accent="var(--color-light)"
             title="Journey complete"
           />
-          <div className="gradient-border rounded-[1.25rem] p-px" data-tone="gold">
-            <div className="grid grid-cols-3 gap-3 rounded-[calc(1.25rem-1px)] bg-panel p-4">
+          <div className="gradient-border rounded-2xl p-px" data-tone="gold">
+            <div className="grid grid-cols-3 gap-3 rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4">
               <StatCard icon={<Target size={16} />} label="Tasks" value={postJourney.finalStats.totalTasksCompleted} />
               <StatCard icon={<TrendingUp size={16} />} label="Accuracy" value={`${postJourney.finalStats.averageAccuracy}%`} />
               <StatCard icon={<Clock size={16} />} label="Hours" value={postJourney.finalStats.totalStudyHours} />
@@ -301,8 +301,8 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
             accent="var(--color-l)"
             title="Mastery Level"
           />
-          <div className="gradient-border rounded-[1.25rem] p-px" data-tone="gold">
-            <div className="flex items-center justify-between rounded-[calc(1.25rem-1px)] bg-panel p-4">
+          <div className="gradient-border rounded-2xl p-px" data-tone="gold">
+            <div className="flex items-center justify-between rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4">
               <div className="flex items-center gap-3">
                 <span className={`flex h-12 w-12 items-center justify-center rounded-xl ${masteryConfig.bgColor}`}>
                   <masteryConfig.icon size={24} className={masteryConfig.color} />
@@ -324,7 +324,7 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
                 <p className="text-xs text-muted">Current day</p>
               </div>
             </div>
-            <div className="rounded-b-[calc(1.25rem-1px)] bg-panel px-4 pb-4">
+            <div className="rounded-b-[calc(var(--radius-2xl)-1px)] bg-panel px-4 pb-4">
               <div className="flex justify-between text-xs text-muted">
                 <span>Beginner</span>
                 <span>Intermediate</span>
@@ -333,7 +333,7 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
               </div>
               <div className="mt-1 h-2 rounded-full bg-bg">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-blue-500 via-l to-yellow-400 transition-all"
+                  className="h-full rounded-full bg-gradient-to-r from-blood via-l to-blood-bright transition-all"
                   style={{
                     width: `${
                       postJourney.mastery.level === 'beginner' ? 25 :
@@ -371,8 +371,8 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
 
           {/* Generator Wizard */}
           {showGenerator && (
-            <div className="gradient-border rounded-[1.25rem] p-px slide-up" data-tone="gold">
-              <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4">
+            <div className="gradient-border rounded-2xl p-px slide-up" data-tone="gold">
+              <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4">
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="font-display font-bold">Create Custom Block</h3>
                   <div className="flex gap-1">
@@ -563,8 +563,8 @@ export default function PostJourneyScreen({ state, update, onBack }: PostJourney
           />
 
           {postJourney.customPhases.length === 0 ? (
-            <div className="gradient-border rounded-[1.25rem] p-px" data-tone="gold">
-              <div className="flex flex-col items-center rounded-[calc(1.25rem-1px)] bg-panel p-6 text-center">
+            <div className="gradient-border rounded-2xl p-px" data-tone="gold">
+              <div className="flex flex-col items-center rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-6 text-center">
                 <BookOpen size={32} className="mb-2 text-muted" />
                 <p className="mb-1 font-medium">No custom blocks yet</p>
                 <p className="mb-3 text-xs text-muted">Use AI generator to create personalized blocks</p>
@@ -645,8 +645,8 @@ function PhaseCard({
           isActive ? 'ring-2 ring-l/30' : ''
         }`}
         style={{
-          borderColor: isActive ? 'rgba(138,154,91,0.5)' : 'var(--color-border)',
-          backgroundColor: isActive ? 'rgba(138,154,91,0.05)' : undefined,
+          borderColor: isActive ? 'rgba(163,19,19,0.5)' : 'var(--color-border)',
+          backgroundColor: isActive ? 'rgba(163,19,19,0.05)' : undefined,
         }}
       >
         <button
@@ -668,7 +668,7 @@ function PhaseCard({
               {phase.difficulty}
             </span>
             {isActive && (
-              <span className="badge" style={{ backgroundColor: 'rgba(138,154,91,0.14)', color: 'var(--color-l)' }}>
+              <span className="badge" style={{ backgroundColor: 'rgba(163,19,19,0.14)', color: 'var(--color-l)' }}>
                 Active
               </span>
             )}
@@ -688,7 +688,7 @@ function PhaseCard({
         {phase.habits.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1">
             {phase.habits.slice(0, 4).map((habit, i) => (
-              <span key={i} className="chip" style={{ borderColor: 'rgba(138,154,91,0.4)', color: 'var(--color-l)' }}>
+              <span key={i} className="chip" style={{ borderColor: 'rgba(163,19,19,0.4)', color: 'var(--color-l)' }}>
                 {habit}
               </span>
             ))}

@@ -97,8 +97,8 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
           title="Response Quality"
         />
 
-        <div className="gradient-border rounded-[1.25rem] p-px" data-tone="blood">
-          <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-5">
+        <div className="gradient-border rounded-2xl p-px" data-tone="blood">
+          <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4 space-y-5">
             {/* Temperature */}
             <div>
               <div className="mb-2 flex items-center justify-between">
@@ -174,8 +174,8 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
           title="Memory & Context"
         />
 
-        <div className="gradient-border rounded-[1.25rem] p-px" data-tone="blood">
-          <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-4">
+        <div className="gradient-border rounded-2xl p-px" data-tone="blood">
+          <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4 space-y-4">
             {/* Memory Toggle */}
             <Toggle
               icon={<Brain size={16} />}
@@ -227,8 +227,8 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
           title="Chat Behavior"
         />
 
-        <div className="gradient-border rounded-[1.25rem] p-px" data-tone="blood">
-          <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-4">
+        <div className="gradient-border rounded-2xl p-px" data-tone="blood">
+          <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4 space-y-4">
             {/* Auto Save */}
             <Toggle
               icon={<Save size={16} />}
@@ -258,8 +258,8 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
           title="Time zone"
         />
 
-        <div className="gradient-border rounded-[1.25rem] p-px" data-tone="blood">
-          <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-4">
+        <div className="gradient-border rounded-2xl p-px" data-tone="blood">
+          <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4 space-y-4">
             <div>
               <label className="field-label">Day boundary timezone</label>
               <select
@@ -293,8 +293,8 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
           title="Persona"
         />
 
-        <div className="gradient-border rounded-[1.25rem] p-px" data-tone="blood">
-          <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4 space-y-4">
+        <div className="gradient-border rounded-2xl p-px" data-tone="blood">
+          <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4 space-y-4">
             <div>
               <label className="field-label">User persona / custom instructions</label>
               <textarea

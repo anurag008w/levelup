@@ -38,11 +38,30 @@ export interface InstallResult {
   message: string;
 }
 
+/** Real-time APK download progress (native chunked download). */
+export interface DownloadProgress {
+  receivedBytes: number;
+  totalBytes: number | null;
+  /** 0-100, null while the total size is still unknown. */
+  percent: number | null;
+}
+
+export interface InstallUpdateOptions {
+  /** Known APK size from the release asset (bytes). Used for the progress bar. */
+  totalBytes?: number;
+  /** Native chunked download reports real bytes/percent as it goes. */
+  onProgress?: (progress: DownloadProgress) => void;
+}
+
 export interface ApkAsset {
   name: string;
   url: string;
   size?: number;
 }
+
+/** 2 MB chunks — GitHub S3 serves release assets with Range support, so we can
+ *  download in slices and report true byte-level progress to the UI. */
+const DOWNLOAD_CHUNK_SIZE = 2 * 1024 * 1024;
 
 export function getEnvVersion(): string {
   const env = import.meta.env as Record<string, string | undefined>;
@@ -173,54 +192,158 @@ export async function openExternalUrl(url: string): Promise<void> {
   window.open(url, '_blank');
 }
 
-export async function installUpdate(apkUrl: string): Promise<InstallResult> {
-  if (!Capacitor.isNativePlatform()) {
-    window.open(apkUrl, '_blank');
-    return { ok: true, message: 'Browser me APK download link khul gaya — wahan se install karo.' };
+/** Full single-shot download (no progress) — used when no progress handler is
+ *  attached (existing callers/tests) or as a fallback when ranged download
+ *  isn't supported. Returns the base64 payload. */
+async function downloadWhole(apkUrl: string): Promise<string> {
+  const response = await CapacitorHttp.get({
+    url: apkUrl,
+    responseType: 'blob',
+    connectTimeout: 30_000,
+    readTimeout: 120_000,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`APK download fail (HTTP ${response.status})`);
   }
+  const base64 = typeof response.data === 'string' ? response.data : String(response.data ?? '');
+  if (!base64) throw new Error('APK data empty');
+  return base64;
+}
+
+/** Reads the total byte size from a `Range: bytes=0-0` probe (206 response
+ *  carries `Content-Range: bytes 0-0/<total>`). Returns null if unknown. */
+async function probeTotalBytes(apkUrl: string): Promise<number | null> {
   try {
-    // WebView fetch GitHub release-asset redirect (release-assets.githubusercontent.com)
-    // ko CORS se block kar deta hai ("Failed to fetch"). Native CapacitorHttp
-    // (OkHttp) download karta hai — CORS nahi lagta, redirects khud follow hote hain.
+    const probe = await CapacitorHttp.get({
+      url: apkUrl,
+      headers: { Range: 'bytes=0-0' },
+      responseType: 'blob',
+      connectTimeout: 30_000,
+      readTimeout: 30_000,
+    });
+    if (probe.status === 206) {
+      const contentRange = String(probe.headers?.['Content-Range'] ?? probe.headers?.['content-range'] ?? '');
+      const match = contentRange.match(/\/(\d+)\s*$/);
+      if (match) return Number(match[1]);
+    }
+  } catch {
+    // probe fail — caller falls back to a whole download
+  }
+  return null;
+}
+
+/** Ranged download that writes chunks straight to cache and reports real
+ *  progress. Throws on failure (caller falls back to a whole download). */
+async function downloadChunked(
+  apkUrl: string,
+  totalBytes: number,
+  onProgress: (progress: DownloadProgress) => void,
+): Promise<void> {
+  const filePath = `${UPDATE_DIR}/${APK_FILE}`;
+  let received = 0;
+  let start = 0;
+  let first = true;
+
+  while (start < totalBytes) {
+    const end = Math.min(start + DOWNLOAD_CHUNK_SIZE - 1, totalBytes - 1);
     const response = await CapacitorHttp.get({
       url: apkUrl,
+      headers: { Range: `bytes=${start}-${end}` },
       responseType: 'blob',
       connectTimeout: 30_000,
       readTimeout: 120_000,
     });
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error(`APK download fail (HTTP ${response.status})`);
+    // Server must answer 206 Partial Content — a 200 means it ignored Range
+    // and sent the full body, which would corrupt a chunked file.
+    if (response.status !== 206) {
+      throw new Error(`Ranged download unsupported (HTTP ${response.status})`);
     }
-    // responseType 'blob' native pe base64 string return karta hai.
     const base64 = typeof response.data === 'string' ? response.data : String(response.data ?? '');
     if (!base64) throw new Error('APK data empty');
+
+    if (first) {
+      await Filesystem.writeFile({ path: filePath, data: base64, directory: Directory.Cache, recursive: true });
+      first = false;
+    } else {
+      await Filesystem.appendFile({ path: filePath, data: base64, directory: Directory.Cache });
+    }
+
+    received += end - start + 1;
+    start = end + 1;
+    onProgress({
+      receivedBytes: Math.min(received, totalBytes),
+      totalBytes,
+      percent: totalBytes > 0 ? Math.min(100, Math.round((received / totalBytes) * 100)) : null,
+    });
+  }
+}
+
+/** Launches the Android package installer on the freshly written APK. */
+async function launchInstaller(): Promise<InstallResult> {
+  const contentUri = `content://${APP_PACKAGE}.fileprovider/${UPDATE_DIR}/${APK_FILE}`;
+  try {
+    await IntentLauncher.startActivityAsync({
+      action: ActivityAction.VIEW,
+      data: contentUri,
+      type: APK_MIME,
+      flags: FLAG_GRANT_READ_URI_PERMISSION | FLAG_ACTIVITY_NEW_TASK,
+    });
+    return { ok: true, message: 'APK installer khul gaya — "Install" par tap karo.' };
+  } catch {
+    try {
+      await IntentLauncher.startActivityAsync({ action: ActivityAction.MANAGE_UNKNOWN_APP_SOURCES });
+    } catch {
+      // settings screen bhi nahi khula — sirf message dikha do
+    }
+    return {
+      ok: false,
+      message:
+        'Installer khul nahi paya. Phone settings me is app ke liye "Install unknown apps" allow karo, phir dobara try karo.',
+    };
+  }
+}
+
+export async function installUpdate(apkUrl: string, options?: InstallUpdateOptions): Promise<InstallResult> {
+  if (!Capacitor.isNativePlatform()) {
+    window.open(apkUrl, '_blank');
+    return { ok: true, message: 'Browser me APK download link khul gaya — wahan se install karo.' };
+  }
+
+  const { totalBytes: knownTotal, onProgress } = options ?? {};
+  try {
+    // Progress mode (UI attached a handler): chunked ranged download so the
+    // user sees real MB/percent instead of a silent wait.
+    if (onProgress) {
+      let totalBytes = typeof knownTotal === 'number' && knownTotal > 0 ? knownTotal : null;
+      onProgress({ receivedBytes: 0, totalBytes, percent: totalBytes && totalBytes > 0 ? 0 : null });
+      if (totalBytes == null) {
+        totalBytes = await probeTotalBytes(apkUrl);
+        onProgress({ receivedBytes: 0, totalBytes, percent: totalBytes != null ? 0 : null });
+      }
+      if (totalBytes != null && totalBytes > 0) {
+        try {
+          await downloadChunked(apkUrl, totalBytes, onProgress);
+          return await launchInstaller();
+        } catch {
+          // ranged path fail — partial file ko hata ke whole download fallback
+          try {
+            await Filesystem.deleteFile({ path: `${UPDATE_DIR}/${APK_FILE}`, directory: Directory.Cache });
+          } catch {
+            // file exist hi nahi karti — koi baat nahi
+          }
+        }
+      }
+    }
+
+    // Whole download (single request, no progress) — default path.
+    const base64 = await downloadWhole(apkUrl);
     await Filesystem.writeFile({
       path: `${UPDATE_DIR}/${APK_FILE}`,
       data: base64,
       directory: Directory.Cache,
       recursive: true,
     });
-    const contentUri = `content://${APP_PACKAGE}.fileprovider/${UPDATE_DIR}/${APK_FILE}`;
-    try {
-      await IntentLauncher.startActivityAsync({
-        action: ActivityAction.VIEW,
-        data: contentUri,
-        type: APK_MIME,
-        flags: FLAG_GRANT_READ_URI_PERMISSION | FLAG_ACTIVITY_NEW_TASK,
-      });
-      return { ok: true, message: 'APK installer khul gaya — "Install" par tap karo.' };
-    } catch {
-      try {
-        await IntentLauncher.startActivityAsync({ action: ActivityAction.MANAGE_UNKNOWN_APP_SOURCES });
-      } catch {
-        // settings screen bhi nahi khula — sirf message dikha do
-      }
-      return {
-        ok: false,
-        message:
-          'Installer khul nahi paya. Phone settings me is app ke liye "Install unknown apps" allow karo, phir dobara try karo.',
-      };
-    }
+    return await launchInstaller();
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }

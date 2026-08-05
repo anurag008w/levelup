@@ -977,9 +977,9 @@ function EmptyChat({ onPick }: { onPick: (prompt: string) => void }) {
       <span
         className="flex h-16 w-16 items-center justify-center rounded-3xl"
         style={{
-          background: 'linear-gradient(145deg, rgba(179,55,47,0.22), rgba(201,162,39,0.1))',
-          border: '1px solid rgba(179,55,47,0.35)',
-          boxShadow: '0 0 42px -10px rgba(179,55,47,0.4)',
+          background: 'linear-gradient(145deg, rgba(227,69,48,0.22), rgba(239,233,223,0.1))',
+          border: '1px solid rgba(227,69,48,0.35)',
+          boxShadow: '0 0 42px -10px rgba(227,69,48,0.4)',
         }}
       >
         <Sparkles size={30} color="var(--color-danger)" />
@@ -1157,18 +1157,14 @@ function MessageBubble({
       {isUser ? (
         <div className="message-card relative rounded-3xl rounded-br-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-user">
           <UserMessageContent content={message.content} attachments={message.attachments} />
-          <div className="mt-2 flex items-center justify-end gap-0.5">
-            {message.stopped && <span className="rounded bg-black/20 px-1.5 py-0.5 text-[9px]">stopped</span>}
-            <BubbleAction label="Edit" onClick={() => actions.onEdit(message)}>
-              <PenLine size={13} />
-            </BubbleAction>
-            <BubbleAction label="Copy" onClick={() => actions.onCopy(message)}>
-              <Copy size={13} />
-            </BubbleAction>
-            <BubbleAction label="Delete" onClick={() => actions.onDelete(message)}>
-              <Trash2 size={13} />
-            </BubbleAction>
-          </div>
+          {/* Edit / Copy / Delete live in the long-press (or right-click)
+              menu — see triggerMenu/MessageMenu below — so the bubble stays
+              clean instead of showing an always-on action row. */}
+          {message.stopped && (
+            <div className="mt-2 flex items-center justify-end">
+              <span className="rounded bg-black/20 px-1.5 py-0.5 text-[9px]">stopped</span>
+            </div>
+          )}
         </div>
       ) : (
         <div className="flex flex-col items-start gap-1.5">
@@ -1216,44 +1212,18 @@ function MessageBubble({
               </span>
             </div>
           )}
-          <div className="mt-1.5 flex items-center gap-0.5 pl-1">
+          {/* Copy / Regenerate / Download live in the long-press (or
+              right-click) menu — see triggerMenu/MessageMenu below — so the
+              bubble only shows status, not an always-on action row. */}
+          <div className="mt-1.5 flex items-center gap-1 pl-1">
             {message.stopped && (
               <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[9px] text-muted">stopped</span>
             )}
             <Check size={11} color="var(--color-success)" />
-            <BubbleAction label="Copy" onClick={() => actions.onCopy(message)}>
-              <Copy size={13} />
-            </BubbleAction>
-            {isLast && (
-              <BubbleAction label="Regenerate" onClick={actions.onRegenerate}>
-                <RefreshCw size={13} />
-              </BubbleAction>
-            )}
-            <BubbleAction label="Download .md" onClick={() => actions.onDownload(message)}>
-              <Download size={13} />
-            </BubbleAction>
           </div>
         </div>
       )}
     </motion.div>
-  );
-}
-
-function BubbleAction({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        haptic();
-        onClick();
-      }}
-      className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-white/8 hover:text-text active:scale-90"
-      aria-label={label}
-      title={label}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -1758,7 +1728,7 @@ function AttachmentSheet({ onPick, onClose }: { onPick: (id: string) => void; on
           >
             <span
               className="flex h-11 w-11 items-center justify-center rounded-xl"
-              style={{ background: 'rgba(138,154,91,0.12)', color: 'var(--color-l)' }}
+              style={{ background: 'rgba(163,19,19,0.12)', color: 'var(--color-l)' }}
             >
               {t.icon}
             </span>

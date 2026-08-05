@@ -1,13 +1,17 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { Capacitor } from '@capacitor/core';
 import TabBar, { type Tab } from './components/TabBar';
 import TodayScreen from './screens/TodayScreen';
 import LoginScreen from './screens/LoginScreen';
+import PermissionOnboarding from './components/PermissionOnboarding';
 import { useAppState } from './lib/useAppState';
 import { clearSession, ensureV1Base, loadSession, saveSession, type AuthSession } from './lib/auth';
 import { container } from './di/container';
 import { setupNotificationActions } from './lib/notification-actions';
 import { setChatTabActive } from './lib/notifications';
+import { getNotificationPermission } from './lib/notifications';
+import { getBackgroundPermissionStatus } from './lib/background-permission';
 import ScreenSkeleton from './components/ScreenSkeleton';
 
 const LevelsScreen = lazy(() => import('./screens/LevelsScreen'));
@@ -33,6 +37,10 @@ export default function App() {
   // Notification tap/reply se aaya target session — ChatScreen isse activeId
   // bana leta hai aur App value clear kar deta hai (onTargetConsumed).
   const [targetChatSessionId, setTargetChatSessionId] = useState<string | null>(null);
+  // Permissions onboarding popup (Android): har app open pe check hota hai —
+  // agar permissions missing hain aur user ne pehle "no" nahi bola, popup aata
+  // hai. Ek baar dismiss karne pe hamesha ke liye band (localStorage flag).
+  const [showPermissionOnboarding, setShowPermissionOnboarding] = useState(false);
 
   useEffect(() => {
     if (tab === 'chat') setChatVisited(true);
@@ -70,6 +78,31 @@ export default function App() {
     container.providerSettings.configureServerAuth(ensureV1Base(session.serverUrl), session.apiKey);
     container.syncCoordinator.attach(session);
   }, [session]);
+
+  // Permissions onboarding (Android): login ke baad aur har app open pe check —
+  // agar permissions missing hain aur user ne pehle "no" nahi bola to popup
+  // aata hai. Ek baar dismiss karne pe localStorage flag hamesha ke liye
+  // popup band kar deta hai (user ka explicit "no").
+  useEffect(() => {
+    if (!session && !guest) return;
+    let cancelled = false;
+    (async () => {
+      if (!Capacitor.isNativePlatform()) return;
+      if (localStorage.getItem('levelup:perm-prompt-dismissed') === 'true') return;
+      const [perm, bg] = await Promise.all([getNotificationPermission(), getBackgroundPermissionStatus()]);
+      if (cancelled) return;
+      const missing = perm !== 'granted' || (bg !== null && !bg.batteryWhitelisted);
+      if (missing) setShowPermissionOnboarding(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session, guest]);
+
+  function handlePermissionOnboardingDone() {
+    localStorage.setItem('levelup:perm-prompt-dismissed', 'true');
+    setShowPermissionOnboarding(false);
+  }
 
   function handleLoggedIn(next: AuthSession) {
     saveSession(next);
@@ -115,6 +148,9 @@ export default function App() {
             onUnlockAdmin={unlockAdmin}
             onLockAdmin={lockAdmin}
             onSetAdminDay={setAdminDay}
+            onNavigate={(tab) => {
+              setTab(tab);
+            }}
           />
         );
       case 'levels':
@@ -173,6 +209,7 @@ export default function App() {
           }
         }}
       />
+      {showPermissionOnboarding && <PermissionOnboarding onDone={handlePermissionOnboardingDone} />}
     </div>
   );
 }
