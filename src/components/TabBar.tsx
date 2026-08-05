@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Brain, CalendarCheck, Check, ChevronRight, Download, LayoutList, LineChart, ListTodo, Menu, MessageCircle, NotebookPen, PenLine, Pin, PinOff, Settings, Trash2, Upload, User, X } from 'lucide-react';
+import { Brain, BookOpen, CalendarCheck, Check, ChevronRight, Download, LayoutList, LineChart, ListTodo, Menu, MessageCircle, NotebookPen, PenLine, Pin, PinOff, Settings, Trash2, Upload, User, X } from 'lucide-react';
 import type { AppState, UserProfile } from '../types';
 import type { MemoryEntry } from '../core/domain/memory';
 import { container } from '../di/container';
 import { haptic } from '../lib/haptics';
 import MemorySummaryPanel from './MemorySummaryPanel';
 
-export type Tab = 'today' | 'levels' | 'progress' | 'review' | 'task-bank' | 'ai' | 'chat' | 'updates';
+export type Tab = 'today' | 'levels' | 'progress' | 'review' | 'task-bank' | 'ai' | 'chat' | 'updates' | 'planners';
 
 const TABS: { id: Tab; label: string; hint: string; icon: typeof CalendarCheck; tone: 'l' | 'gold' | 'blood' | 'slate' | 'neutral' }[] = [
   { id: 'today', label: 'Today', hint: 'Daily mission', icon: CalendarCheck, tone: 'l' },
@@ -16,6 +16,7 @@ const TABS: { id: Tab; label: string; hint: string; icon: typeof CalendarCheck; 
   { id: 'review', label: 'Review', hint: 'Reflect', icon: NotebookPen, tone: 'slate' },
   { id: 'task-bank', label: 'Tasks', hint: 'Bank', icon: ListTodo, tone: 'l' },
   { id: 'chat', label: 'Misa', hint: 'Doubts & maths', icon: MessageCircle, tone: 'blood' },
+  { id: 'planners', label: 'Planners', hint: 'Subject uploads', icon: BookOpen, tone: 'l' },
   { id: 'ai', label: 'Settings', hint: 'App & AI', icon: Settings, tone: 'neutral' },
   { id: 'updates', label: 'Updates', hint: 'Install new version', icon: Download, tone: 'l' },
 ];

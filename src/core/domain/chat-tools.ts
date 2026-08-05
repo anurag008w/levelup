@@ -71,6 +71,19 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('editBlock'), blockId: z.string().min(1), name: z.string().min(1).max(100).optional(), description: z.string().min(1).max(500).optional(), dayStart: z.number().int().min(91).optional(), dayEnd: z.number().int().min(91).optional(), days: z.number().int().min(1).max(90).optional(), difficulty: z.enum(['easy', 'medium', 'hard', 'extreme']).optional(), goals: z.array(z.string()).optional(), habits: z.array(z.string()).optional() }),
   z.object({ action: z.literal('listBlocks') }),
   z.object({ action: z.literal('extendBlock'), blockId: z.string().min(1), days: z.number().int().min(1).max(30) }),
+  // Read-only uploaded-coaching-planner actions (subjects / tests / routine).
+  z.object({ action: z.literal('listPlanners'), type: z.enum(['subject', 'test', 'routine']).optional() }),
+  z.object({ action: z.literal('getSubject'), subject: z.string().min(1).max(60), from: z.string().max(60).optional(), to: z.string().max(60).optional() }),
+  z.object({ action: z.literal('getPlanner'), plannerId: z.string().min(1) }),
+  z.object({ action: z.literal('getTest'), testName: z.string().min(1).max(160) }),
+  z.object({
+    action: z.literal('getTests'),
+    from: z.string().max(60).optional(),
+    to: z.string().max(60).optional(),
+    subject: z.string().max(60).optional(),
+  }),
+  z.object({ action: z.literal('getRoutine'), day: z.string().max(60).optional() }),
+  z.object({ action: z.literal('getContext') }),
 ]);
 
 export type ChatToolAction = z.infer<typeof chatToolActionSchema>;
@@ -120,6 +133,19 @@ export const CHAT_TOOL_INSTRUCTIONS = `You can VIEW or MODIFY the study plan for
 
 When the user asks about the plan for a day, or wants to add/remove/edit/complete tasks,
 your ENTIRE reply must be exactly one JSON object, no extra text.
+
+ALL TOOLS (quick reference — pick the MOST specific one):
+- getContext — current journey snapshot: date, journey day/phase/streak, today's tasks + progress, XP/consistency/habits, weak habits, gaps, blocks, planners. Use for "mera progress/status/context batao".
+- getPlan{day} — one day's plan. getRange{fromDay,toDay} — plan for a range (≤10 days).
+- getAllTasks{day} — ALL tasks (AI + user) for a day. getTaskBank — whole bank (optionally by category).
+- addTask / bulkAddTasks{day,intents} — add one/many tasks to a day. editTask / editAnyTask — edit a task.
+- removeTask / bulkRemoveTasks — hide tasks for ONE day (bank safe). deleteAnyTask — delete from bank (destructive).
+- markDone / bulkMarkDone — complete tasks. setDayMode{day,mode:rest|study} — holiday toggle.
+- listBlocks / createBlock / editBlock / extendBlock / activateBlock / deleteBlock — custom study blocks.
+- listPlanners / getSubject / getPlanner / getTest / getTests / getRoutine — uploaded coaching planners (read-only).
+
+CURRENT CONTEXT:
+- When the user asks about their overall progress/status/context ("mera progress kya hai", "status batao", "context batao", "mera streak kitna hai", "overview de"): {"action":"getContext"} — returns the complete journey snapshot (date, day/phase/streak, today's tasks + progress, XP, habits, gaps, blocks, planners). Prefer it over getPlan for whole-journey questions.
 
 TASK MANAGEMENT:
 - Plan for a day: {"action":"getPlan","day":N}
@@ -195,3 +221,21 @@ export const CHAT_TOOL_RETRY =
   'either ONE action (e.g. {"action":"removeTask","day":10,"taskId":"d1_t1"}), ' +
   'or {"actions":[...]} when the user asked for several changes at once. ' +
   'The task ids come from the plan (e.g. d1_t1, mock_1, ai-xxxxx).';
+
+/** Planner-tools section appended to the system prompt ONLY when the student
+ *  has imported coaching planners — so the model can read them in the SAME
+ *  decision hop as the task tools (never a separate flow). Read-only. */
+export const CHAT_PLANNER_INSTRUCTIONS = `UPLOADED COACHING PLANNERS (read-only): the student may have imported coaching files — SUBJECT planners (chapters/topics/lectures per subject, each item may carry a date), a TEST planner (test name, date, pattern, per-subject syllabus) and a ROUTINE planner (weekly class time-table, day → slots → subject):
+
+{"action":"listPlanners"}                                   # all planners with ids, grouped by kind
+{"action":"listPlanners","type":"test"}                     # planners of one kind only: subject | test | routine
+{"action":"getSubject","subject":"Physics"}                 # a subject's planner items AND the tests covering it
+{"action":"getSubject","subject":"Physics","from":"2026-07-01","to":"2026-07-31"}  # only items/tests inside the date range
+{"action":"getPlanner","plannerId":"<id>"}                  # one planner's full content (id comes from listPlanners)
+{"action":"getTest","testName":"JEE Main-1"}                # one test by name (exact or partial)
+{"action":"getTests"}                                       # ALL tests, sorted by date
+{"action":"getTests","from":"2026-07-01","to":"2026-08-15","subject":"Maths"}  # tests inside a date range, optionally one subject
+{"action":"getRoutine","day":"Monday"}                      # weekly routine (omit day for the full week)
+
+DATE RANGES: use "from"/"to" (inclusive, YYYY-MM-DD) on getTests/getSubject whenever the data could be large or the user names a window ("is week ke tests", "july ke tests", "kal koi test hai"). Resolve "aaj"/"kal"/"is week" from the date given below. For the weekly routine, pass the weekday the user asked about ("monday ko kya class hai" → getRoutine day:"Monday").
+Pick the MOST SPECIFIC action that answers the question — "tests dekho" → getTests, "physics mein kya kya hai" → getSubject, "routine batao" → getRoutine. Only use listPlanners when you need real ids / exact subject or test names. If nothing is uploaded, answer normally in Hinglish instead of JSON.`;

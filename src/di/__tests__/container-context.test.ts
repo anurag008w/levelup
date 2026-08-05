@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { emptyAppState } from '../../core/domain/state';
-import { container, buildRecentProgress, buildJourneyOverview } from '../container';
+import { container } from '../container';
+import { buildRecentProgress, buildJourneyOverview } from '../../features/chat/context-overview';
 import type { DailySummary } from '../../core/domain/summary';
 
 const TODAY = '2026-01-08';

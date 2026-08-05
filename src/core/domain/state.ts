@@ -5,6 +5,7 @@ import type { ProviderConfig, ModelInfo, ThinkingLevel } from './llm';
 import type { TaskBankEntry } from './task-bank';
 import type { Habit } from './habit';
 import type { AiActionHistoryState } from './ai-actions';
+import type { SubjectPlanner } from './subject-planner';
 import { emptyAiActionHistory } from './ai-actions';
 import { INTERNAL_SYSTEM_PROMPT } from './chat';
 
@@ -211,6 +212,8 @@ export interface AppState {
   customHabits: Habit[];
   /** Advanced curriculum controls (add/edit/delete/import/export). */
   curriculumEditing: boolean;
+  /** Uploaded study planners per subject (PCM + custom), readable by the AI. */
+  subjectPlanners: SubjectPlanner[];
 }
 
 export function defaultAiSettings(): AiSettings {
@@ -248,5 +251,6 @@ export function emptyAppState(): AppState {
     timeZone: null,
     customHabits: [],
     curriculumEditing: false,
+    subjectPlanners: [],
   };
 }

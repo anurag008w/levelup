@@ -3,6 +3,7 @@ import type { AppState } from '../../core/domain/state';
 import { defaultUserProfile, emptyAppState, STATE_SCHEMA_VERSION } from '../../core/domain/state';
 import { MEMORY_BYTES_BUDGET, normalizeMemoryStore, pruneMemoryToBudget } from '../../core/domain/memory';
 import { INTERNAL_SYSTEM_PROMPT, LEGACY_MISA_SYSTEM_PROMPT } from '../../core/domain/chat';
+import { normalizePlanners } from '../../core/domain/subject-planner';
 import { migrateV1toV2 } from './migration';
 
 export const STATE_KEY_V1 = 'levelup-state-v1';
@@ -97,6 +98,7 @@ export function normalizeState(raw: unknown): AppState {
     timeZone: typeof r.timeZone === 'string' && r.timeZone.length > 0 ? r.timeZone : null,
     customHabits: Array.isArray(r.customHabits) ? r.customHabits : [],
     curriculumEditing: typeof r.curriculumEditing === 'boolean' ? r.curriculumEditing : false,
+    subjectPlanners: normalizePlanners(r.subjectPlanners),
   };
 }
 

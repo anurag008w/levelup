@@ -221,6 +221,7 @@ export class SyncCoordinator {
     if (Object.keys(state.taskLogs ?? {}).length > 0) return true;
     if ((state.memory?.entries ?? []).length > 0) return true;
     if ((state.customHabits ?? []).length > 0) return true;
+    if ((state.subjectPlanners ?? []).length > 0) return true;
     if ((state.clearedLevels ?? []).length > 0) return true;
     if ((state.weeklyReviews ?? []).length > 0) return true;
     if ((state.monthlyAssessments ?? []).length > 0) return true;

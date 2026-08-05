@@ -12,6 +12,7 @@ import ReviewScreen from './screens/ReviewScreen';
 import TaskBankScreen from './screens/TaskBankScreen';
 import PostJourneyScreen from './screens/PostJourneyScreen';
 import LoginScreen from './screens/LoginScreen';
+import PlannersScreen from './screens/PlannersScreen';
 
 const noop = () => {};
 const unlockAdmin = (_username: string, _password: string) => true;
@@ -66,6 +67,15 @@ describe('screen smoke tests', () => {
   it('TaskBankScreen renders the task list header', () => {
     render(React.createElement(TaskBankScreen, { state: emptyAppState(), update: noop }));
     expect(screen.getByText('TASK BANK')).toBeTruthy();
+  });
+
+  it('PlannersScreen renders the how-it-works card and import section', () => {
+    render(React.createElement(PlannersScreen, { state: emptyAppState(), update: noop }));
+    expect(screen.getByText('SUBJECT PLANNERS')).toBeTruthy();
+    expect(screen.getByText('Kisi bhi file se planner banao')).toBeTruthy();
+    expect(screen.getAllByText('Copy prompt').length).toBeGreaterThan(0);
+    expect(screen.getByText('Import JSON')).toBeTruthy();
+    expect(screen.getByText('Upload .json')).toBeTruthy();
   });
 
   it('PostJourneyScreen renders custom blocks section', () => {

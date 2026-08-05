@@ -22,8 +22,19 @@ const SLASH_TOOL_CALL_INLINE_PATTERN = /\/[a-zA-Z_][\w-]*\s*\([^)\n]*\)/g;
 const TOOL_MARKER_LINE_PATTERN = /^\s*\[\s*(?:tool(?:\s+execut\w*|\s+call\w*|\s+run\w*)?|tool-result|tool-result-text|system)\s*:?[^\]]*\]\s*$/gim;
 
 const TOOL_CALL_OBJECT_PATTERN = /^\s*(?:call_plan_manager_[\w-]+|plan_manager\.[\w-]+)\s*\([\s\S]*?\)\s*;?\s*$/gim;
-const TOOL_JSON_ACTION_PATTERN = /^\s*\{\s*"action"\s*:\s*"(?:getPlan|getRange|addTask|bulkAddTasks|removeTask|bulkRemoveTasks|setDayMode|editTask|markDone|bulkMarkDone|getAllTasks|getTaskBank|editAnyTask|deleteAnyTask|createBlock|deleteBlock|activateBlock|editBlock|listBlocks|extendBlock)"[\s\S]*?\}\s*,?\s*$/gim;
+const TOOL_JSON_ACTION_PATTERN = /^\s*\{\s*"action"\s*:\s*"(?:getPlan|getRange|addTask|bulkAddTasks|removeTask|bulkRemoveTasks|setDayMode|editTask|markDone|bulkMarkDone|getAllTasks|getTaskBank|editAnyTask|deleteAnyTask|createBlock|deleteBlock|activateBlock|editBlock|listBlocks|extendBlock|listPlanners|getSubject|getPlanner|getTest|getTests|getRoutine|getContext)"[\s\S]*?\}\s*,?\s*$/gim;
 const TOOL_JSON_BATCH_PATTERN = /^\s*\{\s*"actions"\s*:\s*\[[\s\S]*?\]\s*\}\s*,?\s*$/gim;
+
+/** Known tool names used by the JSON/python call strippers below. */
+const TOOL_NAME_ALT = '(?:getPlan|getRange|getAllTasks|getTaskBank|addTask|bulkAddTasks|removeTask|bulkRemoveTasks|setDayMode|editTask|markDone|bulkMarkDone|editAnyTask|deleteAnyTask|createBlock|deleteBlock|activateBlock|editBlock|listBlocks|extendBlock|listPlanners|getSubject|getPlanner|getTest|getTests|getRoutine|getContext)';
+
+/** Inline `print(tool(args))` and bare `tool(args)` calls models echo as Python. */
+const PYTHON_PRINT_CALL_PATTERN = new RegExp(`print\\s*\\(\\s*${TOOL_NAME_ALT}\\s*\\([^\\n]*?\\)\\s*\\)`, 'g');
+const BARE_TOOL_CALL_INLINE_PATTERN = new RegExp(`${TOOL_NAME_ALT}\\s*\\([^\\n]*?\\)`, 'g');
+/** Whole-line `print(removeTask(...))` / `removeTask(...)` calls (may span lines). */
+const PYTHON_TOOL_CALL_LINE_PATTERN = new RegExp(`^\\s*(?:print\\s*\\(\\s*)?${TOOL_NAME_ALT}\\s*\\([^\\n]*\\)\\s*\\)?\\s*$`, 'gim');
+/** Fenced code blocks (```python ... ```) that echo tool calls — dropped whole. */
+const TOOL_CODE_FENCE_PATTERN = /```[a-zA-Z0-9_-]*\s*\n[\s\S]*?```/g;
 
 /**
  * Sanitizes a complete text: strips timestamps and raw tool-call traces.
@@ -49,14 +60,22 @@ export function sanitizeToolLeaks(text: string): string {
     .replace(SLASH_TOOL_CALL_INLINE_PATTERN, '')
     .replace(TOOL_CALL_OBJECT_PATTERN, '')
     .replace(TOOL_JSON_BATCH_PATTERN, '')
-    .replace(TOOL_JSON_ACTION_PATTERN, '');
+    .replace(TOOL_JSON_ACTION_PATTERN, '')
+    // Code fences FIRST — before inline stripping removes the tool call that
+    // lets us decide whether the whole fence is a tool-echo to drop.
+    .replace(TOOL_CODE_FENCE_PATTERN, (block) =>
+      new RegExp(`${TOOL_NAME_ALT}\\s*\\(|print\\s*\\(`).test(block) ? '' : block,
+    )
+    .replace(PYTHON_PRINT_CALL_PATTERN, '')
+    .replace(BARE_TOOL_CALL_INLINE_PATTERN, '');
   return withoutCallObjects
     .split('\n')
     .filter(
       (line) =>
         !TOOL_TRACE_LINE_PATTERN.test(line) &&
         !SLASH_TOOL_CALL_LINE_PATTERN.test(line) &&
-        !TOOL_MARKER_LINE_PATTERN.test(line),
+        !TOOL_MARKER_LINE_PATTERN.test(line) &&
+        !PYTHON_TOOL_CALL_LINE_PATTERN.test(line),
     )
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -84,7 +103,11 @@ function isPartialToolTracePrefix(text: string): boolean {
   const markerStarts = ['[tool ', '[tool:', '[tool-result', '[system'];
   if (markerStarts.some((prefix) => trimmed.startsWith(prefix))) return true;
   // Slash-style tool calls being typed, e.g. "/add_tasks(" or "/add".
-  return /^\/[a-z_][\w-]*\s*\(?\s*$/.test(trimmed);
+  if (/^\/[a-z_][\w-]*\s*\(?\s*$/.test(trimmed)) return true;
+  // Python-style tool calls being typed, e.g. "print(removeTask(" or "removeTask(".
+  if (/^print\s*\(/.test(trimmed)) return true;
+  if (new RegExp(`^${TOOL_NAME_ALT}\\s*\\(`).test(trimmed)) return true;
+  return false;
 }
 
 export function createStreamSanitizer(): StreamSanitizer {
