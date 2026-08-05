@@ -10,7 +10,7 @@ export default function ScreenHeader({
   right?: React.ReactNode;
 }) {
   return (
-    <header className="mb-5 flex items-start justify-between gap-3">
+    <header className="mb-5 flex items-start justify-between gap-3 pl-10 sm:pl-0">
       <div className="min-w-0">
         <p className="eyebrow">{eyebrow}</p>
         <h1 className="mt-1 font-display text-2xl font-bold leading-tight tracking-tight">{title}</h1>

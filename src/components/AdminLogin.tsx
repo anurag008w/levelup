@@ -27,11 +27,11 @@ export default function AdminLogin({
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-5">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
-      <div role="dialog" aria-modal="true" aria-label="Admin login" className="gradient-border w-full max-w-sm rounded-[1.25rem] p-px">
-        <div className="rounded-[calc(1.25rem-1px)] bg-panel p-5">
+      <div role="dialog" aria-modal="true" aria-label="Admin login" className="gradient-border w-full max-w-sm rounded-2xl p-px">
+        <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-5">
           <div className="mb-4 flex items-start justify-between">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(201,162,39,0.15)', color: 'var(--color-peak)' }}>
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ backgroundColor: 'rgba(239,233,223,0.15)', color: 'var(--color-peak)' }}>
                 <Lock size={17} />
               </div>
               <div>

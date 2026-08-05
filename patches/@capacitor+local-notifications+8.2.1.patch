@@ -47,10 +47,10 @@ index 0b826a5..dccbe04 100644
                      context,
                      localNotification.getId() + notificationAction.getId().hashCode(),
 diff --git a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationsPlugin.java b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationsPlugin.java
-index 197de4a..ed5dbde 100644
+index 197de4a..c4ebc36 100644
 --- a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationsPlugin.java
 +++ b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationsPlugin.java
-@@ -287,6 +287,18 @@ public class LocalNotificationsPlugin extends Plugin {
+@@ -287,6 +287,37 @@ public class LocalNotificationsPlugin extends Plugin {
          }
      }
  
@@ -58,11 +58,30 @@ index 197de4a..ed5dbde 100644
 +     * Fires `localNotificationActionPerformed` to the JS bridge. Called by
 +     * NotificationActionReceiver for inline reply actions (which run as a
 +     * broadcast so the app stays closed) and by the activity-tap path.
++     *
++     * @return true if the event reached the JS bridge; false when the app
++     *         process was dead (no bridge yet) — callers persist the action
++     *         so it is delivered on the next app start.
 +     */
-+    public static void fireActionPerformed(JSObject data) {
++    public static boolean fireActionPerformed(JSObject data) {
 +        LocalNotificationsPlugin localNotificationsPlugin = LocalNotificationsPlugin.getLocalNotificationsInstance();
-+        if (localNotificationsPlugin != null) {
-+            localNotificationsPlugin.notifyListeners("localNotificationActionPerformed", data, true);
++        if (localNotificationsPlugin == null) {
++            return false;
++        }
++        localNotificationsPlugin.notifyListeners("localNotificationActionPerformed", data, true);
++        return true;
++    }
++
++    @Override
++    public void load() {
++        super.load();
++        // Process dead hone par persisted notification actions (replies) ko
++        // JS bridge ko deliver karo — app ko foreground me laane ki zaroorat
++        // nahi, bas agla open hi kafi hai.
++        try {
++            PendingNotificationActions.flush(getContext(), this);
++        } catch (Exception ignored) {
++            // Flush best-effort hai — queue agle launch pe dobara try hoti hai.
 +        }
 +    }
 +
@@ -71,10 +90,10 @@ index 197de4a..ed5dbde 100644
              PluginHandle handle = staticBridge.getPlugin("LocalNotifications");
 diff --git a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/NotificationActionReceiver.java b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/NotificationActionReceiver.java
 new file mode 100644
-index 0000000..f512bb8
+index 0000000..3ee0698
 --- /dev/null
 +++ b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/NotificationActionReceiver.java
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,68 @@
 +package com.capacitorjs.plugins.localnotifications;
 +
 +import android.app.NotificationManager;
@@ -134,6 +153,73 @@ index 0000000..f512bb8
 +            notificationManager.cancel(notificationId);
 +        }
 +
-+        LocalNotificationsPlugin.fireActionPerformed(dataJson);
++        // Deliver to the JS bridge. Agar app ka process dead tha (bridge
++        // unavailable) to action ko persist kar do — agla app start usse flush
++        // kar dega. Isse reply kabhi silently lost nahi hota aur app reply ke
++        // liye foreground me nahi aati.
++        if (!LocalNotificationsPlugin.fireActionPerformed(dataJson)) {
++            PendingNotificationActions.persist(context, dataJson);
++        }
++    }
++}
+diff --git a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/PendingNotificationActions.java b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/PendingNotificationActions.java
+new file mode 100644
+index 0000000..50dfe64
+--- /dev/null
++++ b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/PendingNotificationActions.java
+@@ -0,0 +1,55 @@
++package com.capacitorjs.plugins.localnotifications;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++import com.getcapacitor.JSObject;
++import org.json.JSONArray;
++import org.json.JSONObject;
++
++/**
++ * Temporary store for notification actions (inline replies) that arrive while
++ * the app process is dead — there is no JS bridge yet, so they cannot be
++ * delivered immediately. The next time the app starts, LocalNotificationsPlugin
++ * flushes this queue to the JS bridge, so a notification reply is never
++ * silently lost AND the app is never pulled to the foreground just to deliver
++ * one. The reply is processed the moment the user next opens the app.
++ */
++public class PendingNotificationActions {
++
++    private static final String PREFS = "levelup_pending_notification_actions";
++    private static final String KEY = "queue";
++
++    private PendingNotificationActions() {}
++
++    /** Saves an action (JSObject with actionId/inputValue/notification) for later delivery. */
++    public static void persist(Context context, JSObject action) {
++        try {
++            SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
++            String existing = prefs.getString(KEY, "[]");
++            JSONArray queue = new JSONArray(existing);
++            queue.put(new JSONObject(action.toString()));
++            prefs.edit().putString(KEY, queue.toString()).apply();
++        } catch (Exception ignored) {
++            // Best-effort — never crash the broadcast receiver.
++        }
++    }
++
++    /** Delivers every queued action to the JS bridge, then clears the queue. */
++    public static void flush(Context context, LocalNotificationsPlugin plugin) {
++        try {
++            SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
++            String existing = prefs.getString(KEY, "[]");
++            JSONArray queue = new JSONArray(existing);
++            for (int i = 0; i < queue.length(); i++) {
++                plugin.notifyListeners(
++                    "localNotificationActionPerformed",
++                    new JSObject(queue.getJSONObject(i).toString()),
++                    true
++                );
++            }
++            prefs.edit().remove(KEY).apply();
++        } catch (Exception ignored) {
++            // Queue stays intact; retried on next launch.
++        }
 +    }
 +}

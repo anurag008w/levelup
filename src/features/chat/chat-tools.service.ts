@@ -1412,7 +1412,7 @@ function coercePythonDay(v: unknown): number | string {
     if (m) return Number(m[1]);
     return v;
   }
-  return v;
+  return String(v);
 }
 
 function convertPythonArgs(name: string, args: Record<string, unknown>): Record<string, unknown> {

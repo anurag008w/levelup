@@ -3,8 +3,9 @@ import { Capacitor } from '@capacitor/core';
 import { Download, ExternalLink, RefreshCw, ShieldAlert, ShieldCheck } from 'lucide-react';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
+import ProgressBar from '../components/ui/ProgressBar';
 import { haptic } from '../lib/haptics';
-import { checkForUpdates, getInstalledVersion, installUpdate, openExternalUrl, type UpdateCheckResult } from '../lib/updates';
+import { checkForUpdates, getInstalledVersion, installUpdate, openExternalUrl, type DownloadProgress, type UpdateCheckResult } from '../lib/updates';
 import { formatBytes } from '../features/backup/backup.service';
 
 type CheckState =
@@ -17,6 +18,7 @@ export default function UpdatesScreen() {
   const [check, setCheck] = useState<CheckState>({ status: 'idle' });
   const [installMsg, setInstallMsg] = useState<string | null>(null);
   const [currentVersion, setCurrentVersion] = useState('dev');
+  const [progress, setProgress] = useState<DownloadProgress | null>(null);
 
   const isNative = Capacitor.isNativePlatform();
 
@@ -41,14 +43,19 @@ export default function UpdatesScreen() {
     setCheck({ status: 'checked', result });
   }
 
-  async function runInstall(apkUrl: string) {
+  async function runInstall(apkUrl: string, apkSize?: number) {
     haptic();
     if (check.status !== 'checked') return;
     const prevResult = check.result;
     setCheck({ status: 'installing' });
     setInstallMsg(null);
-    const result = await installUpdate(apkUrl);
+    setProgress({ receivedBytes: 0, totalBytes: typeof apkSize === 'number' && apkSize > 0 ? apkSize : null, percent: null });
+    const result = await installUpdate(apkUrl, {
+      totalBytes: apkSize,
+      onProgress: (p) => setProgress(p),
+    });
     setInstallMsg(result.message);
+    setProgress(null);
     setCheck({ status: 'checked', result: prevResult });
   }
 
@@ -100,12 +107,24 @@ export default function UpdatesScreen() {
       )}
 
       {check.status === 'installing' && (
-        <div className="card mb-4 flex items-center gap-3 p-4">
-          <RefreshCw size={16} className="animate-spin text-l" />
-          <div>
-            <p className="text-sm font-semibold text-text">APK download ho raha hai…</p>
-            <p className="text-xs text-muted">Thoda sa wait karo — bada file hai to der lag sakti hai.</p>
+        <div className="card mb-4 p-4">
+          <div className="flex items-center gap-3">
+            <RefreshCw size={16} className="animate-spin text-l" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-text">APK download ho raha hai…</p>
+              <p className="text-xs text-muted">
+                {progress?.totalBytes
+                  ? `${formatBytes(progress.receivedBytes)} / ${formatBytes(progress.totalBytes)}${progress.percent != null ? ` · ${progress.percent}%` : ''}`
+                  : 'Thoda sa wait karo — bada file hai to der lag sakti hai.'}
+              </p>
+            </div>
           </div>
+          {progress?.percent != null && (
+            <div className="mt-3.5">
+              <ProgressBar value={progress.percent} color="var(--color-blood-bright)" height={8} />
+              <p className="mt-1.5 text-right font-mono text-[11px] font-semibold text-l">{progress.percent}%</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -139,7 +158,7 @@ export default function UpdatesScreen() {
                   </div>
                   {apkUrl ? (
                     isNative ? (
-                      <button type="button" className="btn mt-3 w-full justify-center text-sm" onClick={() => runInstall(apkUrl)}>
+                      <button type="button" className="btn mt-3 w-full justify-center text-sm" onClick={() => runInstall(apkUrl, latest.apkSize)}>
                         <Download size={15} /> Download & Install
                       </button>
                     ) : (

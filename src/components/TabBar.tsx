@@ -9,16 +9,16 @@ import MemorySummaryPanel from './MemorySummaryPanel';
 
 export type Tab = 'today' | 'levels' | 'progress' | 'review' | 'task-bank' | 'ai' | 'chat' | 'updates' | 'planners';
 
-const TABS: { id: Tab; label: string; hint: string; icon: typeof CalendarCheck; tone: 'l' | 'gold' | 'blood' | 'slate' | 'neutral' }[] = [
+const TABS: { id: Tab; label: string; hint: string; icon: typeof CalendarCheck; tone: 'l' | 'gold' | 'silver' | 'blood' | 'slate' | 'teal' | 'blue' | 'amber' | 'neutral' }[] = [
   { id: 'today', label: 'Today', hint: 'Daily mission', icon: CalendarCheck, tone: 'l' },
   { id: 'levels', label: 'Levels', hint: 'Growth map', icon: LayoutList, tone: 'gold' },
-  { id: 'progress', label: 'Progress', hint: 'Analytics', icon: LineChart, tone: 'gold' },
+  { id: 'progress', label: 'Progress', hint: 'Analytics', icon: LineChart, tone: 'silver' },
   { id: 'review', label: 'Review', hint: 'Reflect', icon: NotebookPen, tone: 'slate' },
-  { id: 'task-bank', label: 'Tasks', hint: 'Bank', icon: ListTodo, tone: 'l' },
+  { id: 'task-bank', label: 'Tasks', hint: 'Bank', icon: ListTodo, tone: 'teal' },
   { id: 'chat', label: 'Misa', hint: 'Doubts & maths', icon: MessageCircle, tone: 'blood' },
-  { id: 'planners', label: 'Planners', hint: 'Subject uploads', icon: BookOpen, tone: 'l' },
+  { id: 'planners', label: 'Planners', hint: 'Subject uploads', icon: BookOpen, tone: 'blue' },
   { id: 'ai', label: 'Settings', hint: 'App & AI', icon: Settings, tone: 'neutral' },
-  { id: 'updates', label: 'Updates', hint: 'Install new version', icon: Download, tone: 'l' },
+  { id: 'updates', label: 'Updates', hint: 'Install new version', icon: Download, tone: 'amber' },
 ];
 
 const sidebarSpring = { type: 'tween', duration: 0.32, ease: [0.2, 0, 0, 1] } as const;
@@ -60,6 +60,10 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
   // chat's horizontal attachment strip fires scroll events with scrollTop 0)
   // must never reset another scroller's baseline, or a scroll-up on the main
   // thread computes a wrong delta and the handle stays hidden forever.
+  //
+  // Misa (chat) tab pe auto-hide band hai: wahan hamburger ke liye reserved
+  // strip hamesha rehti hai, isliye scroll ke saath handle chhupana broken
+  // lagta hai — chat pe kabhi hide nahi hota.
   useEffect(() => {
     const positions = new Map<EventTarget, number>();
 
@@ -78,6 +82,7 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
     }
 
     function onScroll(event: Event) {
+      if (active === 'chat') return;
       const target = event.target;
       if (!canScrollY(target)) return;
       const key: EventTarget = target ?? document;
@@ -95,7 +100,13 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
 
     window.addEventListener('scroll', onScroll, { capture: true, passive: true });
     return () => window.removeEventListener('scroll', onScroll, { capture: true });
-  }, []);
+  }, [active]);
+
+  // Chat tab pe switch karte hi handle ko wapas dikhao (kisi aur tab pe
+  // scroll karne se hidden reh gaya ho to).
+  useEffect(() => {
+    if (active === 'chat') setHandleVisible(true);
+  }, [active]);
 
   useEffect(() => {
     function onTouchStart(event: TouchEvent) {

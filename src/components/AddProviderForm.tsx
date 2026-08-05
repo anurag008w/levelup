@@ -64,12 +64,12 @@ export default function AddProviderForm({ onAdd }: { onAdd: (c: ProviderConfig) 
                   className="flex w-full items-center gap-3 rounded-[var(--radius-lg)] border px-3 py-2.5 text-left transition-colors"
                   style={{
                     borderColor: isSelected ? 'var(--color-l)' : 'var(--color-border)',
-                    background: isSelected ? 'rgba(138,154,91,0.1)' : 'var(--color-panel-raised)',
+                    background: isSelected ? 'rgba(163,19,19,0.1)' : 'var(--color-panel-raised)',
                   }}
                 >
                   <span
                     className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-                    style={{ background: isSelected ? 'rgba(138,154,91,0.18)' : 'var(--color-surface-3)', color: isSelected ? 'var(--color-l)' : 'var(--color-muted)' }}
+                    style={{ background: isSelected ? 'rgba(163,19,19,0.18)' : 'var(--color-surface-3)', color: isSelected ? 'var(--color-l)' : 'var(--color-muted)' }}
                   >
                     <Plug size={14} />
                   </span>

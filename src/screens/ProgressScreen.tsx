@@ -99,8 +99,8 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
       />
 
       {/* XP + consistency hero */}
-      <div className="gradient-border mb-4 rounded-[1.25rem] p-px" data-tone="gold">
-        <div className="rounded-[calc(1.25rem-1px)] bg-panel p-4">
+      <div className="gradient-border mb-4 rounded-2xl p-px" data-tone="gold">
+        <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="eyebrow">TOTAL XP</p>
@@ -123,7 +123,7 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
         </div>
       </div>
 
-      <div className="mb-4 grid grid-cols-3 gap-2.5">
+      <div className="stat-strip mb-4">
         <Stat label="Day Streak" value={overallStreak} icon={<Flame size={14} color="var(--color-light)" />} accent="var(--color-light)" />
         <Stat label="Levels Cleared" value={clearedCount} icon={<Trophy size={14} color="var(--color-l)" />} accent="var(--color-l)" />
         <Stat
@@ -195,9 +195,9 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
               key={a.label}
               className="badge"
               style={{
-                backgroundColor: a.ok ? 'rgba(138,154,91,0.14)' : 'var(--color-panel-raised)',
+                backgroundColor: a.ok ? 'rgba(163,19,19,0.14)' : 'var(--color-panel-raised)',
                 color: a.ok ? 'var(--color-success)' : 'var(--color-muted-dim)',
-                border: `1px solid ${a.ok ? 'rgba(138,154,91,0.35)' : 'var(--color-border)'}`,
+                border: `1px solid ${a.ok ? 'rgba(163,19,19,0.35)' : 'var(--color-border)'}`,
               }}
             >
               {a.ok ? '✓' : '•'} {a.label}
@@ -245,7 +245,7 @@ function StreakPill({ streak }: { streak: number }) {
   return (
     <div
       className="flex items-center gap-1.5 rounded-full border px-3 py-1.5"
-      style={{ borderColor: active ? 'rgba(201,162,39,0.45)' : 'var(--color-border)', backgroundColor: active ? 'rgba(201,162,39,0.08)' : 'var(--color-panel)' }}
+      style={{ borderColor: active ? 'rgba(239,233,223,0.45)' : 'var(--color-border)', backgroundColor: active ? 'rgba(239,233,223,0.08)' : 'var(--color-panel)' }}
     >
       <Flame size={15} color={active ? 'var(--color-light)' : 'var(--color-muted-dim)'} className={active ? 'pulse-dot' : ''} />
       <span className="font-mono text-sm font-bold" style={{ color: active ? 'var(--color-light)' : 'var(--color-muted)' }}>{streak}</span>
@@ -294,9 +294,9 @@ function cellColor(level: number): string {
     case 3:
       return 'var(--color-l)';
     case 2:
-      return 'rgba(138,154,91,0.55)';
+      return 'rgba(163,19,19,0.55)';
     case 1:
-      return 'rgba(138,154,91,0.28)';
+      return 'rgba(163,19,19,0.28)';
     default:
       return 'var(--color-grid)';
   }
@@ -354,7 +354,7 @@ function WeeklyChart({ dayInfos }: { dayInfos: DayInfo[] }) {
                 className="bar-grow w-full max-w-6 rounded-md"
                 style={{
                   height: `${Math.max(pct, 4)}%`,
-                  backgroundColor: pct >= 60 ? 'var(--color-l)' : pct >= 30 ? 'rgba(138,154,91,0.5)' : 'var(--color-grid)',
+                  backgroundColor: pct >= 60 ? 'var(--color-l)' : pct >= 30 ? 'rgba(163,19,19,0.5)' : 'var(--color-grid)',
                   animationDelay: `${i * 70}ms`,
                 }}
               />

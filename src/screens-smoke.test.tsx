@@ -85,7 +85,7 @@ describe('screen smoke tests', () => {
 
   it('LoginScreen renders the app-start auth gate with credentials fields (server URL stays hidden)', () => {
     render(React.createElement(LoginScreen, { onLoggedIn: noop }));
-    expect(screen.getByText('LevelUp')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'LevelUp' })).toBeTruthy();
     expect(screen.getByText('Login / Continue')).toBeTruthy();
     expect(screen.getByText('Register')).toBeTruthy();
     expect(screen.getByPlaceholderText('aapka username')).toBeTruthy();

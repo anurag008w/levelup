@@ -10,10 +10,12 @@ import {
   resolveCurrentVersion,
 } from '../updates';
 
-const { httpGetMock, isNativeMock, writeFileMock, startActivityMock } = vi.hoisted(() => ({
+const { httpGetMock, isNativeMock, writeFileMock, appendFileMock, deleteFileMock, startActivityMock } = vi.hoisted(() => ({
   httpGetMock: vi.fn(),
   isNativeMock: vi.fn(() => true),
   writeFileMock: vi.fn(),
+  appendFileMock: vi.fn(),
+  deleteFileMock: vi.fn(),
   startActivityMock: vi.fn(),
 }));
 
@@ -24,7 +26,11 @@ vi.mock('@capacitor/core', () => ({
 
 vi.mock('@capacitor/filesystem', () => ({
   Directory: { Cache: 'CACHE' },
-  Filesystem: { writeFile: (...args: unknown[]) => writeFileMock(...args) },
+  Filesystem: {
+    writeFile: (...args: unknown[]) => writeFileMock(...args),
+    appendFile: (...args: unknown[]) => appendFileMock(...args),
+    deleteFile: (...args: unknown[]) => deleteFileMock(...args),
+  },
 }));
 
 vi.mock('@capgo/capacitor-intent-launcher', () => ({
@@ -142,6 +148,8 @@ describe('installUpdate', () => {
     isNativeMock.mockReturnValue(true);
     httpGetMock.mockReset();
     writeFileMock.mockReset();
+    appendFileMock.mockReset();
+    deleteFileMock.mockReset();
     startActivityMock.mockReset();
   });
 
@@ -186,5 +194,80 @@ describe('installUpdate', () => {
     expect(result.ok).toBe(true);
     expect(httpGetMock).not.toHaveBeenCalled();
     openSpy.mockRestore();
+  });
+
+  it('downloads in chunks and reports real byte progress when a handler is attached', async () => {
+    // 5 MB total → 3 ranged requests (2MB + 2MB + 1MB).
+    httpGetMock
+      .mockResolvedValueOnce({ status: 206, data: 'Y2h1bmstMQ==', headers: { 'Content-Range': 'bytes 0-2097151/5242880' }, url: 'u' })
+      .mockResolvedValueOnce({ status: 206, data: 'Y2h1bmstMg==', headers: { 'Content-Range': 'bytes 2097152-4194303/5242880' }, url: 'u' })
+      .mockResolvedValueOnce({ status: 206, data: 'Y2h1bmstMw==', headers: { 'Content-Range': 'bytes 4194304-5242879/5242880' }, url: 'u' });
+    writeFileMock.mockResolvedValue({ uri: 'file:///cache/updates/levelup.apk' });
+    appendFileMock.mockResolvedValue({ uri: 'file:///cache/updates/levelup.apk' });
+    startActivityMock.mockResolvedValue({});
+
+    const calls: { receivedBytes: number; percent: number | null }[] = [];
+    const result = await installUpdate('https://x/app.apk', {
+      totalBytes: 5 * 1024 * 1024,
+      onProgress: (p) => calls.push({ receivedBytes: p.receivedBytes, percent: p.percent }),
+    });
+
+    expect(result.ok).toBe(true);
+    // initial 0%, then a tick per chunk
+    expect(calls[0]).toEqual({ receivedBytes: 0, percent: 0 });
+    expect(calls[1].receivedBytes).toBe(2 * 1024 * 1024);
+    expect(calls[1].percent).toBe(40);
+    expect(calls[2].receivedBytes).toBe(4 * 1024 * 1024);
+    expect(calls[2].percent).toBe(80);
+    expect(calls[3].receivedBytes).toBe(5 * 1024 * 1024);
+    expect(calls[3].percent).toBe(100);
+    // ranged requests use the Range header + blob type
+    expect(httpGetMock).toHaveBeenCalledWith(expect.objectContaining({ headers: { Range: 'bytes=0-2097151' }, responseType: 'blob' }));
+    expect(httpGetMock).toHaveBeenCalledWith(expect.objectContaining({ headers: { Range: 'bytes=2097152-4194303' }, responseType: 'blob' }));
+    expect(httpGetMock).toHaveBeenCalledWith(expect.objectContaining({ headers: { Range: 'bytes=4194304-5242879' }, responseType: 'blob' }));
+    // first chunk writes the file, later chunks append
+    expect(writeFileMock).toHaveBeenCalledTimes(1);
+    expect(appendFileMock).toHaveBeenCalledTimes(2);
+    expect(startActivityMock).toHaveBeenCalled();
+  });
+
+  it('probes the total size when unknown and then reports progress', async () => {
+    httpGetMock
+      .mockResolvedValueOnce({ status: 206, data: '', headers: { 'Content-Range': 'bytes 0-0/3145728' }, url: 'u' })
+      .mockResolvedValueOnce({ status: 206, data: 'Y2h1bmstMQ==', headers: { 'Content-Range': 'bytes 0-2097151/3145728' }, url: 'u' })
+      .mockResolvedValueOnce({ status: 206, data: 'Y2h1bmstMg==', headers: { 'Content-Range': 'bytes 2097152-3145727/3145728' }, url: 'u' });
+    writeFileMock.mockResolvedValue({ uri: 'file:///cache/updates/levelup.apk' });
+    appendFileMock.mockResolvedValue({ uri: 'file:///cache/updates/levelup.apk' });
+    startActivityMock.mockResolvedValue({});
+
+    const calls: { receivedBytes: number; percent: number | null }[] = [];
+    const result = await installUpdate('https://x/app.apk', {
+      onProgress: (p) => calls.push({ receivedBytes: p.receivedBytes, percent: p.percent }),
+    });
+
+    expect(result.ok).toBe(true);
+    // probe returns total → first progress tick has percent 0 (not null)
+    expect(calls[1]).toEqual({ receivedBytes: 0, percent: 0 });
+    expect(calls.at(-1)?.percent).toBe(100);
+    expect(httpGetMock).toHaveBeenCalledWith(expect.objectContaining({ headers: { Range: 'bytes=0-0' } }));
+  });
+
+  it('falls back to a whole download when the server does not support ranges', async () => {
+    // Persistent 200: the ranged chunk call gets 200 (ignored Range), then the
+    // whole-download fallback call also gets 200 with the full body.
+    httpGetMock.mockResolvedValue({ status: 200, data: 'd2hvbGUtYXBr', headers: {}, url: 'u' });
+    writeFileMock.mockResolvedValue({ uri: 'file:///cache/updates/levelup.apk' });
+    startActivityMock.mockResolvedValue({});
+
+    const result = await installUpdate('https://x/app.apk', {
+      totalBytes: 1000,
+      onProgress: () => undefined,
+    });
+
+    expect(result.ok).toBe(true);
+    // ranged chunk failed → partial deleted → whole download wrote the file
+    expect(deleteFileMock).toHaveBeenCalled();
+    expect(writeFileMock).toHaveBeenCalledWith(expect.objectContaining({ data: 'd2hvbGUtYXBr', directory: 'CACHE' }));
+    expect(startActivityMock).toHaveBeenCalled();
   });
 });

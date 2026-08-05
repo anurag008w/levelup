@@ -29,6 +29,7 @@ export default function TodayScreen({
   onUnlockAdmin,
   onLockAdmin,
   onSetAdminDay,
+  onNavigate,
 }: {
   state: AppState;
   today: string;
@@ -37,6 +38,7 @@ export default function TodayScreen({
   onUnlockAdmin: (username: string, password: string) => boolean;
   onLockAdmin: () => void;
   onSetAdminDay: (day: number | null) => void;
+  onNavigate?: (tab: 'task-bank' | 'progress' | 'chat') => void;
 }) {
   const [showAdd, setShowAdd] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
@@ -79,7 +81,7 @@ export default function TodayScreen({
   }, [pct, totalCount]);
 
   if (!state.startDateISO) {
-    return <StartScreen onStart={() => update((s) => ({ ...s, startDateISO: today }))} />;
+    return <StartScreen onStart={() => update((s) => ({ ...s, startDateISO: today }))} onNavigate={onNavigate} />;
   }
 
   const activePlan: DailyPlan = plan!;
@@ -212,8 +214,8 @@ export default function TodayScreen({
       )}
 
       {/* Hero */}
-      <div className="gradient-border mb-4 rounded-[1.25rem] p-px">
-        <div className="rounded-[calc(1.25rem-1px)] bg-panel/90 px-4 pb-4 pt-5">
+      <div className="gradient-border mb-4 rounded-2xl p-px">
+        <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel/90 px-4 pb-4 pt-5">
           <div className="flex items-center justify-center">
             <DayGauge
               dayNumber={dayNumber}
@@ -227,7 +229,7 @@ export default function TodayScreen({
               <p className="eyebrow" style={{ color: accent }}>
                 {phase?.title}
               </p>
-              <h2 className="mt-1 font-display text-lg font-bold tracking-tight">{level.title}</h2>
+              <h2 className="mt-1 font-display text-base font-bold tracking-tight">{level.title}</h2>
               <p className="mt-0.5 text-xs text-muted">
                 Days {level.dayStart}–{level.dayEnd}
               </p>
@@ -246,7 +248,7 @@ export default function TodayScreen({
       </div>
 
       {/* Quick stats */}
-      <div className="mb-4 grid grid-cols-3 gap-2.5">
+      <div className="stat-strip mb-4">
         <StatTile icon={<Target size={15} color="var(--color-l)" />} value={`${doneCount}/${totalCount}`} label="Tasks done" />
         <StatTile icon={<Zap size={15} color="var(--color-light)" />} value={activeContext.availableMinutes} label="Min today" />
         <StatTile
@@ -284,7 +286,7 @@ export default function TodayScreen({
       )}
 
       {activeContext.restDay && (
-        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-light-dim/50 bg-[rgba(245,179,103,0.08)] p-3.5 fade-in">
+        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-light-dim/50 bg-[rgba(239,233,223,0.08)] p-3.5 fade-in">
           <Sunset size={18} color="var(--color-light)" className="mt-0.5 shrink-0" />
           <div>
             <p className="font-display text-sm font-bold text-light">Rest Day — Chhuti</p>
@@ -296,7 +298,7 @@ export default function TodayScreen({
       )}
 
       {examMode && (
-        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-light-dim/50 bg-[rgba(245,179,103,0.08)] p-3.5 fade-in">
+        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-light-dim/50 bg-[rgba(239,233,223,0.08)] p-3.5 fade-in">
           <Siren size={18} color="var(--color-light)" className="mt-0.5 shrink-0" />
           <div>
             <p className="font-display text-sm font-bold text-light">Exam Month — {examLeft} din baaki</p>
@@ -416,11 +418,15 @@ function StreakPill({ streak }: { streak: number }) {
     <div
       className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 transition-colors"
       style={{
-        borderColor: active ? 'rgba(245,179,103,0.45)' : 'var(--color-border)',
-        backgroundColor: active ? 'rgba(245,179,103,0.08)' : 'var(--color-panel)',
+        borderColor: active ? 'rgba(239,233,223,0.45)' : 'var(--color-border)',
+        backgroundColor: active ? 'rgba(239,233,223,0.08)' : 'var(--color-panel)',
       }}
     >
-      <span className="font-mono text-[11px]" style={{ color: active ? 'var(--color-light)' : 'var(--color-muted-dim)' }}>■</span>
+      <Flame
+        size={13}
+        style={{ color: active ? 'var(--color-light)' : 'var(--color-muted-dim)', fill: active ? 'var(--color-l)' : 'none' }}
+        aria-hidden="true"
+      />
       <span className="font-mono text-sm font-bold" style={{ color: active ? 'var(--color-light)' : 'var(--color-muted)' }}>
         {streak}
       </span>
@@ -430,7 +436,7 @@ function StreakPill({ streak }: { streak: number }) {
 
 function StatTile({ icon, value, label, warn }: { icon: React.ReactNode; value: string | number; label: string; warn?: boolean }) {
   return (
-    <div className="card flex flex-col items-center gap-1 px-2 py-3.5 text-center">
+    <div className="stat-strip-item">
       <span className="opacity-90">{icon}</span>
       <span className="font-display text-lg font-bold leading-none" style={{ color: warn ? 'var(--color-danger)' : 'var(--color-text)' }}>
         {value}
@@ -562,6 +568,22 @@ const TaskRow = memo(function TaskRow({
   onCancelEdit: () => void;
   onDelete: () => void;
 }) {
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const holdTimer = useRef<number | null>(null);
+  const firedRef = useRef(false);
+
+  function openMenu(clientX: number, clientY: number) {
+    haptic(20);
+    setMenuPos({ x: clientX, y: clientY });
+  }
+
+  function clearHold() {
+    if (holdTimer.current) {
+      window.clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    }
+  }
+
   if (editing && editDraft) {
     return (
       <div className="card p-3.5 text-sm fade-in">
@@ -591,12 +613,27 @@ const TaskRow = memo(function TaskRow({
 
   return (
     <div
-      className="card card-press flex items-center gap-3 p-3"
+      className="card card-press relative flex items-center gap-3 p-3"
       style={{
-        borderColor: done ? 'rgba(138,154,91,0.55)' : 'var(--color-border)',
-        backgroundColor: done ? 'rgba(138,154,91,0.06)' : undefined,
+        borderColor: done ? 'rgba(163,19,19,0.55)' : 'var(--color-border)',
+        backgroundColor: done ? 'rgba(163,19,19,0.06)' : undefined,
         opacity: dim && !done ? 0.55 : 1,
       }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        if (!firedRef.current) openMenu(e.clientX, e.clientY);
+      }}
+      onPointerDown={(e) => {
+        if (e.pointerType !== 'touch') return;
+        firedRef.current = false;
+        holdTimer.current = window.setTimeout(() => {
+          firedRef.current = true;
+          openMenu(e.clientX, e.clientY);
+        }, 450);
+      }}
+      onPointerUp={clearHold}
+      onPointerMove={clearHold}
+      onPointerLeave={clearHold}
     >
       <span
         className="h-10 w-1 shrink-0 rounded-[1px] transition-colors"
@@ -623,14 +660,42 @@ const TaskRow = memo(function TaskRow({
           )}
         </p>
       </div>
-      <div className="flex shrink-0 items-center gap-0.5">
-        <button type="button" className="icon-btn" onClick={onStartEdit} aria-label="Edit task">
-          <Pencil size={15} />
-        </button>
-        <button type="button" className="icon-btn text-danger/60 hover:bg-danger/10 hover:text-danger" onClick={onDelete} aria-label="Delete task">
-          <Trash2 size={15} />
-        </button>
-      </div>
+      {/* Edit / Delete are reached via long-press (or right-click) — see the
+          ctx-menu below — so the row stays clean instead of showing
+          always-on icon buttons. */}
+      {menuPos && (
+        <>
+          <div className="fixed inset-0 z-[59]" onClick={() => setMenuPos(null)} aria-hidden="true" />
+          <div role="menu" className="ctx-menu" style={{ left: menuPos.x, top: menuPos.y }}>
+            <button
+              type="button"
+              role="menuitem"
+              className="ctx-item"
+              onClick={() => {
+                haptic();
+                onStartEdit();
+                setMenuPos(null);
+              }}
+            >
+              <Pencil size={15} />
+              Edit
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="ctx-item danger"
+              onClick={() => {
+                haptic();
+                onDelete();
+                setMenuPos(null);
+              }}
+            >
+              <Trash2 size={15} />
+              Delete
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 });
@@ -644,11 +709,11 @@ function uid(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function StartScreen({ onStart }: { onStart: () => void }) {
+function StartScreen({ onStart, onNavigate }: { onStart: () => void; onNavigate?: (tab: 'task-bank' | 'progress' | 'chat') => void }) {
   const features = [
-    { icon: <Target size={17} color="var(--color-l)" />, label: 'Task Bank', tint: 'rgba(138,154,91,0.14)' },
-    { icon: <Flame size={17} color="var(--color-light)" />, label: 'Streaks', tint: 'rgba(201,162,39,0.14)' },
-    { icon: <Zap size={17} color="var(--color-peak)" />, label: 'Misa AI', tint: 'rgba(201,162,39,0.14)' },
+    { icon: <Target size={17} color="var(--color-l)" />, label: 'Task Bank', tab: 'task-bank' as const, tint: 'rgba(163,19,19,0.14)' },
+    { icon: <Flame size={17} color="var(--color-light)" />, label: 'Streaks', tab: 'progress' as const, tint: 'rgba(239,233,223,0.14)' },
+    { icon: <Zap size={17} color="var(--color-peak)" />, label: 'Misa AI', tab: 'chat' as const, tint: 'rgba(239,233,223,0.14)' },
   ];
 
   return (
@@ -657,11 +722,11 @@ function StartScreen({ onStart }: { onStart: () => void }) {
       <div
         aria-hidden
         className="pointer-events-none absolute left-1/2 top-0 h-72 w-72 -translate-x-1/2 -translate-y-1/3 rounded-full opacity-60"
-        style={{ background: 'radial-gradient(circle, rgba(201,162,39,0.14), rgba(138,154,91,0.06) 45%, transparent 72%)' }}
+        style={{ background: 'radial-gradient(circle, rgba(239,233,223,0.14), rgba(163,19,19,0.06) 45%, transparent 72%)' }}
       />
 
       <div className="fade-up relative w-full max-w-xs">
-        <div className="gradient-border mx-auto mb-6 w-fit rounded-full p-px" style={{ boxShadow: '0 0 32px -6px rgba(201,162,39,0.35)' }}>
+        <div className="gradient-border mx-auto mb-6 w-fit rounded-full p-px" style={{ boxShadow: '0 0 32px -6px rgba(239,233,223,0.35)' }}>
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-panel">
             <Flame size={26} color="var(--color-light)" />
           </div>
@@ -674,12 +739,17 @@ function StartScreen({ onStart }: { onStart: () => void }) {
           90 din. 30 levels. 130+ habits — har din clear plan, streak aur AI coach ke saath.
         </p>
 
-        <div className="mt-7 grid w-full grid-cols-3 gap-2.5">
-          {features.map((f, i) => (
-            <div
+        <div className="mt-7 grid w-full grid-cols-3 gap-1.5">
+          {features.map((f) => (
+            <button
               key={f.label}
-              className="card card-hover fade-up flex flex-col items-center gap-2 px-2 py-4"
-              style={{ animationDelay: `${90 + i * 70}ms` }}
+              type="button"
+              disabled={!onNavigate}
+              onClick={() => {
+                haptic();
+                onNavigate?.(f.tab);
+              }}
+              className="flex flex-col items-center gap-1.5 rounded-xl border border-border bg-panel/70 px-2 py-3 text-center transition-all hover:border-l/40 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <span
                 className="flex h-8 w-8 items-center justify-center rounded-full"
@@ -688,14 +758,14 @@ function StartScreen({ onStart }: { onStart: () => void }) {
                 {f.icon}
               </span>
               <span className="text-[11px] font-medium text-muted">{f.label}</span>
-            </div>
+            </button>
           ))}
         </div>
 
         <button
           onClick={onStart}
           className="btn btn-primary mt-8 w-full gap-2 px-8 font-display text-base font-bold"
-          style={{ boxShadow: '0 16px 36px -16px rgba(138,154,91,0.55)' }}
+          style={{ boxShadow: '0 16px 36px -16px rgba(163,19,19,0.55)' }}
         >
           <Flame size={17} />
           Mission Start — Day 1

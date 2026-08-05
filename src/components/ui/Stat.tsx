@@ -12,7 +12,7 @@ export default function Stat({
   hint?: string;
 }) {
   return (
-    <div className="card flex flex-col items-center justify-center gap-1.5 px-2 py-3.5 text-center">
+    <div className="stat-strip-item">
       {icon && <span className="opacity-90">{icon}</span>}
       <span className="font-display text-xl font-bold leading-none" style={{ color: accent }}>
         {value}
