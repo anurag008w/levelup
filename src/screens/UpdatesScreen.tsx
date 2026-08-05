@@ -177,7 +177,8 @@ export default function UpdatesScreen() {
                     <div className="min-w-0">
                       <p className="font-display text-[15px] font-bold">App latest hai</p>
                       <p className="mt-0.5 text-xs text-muted">
-                        v{latest.version} installed{latest.publishedAt && ` · released ${new Date(latest.publishedAt).toLocaleDateString()}`}
+                        {versionKnown ? `v${currentVersion} installed` : 'Current version installed'}
+                        {latest.publishedAt && ` · released ${new Date(latest.publishedAt).toLocaleDateString()}`}
                       </p>
                     </div>
                     <span className="badge shrink-0">latest</span>
