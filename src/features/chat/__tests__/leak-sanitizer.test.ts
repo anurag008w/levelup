@@ -62,6 +62,32 @@ Done`)).toBe('Done');
 Done`)).toBe('Done');
   });
 
+  it('strips raw planner-tool JSON from assistant replies', () => {
+    expect(sanitizeToolLeaks(`{"action":"getTests","from":"2026-08-06","to":"2026-08-06"}
+Kal koi test nahi hai.`)).toBe('Kal koi test nahi hai.');
+    expect(sanitizeToolLeaks(`{"action":"getRoutine","day":"Friday"}
+Friday: 04:00 Physics.`)).toBe('Friday: 04:00 Physics.');
+    expect(sanitizeToolLeaks(`{"action":"getSubject","subject":"Physics","from":"2026-07-01"}
+Physics ke items.`)).toBe('Physics ke items.');
+    expect(sanitizeToolLeaks(`{"action":"getContext"}
+Journey Day 30.`)).toBe('Journey Day 30.');
+  });
+
+  it('strips Python-style tool calls that leak into assistant replies', () => {
+    expect(
+      sanitizeToolLeaks(
+        `print(removeTask(task_id="d1_t3", day_id="Day 1"))
+print(removeTask(task_id="d1_t4", day_id="Day 1"))
+✅ Har study block ke baad 2-min active recall aur Likho: Kya complete hua? — yeh dono tasks hata diye.`,
+      ),
+    ).toBe('✅ Har study block ke baad 2-min active recall aur Likho: Kya complete hua? — yeh dono tasks hata diye.');
+    expect(sanitizeToolLeaks('print(removeTask(day=1, task_id="d1_t3"))')).toBe('');
+    expect(sanitizeToolLeaks('removeTask(day=1, task_id="d1_t3")\nHo gaya.')).toBe('Ho gaya.');
+    expect(
+      sanitizeToolLeaks('```python\nprint(removeTask(task_id="d1_t3", day_id="Day 1"))\n```\nDone.'),
+    ).toBe('Done.');
+  });
+
   it('keeps normal student-facing text', () => {
     const text = 'Perfect, Day 1 reset kar diya. Ab fresh start karo.';
     expect(sanitizeToolLeaks(text)).toBe(text);

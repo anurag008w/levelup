@@ -14,8 +14,8 @@ import {
 } from '../../core/domain/chat';
 import type { LLMMessage, LLMRequest, LLMResponse, ThinkingLevel, ContentPart } from '../../core/domain/llm';
 import { isAbortError } from '../../core/domain/llm';
-import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY } from '../../core/domain/chat-tools';
-import type { ChatToolActionResult, ChatToolResult } from '../../core/domain/chat-tools';
+import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY, CHAT_PLANNER_INSTRUCTIONS } from '../../core/domain/chat-tools';
+import type { ChatToolAction, ChatToolActionResult, ChatToolResult } from '../../core/domain/chat-tools';
 import { createStreamSanitizer, sanitizeAssistantLeaks } from './leak-sanitizer';
 import { MEMORY_SUMMARY_INSTRUCTIONS, parseMemoryBlocks, shouldPinMemoryBlock, type MemoryBlock } from '../../core/domain/memory-summary';
 import {
@@ -29,7 +29,7 @@ import {
 } from '../../core/domain/chat-transcript';
 import { isoAddDays } from '../habit-engine/dates';
 import type { Clock } from '../../core/ports/clock';
-import { isoDate } from '../../core/ports/clock';
+import { isoDate, deviceTimeZone } from '../../core/ports/clock';
 import type { ChatRepository, StateStore } from '../../core/ports/repositories';
 import type { LLMService } from '../ai/llm.service';
 import type { ProviderSettingsService } from '../ai/provider-settings.service';
@@ -395,21 +395,36 @@ export class ChatService {
         return memoryAssistant;
       }
 
-      // Tool decision hop for plan/task queries. Skipped when files are
-      // attached — document analysis must reach the model directly (see the
-      // hasAttachments comment above).
+      // Tool decision hop for plan/task/uploaded-planner queries. Skipped when
+      // files are attached — document analysis must reach the model directly
+      // (see the hasAttachments comment above).
       if (!hasAttachments && this.tools && this.tools.isTaskQuery(text)) {
-        onStatus?.('AI soch raha hai…');
-        const decision = await this.llm.complete(await this.buildDecisionRequest(session, signal));
-        let actions = this.tools.parseTools(decision.text);
-        let answer = decision.text;
-        if (actions.length === 0 && answer) {
-          // The model talked instead of emitting an action — retry once with a
-          // strict correction so plan tools work even on weaker models.
-          onStatus?.('Tool decision retry kar raha hai…');
-          const retry = await this.llm.complete(await this.buildRetryRequest(session, decision.text, signal));
-          actions = this.tools.parseTools(retry.text);
-          if (retry.text) answer = retry.text;
+        // Deterministic fast path: unambiguous uploaded-planner questions
+        // ("friday ka schedule", "tests dekho", "physics mein kya kya hai")
+        // and whole-journey overview questions ("mera progress batao",
+        // "context batao") resolve straight to a tool — no LLM hop that can
+        // drift to getPlan/getAllTasks. Still runs through the same runMany +
+        // summary flow, so the reply is a normal Hinglish message with ✅/❌
+        // per action.
+        const plannerAction = this.tools.plannerActionFor(text, isoDate(this.clock.now(), deviceTimeZone()));
+        const contextAction = plannerAction ? null : this.tools.contextActionFor(text);
+        let actions: ChatToolAction[] | null = plannerAction ? [plannerAction] : contextAction ? [contextAction] : null;
+        let answer = '';
+        let decisionModel: string | undefined;
+        if (!actions) {
+          onStatus?.('AI soch raha hai…');
+          const decision = await this.llm.complete(await this.buildDecisionRequest(session, signal));
+          actions = this.tools.parseTools(decision.text);
+          answer = decision.text;
+          decisionModel = decision.model;
+          if (actions.length === 0 && answer) {
+            // The model talked instead of emitting an action — retry once with a
+            // strict correction so plan tools work even on weaker models.
+            onStatus?.('Tool decision retry kar raha hai…');
+            const retry = await this.llm.complete(await this.buildRetryRequest(session, decision.text, signal));
+            actions = this.tools.parseTools(retry.text);
+            if (retry.text) answer = retry.text;
+          }
         }
         if (actions.length === 0) {
           if (answer) {
@@ -418,7 +433,7 @@ export class ChatService {
               role: 'assistant',
               content: sanitizeAssistantLeaks(answer),
               createdAt: this.clock.now().toISOString(),
-              model: decision.model,
+              model: decisionModel,
             };
             this.appendAssistant(session, assistant);
             return assistant;
@@ -611,9 +626,18 @@ export class ChatService {
     }
   }
 
+  /** Base tool instructions, plus the uploaded-planner section + today's date
+   *  context whenever the student has imported coaching planners — so the model
+   *  answers tests/routine/subject questions with planner tools in the SAME
+   *  decision hop as the task tools. */
+  private toolSystem(base: string): string {
+    const planner = this.tools?.hasPlannerData() ? `\n\n${CHAT_PLANNER_INSTRUCTIONS}\n\n${this.plannerDateContext()}` : '';
+    return `${base}${planner}`;
+  }
+
   private async buildDecisionRequest(session: ChatSession, signal?: AbortSignal): Promise<LLMRequest> {
     const request: LLMRequest = {
-      messages: await this.buildMessages(session, CHAT_TOOL_INSTRUCTIONS),
+      messages: await this.buildMessages(session, this.toolSystem(CHAT_TOOL_INSTRUCTIONS)),
       temperature: this.decisionTemperature(session),
       maxTokens: 1024,
       providerId: session.prefs.providerId,
@@ -627,8 +651,7 @@ export class ChatService {
     return request;
   }
 
-  private async buildMemoryDecisionRequest(session: ChatSession, signal?: AbortSignal, previousReply?: string): Promise<LLMRequest> {
-    const extra = previousReply
+  private async buildMemoryDecisionRequest(session: ChatSession, signal?: AbortSignal, previousReply?: string): Promise<LLMRequest> {    const extra = previousReply
       ? `\n\nYour previous reply was:\n${previousReply}\n\nThat was not a valid action. Reply with exactly ONE JSON object from the list above now.`
       : '';
     const system = `${MEMORY_TOOL_INSTRUCTIONS}\n\nRead the student's question above and decide the single best action.${extra}`;
@@ -645,10 +668,31 @@ export class ChatService {
     return request;
   }
 
+  /** Today's date + weekday so the planner hop can resolve relative dates like
+   *  "aaj"/"kal"/"is week" to concrete "from"/"to" values for getTests/getSubject. */
+  private plannerDateContext(): string {
+    const tz = deviceTimeZone();
+    const now = this.clock.now();
+    const iso = isoDate(now, tz);
+    let weekday = '';
+    try {
+      weekday = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' }).format(now);
+    } catch {
+      weekday = '';
+    }
+    return (
+      `Today is ${weekday ? `${weekday}, ` : ''}${iso} (the user's local date). ` +
+      `When the user says "aaj" that is ${iso}; "kal" is the next day (${isoAddDays(iso, 1)}); ` +
+      `"parso" is two days ahead (${isoAddDays(iso, 2)}); "is week" is the current week. ` +
+      `Pass exact dates as "from"/"to" (YYYY-MM-DD, inclusive) in getTests/getSubject, ` +
+      `and use the weekday name in getRoutine.`
+    );
+  }
+
   private async buildRetryRequest(session: ChatSession, previousReply: string, signal?: AbortSignal): Promise<LLMRequest> {
     const system =
-      `${CHAT_TOOL_INSTRUCTIONS}\n\n${CHAT_TOOL_RETRY}\n\n` +
-      `Your previous reply was:\n${previousReply}\n\nReplace it with exactly one JSON object now.`;
+      this.toolSystem(`${CHAT_TOOL_INSTRUCTIONS}\n\n${CHAT_TOOL_RETRY}`) +
+      `\n\nYour previous reply was:\n${previousReply}\n\nReplace it with exactly one JSON object now.`;
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),
       temperature: this.decisionTemperature(session),
@@ -678,9 +722,9 @@ export class ChatService {
   ): Promise<LLMRequest> {
     const failedText = failed.map((f) => `- ${f.action}: ${f.summary}`).join('\n');
     const system =
-      `${CHAT_TOOL_INSTRUCTIONS}\n\n` +
-      `Your previous tool call partially failed. The errors below are FIXABLE — ` +
-      `look the real id up first if needed (listBlocks / getTaskBank / getAllTasks / getPlan), ` +
+      this.toolSystem(CHAT_TOOL_INSTRUCTIONS) +
+      `\n\nYour previous tool call partially failed. The errors below are FIXABLE — ` +
+      `look the real id up first if needed (listBlocks / getTaskBank / getAllTasks / getPlan / listPlanners), ` +
       `then re-emit the corrected action.\n` +
       `Rules:\n` +
       `- Re-emit ONLY the actions that failed, as exactly one JSON object (single action or {"actions":[...]}).\n` +
@@ -717,8 +761,8 @@ export class ChatService {
    */
   private async buildReplanRequest(session: ChatSession, plans: string, failure: string, signal?: AbortSignal): Promise<LLMRequest> {
     const system =
-      `${CHAT_TOOL_INSTRUCTIONS}\n\n` +
-      `Your previous tool call failed because the task id was NOT in that day's plan.\n` +
+      this.toolSystem(CHAT_TOOL_INSTRUCTIONS) +
+      `\n\nYour previous tool call failed because the task id was NOT in that day's plan.\n` +
       `Below is the affected day's exact plan with REAL task ids (format "id:<taskId>").\n` +
       `Re-emit your ENTIRE reply as exactly one JSON object (or an actions array) using a VALID task id from the plan. ` +
       `Do NOT explain, refuse or apologize — just the corrected JSON.`;
@@ -1440,19 +1484,31 @@ function normalizePrefs(prefs: Partial<ChatPreferences>): ChatPreferences {
   const merged = { ...defaults, ...prefs };
 
   // Sessions created before editable system persona used `systemPrompt` as the
-  // user persona. Keep non-default custom text as user instructions, while new
-  // sessions get Misa as the editable system persona and a blank user persona.
+  // user persona. Only sessions still carrying an UNEDITED legacy default get
+  // migrated to Misa + a blank user persona. Any other custom text means the
+  // user wrote it themselves — it must stay the editable system persona, never
+  // be demoted back to the default (that silently swallowed user prompts).
   const legacyDefault = 'Mere JEE coach bano. Hinglish mein concise, direct aur step-by-step samjhao. Maths ke answers LaTeX + short explanation ke saath do.';
   const legacySystemPrompt = prefs.systemPrompt;
   const isOldDivyaDefault =
     !!legacySystemPrompt &&
     legacySystemPrompt.startsWith('Tum Divya ho — LevelUp ki warm, sharp aur motivating girl JEE study coach.') &&
     legacySystemPrompt.includes('TIMESTAMP USER KO KABHI MAT DIKHAO');
-  const hasLegacyUserPersona = prefs.userPersona === undefined && !!legacySystemPrompt && legacySystemPrompt !== INTERNAL_SYSTEM_PROMPT;
+  const isUneditedLegacyDefault =
+    !!legacySystemPrompt &&
+    (legacySystemPrompt === legacyDefault ||
+      isOldDivyaDefault ||
+      legacySystemPrompt === LEGACY_DIVYA_SYSTEM_PROMPT ||
+      legacySystemPrompt === LEGACY_MISA_SYSTEM_PROMPT);
+  const hasLegacyUserPersona = prefs.userPersona === undefined && isUneditedLegacyDefault;
   if (hasLegacyUserPersona) {
     merged.systemPrompt = INTERNAL_SYSTEM_PROMPT;
     merged.userPersona = legacySystemPrompt === legacyDefault || isOldDivyaDefault ? DEFAULT_USER_PERSONA : legacySystemPrompt;
   }
+
+  // Legacy persisted sessions may lack the field entirely — normalize it to a
+  // blank persona so the rest of the app sees a well-formed preference object.
+  if (merged.userPersona === undefined) merged.userPersona = DEFAULT_USER_PERSONA;
 
   // Upgrade sessions that still carry the exact pre-Misa Divya default persona;
   // anything the user edited themselves is preserved.

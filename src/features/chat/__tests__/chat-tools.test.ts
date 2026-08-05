@@ -14,6 +14,7 @@ import { LLMService } from '../../ai/llm.service';
 import { ProviderSettingsService } from '../../ai/provider-settings.service';
 import { ChatService } from '../chat.service';
 import { ChatToolsService } from '../chat-tools.service';
+import { PlannerService, PlannerToolsService } from '../../planner/planner.service';
 import type { TaskGenerationService } from '../../ai/task-generation.service';
 
 class MemoryChatRepository implements ChatRepository {
@@ -548,6 +549,207 @@ describe('ChatToolsService', () => {
     expect(deleted.ok).toBe(true);
     expect(store.get().dynamicTaskBank).toHaveLength(0);
   });
+
+  it('routes uploaded-planner questions to the SAME tools hop and runs getTests/getSubject/getRoutine', async () => {
+    const store = makeStore();
+    const stateRepo: StateRepository = { load: () => store.get(), save: (s) => store.save(s), clear: () => undefined };
+    const taskBankRepo = new TaskBankRepositoryImpl(stateRepo, buildSeed());
+    const taskBank = new TaskBankServiceImpl(taskBankRepo);
+    const planner = new HabitProgressionService({ taskBank, habits: taskBankRepo, levels: LEVELS, totalDays: TOTAL_DAYS });
+    const taskGeneration = { generate: async () => ({ entry: null as never, source: 'ai' as const }) } as unknown as TaskGenerationService;
+
+    const plannerService = new PlannerService(store);
+    plannerService.importPlanners(
+      JSON.stringify({
+        version: 2,
+        type: 'levelup-subject-planner',
+        planners: [
+          { kind: 'test', subject: 'Full Test Schedule', title: 'JEE 2027 Tests', tests: [
+            { name: 'Short Test-1', date: '2026-07-10', testType: 'Part Test', pattern: 'JEE Advanced', syllabus: { Physics: ['Electrostatic Potential'], Chemistry: ['Mole Concept'], Maths: ['Matrices (Complete Chapter)'] } },
+            { name: 'JEE Main-1', date: '2026-07-28', testType: 'Full Syllabus', pattern: 'JEE Main', syllabus: { Physics: ['Electrostatics of Conductor'] } },
+          ] },
+          { kind: 'routine', subject: 'Class Timetable', title: 'Lakshya Weekly Routine', routine: [
+            { day: 'Monday', slots: [{ time: '06:00 PM - 07:30 PM', activity: 'Physics' }, { time: '08:00 PM - 09:00 PM', activity: 'Maths' }] },
+            { day: 'Tuesday', slots: [{ time: '06:00 PM - 07:30 PM', activity: 'Chemistry' }] },
+          ] },
+        ],
+      }),
+    );
+    const plannerTools = new PlannerToolsService(store, plannerService);
+    const tools = new ChatToolsService(store, planner, taskBank, taskGeneration, undefined, plannerTools);
+
+    expect(tools.hasPlannerData()).toBe(true);
+    // Planner schedule questions reach the same decision gate as task queries.
+    expect(tools.isTaskQuery('tests dekho')).toBe(true);
+    expect(tools.isTaskQuery('kal koi test hai kya')).toBe(true);
+    expect(tools.isTaskQuery('routine batao')).toBe(true);
+    expect(tools.isTaskQuery('monday ko kya class hai')).toBe(true);
+    expect(tools.isTaskQuery('physics mein kya kya hai')).toBe(true);
+    expect(tools.isTaskQuery('concept samjhao')).toBe(false);
+
+    const tests = await tools.run({ action: 'getTests', from: '2026-07-01', to: '2026-07-15' });
+    expect(tests.ok).toBe(true);
+    expect(tests.summary).toContain('Short Test-1');
+    expect(tests.summary).not.toContain('JEE Main-1');
+
+    const routine = await tools.run({ action: 'getRoutine', day: 'Monday' });
+    expect(routine.ok).toBe(true);
+    expect(routine.summary).toContain('Physics');
+
+    const subject = await tools.run({ action: 'getSubject', subject: 'Physics' });
+    expect(subject.ok).toBe(true);
+    expect(subject.summary).toContain('Short Test-1');
+    expect(subject.summary).toContain('JEE Main-1');
+
+    const missing = await tools.run({ action: 'getTests', from: '2026-09-01', to: '2026-09-30' });
+    expect(missing.ok).toBe(false);
+    expect(missing.retryable).toBe(true);
+  });
+
+  it('resolves unambiguous planner questions deterministically (no LLM needed)', async () => {
+    const store = makeStore();
+    const stateRepo: StateRepository = { load: () => store.get(), save: (s) => store.save(s), clear: () => undefined };
+    const taskBankRepo = new TaskBankRepositoryImpl(stateRepo, buildSeed());
+    const taskBank = new TaskBankServiceImpl(taskBankRepo);
+    const planner = new HabitProgressionService({ taskBank, habits: taskBankRepo, levels: LEVELS, totalDays: TOTAL_DAYS });
+    const taskGeneration = { generate: async () => ({ entry: null as never, source: 'ai' as const }) } as unknown as TaskGenerationService;
+
+    const plannerService = new PlannerService(store);
+    plannerService.importPlanners(
+      JSON.stringify({
+        version: 2,
+        type: 'levelup-subject-planner',
+        planners: [
+          { kind: 'routine', subject: 'Class Timetable', title: 'Lakshya Weekly Routine', routine: [
+            { day: 'Friday', slots: [{ time: '04:00 PM - 05:45 PM', activity: 'Physics' }, { time: '06:15 PM - 08:00 PM', activity: 'Maths' }] },
+          ] },
+          { kind: 'test', subject: 'Full Test Schedule', title: 'JEE 2027 Tests', tests: [
+            { name: 'Short Test-1', date: '2026-07-10', testType: 'Part Test', pattern: 'JEE Advanced', syllabus: { Physics: ['Electrostatic Potential'] } },
+          ] },
+          { kind: 'subject', subject: 'Physics', title: 'Class 11 Physics', items: [{ title: 'Kinematics', type: 'chapter', week: 1 }] },
+        ],
+      }),
+    );
+    const plannerTools = new PlannerToolsService(store, plannerService);
+    const tools = new ChatToolsService(store, planner, taskBank, taskGeneration, undefined, plannerTools);
+    const today = '2026-08-05';
+
+    expect(tools.plannerActionFor('friday ka schedule batao', today)).toEqual({ action: 'getRoutine', day: 'Friday' });
+    expect(tools.plannerActionFor('routine batao', today)).toEqual({ action: 'getRoutine' });
+    expect(tools.plannerActionFor('kal koi test hai kya', today)).toEqual({ action: 'getTests', from: '2026-08-06', to: '2026-08-06' });
+    expect(tools.plannerActionFor('physics mein kya kya hai', today)).toEqual({ action: 'getSubject', subject: 'Physics' });
+    // A guessed subject that is NOT in the data falls back to the LLM hop.
+    expect(tools.plannerActionFor('biology mein kya kya hai', today)).toBeNull();
+    expect(tools.plannerActionFor('concept samjhao', today)).toBeNull();
+  });
+
+  it('resolves whole-journey overview questions deterministically to getContext', () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+
+    expect(tools.contextActionFor('mera progress kya hai')).toEqual({ action: 'getContext' });
+    expect(tools.contextActionFor('status batao')).toEqual({ action: 'getContext' });
+    expect(tools.contextActionFor('context batao')).toEqual({ action: 'getContext' });
+    expect(tools.contextActionFor('mera streak kitna hai')).toEqual({ action: 'getContext' });
+    expect(tools.contextActionFor('journey ka overview de do')).toEqual({ action: 'getContext' });
+    // Explicit plan/test/subject anchors stay on the normal LLM decision hop.
+    expect(tools.contextActionFor('day 5 ka summary batao')).toBeNull();
+    expect(tools.contextActionFor('aaj ka plan kya hai')).toBeNull();
+    expect(tools.contextActionFor('physics revision samjhao')).toBeNull();
+    expect(tools.contextActionFor('')).toBeNull();
+  });
+
+  it('getContext returns the full journey snapshot deterministically', async () => {
+    const store = makeStore();
+    const stateRepo: StateRepository = { load: () => store.get(), save: (s) => store.save(s), clear: () => undefined };
+    const taskBankRepo = new TaskBankRepositoryImpl(stateRepo, buildSeed());
+    const taskBank = new TaskBankServiceImpl(taskBankRepo);
+    const planner = new HabitProgressionService({ taskBank, habits: taskBankRepo, levels: LEVELS, totalDays: TOTAL_DAYS });
+    const taskGeneration = { generate: async () => ({ entry: null as never, source: 'ai' as const }) } as unknown as TaskGenerationService;
+    const now = { now: () => new Date('2026-07-31T10:00:00Z') };
+    const tools = new ChatToolsService(store, planner, taskBank, taskGeneration, undefined, null, now);
+
+    const result = await tools.run({ action: 'getContext' });
+
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('2026-07-31');
+    expect(result.summary).toContain('Journey Day');
+    expect(result.summary).toContain('Today\'s scheduled tasks');
+    expect(result.summary).toContain('Journey so far');
+  });
+
+  it('runs a mixed bulk batch: planner tools AND task tools in ONE call', async () => {
+    const store = makeStore();
+    const stateRepo: StateRepository = { load: () => store.get(), save: (s) => store.save(s), clear: () => undefined };
+    const taskBankRepo = new TaskBankRepositoryImpl(stateRepo, buildSeed());
+    const taskBank = new TaskBankServiceImpl(taskBankRepo);
+    const planner = new HabitProgressionService({ taskBank, habits: taskBankRepo, levels: LEVELS, totalDays: TOTAL_DAYS });
+    const taskGeneration = {
+      generate: async () => ({
+        entry: parseTaskBankEntry({
+          id: 'ai-chat-test',
+          habitId: 'h1',
+          title: 'Chat se add hua task',
+          description: 'added via chat tool',
+          phase: 'jee-core',
+          difficulty: 2,
+          estimatedDurationMin: 20,
+          energyLevel: 'low',
+          tags: [],
+          prerequisites: [],
+          taskType: 'Beginner',
+          revisionSuitability: 0.2,
+          backlogSuitability: 0.2,
+          thinkingSkills: ['recall'],
+          jeeRelevance: { subject: 'physics', score: 0.5 },
+          unlockConditions: [{ type: 'day', fromDay: 1 }],
+          active: true,
+        }),
+        source: 'ai',
+      }),
+    } as unknown as TaskGenerationService;
+
+    const plannerService = new PlannerService(store);
+    plannerService.importPlanners(
+      JSON.stringify({
+        version: 2,
+        type: 'levelup-subject-planner',
+        planners: [
+          { kind: 'routine', subject: 'Class Timetable', title: 'Weekly Routine', routine: [
+            { day: 'Monday', slots: [{ time: '04:00 PM - 05:45 PM', activity: 'Physics' }] },
+          ] },
+          { kind: 'test', subject: 'Full Test Schedule', title: 'Tests', tests: [
+            { name: 'Short Test-1', date: '2026-07-10', testType: 'Part Test', pattern: 'JEE Advanced', syllabus: { Physics: ['Electrostatic Potential'] } },
+          ] },
+        ],
+      }),
+    );
+    const plannerTools = new PlannerToolsService(store, plannerService);
+    const tools = new ChatToolsService(store, planner, taskBank, taskGeneration, undefined, plannerTools);
+
+    const result = await tools.runMany([
+      { action: 'getRoutine', day: 'Monday' },
+      { action: 'getTests' },
+      { action: 'addTask', day: 3, intent: 'mixed batch physics revision', durationMin: 30 },
+    ]);
+
+    expect(result.ok).toBe(true);
+    expect(result.results).toHaveLength(3);
+    expect(result.results?.map((r) => r.action)).toEqual(['getRoutine', 'getTests', 'addTask']);
+    expect(result.results?.every((r) => r.ok)).toBe(true);
+    expect(result.summary).toContain('Physics');
+    expect(result.summary).toContain('Short Test-1');
+    expect(result.summary).toContain('Chat se add hua task');
+    expect(store.get().dynamicTaskBank).toHaveLength(1);
+  });
+
+  it('does not route planner questions to a separate hop when no planner data exists', () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    expect(tools.hasPlannerData()).toBe(false);
+    expect(tools.isTaskQuery('physics mein kya kya hai')).toBe(false);
+    expect(tools.isTaskQuery('concept samjhao')).toBe(false);
+  });
 });
 
 describe('ChatService with tools', () => {
@@ -560,6 +762,96 @@ describe('ChatService with tools', () => {
     const reply = await chat.send(session.id, 'day 1 ka pehla task mark karo');
     expect(reply.content).toBe('Ho gaya! Day 1 ka d1_t1 done mark.');
     expect(store.get().taskLogs['2026-07-01']?.['d1_t1']).toBe(true);
+  });
+
+  it('runs getRoutine deterministically for "friday ka schedule batao" even when the model is broken', async () => {
+    const store = makeStore();
+    const stateRepo: StateRepository = { load: () => store.get(), save: (s) => store.save(s), clear: () => undefined };
+    const taskBankRepo = new TaskBankRepositoryImpl(stateRepo, buildSeed());
+    const taskBank = new TaskBankServiceImpl(taskBankRepo);
+    const planner = new HabitProgressionService({ taskBank, habits: taskBankRepo, levels: LEVELS, totalDays: TOTAL_DAYS });
+    const taskGeneration = { generate: async () => ({ entry: null as never, source: 'ai' as const }) } as unknown as TaskGenerationService;
+    const plannerService = new PlannerService(store);
+    plannerService.importPlanners(
+      JSON.stringify({
+        version: 2,
+        type: 'levelup-subject-planner',
+        planners: [
+          { kind: 'routine', subject: 'Class Timetable', title: 'Weekly Routine', routine: [
+            { day: 'Friday', slots: [{ time: '04:00 PM - 05:45 PM', activity: 'Physics' }, { time: '06:15 PM - 08:00 PM', activity: 'Maths' }] },
+          ] },
+        ],
+      }),
+    );
+    const plannerTools = new PlannerToolsService(store, plannerService);
+    const tools = new ChatToolsService(store, planner, taskBank, taskGeneration, undefined, plannerTools);
+
+    let completeCalled = false;
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      // A broken model: decision hop would return prose, not JSON.
+      complete: async (): Promise<LLMResponse> => {
+        completeCalled = true;
+        return { text: 'Main aapko Friday ka plan bata deta hoon.', model: 'a' };
+      },
+      stream: async (_req: LLMRequest): Promise<LLMResponse> => {
+        return { text: 'Friday ka class schedule: 04:00-05:45 Physics, 06:15-08:00 Maths.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+
+    const reply = await chat.send(session.id, 'friday ka schedule batao');
+
+    // The deterministic fast path never asked the LLM for a decision.
+    expect(completeCalled).toBe(false);
+    expect(reply.tool).toBe('getRoutine');
+    expect(reply.toolCalls?.[0]).toMatchObject({ action: 'getRoutine', ok: true });
+    expect(reply.content).toContain('Physics');
+    expect(reply.content).not.toContain('"action"');
+  });
+
+  it('runs getContext deterministically for "mera progress kya hai" even when the model is broken', async () => {
+    const store = makeStore();
+    const stateRepo: StateRepository = { load: () => store.get(), save: (s) => store.save(s), clear: () => undefined };
+    const taskBankRepo = new TaskBankRepositoryImpl(stateRepo, buildSeed());
+    const taskBank = new TaskBankServiceImpl(taskBankRepo);
+    const planner = new HabitProgressionService({ taskBank, habits: taskBankRepo, levels: LEVELS, totalDays: TOTAL_DAYS });
+    const taskGeneration = { generate: async () => ({ entry: null as never, source: 'ai' as const }) } as unknown as TaskGenerationService;
+    const now = { now: () => new Date('2026-07-31T10:00:00Z') };
+    const tools = new ChatToolsService(store, planner, taskBank, taskGeneration, undefined, null, now);
+
+    let completeCalled = false;
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      // A broken model: decision hop would return prose, not JSON.
+      complete: async (): Promise<LLMResponse> => {
+        completeCalled = true;
+        return { text: 'Main aapko progress bata deta hoon.', model: 'a' };
+      },
+      stream: async (_req: LLMRequest): Promise<LLMResponse> => {
+        return { text: 'Aapki journey Day 30 par hai.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+
+    const reply = await chat.send(session.id, 'mera progress kya hai');
+
+    // The deterministic fast path never asked the LLM for a decision.
+    expect(completeCalled).toBe(false);
+    expect(reply.tool).toBe('getContext');
+    expect(reply.toolCalls?.[0]).toMatchObject({ action: 'getContext', ok: true });
+    expect(reply.content).toContain('Day 30');
+    expect(reply.content).not.toContain('"action"');
   });
 
   it('delivers a normal answer directly when the model does not emit a tool action', async () => {
@@ -583,6 +875,40 @@ describe('ChatService with tools', () => {
     const reply = await chat.send(session.id, 'mere tasks kya hain?');
     expect(reply.content).toContain('konse din');
     expect(streamCalled).toBe(false);
+  });
+
+  it('executes Python-style tool calls from a Python-trained model and never leaks them', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      // A Python/agent-trained model answers the decision hop with print() calls.
+      complete: async (): Promise<LLMResponse> => ({
+        text: 'print(addTask(day=3, intent="physics revision", durationMin=40))',
+        model: 'a',
+      }),
+      stream: async (_req: LLMRequest): Promise<LLMResponse> => {
+        return { text: 'Day 3 mein physics revision add ho gaya.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+
+    const reply = await chat.send(session.id, 'day 3 mein physics revision add karo');
+
+    expect(reply.tool).toBe('addTask');
+    expect(reply.toolCalls?.[0]).toMatchObject({ action: 'addTask', ok: true });
+    // The action really ran...
+    expect(store.get().dynamicTaskBank.some((t) => t.id === 'ai-chat-test')).toBe(true);
+    // ...and the print() call never reached the user.
+    expect(reply.content).toContain('add ho gaya');
+    expect(reply.content).not.toContain('print(');
+    expect(reply.content).not.toContain('removeTask');
+    expect(reply.content).not.toContain('"action"');
   });
 
   it('sends file attachments straight to the model — skips the tool decision hop', async () => {
@@ -870,6 +1196,53 @@ describe('ChatService tool retry + reasoning', () => {
     ]);
     expect(tools.parseTools('{"actions":[{"action":"addTask","day":5,"intent":"maths"},{"action":"removeTask","day":5,"taskId":"d1_t1","confirmed":true}]}')).toEqual([]);
     expect(tools.parseTools('koi json nahi')).toEqual([]);
+  });
+
+  it('parseTools converts Python-style tool calls into real actions', () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+
+    expect(
+      tools.parseTools(
+        'print(removeTask(task_id="d1_t3", day_id="Day 1"))\nprint(removeTask(task_id="d1_t4", day_id="Day 1"))',
+      ),
+    ).toEqual([
+      { action: 'removeTask', day: 1, taskId: 'd1_t3' },
+      { action: 'removeTask', day: 1, taskId: 'd1_t4' },
+    ]);
+
+    expect(tools.parseTools('removeTask(day=5, task_id="d1_t1", confirmed=True)')).toEqual([
+      { action: 'removeTask', day: 5, taskId: 'd1_t1', confirmed: true },
+    ]);
+
+    expect(tools.parseTools('bulkAddTasks(day_id="Day 2", intents=["maths 10 questions","thermo revision"], duration_min=30)')).toEqual([
+      { action: 'bulkAddTasks', day: 2, intents: ['maths 10 questions', 'thermo revision'], durationMin: 30 },
+    ]);
+
+    expect(tools.parseTools('addTask(day=3, intent="physics revision", durationMin=40)')).toEqual([
+      { action: 'addTask', day: 3, intent: 'physics revision', durationMin: 40 },
+    ]);
+
+    expect(tools.parseTools('getRoutine(day="Monday")')).toEqual([{ action: 'getRoutine', day: 'Monday' }]);
+    expect(tools.parseTools('getTests(from="2026-07-01", to="2026-07-31")')).toEqual([
+      { action: 'getTests', from: '2026-07-01', to: '2026-07-31' },
+    ]);
+    expect(tools.parseTools('getContext()')).toEqual([{ action: 'getContext' }]);
+    // Unknown/unsupported calls are ignored, not mis-executed.
+    expect(tools.parseTools('print(unknownTool(x=1))')).toEqual([]);
+  });
+
+  it('runs Python-style tool calls from a broken model as a real batch', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+
+    const result = await tools.runMany(
+      tools.parseTools('print(addTask(day=3, intent="python call add", durationMin=25))'),
+    );
+
+    expect(result.ok).toBe(true);
+    // The makeTools stub generates a fixed entry title, but the action itself ran.
+    expect(store.get().dynamicTaskBank.some((t) => t.id === 'ai-chat-test')).toBe(true);
   });
 
   it('runMany applies several actions in order on fresh state', async () => {

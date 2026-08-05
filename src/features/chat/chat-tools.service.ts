@@ -9,9 +9,13 @@ import { chatToolActionSchema, chatToolBatchSchema } from '../../core/domain/cha
 import type { HabitProgressionService } from '../habit-engine/planner';
 import type { TaskBankService } from '../task-bank/task-bank.service';
 import type { TaskGenerationService } from '../ai/task-generation.service';
+import type { PlannerToolsService } from '../planner/planner.service';
+import { plannerActionForQuery, type PlannerToolAction } from '../../core/domain/subject-planner';
 import { isAbortError } from '../../core/domain/llm';
 import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from './plan-format';
+import { buildContextOverview } from './context-overview';
 import { isoAddDays } from '../habit-engine/dates';
+import { deviceTimeZone, todayISO, type Clock } from '../../core/ports/clock';
 
 const MIN_DAY = 1;
 const MAX_DAY = 90;
@@ -119,6 +123,8 @@ export class ChatToolsService {
   private readonly taskBank: TaskBankService;
   private readonly taskGeneration: TaskGenerationService;
   private readonly config: ProgressionConfig;
+  private readonly plannerTools: PlannerToolsService | null;
+  private readonly now: Clock;
 
   constructor(
     store: StateStore,
@@ -126,24 +132,80 @@ export class ChatToolsService {
     taskBank: TaskBankService,
     taskGeneration: TaskGenerationService,
     config: ProgressionConfig = DEFAULT_PROGRESSION_CONFIG,
+    plannerTools: PlannerToolsService | null = null,
+    now: Clock = { now: () => new Date() },
   ) {
     this.store = store;
     this.planner = planner;
     this.taskBank = taskBank;
     this.taskGeneration = taskGeneration;
     this.config = config;
+    this.plannerTools = plannerTools;
+    this.now = now;
+  }
+
+  /** True when the student imported at least one coaching planner. */
+  hasPlannerData(): boolean {
+    return this.plannerTools ? this.plannerTools.hasPlannerData() : false;
   }
 
   /** Cheap heuristic: does this message plausibly ask about the plan/tasks?
    *  General concept questions ("concept samjhao", "physics kaise padhein")
    *  deliberately do NOT route to tools — only concrete plan/task/block
    *  commands do. "concept building block banao" still works because it is
-   *  anchored on block + a command verb. */
+   *  anchored on block + a command verb. Uploaded-planner questions route to
+   *  the SAME tools hop (tests/routine/subjects) when planner data exists. */
   isTaskQuery(text: string): boolean {
+    if (this.hasPlannerData() && this.plannerTools && this.plannerTools.isPlannerQuery(text)) return true;
     const t = text.toLowerCase();
     if (TASK_QUERY_WORDS.some((w) => t.includes(w))) return true;
     if (!t.includes('block') && !t.includes('phase')) return false;
     return BLOCK_COMMAND_WORDS.some((w) => t.includes(w));
+  }
+
+  /**
+   * Deterministic planner fast path: resolves UNAMBIGUOUS uploaded-planner
+   * questions ("friday ka schedule batao", "tests dekho", "physics mein kya
+   * kya hai") straight to one planner tool action, so the right planner tool
+   * is used even when the LLM would drift to getPlan/getAllTasks. Returns null
+   * when the LLM decision hop should decide. Subject guesses are only accepted
+   * when they match imported data.
+   */
+  plannerActionFor(text: string, todayISO: string): ChatToolAction | null {
+    if (!this.hasPlannerData()) return null;
+    const action = plannerActionForQuery(text, todayISO);
+    if (!action) return null;
+    if (action.action === 'getSubject' && !this.subjectDataMatch(action.subject)) return null;
+    return action;
+  }
+
+  private subjectDataMatch(subject: string): boolean {
+    const w = subject.toLowerCase();
+    return (this.store.get().subjectPlanners ?? []).some(
+      (p) => p.subject.toLowerCase().includes(w) || w.includes(p.subject.toLowerCase()),
+    );
+  }
+
+  /**
+   * Deterministic getContext fast path: whole-journey overview questions
+   * ("mera progress kya hai", "status batao", "context batao", "streak kitna
+   * hai") resolve straight to getContext instead of letting the model guess a
+   * plan day. Explicit plan/test/subject anchors are excluded so "day 5 ka
+   * summary" still reaches the normal LLM decision hop.
+   */
+  contextActionFor(text: string): ChatToolAction | null {
+    const t = text.toLowerCase().trim();
+    if (!t) return null;
+    const EXCLUDED = /\b(day\s*\d+|din\s*\d+|plan|schedule|routine|timetable|syllabus|test|subject|task|block|aaj|kal|parso|is week|hafta|mahina|chapter)\b/;
+    if (EXCLUDED.test(t)) return null;
+    if (/\bcontext\b/.test(t)) return { action: 'getContext' };
+    if (
+      /\b(overview|status|progress|streak|journey|report|summary)\b/.test(t) &&
+      /\b(batao|dekho|dikhao|de do|check|kya hai|kaisa|kitna|chahiye|chal raha)\b/.test(t)
+    ) {
+      return { action: 'getContext' };
+    }
+    return null;
   }
 
   /** Extracts and validates a single tool action from the model reply. */
@@ -155,6 +217,8 @@ export class ChatToolsService {
   /**
    * Extracts tool actions from the model reply. Accepts a single action object,
    * a batch wrapper {"actions":[...]} or a bare array — in any JSON or prose.
+   * Also parses Python-style tool calls ("print(removeTask(task_id=...))") so
+   * models trained on Python output still execute the batch instead of failing.
    */
   parseTools(text: string): ChatToolAction[] {
     const objStart = text.indexOf('{');
@@ -188,12 +252,15 @@ export class ChatToolsService {
           if (parsedActions.every((r) => r.success)) {
             return parsedActions.map((r) => (r as { success: true; data: ChatToolAction }).data).slice(0, 100);
           }
-          return [];
+          // Not a valid action array — fall through to python-call parsing
+          // instead of failing (e.g. intents=["a","b"] inside a python call).
         }
       } catch {
         // fall through
       }
     }
+    const python = parsePythonToolCalls(text);
+    if (python.length > 0) return python;
     return [];
   }
 
@@ -309,11 +376,54 @@ export class ChatToolsService {
           return this.editAnyTask(state, action);
         case 'deleteAnyTask':
           return this.deleteAnyTask(state, action.taskId, action.confirmed === true);
+        case 'getContext':
+          return await this.getContext(state);
+        // Read-only uploaded-coaching-planner actions — delegated to the
+        // PlannerToolsService so the model can read subjects/tests/routine in
+        // the SAME hop as the task tools.
+        case 'listPlanners':
+        case 'getSubject':
+        case 'getPlanner':
+        case 'getTest':
+        case 'getTests':
+        case 'getRoutine':
+          return this.runPlanner(action);
       }
     } catch (err) {
       if (isAbortError(err)) throw err;
       return { ok: false, summary: err instanceof Error ? err.message : 'tool execution failed' };
     }
+  }
+
+  /** Delegates one planner action to the deterministic planner executor. */
+  private async runPlanner(action: ChatToolAction): Promise<ChatToolResult> {
+    if (!this.plannerTools) return { ok: false, summary: 'Planner tools available nahi hain.' };
+    const result = await this.plannerTools.runMany([action as unknown as PlannerToolAction]);
+    return { ok: result.ok, summary: result.summary, retryable: result.retryable };
+  }
+
+  /**
+   * Deterministic getContext tool: the full current-journey snapshot (date,
+   * day/phase/streak, today's tasks + progress, XP/habits/gaps) plus post-journey
+   * blocks and uploaded-planner summary — read-only, always succeeds.
+   */
+  private async getContext(state: AppState): Promise<ChatToolResult> {
+    const timeZone = state.timeZone ?? deviceTimeZone();
+    const dateISO = todayISO(this.now, timeZone);
+    const lines: string[] = [buildContextOverview(state, dateISO, this.planner, this.config)];
+    const blocks = sortBlocks(state.postJourney?.customPhases ?? []);
+    if (blocks.length > 0) {
+      const active = state.postJourney?.activeCustomPhaseId;
+      const activeName = blocks.find((b) => b.id === active)?.name;
+      lines.push(
+        `Post-journey blocks: ${blocks.length} — ${blocks.map((b) => `${b.name} (Days ${b.dayStart}-${b.dayEnd})`).join(', ')}.${activeName ? ` Active: ${activeName}.` : ' No active block.'}`,
+      );
+    }
+    if (this.hasPlannerData() && this.plannerTools) {
+      const plannerList = await this.plannerTools.runMany([{ action: 'listPlanners' }]);
+      if (plannerList.ok) lines.push(`Uploaded coaching planners:\n${plannerList.summary}`);
+    }
+    return { ok: true, summary: lines.join('\n') };
   }
 
   // ========== BLOCK MANAGEMENT ==========
@@ -1239,4 +1349,117 @@ function cloneBankTask(entry: TaskBankEntry, day: number): TaskBankEntry {
     id: `ai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
     legacy: undefined,
   };
+}
+
+// ========== PYTHON-STYLE TOOL CALL PARSING ==========
+// Some models emit tool calls as Python: `print(removeTask(task_id="d1_t3",
+// day_id="Day 1"))` or bare `removeTask(day=1, intent="...")`. Without this
+// parser the decision hop sees no JSON, falls back to prose, and the requested
+// work never runs. These helpers convert such calls into validated actions.
+
+const PYTHON_TOOL_NAME = '(getPlan|getRange|getAllTasks|getTaskBank|addTask|bulkAddTasks|removeTask|bulkRemoveTasks|setDayMode|editTask|markDone|bulkMarkDone|editAnyTask|deleteAnyTask|createBlock|deleteBlock|activateBlock|editBlock|listBlocks|extendBlock|listPlanners|getSubject|getPlanner|getTest|getTests|getRoutine|getContext)';
+
+/** Splits an argument list on top-level commas (ignores commas inside quotes/brackets). */
+function splitPythonArgs(s: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = '';
+  let quote: string | null = null;
+  for (const ch of s) {
+    if (quote) {
+      current += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+    } else if (ch === '[' || ch === '(' || ch === '{') {
+      depth += 1;
+      current += ch;
+    } else if (ch === ']' || ch === ')' || ch === '}') {
+      depth = Math.max(0, depth - 1);
+      current += ch;
+    } else if (ch === ',' && depth === 0) {
+      parts.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim() !== '') parts.push(current);
+  return parts;
+}
+
+function parsePythonValue(raw: string): unknown {
+  const v = raw.trim();
+  if (v.length >= 2 && ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))) return v.slice(1, -1);
+  if (/^(?:True|true|False|false)$/.test(v)) return v.toLowerCase() === 'true';
+  if (/^-?\d+(?:\.\d+)?$/.test(v)) return Number(v);
+  if ((v.startsWith('[') && v.endsWith(']')) || (v.startsWith('(') && v.endsWith(')'))) {
+    const inner = v.slice(1, -1);
+    return splitPythonArgs(inner).map(parsePythonValue).filter((x) => x !== '');
+  }
+  return v;
+}
+
+/** Python "Day 1" / "Day 3" labels and plain numbers → day number; weekday
+ *  strings like "Monday" (getRoutine) pass through untouched. */
+function coercePythonDay(v: unknown): number | string {
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string') {
+    const m = v.match(/^\s*(?:day\s*)?(\d+)\s*$/i);
+    if (m) return Number(m[1]);
+    return v;
+  }
+  return v;
+}
+
+function convertPythonArgs(name: string, args: Record<string, unknown>): Record<string, unknown> {
+  const aliases: Record<string, string> = {
+    task_id: 'taskId',
+    task_ids: 'taskIds',
+    day_id: 'day',
+    day_to: 'dayTo',
+    duration_min: 'durationMin',
+    from_day: 'fromDay',
+    to_day: 'toDay',
+    test_name: 'testName',
+    planner_id: 'plannerId',
+  };
+  const out: Record<string, unknown> = { action: name };
+  for (const [k, v] of Object.entries(args)) {
+    out[aliases[k] ?? k] = v;
+  }
+  for (const dayKey of ['day', 'dayTo', 'fromDay', 'toDay']) {
+    if (out[dayKey] !== undefined) out[dayKey] = coercePythonDay(out[dayKey]);
+  }
+  return out;
+}
+
+function parsePythonArgs(s: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const part of splitPythonArgs(s)) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    const key = part.slice(0, eq).trim();
+    if (!key) continue;
+    out[key] = parsePythonValue(part.slice(eq + 1));
+  }
+  return out;
+}
+
+/** Extracts every Python-style tool call in the text into validated actions. */
+function parsePythonToolCalls(text: string): ChatToolAction[] {
+  const callRe = new RegExp(`(?:print\\s*\\(\\s*)?${PYTHON_TOOL_NAME}\\s*\\(([^)]*)\\)`, 'g');
+  const out: ChatToolAction[] = [];
+  for (const m of text.matchAll(callRe)) {
+    const converted = convertPythonArgs(m[1], parsePythonArgs(m[2]));
+    const parsed = chatToolActionSchema.safeParse(converted);
+    if (parsed.success) {
+      out.push(parsed.data as ChatToolAction);
+      if (out.length >= 100) break;
+    }
+  }
+  return out;
 }

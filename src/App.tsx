@@ -14,6 +14,7 @@ const LevelsScreen = lazy(() => import('./screens/LevelsScreen'));
 const ProgressScreen = lazy(() => import('./screens/ProgressScreen'));
 const ReviewScreen = lazy(() => import('./screens/ReviewScreen'));
 const TaskBankScreen = lazy(() => import('./screens/TaskBankScreen'));
+const PlannersScreen = lazy(() => import('./screens/PlannersScreen'));
 const AISettingsScreen = lazy(() => import('./screens/AISettingsScreen'));
 const UpdatesScreen = lazy(() => import('./screens/UpdatesScreen'));
 const ChatScreen = lazy(() => import('./screens/ChatScreen'));
@@ -126,6 +127,8 @@ export default function App() {
         );
       case 'task-bank':
         return <TaskBankScreen state={state} update={update} />;
+      case 'planners':
+        return <PlannersScreen state={state} update={update} />;
       case 'ai':
         return <AISettingsScreen state={state} update={update} session={session} onLogout={handleLogout} />;
       case 'updates':

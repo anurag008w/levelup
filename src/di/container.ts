@@ -16,6 +16,7 @@ import { TaskGenerationService } from '../features/ai/task-generation.service';
 import { ChatService } from '../features/chat/chat.service';
 import { ChatToolsService } from '../features/chat/chat-tools.service';
 import { MemoryToolsService } from '../features/chat/memory-tools.service';
+import { PlannerService, PlannerToolsService } from '../features/planner/planner.service';
 import { extractFileText } from '../lib/fileText';
 import { LocalChatRepository } from '../infra/storage/chat-repository';
 import { SyncService } from '../features/sync/sync.service';
@@ -24,14 +25,8 @@ import { buildBackupPayload, parseBackup, serializeBackup, applyBackup, type Bac
 import { TaskBankRepositoryImpl } from '../features/task-bank/task-bank.repository';
 import { TaskBankServiceImpl, type TaskBankService } from '../features/task-bank/task-bank.service';
 import { HabitProgressionService } from '../features/habit-engine/planner';
-import { isoAddDays, rawDayNumberForDate } from '../features/habit-engine/dates';
 import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from '../features/chat/plan-format';
-import {
-  computeHabitScore,
-  computeOverallStreak,
-  getCumulativeHabits,
-  getLevelStatus,
-} from '../lib/engine';
+import { buildRecentProgress, buildJourneyOverview } from '../features/chat/context-overview';
 export interface AppContainer {
   stateRepository: StateRepository;
   store: StateStore;
@@ -49,6 +44,10 @@ export interface AppContainer {
   taskGeneration: TaskGenerationService;
   chat: ChatService;
   chatTools: ChatToolsService;
+  /** CRUD/import for uploaded subject planners (PCM + custom subjects). */
+  plannerService: PlannerService;
+  /** Deterministic read-only AI tools over uploaded subject planners. */
+  plannerTools: PlannerToolsService;
   /** Versioned export/import of ALL user data (state + chat). */
   backup: {
     export(scope?: BackupScope): string;
@@ -126,7 +125,9 @@ export function createContainer(
     llm,
   });
   const taskGeneration = new TaskGenerationService(llm, taskBank, taskBankRepo);
-  const chatTools = new ChatToolsService(store, planner, taskBank, taskGeneration);
+  const plannerService = new PlannerService(store);
+  const plannerTools = new PlannerToolsService(store, plannerService);
+  const chatTools = new ChatToolsService(store, planner, taskBank, taskGeneration, undefined, plannerTools);
   const memoryTools = new MemoryToolsService(store, memory);
   const rawChatRepo = new LocalChatRepository(storage);
   const chatRepo: ChatRepository = {
@@ -214,6 +215,8 @@ export function createContainer(
     taskGeneration,
     chat,
     chatTools,
+    plannerService,
+    plannerTools,
     backup,
     sync,
     syncCoordinator,
@@ -231,70 +234,3 @@ function formatUserProfileContext(profile: { name?: string; classLevel?: string;
   return items.join('; ');
 }
 export const container = createContainer();
-
-/** Exported for tests: compact journey-level stats used in the AI context. */
-export function buildRecentProgress(state: import('../core/domain/state').AppState, today: string, planner: HabitProgressionService): string[] {
-  if (!state.startDateISO) return [];
-  const todayDay = rawDayNumberForDate(today, state.startDateISO);
-  const fromDay = Math.max(1, todayDay - 13);
-  const rows: string[] = [];
-  for (let day = fromDay; day <= todayDay; day++) {
-    const dateISO = isoAddDays(state.startDateISO, day - 1);
-    const plan = planner.buildPlan(state, dateISO, DEFAULT_PROGRESSION_CONFIG);
-    rows.push(`${formatDayLabel(dateISO)} Day ${day}: ${formatPlanProgress(plan, state)}`);
-  }
-  return rows;
-}
-
-const XP_PER_TASK = 10;
-const XP_PER_LEVEL = 250;
-
-/** Compact journey-level stats mirroring the Progress tab (XP, consistency, levels, habit tiers, achievements). */
-export function buildJourneyOverview(state: import('../core/domain/state').AppState, today: string): string {
-  if (!state.startDateISO) return 'mission not started';
-  // Iterate in pure UTC so day keys match the planner's UTC taskLogs keys
-  // (local-time iteration shifts every key by a day on non-UTC machines).
-  let totalDone = 0;
-  let activeDays = 0;
-  let days = 0;
-  let cursor = state.startDateISO;
-  while (cursor <= today) {
-    const done = Object.values(state.taskLogs[cursor] ?? {}).filter(Boolean).length;
-    if (done > 0) activeDays += 1;
-    totalDone += done;
-    days += 1;
-    cursor = isoAddDays(cursor, 1);
-  }
-  const xp = totalDone * XP_PER_TASK;
-  const consistency = days > 0 ? Math.round((activeDays / days) * 100) : 0;
-  const dayNumber = rawDayNumberForDate(today, state.startDateISO);
-  const cleared = LEVELS.filter((l) => l.authored && getLevelStatus(l, state, dayNumber) === 'cleared').length;
-  const recovery = LEVELS.filter((l) => l.authored && getLevelStatus(l, state, dayNumber) === 'needs-recovery').length;
-  const habits = getCumulativeHabits(dayNumber)
-    .map((h) => ({ name: h.name, score: computeHabitScore(h.id, state, today) }))
-    .sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
-  const tierOf = (score: number | null): string => (score === null ? 'building' : score >= 70 ? 'strong' : score >= 40 ? 'building' : 'weak');
-  const tiers: Record<string, string[]> = { strong: [], building: [], weak: [] };
-  for (const h of habits) tiers[tierOf(h.score)].push(`${h.name}(${h.score ?? 'n/a'}%)`);
-  const best = habits.find((h) => (h.score ?? -1) >= 0);
-  const worst = [...habits].reverse().find((h) => h.score !== null);
-  const overallStreak = computeOverallStreak(state, today);
-  const achieved: string[] = [];
-  if (dayNumber >= 7) achieved.push('Week 1 done');
-  if (overallStreak >= 7) achieved.push('7-day streak');
-  if (cleared >= 1) achieved.push('first level cleared');
-  if (consistency >= 70) achieved.push('70%+ consistency');
-  if (xp >= 500) achieved.push('500 XP');
-  const bits = [
-    `Total XP ${xp} (level ${Math.floor(xp / XP_PER_LEVEL) + 1}, ${xp % XP_PER_LEVEL}/${XP_PER_LEVEL} into level)`,
-    `consistency ${consistency}% over ${days} days (${activeDays} active)`,
-    `overall streak ${overallStreak}`,
-    `levels cleared ${cleared}, need recovery ${recovery}`,
-  ];
-  if (best) bits.push(`best habit ${best.name} (${best.score}%)`);
-  if (worst) bits.push(`weakest habit ${worst.name} (${worst.score}%)`);
-  if (achieved.length > 0) bits.push(`achievements: ${achieved.join(', ')}`);
-  const latest = [...state.summaries].sort((a, b) => b.dateISO.localeCompare(a.dateISO))[0];
-  if (latest) bits.push(`latest day snapshot ${latest.dateISO}: productivity ${latest.productivityScore}%, thinking ${latest.thinkingScore}%${latest.aiObservations[0] ? ` — ${latest.aiObservations[0]}` : ''}`);
-  return bits.join('; ');
-}
