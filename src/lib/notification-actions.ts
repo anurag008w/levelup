@@ -9,9 +9,15 @@
  *    broadcast se bridge/webview zyada tar guaranteed available nahi hota,
  *    khaaskar jab process pehle se kill ho chuka ho — isi wajah se reply
  *    "Sending" pe atak jaata tha aur kabhi complete nahi hota tha). Reply
- *    process hone ke turant baad agar app pehle se foreground me nahi thi to
- *    hum use wapas minimize kar dete hain, taaki visually app "khuli" na
- *    mehsoos ho.
+ *    process hone ke baad app hamesha wapas minimize ho jaati hai, taaki
+ *    visually app "khuli" na mehsoos ho.
+ *
+ *    Note: "reply se pehle app already foreground thi" wala check (`isAppActive`)
+ *    reliable nahi hai — reply action Activity ko launch/resume kar deta hai,
+ *    isliye handler chalta hai to app hamesha "active" dikhti hai (chahe process
+ *    cold-start hua ho ya background se aaya ho). Isliye minimize unconditional
+ *    hai: notification reply ka matlab hi hai ki user app UI me nahi hai.
+ *
  *  - Tap / "Open chat" action → `levelup:open-chat` event dispatch hota hai,
  *    jise App.tsx sunke Chat tab khol deta hai aur usi session pe le jaata hai.
  *
@@ -20,7 +26,7 @@
  */
 import { App } from '@capacitor/app';
 import { container } from '../di/container';
-import { isAppActive, isNativePlatform, notifyAiReply, onNotificationAction, registerNotificationActions, trackAppState } from './notifications';
+import { isNativePlatform, notifyAiReply, onNotificationAction, registerNotificationActions, trackAppState } from './notifications';
 
 let setup = false;
 
@@ -38,10 +44,6 @@ export function setupNotificationActions(): void {
     }
 
     if (actionId === 'reply' && inputValue && inputValue.trim()) {
-      // Reply se pehle app already foreground me thi ya nahi — isi se decide
-      // hota hai ki process ke baad minimize karna hai ya nahi (agar user
-      // pehle se app use kar raha tha to use yahan se yank nahi karna).
-      const wasActive = isAppActive();
       void (async () => {
         try {
           const assistant = await container.chat.send(sessionId, inputValue.trim());
@@ -56,9 +58,11 @@ export function setupNotificationActions(): void {
         } finally {
           // Chat UI agar khula ho to refresh ho jaye.
           window.dispatchEvent(new Event('levelup:chat-updated'));
-          // App reply se pehle background/locked thi — process hone ke baad
-          // wapas minimize taaki user ko UI na dikhe (jaisa pehle intent tha).
-          if (!wasActive && isNativePlatform()) {
+          // App hamesha wapas minimize — reply action Activity ko launch/resume
+          // kar chuka hai, isliye user ab notification se interact kar raha tha,
+          // app UI me nahi. (isAppActive yahan hamesha true hota hai, isliye wo
+          // check unreliable hai.)
+          if (isNativePlatform()) {
             try {
               await App.minimizeApp();
             } catch {

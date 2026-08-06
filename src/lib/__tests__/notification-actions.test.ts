@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { sendMock, notifyAiReplyMock, onActionHandlerMock, isAppActiveMock, minimizeAppMock } = vi.hoisted(() => ({
+const { sendMock, notifyAiReplyMock, onActionHandlerMock, minimizeAppMock } = vi.hoisted(() => ({
   sendMock: vi.fn(),
   notifyAiReplyMock: vi.fn(),
   onActionHandlerMock: vi.fn(),
-  isAppActiveMock: vi.fn(),
   minimizeAppMock: vi.fn(),
 }));
 
@@ -23,7 +22,6 @@ vi.mock('../notifications', () => ({
   notifyAiReply: (...args: unknown[]) => notifyAiReplyMock(...args),
   registerNotificationActions: async () => {},
   trackAppState: () => {},
-  isAppActive: () => isAppActiveMock(),
   isNativePlatform: () => true,
   onNotificationAction: (handler: unknown) => {
     onActionHandlerMock(handler);
@@ -46,7 +44,6 @@ describe('notification-actions', () => {
     sendMock.mockReset();
     notifyAiReplyMock.mockReset();
     minimizeAppMock.mockReset();
-    isAppActiveMock.mockReset();
     onActionHandlerMock.mockImplementation((h: ActionHandler) => {
       handler = h;
     });
@@ -54,7 +51,6 @@ describe('notification-actions', () => {
   });
 
   it('sends an inline reply without opening the chat app, then minimizes back down', async () => {
-    isAppActiveMock.mockReturnValue(false);
     sendMock.mockResolvedValue({ content: 'AI reply text' });
     const openChat = vi.fn();
     const chatUpdated = vi.fn();
@@ -71,14 +67,17 @@ describe('notification-actions', () => {
     expect(minimizeAppMock).toHaveBeenCalled();
   });
 
-  it('does not minimize if the app was already open when the reply was sent', async () => {
-    isAppActiveMock.mockReturnValue(true);
-    sendMock.mockResolvedValue({ content: 'AI reply text' });
+  it('still minimizes and cleans up even if the reply send fails', async () => {
+    sendMock.mockRejectedValue(new Error('AI off'));
+    const chatUpdated = vi.fn();
+    window.addEventListener('levelup:chat-updated', chatUpdated);
 
     await handler!({ actionId: 'reply', inputValue: 'hello', sessionId: 's1' });
     await flush();
 
-    expect(minimizeAppMock).not.toHaveBeenCalled();
+    expect(notifyAiReplyMock).not.toHaveBeenCalled();
+    expect(chatUpdated).toHaveBeenCalled();
+    expect(minimizeAppMock).toHaveBeenCalled();
   });
 
   it('opens the chat when the user taps an "open" action', async () => {
