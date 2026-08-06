@@ -61,10 +61,28 @@ describe('notification-actions', () => {
     await flush();
 
     expect(sendMock).toHaveBeenCalledWith('s1', 'hello');
-    expect(notifyAiReplyMock).toHaveBeenCalledWith('Misa', 'AI reply text', 's1', 0, true);
+    // Reply notification ab chat UI jaisa reveal schedule use karti hai:
+    // single bubble → 3000ms thinking delay (not 0/turant).
+    expect(notifyAiReplyMock).toHaveBeenCalledWith('Misa', 'AI reply text', 's1', 3000, true);
     expect(openChat).not.toHaveBeenCalled();
     expect(chatUpdated).toHaveBeenCalled();
-    expect(minimizeAppMock).toHaveBeenCalled();
+    // Turant minimize (screen kam time ke liye khule) + finally mein double safety.
+    expect(minimizeAppMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses the full reveal delay for multi-bubble replies (delayed, not instant)', async () => {
+    sendMock.mockResolvedValue({ content: 'Pehla paragraph.\n\nDusra paragraph.' });
+    await handler!({ actionId: 'reply', inputValue: 'hello again', sessionId: 's1' });
+    await flush();
+
+    expect(notifyAiReplyMock).toHaveBeenCalledTimes(1);
+    const [title, body, sessionId, delayMs, force] = notifyAiReplyMock.mock.calls[0];
+    expect(title).toBe('Misa');
+    expect(body).toBe('Pehla paragraph.\n\nDusra paragraph.');
+    expect(sessionId).toBe('s1');
+    // firstDelay (3000) + 3–8s gap → definitely above the single-bubble delay.
+    expect(delayMs).toBeGreaterThan(3000);
+    expect(force).toBe(true);
   });
 
   it('still minimizes and cleans up even if the reply send fails', async () => {
@@ -72,12 +90,13 @@ describe('notification-actions', () => {
     const chatUpdated = vi.fn();
     window.addEventListener('levelup:chat-updated', chatUpdated);
 
-    await handler!({ actionId: 'reply', inputValue: 'hello', sessionId: 's1' });
+    await handler!({ actionId: 'reply', inputValue: 'dusra message', sessionId: 's1' });
     await flush();
 
     expect(notifyAiReplyMock).not.toHaveBeenCalled();
     expect(chatUpdated).toHaveBeenCalled();
-    expect(minimizeAppMock).toHaveBeenCalled();
+    // Turant minimize + finally cleanup — dono.
+    expect(minimizeAppMock).toHaveBeenCalledTimes(2);
   });
 
   it('opens the chat when the user taps an "open" action', async () => {
@@ -88,5 +107,17 @@ describe('notification-actions', () => {
 
     expect(sendMock).not.toHaveBeenCalled();
     expect(openChat).toHaveBeenCalled();
+  });
+
+  it('sends a duplicate reply (persist flush + activity intent) only once', async () => {
+    sendMock.mockResolvedValue({ content: 'AI reply text' });
+    // Cold-start fallback me same reply 2 baar aa sakta hai — dono events ka
+    // sessionId + inputValue same hota hai. Sirf pehla send hona chahiye.
+    await handler!({ actionId: 'reply', inputValue: 'duplicate check', sessionId: 's1' });
+    await handler!({ actionId: 'reply', inputValue: 'duplicate check', sessionId: 's1' });
+    await flush();
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(notifyAiReplyMock).toHaveBeenCalledTimes(1);
   });
 });

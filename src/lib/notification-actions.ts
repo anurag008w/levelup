@@ -4,13 +4,22 @@
  * Setup app start pe ek baar hota hai (`setupNotificationActions`):
  *  - "Reply" action (Android inline reply) → user ka text seedha usi chat
  *    session me send hota hai (container.chat.send) — app background/locked
- *    ho tab bhi. Android RemoteInput ko reliably deliver karne ke liye ye
- *    Activity launch karta hai (OS requirement — bina Activity ke background
- *    broadcast se bridge/webview zyada tar guaranteed available nahi hota,
- *    khaaskar jab process pehle se kill ho chuka ho — isi wajah se reply
- *    "Sending" pe atak jaata tha aur kabhi complete nahi hota tha). Reply
- *    process hone ke baad app hamesha wapas minimize ho jaati hai, taaki
- *    visually app "khuli" na mehsoos ho.
+ *    ho tab bhi.
+ *
+ *    Reply ka native path (patched plugin) ab broadcast-based hai:
+ *      primary → NotificationActionReceiver (broadcast) reply ko JS bridge ko
+ *               deta hai bina app ko foreground me laaye. App ka process alive
+ *               ho to yehi hota hai — screen nahi khulti.
+ *      fallback → process dead hone par receiver reply ko persist karta hai
+ *               (agla open flush karega) AUR same intent se Activity launch
+ *               try karta hai — launch allowed ho to reply TURANT JS tak
+ *               pahunchta hai (purana working path), phir app turant wapas
+ *               minimize ho jaati hai taaki visually app "khuli" na lage.
+ *
+ *    In dono paths se same reply 2 baar aaya to bhi sirf ek baar send hota
+ *    hai — `dedupeReply` same sessionId+inputValue ko 30s window me ignore
+ *    karta hai (cold-start pe persist-flush + Activity intent dono event
+ *    bhejte hain).
  *
  *    Note: "reply se pehle app already foreground thi" wala check (`isAppActive`)
  *    reliable nahi hai — reply action Activity ko launch/resume kar deta hai,
@@ -33,9 +42,46 @@
  */
 import { App } from '@capacitor/app';
 import { container } from '../di/container';
+import { computeRevealSchedule, splitReplyIntoBubbles, totalRevealDelay } from '../features/chat/message-segments';
 import { isNativePlatform, notifyAiReply, onNotificationAction, registerNotificationActions, trackAppState } from './notifications';
 
 let setup = false;
+
+/**
+ * Reply events ka duplicate guard. Patched broadcast flow (process alive) se
+ * ek baar event aata hai, par process-dead fallback me same reply 2 baar aa
+ * sakta hai: (1) persist flush (load()) aur (2) Activity intent
+ * (handleOnNewIntent). Dono ka sessionId+inputValue same hota hai. Isse
+ * message/AI-reply 2 baar na bheje jayein — 30s window ke andar duplicate
+ * silently skip.
+ */
+const dedupeWindowMs = 30_000;
+const seenReplies = new Map<string, number>();
+
+function isDuplicateReply(sessionId: string, inputValue: string): boolean {
+  const key = `${sessionId}:${inputValue.trim()}`;
+  const now = Date.now();
+  const last = seenReplies.get(key);
+  // Purane keys hata do taaki map unbounded na bade.
+  for (const [oldKey, at] of seenReplies) {
+    if (now - at > dedupeWindowMs) seenReplies.delete(oldKey);
+  }
+  if (last !== undefined && now - last < dedupeWindowMs) {
+    return true;
+  }
+  seenReplies.set(key, now);
+  return false;
+}
+
+async function minimizeIfNative(): Promise<void> {
+  if (isNativePlatform()) {
+    try {
+      await App.minimizeApp();
+    } catch {
+      // Android-only API — fail ho to bhi silently ignore karo
+    }
+  }
+}
 
 export function setupNotificationActions(): void {
   if (setup) return;
@@ -51,35 +97,42 @@ export function setupNotificationActions(): void {
     }
 
     if (actionId === 'reply' && inputValue && inputValue.trim()) {
+      if (isDuplicateReply(sessionId, inputValue)) {
+        return;
+      }
       void (async () => {
+        // Screen ko kam se kam time ke liye khula rakho: reply action Android
+        // ko Activity launch karni padti hai (OS requirement — RemoteInput ko
+        // reliably deliver karne ke liye), isliye app UI flash hoti hai. User
+        // notification shade se reply kar raha hai — app UI dikhane ki koi
+        // zaroorat nahi. Turant minimize kar do, phir reply background me
+        // process ho.
+        await minimizeIfNative();
         try {
           const assistant = await container.chat.send(sessionId, inputValue.trim());
-          // Poora reply notification me jaata hai — largeBody (BigTextStyle)
-          // expand karke poora message dikhata hai, chahe kitna bhi bada ho.
           const replyBody = assistant.content.trim() || 'Naya AI reply aaya';
-          // Title = "Misa" (sender), body = poora reply. Reply/open actions
-          // same sessionId se hi kaam karte hain — title/body se independent.
-          // force=true: is Activity-resume ke baad appActive/chatTabActive
-          // dono "true" dikh sakte hain (neeche wala comment dekho), jo
-          // notifyAiReply ke default guard ko galat trigger karke reply-
-          // notification hi skip kara deta — force isse bypass karta hai.
-          void notifyAiReply('Misa', replyBody, sessionId, 0, true);
+          // Reply ko bhi chat UI jaisa hi reveal schedule mile: pehla bubble
+          // 3s thinking pause ke baad, phir har paragraph ke beech 3–8s —
+          // poora reply ek saath turant nahi, delay ke saath. Jab app
+          // minimized/background ho, notifyAiReply is delay ko OS-level
+          // (schedule.at) pe schedule karta hai — JS timers throttle hone par
+          // bhi reply notification fire hoti hai.
+          const bubbles = splitReplyIntoBubbles(assistant.content);
+          const schedule = computeRevealSchedule(bubbles.length);
+          const delayMs = bubbles.length > 0 ? totalRevealDelay(schedule) : 0;
+          // force=true: Activity-resume ke baad appActive/chatTabActive dono
+          // "true" dikh sakte hain (comment below), jo default guard ko galat
+          // trigger karke reply-notification hi skip kara deta — force isse
+          // bypass karta hai taaki reply hamesha notification pe aaye.
+          void notifyAiReply('Misa', replyBody, sessionId, delayMs, true);
         } catch {
           // session delete ho gaya ya AI off — chup rehna, koi error nahi dikhana
         } finally {
           // Chat UI agar khula ho to refresh ho jaye.
           window.dispatchEvent(new Event('levelup:chat-updated'));
-          // App hamesha wapas minimize — reply action Activity ko launch/resume
-          // kar chuka hai, isliye user ab notification se interact kar raha tha,
-          // app UI me nahi. (isAppActive yahan hamesha true hota hai, isliye wo
-          // check unreliable hai.)
-          if (isNativePlatform()) {
-            try {
-              await App.minimizeApp();
-            } catch {
-              // Android-only API — fail ho to bhi silently ignore karo
-            }
-          }
+          // Double safety — upar minimize already ho chuka hai (turant), par
+          // agar kisi wajah se fail hua ho to yahan pakka kar do.
+          await minimizeIfNative();
         }
       })();
     }
