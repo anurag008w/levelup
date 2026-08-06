@@ -61,7 +61,7 @@ describe('notification-actions', () => {
     await flush();
 
     expect(sendMock).toHaveBeenCalledWith('s1', 'hello');
-    expect(notifyAiReplyMock).toHaveBeenCalledWith('Misa', 'AI reply text', 's1');
+    expect(notifyAiReplyMock).toHaveBeenCalledWith('Misa', 'AI reply text', 's1', 0, true);
     expect(openChat).not.toHaveBeenCalled();
     expect(chatUpdated).toHaveBeenCalled();
     expect(minimizeAppMock).toHaveBeenCalled();
