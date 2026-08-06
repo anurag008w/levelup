@@ -37,6 +37,7 @@ public class BackgroundPermissionPlugin extends Plugin {
      */
     private static final String[][] AUTOSTART_TARGETS = {
         { "com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity" },   // Xiaomi / Redmi / POCO (MIUI)
+        { "com.transsion.phonemaster", "com.cyin.himgr.autostart.AutoStartActivity" },                // itel / Tecno / Infinix (Transsion — HiOS/XOS phone master)
         { "com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity" }, // Huawei / Honor
         { "com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity" },       // Oppo (ColorOS)
         { "com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity" },               // Oppo (older)
@@ -45,7 +46,8 @@ public class BackgroundPermissionPlugin extends Plugin {
         { "com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity" },                        // Vivo / iQOO
         { "com.oneplus.security", "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity" },        // OnePlus (OxygenOS)
         { "com.samsung.android.lool", "com.samsung.android.lool.BatteryActivity" },                            // Samsung (Smart Manager)
-        { "com.samsung.android.sm", "com.samsung.android.sm.ui.battery.BatteryActivity" },                     // Samsung (newer)
+        { "com.samsung.android.sm", "com.samsung.android.sm.ui.battery.BatteryActivity" },                     // Samsung (Android 7–9)
+        { "com.samsung.android.sm", "com.samsung.android.sm.battery.ui.BatteryActivity" },                     // Samsung (Android 10+)
         { "com.motorola.motocare", "com.motorola.motocare.internal.ui.MainActivity" },                         // Motorola
         { "com.asus.mobilemanager", "com.asus.mobilemanager.powersaver.PowerSaverActivity" },                  // ASUS
     };
