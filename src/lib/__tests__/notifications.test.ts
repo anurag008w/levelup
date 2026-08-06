@@ -94,6 +94,14 @@ describe('notifications — chat-tab suppression', () => {
     expect(scheduleMock).not.toHaveBeenCalled();
   });
 
+  it('force bypasses chat-tab suppression — notification-reply flow, where the reply Activity resuming makes chatTabActive+appActive look identical to "user is watching" even though they are not', async () => {
+    await setNotificationPreference(true);
+    setChatTabActive(true);
+    await notifyAiReply('Misa', 'reply', 'session-1', 0, true);
+    await flush();
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+  });
+
   it('sends the notification when the chat tab is NOT active', async () => {
     await setNotificationPreference(true);
     setChatTabActive(false);

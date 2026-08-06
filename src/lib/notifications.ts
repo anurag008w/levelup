@@ -274,7 +274,7 @@ function sessionToNotificationId(sessionId?: string): number {
  * Same id ka matlab plugin purani pending schedule ko cancel kar deta hai,
  * isliye multiple bubble updates me se sirf aakhri (poora reply) bachegi.
  */
-export async function notifyAiReply(title: string, body: string, sessionId?: string, delayMs = 0): Promise<void> {
+export async function notifyAiReply(title: string, body: string, sessionId?: string, delayMs = 0, force = false): Promise<void> {
   if (!isNotificationSupported()) return;
   try {
     if (!(await getNotificationPreference())) return;
@@ -322,7 +322,17 @@ export async function notifyAiReply(title: string, body: string, sessionId?: str
     // nahi dekh raha. Ye check fire-time pe hota hai, isliye agar user reveal
     // ke beech me tab switch kare to agle bubbles ki notifications turant
     // chalu ho jaati hain.
-    if (chatTabActive && appActive) return;
+    //
+    // `force` isi check ko bypass karta hai — notification-actions.ts se
+    // reply karne par Android us Activity ko launch/resume kar deta hai
+    // (RemoteInput deliver karne ke liye), isliye appActive turant true ho
+    // jaata hai, aur agar app pehle se chat tab pe tha to chatTabActive bhi
+    // true rehta hai — bilkul "user dekh raha hai" jaisa lagta hai, jabki
+    // user notification shade me tha aur reply ke baad app phir minimize ho
+    // jaati hai. Us case me ye check hamesha AI ka reply-notification skip
+    // kar deta tha. force=true caller ko batata hai ki "user definitely nahi
+    // dekh raha" — sirf notification-actions.ts isse use karta hai.
+    if (!force && chatTabActive && appActive) return;
 
     if (isNativePlatform()) {
       try {

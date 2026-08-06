@@ -18,6 +18,13 @@
  *    cold-start hua ho ya background se aaya ho). Isliye minimize unconditional
  *    hai: notification reply ka matlab hi hai ki user app UI me nahi hai.
  *
+ *    Isi wajah se AI ka reply-notification bhi `notifyAiReply(..., force: true)`
+ *    se bheja jaata hai — normal flow me notifyAiReply appActive+chatTabActive
+ *    dono true hone par notification skip kar deta hai ("user already dekh raha
+ *    hai"), par yahan wo dono galat-se true dikh sakte hain (upar wala note
+ *    dekho), jisse reply-notification hi kabhi na aata — force isko bypass
+ *    karta hai taaki reply hamesha notification pe aaye.
+ *
  *  - Tap / "Open chat" action → `levelup:open-chat` event dispatch hota hai,
  *    jise App.tsx sunke Chat tab khol deta hai aur usi session pe le jaata hai.
  *
@@ -52,7 +59,11 @@ export function setupNotificationActions(): void {
           const replyBody = assistant.content.trim() || 'Naya AI reply aaya';
           // Title = "Misa" (sender), body = poora reply. Reply/open actions
           // same sessionId se hi kaam karte hain — title/body se independent.
-          void notifyAiReply('Misa', replyBody, sessionId);
+          // force=true: is Activity-resume ke baad appActive/chatTabActive
+          // dono "true" dikh sakte hain (neeche wala comment dekho), jo
+          // notifyAiReply ke default guard ko galat trigger karke reply-
+          // notification hi skip kara deta — force isse bypass karta hai.
+          void notifyAiReply('Misa', replyBody, sessionId, 0, true);
         } catch {
           // session delete ho gaya ya AI off — chup rehna, koi error nahi dikhana
         } finally {
