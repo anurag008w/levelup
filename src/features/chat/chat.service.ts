@@ -4,6 +4,7 @@ import {
   LEGACY_DIVYA_SYSTEM_PROMPT,
   LEGACY_MISA_SYSTEM_PROMPT,
   MISA_IDENTITY_GUARD,
+  ROMAN_SCRIPT_RULE,
 } from '../../core/domain/chat';
 import type { ChatMessage, ChatSession, ChatPreferences, ChatStoreState, ChatAttachment, GlobalChatPrefs } from '../../core/domain/chat';
 import {
@@ -14,7 +15,8 @@ import {
 } from '../../core/domain/chat';
 import type { LLMMessage, LLMRequest, LLMResponse, ThinkingLevel, ContentPart } from '../../core/domain/llm';
 import { isAbortError } from '../../core/domain/llm';
-import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY, CHAT_PLANNER_INSTRUCTIONS } from '../../core/domain/chat-tools';
+import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY, CHAT_PLANNER_INSTRUCTIONS, chatToolScopeInstructions, type ChatToolMeta } from '../../core/domain/chat-tools';
+import { PLANNER_TOOL_INSTRUCTIONS, PLANNER_TOOL_RETRY } from '../../core/domain/subject-planner';
 import type { ChatToolAction, ChatToolActionResult, ChatToolResult } from '../../core/domain/chat-tools';
 import { createStreamSanitizer, sanitizeAssistantLeaks } from './leak-sanitizer';
 import { MEMORY_SUMMARY_INSTRUCTIONS, parseMemoryBlocks, shouldPinMemoryBlock, type MemoryBlock } from '../../core/domain/memory-summary';
@@ -44,6 +46,27 @@ const HISTORY_FOR_PROMPT = 30;
 const MEMORY_FOR_PROMPT = 8;
 /** Max decision hops per message: initial guess + plan-fetch replans. */
 const MAX_TOOL_HOPS = 3;
+
+/**
+ * Rebuild the retry batch after a rollback. The model is asked to re-emit the
+ * ENTIRE original batch with only the failed actions corrected. As a safety
+ * net against models that re-emit just the failed subset, the succeeded
+ * originals are re-appended so nothing the user asked for is silently dropped
+ * when the batch is re-run from the rolled-back state.
+ */
+function mergeRetryActions(original: ChatToolAction[], results: ChatToolActionResult[], next: ChatToolAction[]): ChatToolAction[] {
+  const succeededKeys = new Set<string>();
+  results.forEach((r, i) => {
+    if (r.ok && original[i]) succeededKeys.add(JSON.stringify(original[i]));
+  });
+  const nextKeys = new Set(next.map((a) => JSON.stringify(a)));
+  const missingSucceeded = original.filter((a) => {
+    const key = JSON.stringify(a);
+    return succeededKeys.has(key) && !nextKeys.has(key);
+  });
+  return [...next, ...missingSucceeded];
+}
+
 /** AI memory condensation batches: at most this many chats per AI pass… */
 const AI_SUMMARY_CHUNK_SIZE = 4;
 /** …or ~this many transcript chars, whichever hits first (bounds prompt size). */
@@ -259,6 +282,17 @@ export class ChatService {
     if (touched) this.persist();
   }
 
+  /** The user-pickable tool set shown in the composer "@" picker. */
+  listTools(): ChatToolMeta[] {
+    return this.tools?.listTools() ?? [];
+  }
+
+  /** Filters parsed actions down to the pinned "@" tool set (empty scope = all). */
+  private scopeActions(actions: ChatToolAction[], onlyTools: string[]): ChatToolAction[] {
+    if (onlyTools.length === 0) return actions;
+    return actions.filter((a) => onlyTools.includes(a.action));
+  }
+
   /**
    * Sends a message and streams the answer. Appends the user message up front;
    * on a hard error the user message is rolled back so retry stays clean.
@@ -269,6 +303,9 @@ export class ChatService {
    * call decides whether the reply is a single tool action (view/modify any
    * day's tasks). Actions are executed deterministically, then the result is
    * streamed back as a Hinglish summary. Everything else streams as usual.
+   *
+   * When `onlyTools` is provided the hop is scoped: the AI may ONLY execute
+   * the listed tools for this run, everything else is filtered out.
    */
   async send(
     sessionId: string,
@@ -278,6 +315,7 @@ export class ChatService {
     onStatus?: (status: string) => void,
     onReasoningDelta?: (delta: string) => void,
     attachments?: ChatAttachment[],
+    onlyTools?: string[],
   ): Promise<ChatMessage> {
     const session = this.getSession(sessionId);
     if (!session) throw new Error('Chat session not found');
@@ -310,6 +348,9 @@ export class ChatService {
       // so the extracted text never gets a chance. With files attached the
       // user wants "ye content dekh ke jawab do" — skip the hops entirely.
       const hasAttachments = (attachments?.length ?? 0) > 0;
+      // Tools the user pinned with "@" mentions for THIS run. When present, the
+      // AI may ONLY execute those tools — every other tool is unavailable.
+      const toolScope = onlyTools?.length ? this.tools?.resolveToolScope(onlyTools) ?? [] : [];
 
       // A destructive memory action is waiting for the user's explicit "haan".
       // Consent is decided DETERMINISTICALLY from the user's own words — no
@@ -337,8 +378,9 @@ export class ChatService {
 
       // Memory tool decision hop — the AI can read/edit/delete/pin its memory
       // on command ("memory mein kya hai", "ye delete karo", "yaad rakho").
-      // Skipped entirely when AI memory is turned off in settings.
-      if (!hasAttachments && this.memoryTools && this.memoryEnabled() && this.memoryTools.isMemoryQuery(text)) {
+      // Skipped entirely when AI memory is turned off in settings, and when
+      // the user pinned chat tools with "@" — memory tools are not in that set.
+      if (!hasAttachments && toolScope.length === 0 && this.memoryTools && this.memoryEnabled() && this.memoryTools.isMemoryQuery(text)) {
         onStatus?.('AI memory soch raha hai…');
         const decision = await this.llm.complete(await this.buildMemoryDecisionRequest(session, signal));
         let actions = this.memoryTools.parseTools(decision.text);
@@ -397,33 +439,63 @@ export class ChatService {
 
       // Tool decision hop for plan/task/uploaded-planner queries. Skipped when
       // files are attached — document analysis must reach the model directly
-      // (see the hasAttachments comment above).
-      if (!hasAttachments && this.tools && this.tools.isTaskQuery(text)) {
+      // (see the hasAttachments comment above). When the user pinned tools with
+      // "@" mentions, the hop ALWAYS runs (scoped to only those tools).
+      if (!hasAttachments && this.tools && (this.tools.isTaskQuery(text) || toolScope.length > 0)) {
         // Deterministic fast path: unambiguous uploaded-planner questions
         // ("friday ka schedule", "tests dekho", "physics mein kya kya hai")
         // and whole-journey overview questions ("mera progress batao",
         // "context batao") resolve straight to a tool — no LLM hop that can
         // drift to getPlan/getAllTasks. Still runs through the same runMany +
         // summary flow, so the reply is a normal Hinglish message with ✅/❌
-        // per action.
+        // per action. With "@" scoping, a fast-path action is only used when
+        // the user pinned that tool.
+        const inScope = (a: ChatToolAction) => toolScope.length === 0 || toolScope.includes(a.action);
         const plannerAction = this.tools.plannerActionFor(text, isoDate(this.clock.now(), deviceTimeZone()));
         const contextAction = plannerAction ? null : this.tools.contextActionFor(text);
-        let actions: ChatToolAction[] | null = plannerAction ? [plannerAction] : contextAction ? [contextAction] : null;
+        const fastAction = plannerAction && inScope(plannerAction) ? plannerAction : contextAction && inScope(contextAction) ? contextAction : null;
+        // When the user pinned a SINGLE tool (or none), an unambiguous fast-path
+        // action wins deterministically — no LLM hop that can drift. With
+        // MULTIPLE pinned tools the fast path would silently drop the other
+        // selected tools ("@getDay @addTask aaj ke tasks + ek task add karo"
+        // must run BOTH), so the scoped decision hop runs instead. The fast
+        // path action stays as a FALLBACK when the model can't produce a valid
+        // scoped action, so planner/today questions keep working on weak models.
+        let actions: ChatToolAction[] | null = toolScope.length <= 1 && fastAction ? [fastAction] : null;
+        const fastFallback: ChatToolAction[] | null = toolScope.length > 1 && fastAction ? [fastAction] : null;
         let answer = '';
         let decisionModel: string | undefined;
         if (!actions) {
+          // Uploaded-planner questions that fell past the deterministic fast
+          // path get a scoped decision hop. When the user pinned tools with
+          // "@", that scope wins (lists ONLY the pinned tools); otherwise a
+          // planner-only hop keeps a drifting model away from Day 1-90 tools.
+          const plannerScoped = toolScope.length === 0 && this.tools.isPlannerQueryOnly(text);
           onStatus?.('AI soch raha hai…');
-          const decision = await this.llm.complete(await this.buildDecisionRequest(session, signal));
-          actions = this.tools.parseTools(decision.text);
+          const decision = await this.llm.complete(
+            await (plannerScoped ? this.buildPlannerDecisionRequest(session, signal) : this.buildDecisionRequest(session, signal, toolScope)),
+          );
+          actions = this.scopeActions(this.tools.parseTools(decision.text), toolScope);
           answer = decision.text;
           decisionModel = decision.model;
           if (actions.length === 0 && answer) {
             // The model talked instead of emitting an action — retry once with a
-            // strict correction so plan tools work even on weaker models.
+            // strict correction so plan/planner tools work even on weaker models.
             onStatus?.('Tool decision retry kar raha hai…');
-            const retry = await this.llm.complete(await this.buildRetryRequest(session, decision.text, signal));
-            actions = this.tools.parseTools(retry.text);
+            const retry = await this.llm.complete(
+              await (plannerScoped
+                ? this.buildPlannerRetryRequest(session, decision.text, signal)
+                : this.buildRetryRequest(session, decision.text, signal, toolScope)),
+            );
+            actions = this.scopeActions(this.tools.parseTools(retry.text), toolScope);
             if (retry.text) answer = retry.text;
+          }
+          // Multi-tool safety net: the model gave up (no scoped JSON) but a
+          // deterministic fast-path action exists — use it so the reply still
+          // happens instead of an error.
+          if (actions.length === 0 && fastFallback) {
+            actions = fastFallback;
+            answer = '';
           }
         }
         if (actions.length === 0) {
@@ -469,25 +541,27 @@ export class ChatService {
           if (canReplan) {
             onStatus?.('Pehle plan fetch kar raha hai…');
             const plans = this.tools.renderPlans(missing);
-            const replan = await this.llm.complete(await this.buildReplanRequest(session, plans, toolResult.summary, signal));
-            const next = this.tools.parseTools(replan.text);
-            if (next.length === 0) {
+            const replan = await this.llm.complete(await this.buildReplanRequest(session, plans, toolResult.summary, signal, toolScope));
+            const next = this.scopeActions(this.tools.parseTools(replan.text), toolScope);
+            const merged = mergeRetryActions(actions, toolResult.results ?? [], next);
+            if (merged.length === 0) {
               this.store!.save(postRun);
               break;
             }
             this.store!.save(preRun);
-            actions = next;
+            actions = merged;
             continue;
           }
           onStatus?.(`${retryable.length} tool fix kar raha hai…`);
-          const fixed = await this.llm.complete(await this.buildErrorRetryRequest(session, toolResult.summary, retryable, signal));
-          const next = this.tools.parseTools(fixed.text);
-          if (next.length === 0) {
+          const fixed = await this.llm.complete(await this.buildErrorRetryRequest(session, actions, toolResult.summary, retryable, signal, toolScope));
+          const next = this.scopeActions(this.tools.parseTools(fixed.text), toolScope);
+          const merged = mergeRetryActions(actions, toolResult.results ?? [], next);
+          if (merged.length === 0) {
             if (postRun !== undefined && this.store) this.store.save(postRun);
             break;
           }
           if (preRun !== undefined && this.store) this.store.save(preRun);
-          actions = next;
+          actions = merged;
         }
         if (!toolResult) throw new Error('Tool execution failed');
         onStatus?.('Jawab likh raha hai…');
@@ -635,15 +709,52 @@ export class ChatService {
     return `${base}${planner}`;
   }
 
-  private async buildDecisionRequest(session: ChatSession, signal?: AbortSignal): Promise<LLMRequest> {
+  private async buildDecisionRequest(session: ChatSession, signal?: AbortSignal, onlyTools?: string[]): Promise<LLMRequest> {
+    // When the user pinned tools with "@" mentions, list ONLY those tools —
+    // the model physically cannot choose anything outside the set.
+    const system = onlyTools?.length ? chatToolScopeInstructions(onlyTools) : this.toolSystem(CHAT_TOOL_INSTRUCTIONS);
     const request: LLMRequest = {
-      messages: await this.buildMessages(session, this.toolSystem(CHAT_TOOL_INSTRUCTIONS)),
+      messages: await this.buildMessages(session, system),
       temperature: this.decisionTemperature(session),
       maxTokens: 1024,
       providerId: session.prefs.providerId,
       signal,
       // Decision hops must be fast, deterministic JSON — thinking only risks
       // a budget clash and prose contamination.
+      thinking: 'off',
+    };
+    const model = this.resolveModel(session);
+    if (model) request.model = model;
+    return request;
+  }
+
+  /** Planner-scoped decision hop: system lists ONLY the uploaded-planner JSON
+   *  actions plus today's date context, so planner questions that fell past the
+   *  deterministic fast path can never drift to plan/task-bank tools. */
+  private async buildPlannerDecisionRequest(session: ChatSession, signal?: AbortSignal): Promise<LLMRequest> {
+    const request: LLMRequest = {
+      messages: await this.buildMessages(session, `${PLANNER_TOOL_INSTRUCTIONS}\n\n${this.plannerDateContext()}`),
+      temperature: this.decisionTemperature(session),
+      maxTokens: 1024,
+      providerId: session.prefs.providerId,
+      signal,
+      thinking: 'off',
+    };
+    const model = this.resolveModel(session);
+    if (model) request.model = model;
+    return request;
+  }
+
+  private async buildPlannerRetryRequest(session: ChatSession, previousReply: string, signal?: AbortSignal): Promise<LLMRequest> {
+    const system =
+      `${PLANNER_TOOL_INSTRUCTIONS}\n\n${this.plannerDateContext()}\n\n${PLANNER_TOOL_RETRY}` +
+      `\n\nYour previous reply was:\n${previousReply}\n\nReplace it with exactly one JSON object now.`;
+    const request: LLMRequest = {
+      messages: await this.buildMessages(session, system),
+      temperature: this.decisionTemperature(session),
+      maxTokens: 1024,
+      providerId: session.prefs.providerId,
+      signal,
       thinking: 'off',
     };
     const model = this.resolveModel(session);
@@ -685,13 +796,18 @@ export class ChatService {
       `When the user says "aaj" that is ${iso}; "kal" is the next day (${isoAddDays(iso, 1)}); ` +
       `"parso" is two days ahead (${isoAddDays(iso, 2)}); "is week" is the current week. ` +
       `Pass exact dates as "from"/"to" (YYYY-MM-DD, inclusive) in getTests/getSubject, ` +
+      `pass a single date to getDay (or a "from"/"to" range for it), ` +
       `and use the weekday name in getRoutine.`
     );
   }
 
-  private async buildRetryRequest(session: ChatSession, previousReply: string, signal?: AbortSignal): Promise<LLMRequest> {
+  private async buildRetryRequest(session: ChatSession, previousReply: string, signal?: AbortSignal, onlyTools?: string[]): Promise<LLMRequest> {
+    const scopeRule = onlyTools?.length
+      ? `\nThe user pinned ONLY these tools: ${onlyTools.join(', ')}. Emit actions only from this set.\n`
+      : '';
     const system =
       this.toolSystem(`${CHAT_TOOL_INSTRUCTIONS}\n\n${CHAT_TOOL_RETRY}`) +
+      scopeRule +
       `\n\nYour previous reply was:\n${previousReply}\n\nReplace it with exactly one JSON object now.`;
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),
@@ -709,30 +825,40 @@ export class ChatService {
   /**
    * Decision-hop follow-up after a tool call failed for a FIXABLE reason that
    * is not a missing task id (wrong block id, missing edit field, block not
-   * found, ...). Shows the model exactly which actions failed and why, and
-   * asks it to look the real id up (listBlocks / getTaskBank / getPlan) and
-   * re-emit ONLY the failed actions. Successful actions are never re-emitted,
-   * so the corrected batch cannot double-apply anything.
+   * found, ...). Shows the model the full original batch plus exactly which
+   * actions failed and why, and asks it to look the real id up
+   * (listBlocks / getTaskBank / getPlan) and re-emit the ENTIRE batch with
+   * only the failed actions corrected. The batch is rolled back before being
+   * re-applied, so re-emitting everything is safe and nothing the user asked
+   * for is dropped.
    */
   private async buildErrorRetryRequest(
     session: ChatSession,
+    original: ChatToolAction[],
     toolSummary: string,
     failed: ChatToolActionResult[],
     signal?: AbortSignal,
+    onlyTools?: string[],
   ): Promise<LLMRequest> {
     const failedText = failed.map((f) => `- ${f.action}: ${f.summary}`).join('\n');
+    const originalText = original.map((a) => `- ${JSON.stringify(a)}`).join('\n');
+    const scopeRule = onlyTools?.length
+      ? `\nThe user pinned ONLY these tools: ${onlyTools.join(', ')}. Never re-emit anything outside this set.\n`
+      : '';
     const system =
       this.toolSystem(CHAT_TOOL_INSTRUCTIONS) +
+      scopeRule +
       `\n\nYour previous tool call partially failed. The errors below are FIXABLE — ` +
       `look the real id up first if needed (listBlocks / getTaskBank / getAllTasks / getPlan / listPlanners), ` +
       `then re-emit the corrected action.\n` +
       `Rules:\n` +
-      `- Re-emit ONLY the actions that failed, as exactly one JSON object (single action or {"actions":[...]}).\n` +
-      `- Never repeat actions that already succeeded.\n` +
+      `- Re-emit your ENTIRE original batch as exactly one JSON object (single action or {"actions":[...]}).\n` +
+      `- Correct ONLY the actions that failed; keep every other action exactly as it was.\n` +
+      `- The batch is rolled back before being re-applied, so re-emitting the full batch is safe — never drop actions.\n` +
       `- Do NOT explain, refuse or apologize — just the corrected JSON.\n` +
       `- If the request is genuinely impossible, reply with a short normal-text message in Hinglish instead of JSON.`;
     const messages = await this.buildMessages(session, system);
-    messages.push({ role: 'user', content: `Previous tool results:\n${toolSummary}\n\nFailed actions and errors:\n${failedText}` });
+    messages.push({ role: 'user', content: `Your original batch:\n${originalText}\n\nPrevious tool results:\n${toolSummary}\n\nFailed actions and errors:\n${failedText}` });
     const request: LLMRequest = {
       messages,
       temperature: this.decisionTemperature(session),
@@ -759,9 +885,13 @@ export class ChatService {
    * Decision-hop follow-up after a task-id action failed: shows the day's real
    * plan (with task ids) and asks the model to re-emit the corrected JSON.
    */
-  private async buildReplanRequest(session: ChatSession, plans: string, failure: string, signal?: AbortSignal): Promise<LLMRequest> {
+  private async buildReplanRequest(session: ChatSession, plans: string, failure: string, signal?: AbortSignal, onlyTools?: string[]): Promise<LLMRequest> {
+    const scopeRule = onlyTools?.length
+      ? `\nThe user pinned ONLY these tools: ${onlyTools.join(', ')}. Re-emit actions only from this set.\n`
+      : '';
     const system =
       this.toolSystem(CHAT_TOOL_INSTRUCTIONS) +
+      scopeRule +
       `\n\nYour previous tool call failed because the task id was NOT in that day's plan.\n` +
       `Below is the affected day's exact plan with REAL task ids (format "id:<taskId>").\n` +
       `Re-emit your ENTIRE reply as exactly one JSON object (or an actions array) using a VALID task id from the plan. ` +
@@ -806,9 +936,10 @@ export class ChatService {
   ): Promise<LLMRequest> {
     const system =
       `A plan tool executed and returned:\n${toolSummary}\n\n` +
-      `Reply to the user's request in concise Hinglish. Tell them what was done (or why it failed).\n` +
+      `Reply to the user's request in concise Hinglish (always ROMAN script — no Devanagari unless the user explicitly asked). Tell them what was done (or why it failed).\n` +
       `Rules: never echo tool calls, JSON, "/add_tasks(...)" or any protocol text; never add "Tool Execution", "[Tool ...]" or similar headers; never introduce yourself or say your name; if the tool blocked a duplicate task, say plainly that it already exists and was not re-added.\n` +
-      `If ANY action is marked ❌ in the tool result, explicitly tell the user which change failed and why — NEVER claim everything succeeded when some actions failed.`;
+      `If ANY action is marked ❌ in the tool result, explicitly tell the user which change failed and why — NEVER claim everything succeeded when some actions failed.\n` +
+      ROMAN_SCRIPT_RULE;
     const thinking = this.resolveThinking(session);
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),
@@ -1519,6 +1650,21 @@ function normalizePrefs(prefs: Partial<ChatPreferences>): ChatPreferences {
   // Upgrade sessions still carrying the old (longer) Misa default persona to
   // the compressed one. Exact match only — user-edited text stays untouched.
   if (merged.systemPrompt === LEGACY_MISA_SYSTEM_PROMPT) {
+    merged.systemPrompt = INTERNAL_SYSTEM_PROMPT;
+  }
+
+  // Sessions created before the strict Roman-script rule (language guard) was
+  // added still carry the older compressed persona. If it is the untouched
+  // default, roll it forward to the current persona so the Roman-script rule
+  // applies to EXISTING chats too. User-edited personas are preserved.
+  const oldScriptDefault =
+    typeof merged.systemPrompt === 'string' &&
+    merged.systemPrompt.startsWith(
+      'LevelUp ki study partner — cute, friendly, thodi cheesy aur curious JEE topper (PCM), khud bhi learner, kabhi superior nahi. Hinglish me warm, direct, actionable; chhote paragraphs, sirf useful, emojis nahi.',
+    ) &&
+    merged.systemPrompt.includes('Marathi me user bole to Roman Marathi me jawab do') &&
+    !merged.systemPrompt.includes('Language: hamesha Roman (Hinglish) me likho');
+  if (oldScriptDefault) {
     merged.systemPrompt = INTERNAL_SYSTEM_PROMPT;
   }
 

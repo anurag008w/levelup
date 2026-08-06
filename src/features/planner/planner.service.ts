@@ -18,6 +18,7 @@ import {
   routineToText,
   groupBySubject,
   normalizePlanner,
+  dayScheduleToText,
   plannerToolActionSchema,
   plannerToolBatchSchema,
   type PlannerToolAction,
@@ -240,6 +241,19 @@ export class PlannerToolsService {
             summary: `Planner "${action.plannerId}" nahi mila. Pehle listPlanners se exact planner id le lo, phir retry karo.`,
           };
         }
+        const from = action.from ? normalizeDate(action.from) : null;
+        const to = action.to ? normalizeDate(action.to) : null;
+        if (!from && !to) return { ok: true, summary: plannerToText(planner) };
+        // Date-range view of ONE planner: dated subject items / tests inside
+        // the window (routine is weekly — day-based, so it is shown whole).
+        if (planner.kind === 'subject') {
+          const filtered = { ...planner, items: planner.items.filter((i) => inDateRange(i.date, from, to)) };
+          return { ok: true, summary: plannerToText(filtered) };
+        }
+        if (planner.kind === 'test') {
+          const filtered = { ...planner, tests: (planner.tests ?? []).filter((test) => inDateRange(test.date, from, to)) };
+          return { ok: true, summary: plannerToText(filtered) };
+        }
         return { ok: true, summary: plannerToText(planner) };
       }
       case 'getTest': {
@@ -305,6 +319,22 @@ export class PlannerToolsService {
           };
         }
         return { ok: true, summary: routineToText(matched) };
+      }
+      case 'getDay': {
+        const single = action.date ? normalizeDate(action.date) : null;
+        const from = single ?? (action.from ? normalizeDate(action.from) : null);
+        const to = single ?? (action.to ? normalizeDate(action.to) : null);
+        if (!from || !to) {
+          return {
+            ok: false,
+            retryable: true,
+            summary: 'getDay ke liye ek valid date chahiye — "date" (ek din) ya "from"/"to" range, YYYY-MM-DD ya normal format ("July 5, 2026") mein.',
+          };
+        }
+        if (from > to) {
+          return { ok: false, retryable: true, summary: `getDay range galat hai: from (${from}) to (${to}) ke baad hai.` };
+        }
+        return { ok: true, summary: dayScheduleToText(planners, from, to) };
       }
     }
   }

@@ -30,6 +30,7 @@ import {
   X,
 } from 'lucide-react';
 import type { ChatAttachment, ChatMessage, ChatPreferences, ChatSession, ChatToolCallRecord } from '../core/domain/chat';
+import type { ChatToolMeta } from '../core/domain/chat-tools';
 import type { ArchivedConversation } from '../core/domain/chat-transcript';
 import type { ModelInfo } from '../core/domain/llm';
 import { defaultChatPrefs, globalChatPrefsFromSettings } from '../core/domain/chat';
@@ -129,12 +130,17 @@ export default function ChatScreen({
   const [catalog, setCatalog] = useState<ModelInfo[]>([]);
   const [providerSig, setProviderSig] = useState(() => providerSigOf(container.providerSettings.listStoredProviders()));
   const [menu, setMenu] = useState<MenuState | null>(null);
+  /** Tools pinned for the NEXT run via the "@" picker — the AI may only use these. */
+  const [toolMentions, setToolMentions] = useState<string[]>([]);
+  /** Live "@query" filter text while the tool picker is open (null = closed). */
+  const [toolQuery, setToolQuery] = useState<string | null>(null);
   /** Pending "Copy this chat to memory?" prompt shown when switching away from an unarchived chat. */
   const [memoryPrompt, setMemoryPrompt] = useState<{ sessionId: string; title: string; onConfirm: () => void } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const toolPickerRef = useRef<HTMLDivElement | null>(null);
   // The reveal schedule for the freshly generated reply. Set in doSend, consumed
   // by the revealing MessageBubble and by the notification delay — both share
   // the SAME schedule so the notification lands exactly when the chat finishes
@@ -143,6 +149,13 @@ export default function ChatScreen({
   const revealScheduleRef = useRef<RevealSchedule | null>(null);
 
   const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? null, [sessions, activeId]);
+  // User-pickable AI tools for the "@" composer picker (empty when tools are off).
+  const toolCatalog = useMemo(() => container.chat.listTools(), []);
+  const filteredTools = useMemo(() => {
+    if (toolQuery === null) return [];
+    const q = toolQuery.toLowerCase().trim();
+    return toolCatalog.filter((t) => !q || t.id.toLowerCase().includes(q) || t.label.toLowerCase().includes(q));
+  }, [toolCatalog, toolQuery]);
   const providers = useMemo(
     () => (void providerSig, container.providerSettings.listStoredProviders()),
     [providerSig],
@@ -170,6 +183,22 @@ export default function ChatScreen({
     }, 300);
     return () => clearInterval(id);
   }, []);
+
+  // "@" tool picker: close when the user interacts OUTSIDE the picker + input
+  // (not on blur — blur fires on touch/scroll inside the panel and killed the
+  // whole scrollable list on mobile).
+  useEffect(() => {
+    if (toolQuery === null) return;
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (toolPickerRef.current?.contains(target)) return;
+      if (textareaRef.current?.contains(target)) return;
+      setToolQuery(null);
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [toolQuery]);
 
   const modelChip = useMemo(() => {
     const pid = active?.prefs.providerId ?? null;
@@ -430,7 +459,7 @@ export default function ChatScreen({
       setEditing(null);
       refresh();
     }
-    await doSend(s.id, text, pendingDraft, pendingAttachments);
+    await doSend(s.id, text, pendingDraft, pendingAttachments, toolMentions);
   }
 
   async function doSend(
@@ -438,12 +467,15 @@ export default function ChatScreen({
     text: string,
     pendingDraft: string,
     pendingAttachments: DraftAttachment[],
+    onlyTools: string[],
   ) {
     if (!text || streaming) return;
     let sent = false;
     setError('');
     setDraft('');
     setAttachments([]);
+    setToolMentions([]);
+    setToolQuery(null);
     setStreaming(true);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -471,6 +503,7 @@ export default function ChatScreen({
       undefined, // onStatus — intentionally unused; no live tool-status box in the composer
       undefined, // reasoning delta — collected and stored on the message
       chatAttachments,
+      onlyTools,
     );
     // chat.send() pushes the user message synchronously before its first await,
     // so re-read sessions now — the user's own message appears immediately
@@ -542,7 +575,7 @@ export default function ChatScreen({
     container.chat.deleteMessagesFrom(active.id, userMsg.id);
     refresh();
     haptic();
-    void doSend(active.id, userMsg.content, '', []);
+    void doSend(active.id, userMsg.content, '', [], []);
   }
 
   function deleteMessage(message: ChatMessage) {
@@ -685,10 +718,35 @@ export default function ChatScreen({
   }
 
   function keydown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Escape' && toolQuery !== null) {
+      e.preventDefault();
+      setToolQuery(null);
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void send();
     }
+  }
+
+  /** Composer typing: track the draft and open/close the "@" tool picker. */
+  function handleDraftChange(value: string) {
+    setDraft(value);
+    const match = /(^|\s)@([a-z]*)$/i.exec(value);
+    if (match && toolCatalog.length > 0 && !streaming) setToolQuery(match[2] ?? '');
+    else setToolQuery(null);
+  }
+
+  /** Pins a tool from the "@" picker: strips the "@query" text and adds a chip. */
+  function pickTool(tool: ChatToolMeta) {
+    setDraft((d) => d.replace(/(^|\s)@[a-z]*$/i, '$1').trimEnd());
+    setToolMentions((prev) => (prev.includes(tool.id) ? prev : [...prev, tool.id]));
+    setToolQuery(null);
+    focusComposer();
+  }
+
+  function removeToolMention(id: string) {
+    setToolMentions((prev) => prev.filter((t) => t !== id));
   }
 
   function openMenu(e: { clientX: number; clientY: number }, message: ChatMessage) {
@@ -790,10 +848,56 @@ export default function ChatScreen({
             </span>
           </div>
         )}
-        <div className="chat-input chat-composer rounded-[1.5rem] p-1.5">
-          {(processing.length > 0 || attachments.length > 0) && (
-            <div className="no-scrollbar mb-1.5 flex gap-2 overflow-x-auto px-1 pt-1">
-              {processing.map((name) => (
+        <div className="relative">
+          {toolQuery !== null && filteredTools.length > 0 && (
+            <div
+              ref={toolPickerRef}
+              className="absolute bottom-full left-0 right-0 z-30 mb-2 max-h-72 overflow-y-auto overscroll-contain rounded-2xl border border-border bg-surface/95 p-1.5 pr-1 shadow-xl backdrop-blur [scrollbar-width:thin]"
+            >
+              <p className="px-2 pb-1 pt-1 text-[9px] font-semibold uppercase tracking-wider text-muted">
+                Tools — is run mein sirf ye chalenge
+              </p>
+              {filteredTools.map((t) => {
+                const selected = toolMentions.includes(t.id);
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      pickTool(t);
+                    }}
+                    className={`flex w-full items-start gap-2.5 rounded-xl px-2 py-2 text-left transition-colors ${
+                      selected ? 'bg-l/15' : 'hover:bg-bg'
+                    }`}
+                  >
+                    <span
+                      className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-md border ${
+                        selected ? 'border-l bg-l text-bg' : 'border-border'
+                      }`}
+                      aria-hidden="true"
+                    >
+                      {selected && <Check size={11} strokeWidth={3} />}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span className="text-xs font-semibold text-text">@{t.id}</span>
+                        <span className="text-[10px] font-medium text-l">{t.label}</span>
+                      </span>
+                      <span className="block truncate text-[10px] leading-snug text-muted">{t.description}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <div className="chat-input chat-composer rounded-[1.5rem] p-1.5">
+            {(toolMentions.length > 0 || processing.length > 0 || attachments.length > 0) && (
+              <div className="no-scrollbar mb-1.5 flex gap-2 overflow-x-auto px-1 pt-1">
+                {toolMentions.map((id) => (
+                  <ToolChip key={id} id={id} catalog={toolCatalog} onRemove={() => removeToolMention(id)} />
+                ))}
+                {processing.map((name) => (
                 <span
                   key={`proc-${name}`}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-l/30 bg-l/10 px-2 py-1 text-[10px] font-semibold text-l"
@@ -833,9 +937,9 @@ export default function ChatScreen({
               ref={textareaRef}
               rows={1}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => handleDraftChange(e.target.value)}
               onKeyDown={keydown}
-              placeholder="Maths, doubts ya notes likho…"
+              placeholder="Maths, doubts ya notes likho… (@ se tools select karo)"
               className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-[14px] leading-snug text-text outline-none placeholder:text-muted-dim"
               aria-label="Message"
             />
@@ -859,6 +963,7 @@ export default function ChatScreen({
               </button>
             )}
           </div>
+        </div>
         </div>
       </div>
 
@@ -1339,6 +1444,24 @@ const TOOL_LABELS: Record<string, string> = {
 /* =====================================================================
    Attachments
    ===================================================================== */
+
+function ToolChip({ id, catalog, onRemove }: { id: string; catalog: ChatToolMeta[]; onRemove: () => void }) {
+  const tool = catalog.find((t) => t.id === id);
+  return (
+    <div className="flex min-w-0 shrink-0 items-center gap-1.5 rounded-xl border border-l/35 bg-l/10 px-2 py-1.5">
+      <span className="text-[10px] font-bold leading-tight text-l">@{id}</span>
+      {tool && <span className="hidden text-[9px] text-muted sm:inline">{tool.label}</span>}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="rounded-full p-0.5 text-muted hover:bg-danger/10 hover:text-danger"
+        aria-label={`Remove ${id} from tools`}
+      >
+        <X size={11} />
+      </button>
+    </div>
+  );
+}
 
 function AttachmentChip({ attachment, onRemove }: { attachment: DraftAttachment; onRemove: () => void }) {
   const isImage = attachment.kind === 'image';

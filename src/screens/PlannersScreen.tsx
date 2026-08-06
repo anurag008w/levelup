@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { BookOpen, CalendarDays, Check, ChevronDown, Copy, FileText, FlaskConical, ListChecks, Sparkles, Trash2, Upload } from 'lucide-react';
 import type { AppState } from '../types';
 import type { PlannerRoutineRow, PlannerTestRow, SubjectPlanner } from '../core/domain/subject-planner';
-import { PLANNER_CONVERSION_PROMPT, groupBySubject, plannerCountLabel, kindLabel } from '../core/domain/subject-planner';
+import { PLANNER_CONVERSION_PROMPT, groupBySubject, plannerCountLabel, kindLabel, sortPlannerItems } from '../core/domain/subject-planner';
 import { container } from '../di/container';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
@@ -346,7 +346,7 @@ function PlannerRow({
 }
 
 function SubjectItems({ planner, onToggleItem }: { planner: SubjectPlanner; onToggleItem: (itemId: string, done: boolean) => void }) {
-  const sorted = [...planner.items].sort((a, b) => (a.week ?? 0) - (b.week ?? 0) || a.title.localeCompare(b.title));
+  const sorted = sortPlannerItems(planner.items);
   if (sorted.length === 0) {
     return <p className="px-1 py-1 text-xs text-muted">Is planner mein koi items nahi hain.</p>;
   }
@@ -365,6 +365,7 @@ function SubjectItems({ planner, onToggleItem }: { planner: SubjectPlanner; onTo
           <div className="min-w-0 flex-1">
             <p className={`text-[12px] leading-snug ${item.done ? 'text-muted line-through' : 'text-text'}`}>
               {item.week !== undefined && <span className="mr-1 font-mono text-[10px] text-muted">W{item.week}</span>}
+              {item.date && <span className="mr-1 font-mono text-[10px] text-l">📅 {item.date}</span>}
               {item.type !== 'topic' && <span className="mr-1 uppercase tracking-wide text-muted text-[9px]">{item.type}</span>}
               {item.title}
             </p>
