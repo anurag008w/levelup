@@ -132,6 +132,33 @@ describe('notifications — chat-tab suppression', () => {
     expect(scheduled.schedule.allowWhileIdle).toBe(true);
   });
 
+  it('schedules a delayed reply notification at the OS level when force=true even if the app still reads as active (reply flow minimizes right after)', async () => {
+    await setNotificationPreference(true);
+    setChatTabActive(true);
+    // Reply action Activity ko resume kar deta hai, isliye appActive abhi bhi
+    // "true" dikh sakta hai — but force=true means the user is definitely NOT
+    // watching (they replied from the notification shade), and the app is
+    // minimized right after send. JS setTimeout delivery can't be trusted then,
+    // so the reply notification MUST go to OS-level schedule.at.
+    setAppHidden(false);
+    const before = Date.now();
+    await notifyAiReply('Misa', 'reply body', 'session-1', 3000, true);
+    await flush();
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    const scheduled = scheduleMock.mock.calls[0][0].notifications[0];
+    expect(scheduled.schedule.at.getTime()).toBeGreaterThanOrEqual(before + 3000);
+    expect(scheduled.schedule.allowWhileIdle).toBe(true);
+  });
+
+  it('keeps foreground delayed notifications on JS timers when force is NOT set (normal chat reveal flow)', async () => {
+    await setNotificationPreference(true);
+    setChatTabActive(true);
+    setAppHidden(false);
+    await notifyAiReply('Misa', 'bubble text', 'session-1', 3000);
+    await flush();
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
   it('does nothing when the notification preference is off', async () => {
     await setNotificationPreference(false);
     setChatTabActive(false);
