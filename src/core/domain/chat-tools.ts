@@ -283,15 +283,34 @@ export const CHAT_TOOL_CATALOG: ChatToolMeta[] = [
   { id: 'getTests', label: 'Tests list', description: 'Uploaded planner se tests list (date range optional).', example: '{"action":"getTests","from":"2026-07-01","to":"2026-07-31"}', readOnly: true },
   { id: 'getRoutine', label: 'Routine', description: 'Uploaded planner se weekly routine.', example: '{"action":"getRoutine","day":"Monday"}', readOnly: true },
   { id: 'getDay', label: 'Day detail', description: 'Uploaded planner se ek din ka poora detail (classes + tests + lectures).', example: '{"action":"getDay","date":"2026-07-05"}', readOnly: true },
+  { id: 'websearch', label: 'Web search', description: 'Live Google Search — current/recent info (news, syllabus changes, results, dates). Model khud decide karta hai kab search karna hai; raw results nahi dikhte, sirf summarized jawab.', example: 'auto — model decide karega', readOnly: true },
 ];
 
 /**
  * Decision-hop system prompt when the user pinned a set of tools with "@"
  * mentions: ONLY those tools may be used this run, and the model must reply
  * with exactly one JSON object (or an actions array) built from them.
+ *
+ * `websearch` is special: it is NOT a JSON tool action — it maps to live
+ * Google Search grounding on capable models. It is excluded from the JSON-only
+ * list; when it is the ONLY pinned tool the model replies normally (grounded,
+ * never JSON). When pinned alongside JSON tools it stays available for the
+ * final answer while the JSON tools run the plan work.
  */
 export function chatToolScopeInstructions(onlyTools: string[]): string {
-  const selected = CHAT_TOOL_CATALOG.filter((t) => onlyTools.includes(t.id));
+  const hasWebSearch = onlyTools.includes('websearch');
+  const selected = CHAT_TOOL_CATALOG.filter((t) => onlyTools.includes(t.id) && t.id !== 'websearch');
+  const webSearchLine = hasWebSearch
+    ? `\nWEB SEARCH is enabled for this run: you can pull CURRENT/recent information (news, syllabus changes, NTA updates, results, dates) with live Google Search grounding. Use it whenever the user's request needs fresh info. Raw search results are internal — the user sees only your synthesized answer.`
+    : '';
+  // websearch-only run: no JSON tool protocol — answer normally with grounding.
+  if (selected.length === 0) {
+    return (
+      `The user selected ONLY the web search tool for this run.` +
+      webSearchLine +
+      `\nReply normally in Hinglish (always ROMAN script — no Devanagari unless the user explicitly asked). Use live web search for current/recent facts; do NOT emit JSON or any tool-call protocol text. If a question is about the study plan and NOT something that needs fresh info, answer from your own knowledge.`
+    );
+  }
   const lines = selected.map((t) => {
     const confirm = t.confirmationRequired ? ' [needs the user\'s "confirmed":true first]' : '';
     const ro = t.readOnly ? ' (read-only)' : '';
@@ -309,6 +328,7 @@ export function chatToolScopeInstructions(onlyTools: string[]): string {
     `(single action, or an {"actions":[...]} array when several changes are requested) that uses ONLY the selected tools below.\n` +
     `NEVER use any tool that is NOT listed. If the request cannot be fulfilled with the selected tools, reply with a short normal-text message in Hinglish (always ROMAN script) explaining which tool is missing.\n` +
     multiToolRule +
+    webSearchLine +
     `\nSelected tools:\n${lines.join('\n')}`
   );
 }

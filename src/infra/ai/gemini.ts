@@ -27,6 +27,7 @@ interface GeminiRolePart {
 interface GeminiGenerateRequest {
   contents: GeminiRolePart[];
   system_instruction?: { parts: Array<{ text: string }> };
+  tools?: Array<{ google_search: Record<string, never> }>;
   generationConfig: {
     temperature?: number;
     maxOutputTokens?: number;
@@ -147,6 +148,13 @@ export class GeminiProvider implements LLMProvider {
     return {
       contents,
       ...(systemInstruction ? { system_instruction: systemInstruction } : {}),
+      // Live web search (Google Search grounding): the model grounds its answer
+      // with fresh web results ONLY when it decides current info is needed. The
+      // user only ever sees the model's synthesized answer — never raw results.
+      // NOTE: `google_search` is the current tool shape for Gemini 2.5/3.x.
+      // `googleSearchRetrieval` was the Gemini 1.5-era name — current models
+      // reject it (which silently killed grounding before the graceful retry).
+      ...(request.websearch ? { tools: [{ google_search: {} }] } : {}),
       generationConfig: {
         ...(request.temperature ?? this.config.temperature !== undefined ? { temperature: request.temperature ?? this.config.temperature } : {}),
         ...(maxTokens !== undefined ? { maxOutputTokens: maxTokens } : {}),
@@ -157,6 +165,21 @@ export class GeminiProvider implements LLMProvider {
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
     const model = this.resolveModel(request);
+    try {
+      return await this.generateOnce(request, model);
+    } catch (err) {
+      // Some models don't accept the googleSearchRetrieval tool. Retry once
+      // WITHOUT web search so the answer still arrives — grounding is a
+      // capability bonus, never a hard requirement.
+      if (request.websearch && looksLikeToolError(err)) {
+        request.websearch = false;
+        return await this.generateOnce(request, model);
+      }
+      throw err;
+    }
+  }
+
+  private async generateOnce(request: LLMRequest, model: string): Promise<LLMResponse> {
     const body = this.buildBody(request);
     const res = await this.http
       .requestJson<GeminiGenerateResponse>(
@@ -188,6 +211,20 @@ export class GeminiProvider implements LLMProvider {
 
   async stream(request: LLMRequest): Promise<LLMResponse> {
     const model = this.resolveModel(request);
+    try {
+      return await this.streamOnce(request, model);
+    } catch (err) {
+      // Same graceful fallback as complete(): retry without web search when
+      // the model rejects the grounding tool.
+      if (request.websearch && looksLikeToolError(err)) {
+        request.websearch = false;
+        return await this.streamOnce(request, model);
+      }
+      throw err;
+    }
+  }
+
+  private async streamOnce(request: LLMRequest, model: string): Promise<LLMResponse> {
     const body = this.buildBody(request);
     let full = '';
     let reasoning = '';
@@ -314,4 +351,15 @@ export function splitParts(parts: Array<{ text?: string; thought?: boolean }> | 
     else text += value;
   }
   return { text, reasoning };
+}
+
+/**
+ * True when a Gemini API error means the model doesn't support the
+ * google_search grounding tool (or the tools field itself). Triggered by the
+ * generic 400s Gemini returns for unsupported tools, so the caller can retry
+ * the same request without web search instead of failing the whole reply.
+ */
+function looksLikeToolError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /google.?search|not supported|does not support|invalid argument/i.test(message);
 }

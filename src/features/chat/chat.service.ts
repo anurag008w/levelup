@@ -363,7 +363,16 @@ export class ChatService {
       const hasAttachments = (attachments?.length ?? 0) > 0;
       // Tools the user pinned with "@" mentions for THIS run. When present, the
       // AI may ONLY execute those tools — every other tool is unavailable.
-      const toolScope = onlyTools?.length ? this.tools?.resolveToolScope(onlyTools) ?? [] : [];
+      // `websearch` is NOT a JSON tool action: it maps to live Google Search
+      // grounding on capable models. It is filtered out of the JSON tool scope
+      // and handled as a separate flag (auto on the default chat path; forced
+      // when pinned).
+      const pinnedWebSearch = onlyTools?.includes('websearch') ?? false;
+      const jsonOnlyTools = (onlyTools ?? []).filter((t) => t !== 'websearch');
+      const toolScope = jsonOnlyTools.length ? this.tools?.resolveToolScope(jsonOnlyTools) ?? [] : [];
+      // websearch pinned ALONE → this run is a pure web-search answer, not a
+      // plan operation — skip the JSON tool hops entirely.
+      const onlyWebSearch = pinnedWebSearch && jsonOnlyTools.length === 0;
 
       // A destructive memory action is waiting for the user's explicit "haan".
       // Consent is decided DETERMINISTICALLY from the user's own words — no
@@ -454,7 +463,7 @@ export class ChatService {
       // files are attached — document analysis must reach the model directly
       // (see the hasAttachments comment above). When the user pinned tools with
       // "@" mentions, the hop ALWAYS runs (scoped to only those tools).
-      if (!hasAttachments && this.tools && (this.tools.isTaskQuery(text) || toolScope.length > 0)) {
+      if (!hasAttachments && this.tools && !onlyWebSearch && (this.tools.isTaskQuery(text) || toolScope.length > 0)) {
         // Deterministic fast path: unambiguous uploaded-planner questions
         // ("friday ka schedule", "tests dekho", "physics mein kya kya hai")
         // and whole-journey overview questions ("mera progress batao",
@@ -589,7 +598,7 @@ export class ChatService {
         }, signal, (delta) => {
           reasoning += delta;
           onReasoningDelta?.(delta);
-        });
+        }, pinnedWebSearch);
         const summary = await this.llm.stream(summaryRequest);
         // Release any trailing chunk the sanitizer held back as a possible
         // partial timestamp — otherwise the streamed tail is silently dropped.
@@ -637,7 +646,7 @@ export class ChatService {
         }, signal, (delta) => {
           reasoning += delta;
           onReasoningDelta?.(delta);
-        });
+        }, onlyWebSearch ? 'pinned' : 'auto');
         const resp = await this.llm.stream(request);
         // Release any trailing chunk the sanitizer held back as a possible
         // partial timestamp — otherwise the streamed tail is silently dropped.
@@ -669,7 +678,7 @@ export class ChatService {
       }
       let finalResp = resp;
       if (!finalResp.text && !finalResp.reasoning) {
-        const fallbackReq = await this.buildRequest(session, undefined, signal);
+        const fallbackReq = await this.buildRequest(session, undefined, signal, undefined, onlyWebSearch ? 'pinned' : 'auto');
         fallbackReq.thinking = 'off';
         fallbackReq.maxTokens = 16384;
         finalResp = await this.llm.stream(fallbackReq);
@@ -946,6 +955,7 @@ export class ChatService {
     onDelta: ((d: string) => void) | undefined,
     signal?: AbortSignal,
     onReasoningDelta?: (d: string) => void,
+    websearch = false,
   ): Promise<LLMRequest> {
     const system =
       `A plan tool executed and returned:\n${toolSummary}\n\n` +
@@ -962,6 +972,10 @@ export class ChatService {
       onDelta,
       onReasoningDelta,
       signal,
+      // Pinned @web-search stays available while writing the final answer
+      // after tool execution (mixed pins). Auto search does not apply here —
+      // summaries follow tool results and don't re-trigger live search.
+      ...(websearch ? { websearch: true } : {}),
     };
     const model = this.resolveModel(session);
     if (model) request.model = model;
@@ -1103,6 +1117,7 @@ export class ChatService {
     onDelta: ((d: string) => void) | undefined,
     signal?: AbortSignal,
     onReasoningDelta?: (d: string) => void,
+    webSearchMode: 'auto' | 'pinned' = 'auto',
   ): Promise<LLMRequest> {
     const thinking = this.resolveThinking(session);
     const request: LLMRequest = {
@@ -1113,11 +1128,33 @@ export class ChatService {
       onDelta,
       onReasoningDelta,
       signal,
+      // Web search: the default chat path may use live search grounding
+      // (Gemini) whenever the model decides fresh/current info is needed —
+      // news, syllabus changes, results, dates. Raw results are never shown
+      // to the user, only the model's synthesized answer. Plan/decision hops
+      // stay tool-free.
+      //
+      // 'auto'   → Gemini only (native googleSearchRetrieval grounding, model
+      //            decides). OpenAI-compatible endpoints stay tool-free so we
+      //            don't burn a request on every message for models that
+      //            reject `{"type": "web_search"}` (Groq Gemma/Llama, ...).
+      // 'pinned' → user explicitly pinned @web-search: enable for ANY
+      //            provider; the adapter sends the search tool + gracefully
+      //            falls back when the endpoint doesn't support it.
+      websearch: webSearchMode === 'pinned' || this.isGeminiProvider(session),
     };
     const model = this.resolveModel(session);
     if (model) request.model = model;
     if (thinking) request.thinking = thinking;
     return request;
+  }
+
+  /** True when the active provider is the native Gemini adapter. */
+  private isGeminiProvider(session: ChatSession): boolean {
+    const config = session.prefs.providerId
+      ? this.settings.getProviderById(session.prefs.providerId)
+      : this.settings.getActiveProvider();
+    return config?.id === 'gemini';
   }
 
   /**
