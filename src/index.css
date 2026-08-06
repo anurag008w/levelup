@@ -115,6 +115,15 @@ body,
   height: 100%;
 }
 
+/* Misa (chat) owns its own internal scroll (.chat-thread); body must not
+   also become scrollable while it's the active tab, or the whole screen
+   (topbar + messages + composer) scrolls as one block and the fixed
+   hamburger handle ends up overlapping message text. See App.tsx. */
+body.chat-scroll-lock {
+  overflow: hidden;
+  height: 100%;
+}
+
 body {
   background-color: var(--color-bg);
   color: var(--color-text);
@@ -1518,6 +1527,7 @@ label.field-label {
 .chat-shell {
   display: flex;
   flex-direction: column;
+  height: 100vh; /* fallback for WebViews without svh support */
   height: 100svh;
   width: 100%;
   max-width: min(56rem, 100vw);

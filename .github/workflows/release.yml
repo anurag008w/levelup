@@ -47,9 +47,33 @@ jobs:
               VERSION="v$VERSION"
             fi
           fi
+          VERSION_NAME="${VERSION#v}"
+
+          # versionCode: always YYYYMMDDSS (10-digit, zero-padded) so it can
+          # only go up. Day-only tags (vYYYY.MM.DD) get SEQ=00; same-day
+          # sequenced tags (vYYYY.MM.DDSS) keep their real SEQ. Naively
+          # stripping dots (old approach) breaks monotonicity the moment a
+          # plain-date tag follows a same-day-sequence tag — e.g.
+          # 2026.08.0503 -> code 2026080503, then 2026.08.06 -> code
+          # 20260806, a DECREASE — and Android's downgrade protection then
+          # silently refuses to install the "update" over the existing app.
+          YEAR="${VERSION_NAME%%.*}"
+          REST="${VERSION_NAME#*.}"
+          MONTH="${REST%%.*}"
+          DAYSEQ="${REST#*.}"
+          if [[ ${#DAYSEQ} -gt 2 ]]; then
+            DAY="${DAYSEQ:0:2}"
+            SEQ="${DAYSEQ:2:2}"
+          else
+            DAY="$DAYSEQ"
+            SEQ="00"
+          fi
+          VERSION_CODE="${YEAR}${MONTH}${DAY}${SEQ}"
+
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "VERSION_NAME=${VERSION#v}" >> $GITHUB_OUTPUT
-          echo "📌 Release: $VERSION"
+          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_OUTPUT
+          echo "📌 Release: $VERSION (versionCode $VERSION_CODE)"
 
       - name: Determine previous tag
         id: prev_tag
@@ -128,7 +152,7 @@ jobs:
           cd android
           ./gradlew assembleRelease --no-daemon \
             -PversionName="${{ steps.version.outputs.VERSION_NAME }}" \
-            -PversionCode="$(echo "${{ steps.version.outputs.VERSION_NAME }}" | tr -d '.')"
+            -PversionCode="${{ steps.version.outputs.VERSION_CODE }}"
 
       - name: Build debug APK
         if: steps.setup_signing.outputs.SIGNED != 'true'
@@ -136,7 +160,7 @@ jobs:
           cd android
           ./gradlew assembleDebug --no-daemon \
             -PversionName="${{ steps.version.outputs.VERSION_NAME }}" \
-            -PversionCode="$(echo "${{ steps.version.outputs.VERSION_NAME }}" | tr -d '.')"
+            -PversionCode="${{ steps.version.outputs.VERSION_CODE }}"
 
       - name: Prepare APK
         id: prepare

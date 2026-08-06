@@ -95,6 +95,26 @@ export default function App() {
     setChatTabActive(tab === 'chat');
   }, [tab]);
 
+  // Other tabs (.screen) rely on the normal page/body scroll — they have no
+  // internal scroll container. Misa (chat) is the opposite: .chat-shell owns
+  // a fixed-height flex layout and .chat-thread does its own internal
+  // overflow-y scroll, with the topbar/composer meant to stay put. If body
+  // is ever allowed to scroll too (a rounding/viewport-unit hiccup on some
+  // WebViews can make chat-shell's content a hair taller than the screen),
+  // the WHOLE screen — topbar, messages, composer — scrolls together as one
+  // block, and the fixed hamburger handle (position: fixed) stays pinned to
+  // the viewport while everything slides underneath it, so it visually
+  // overlaps message text. Locking body scroll only while chat is the active
+  // tab forces all scrolling back into .chat-thread, where it belongs.
+  useEffect(() => {
+    if (tab === 'chat') {
+      document.body.classList.add('chat-scroll-lock');
+    } else {
+      document.body.classList.remove('chat-scroll-lock');
+    }
+    return () => document.body.classList.remove('chat-scroll-lock');
+  }, [tab]);
+
   // Notification actions (native): inline reply / tap → chat kholo.
   // Listen `levelup:open-chat` from notification-actions and jump to Chat tab.
   useEffect(() => {
