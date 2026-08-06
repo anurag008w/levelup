@@ -5,7 +5,6 @@
 // from the plan tools so the two protocols never fight in one decision hop.
 
 import { z } from 'zod';
-import { ROMAN_SCRIPT_RULE } from './chat';
 
 export const memoryToolActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('readMemory') }),
@@ -60,7 +59,7 @@ RULES:
 - When the user says "yaad rakho X" / "yaad rakhna X" / "mat bhoolna X", ADD it with addMemory instead of just talking.
 - For edits/deletes you MUST use the real entry id from readMemory. Never invent ids.
 - Deleting is destructive: if the user did not explicitly ask to delete, do nothing.
-- After executing, explain what you did in short Hinglish (always ROMAN script). ${ROMAN_SCRIPT_RULE}`;
+- After executing, explain what you did in short Hinglish (always ROMAN script).`;
 
 /** Keywords that route a user message to the memory tool decision hop. */
 const MEMORY_QUERY_PATTERN =
