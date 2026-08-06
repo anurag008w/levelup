@@ -859,14 +859,31 @@ export function groupBySubject(planners: SubjectPlanner[]): Map<string, SubjectP
 }
 
 /**
+ * Extracts the first parseable date found inside free-form text. Lecture rows
+ * often carry their date only inside `details` ("Lec 2 · Physical Chemistry ·
+ * 17 Jun 2026 · Rahul Dudi Sir") — this lets sorting (and date-range answers)
+ * see those dates too. Splitting on separators keeps the scan cheap and avoids
+ * matching random numbers inside names like "Rahul Dudi Sir".
+ */
+export function normalizeDateInText(text: string | undefined): string | null {
+  if (!text) return null;
+  for (const part of text.split(/[·|,/;\n]+/)) {
+    const iso = normalizeDate(part);
+    if (iso) return iso;
+  }
+  return null;
+}
+
+/**
  * Display order for subject items: dated items first (chronological), then
  * undated items by week + title. Keeps a lecture schedule readable as a
- * calendar instead of grouped by week/title.
+ * calendar instead of grouped by week/title. A date inside `details` counts
+ * when the item has no explicit `date` field (common for imported lectures).
  */
 export function sortPlannerItems(items: PlannerItem[]): PlannerItem[] {
   return [...items].sort((a, b) => {
-    const da = normalizeDate(a.date);
-    const db = normalizeDate(b.date);
+    const da = normalizeDate(a.date) ?? normalizeDateInText(a.details);
+    const db = normalizeDate(b.date) ?? normalizeDateInText(b.details);
     if (da && db) return da.localeCompare(db) || a.title.localeCompare(b.title);
     if (da) return -1;
     if (db) return 1;

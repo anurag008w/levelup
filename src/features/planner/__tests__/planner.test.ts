@@ -10,6 +10,8 @@ import {
   plannerActionForQuery,
   plannerCountLabel,
   plannerToText,
+  sortPlannerItems,
+  type PlannerItem,
   type SubjectPlanner,
 } from '../../../core/domain/subject-planner';
 import { normalizeState } from '../../../infra/storage/state-repository';
@@ -767,5 +769,18 @@ describe('planner routing + sync integration', () => {
     expect(PLANNER_CONVERSION_PROMPT).toContain('WHOLE file');
     expect(PLANNER_CONVERSION_PROMPT).toContain('ONE JSON');
     expect(PLANNER_CONVERSION_PROMPT).toContain('Do NOT translate');
+  });
+
+  it('sorts lectures chronologically when their date lives only inside details', () => {
+    // Real scenario: imported lecture rows carry no `date` field — the date is
+    // embedded in `details`. Sorting must read it from there, otherwise the UI
+    // falls back to alphabetical title order (Lec 2, Lec 3, Lec 1).
+    const items: PlannerItem[] = [
+      { id: 'l3', title: 'Solubility', type: 'lecture', details: 'Lec 3 · Physical Chemistry · 19 Jun 2026 · Rahul Dudi Sir' },
+      { id: 'l1', title: 'Binary Solution', type: 'lecture', details: 'Lec 1 · Physical Chemistry · 16 Jun 2026 · Rahul Dudi Sir' },
+      { id: 'l2', title: 'Concentration Terms', type: 'lecture', details: 'Lec 2 · Physical Chemistry · 17 Jun 2026 · Rahul Dudi Sir' },
+    ];
+    const sorted = sortPlannerItems(items);
+    expect(sorted.map((i) => i.id)).toEqual(['l1', 'l2', 'l3']);
   });
 });

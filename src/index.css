@@ -122,6 +122,7 @@ body,
 body.chat-scroll-lock {
   overflow: hidden;
   height: 100%;
+  overscroll-behavior: none; /* no scroll chaining out of the chat thread onto the page */
 }
 
 body {
@@ -1527,8 +1528,9 @@ label.field-label {
 .chat-shell {
   display: flex;
   flex-direction: column;
-  height: 100vh; /* fallback for WebViews without svh support */
-  height: 100svh;
+  height: 100dvh; /* dynamic viewport: tracks URL bar / keyboard, composer stays pinned to the visible bottom */
+  height: 100svh; /* fallback: WebViews without dvh support */
+  height: 100vh; /* fallback: WebViews without svh support */
   width: 100%;
   max-width: min(56rem, 100vw);
   margin-inline: auto;
@@ -1558,6 +1560,7 @@ label.field-label {
   min-height: 0;
   flex: 1 1 0%;
   overflow-y: auto;
+  overscroll-behavior: contain; /* thread scroll must never drag the page/shell around */
   padding-inline: clamp(0.75rem, 3vw, 1.25rem);
   scroll-padding-bottom: 7rem;
 }

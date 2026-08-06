@@ -45,6 +45,13 @@ function healthyState(): AppState {
   return { ...emptyAppState(), startDateISO: '2026-01-01' };
 }
 
+/** A fully-completed task log for a given journey day. */
+function completeLogFor(planner: HabitProgressionService, day: number): Record<string, boolean> {
+  const log: Record<string, boolean> = {};
+  for (const t of planner.stats.baseTasksForDay(day)) log[t.id] = true;
+  return log;
+}
+
 /** A state where the previous few days were completed 100% → truly healthy. */
 function healthyStateWithRecentCompletion(planner: HabitProgressionService, todayDay: number): AppState {
   const state = healthyState();
@@ -115,37 +122,130 @@ describe('HabitProgressionService backward compatibility', () => {
     expect(plan.generationStrategy).toBe('bank');
   });
 
-  it('applies recovery mode when yesterday completed poorly', () => {
+  it('applies recovery mode only after 3 consecutive missed days', () => {
     const { planner } = makePlanner();
     const state = healthyState();
-    // Yesterday (2026-01-07) all base tasks were missed → recovery.
+    // Earliest days completed → background days don't count as a miss streak.
+    for (const d of [1, 2, 3, 4, 5, 6]) {
+      state.taskLogs[isoFromDay(d)] = completeLogFor(planner, d);
+    }
+    // Sirf 1 missed day (Day 7) → recovery nahi aana chahiye.
     state.taskLogs['2026-01-07'] = {};
+    const afterOneMiss = planner.buildPlan(state, '2026-01-08', DEFAULT_PROGRESSION_CONFIG);
+    expect(afterOneMiss.contextSummary).not.toContain('recovery');
+
+    // 2 consecutive missed days → ab bhi nahi.
+    state.taskLogs['2026-01-06'] = {};
+    const afterTwoMisses = planner.buildPlan(state, '2026-01-08', DEFAULT_PROGRESSION_CONFIG);
+    expect(afterTwoMisses.contextSummary).not.toContain('recovery');
+
+    // 3 consecutive missed days (Day 5, 6, 7) → recovery ON.
+    state.taskLogs['2026-01-05'] = {};
     const plan = planner.buildPlan(state, '2026-01-08', DEFAULT_PROGRESSION_CONFIG);
     expect(plan.contextSummary).toContain('recovery');
     const currentLevel = LEVELS.find((l) => 8 >= l.dayStart && 8 <= l.dayEnd)!;
-    const coreIds = new Set(
-      plan.tasks.filter((t) => t.required).map((t) => t.entry.id),
-    );
-    // Only the current level's tasks may be required.
+    // Only the current level's core tasks and recovery tasks may be required.
     for (const t of plan.tasks) {
-      if (t.required) expect(t.entry.legacy?.levelId).toBe(currentLevel.id);
-      void coreIds;
+      if (!t.required) continue;
+      const isCore = t.entry.legacy?.levelId === currentLevel.id;
+      const isRecoveryTask = t.entry.taskType === 'Recovery';
+      expect(isCore || isRecoveryTask, `${t.entry.id} should be core or a recovery task`).toBe(true);
+    }
+  });
+
+  it('turns recovery off the morning after a 70%+ day and re-arms after 3 more misses', () => {
+    const { planner } = makePlanner();
+    const state = healthyState();
+    // Day 5, 6, 7 missed → recovery ON from Day 8.
+    for (const d of [5, 6, 7]) state.taskLogs[isoFromDay(d)] = {};
+    const day8 = planner.buildPlan(state, isoFromDay(8), DEFAULT_PROGRESSION_CONFIG);
+    expect(day8.contextSummary).toContain('recovery');
+
+    // Day 8 partial (~50%) → miss streak breaks but user is still not "back on
+    // track" (below 70%), so recovery continues on Day 9.
+    const partial8: Record<string, boolean> = {};
+    planner.stats.baseTasksForDay(8).forEach((t, i) => {
+      if (i % 2 === 0) partial8[t.id] = true;
+    });
+    const day9State = { ...state, taskLogs: { ...state.taskLogs, [isoFromDay(8)]: partial8 } };
+    const day9 = planner.buildPlan(day9State, isoFromDay(9), DEFAULT_PROGRESSION_CONFIG);
+    expect(day9.contextSummary).toContain('recovery');
+
+    // Day 9 completed 100% (≥ 70%) → recovery OFF on Day 10.
+    const day10State = {
+      ...day9State,
+      taskLogs: { ...day9State.taskLogs, [isoFromDay(9)]: completeLogFor(planner, 9) },
+    };
+    const day10 = planner.buildPlan(day10State, isoFromDay(10), DEFAULT_PROGRESSION_CONFIG);
+    expect(day10.contextSummary).not.toContain('recovery');
+
+    // Day 10, 11, 12 missed again → recovery re-arms on Day 13.
+    const rearmState = {
+      ...day10State,
+      taskLogs: { ...day10State.taskLogs, [isoFromDay(10)]: {}, [isoFromDay(11)]: {}, [isoFromDay(12)]: {} },
+    };
+    const day13 = planner.buildPlan(rearmState, isoFromDay(13), DEFAULT_PROGRESSION_CONFIG);
+    expect(day13.contextSummary).toContain('recovery');
+  });
+
+  it('injects recovery tasks as required (shown with core, not bonus)', () => {
+    const { planner } = makePlanner();
+    const state = healthyState();
+    // 3 consecutive missed days (Day 5, 6, 7) → recovery mode.
+    for (const d of [5, 6, 7]) state.taskLogs[isoFromDay(d)] = {};
+    const plan = planner.buildPlan(state, '2026-01-08', DEFAULT_PROGRESSION_CONFIG);
+    const recoveryTasks = plan.tasks.filter((t) => t.reason.startsWith('recovery:'));
+    expect(recoveryTasks.length).toBeGreaterThan(0);
+    for (const t of recoveryTasks) {
+      expect(t.required).toBe(true);
+      expect(t.group).not.toBe('bonus');
+    }
+  });
+
+  it('injects recovery tasks matched to the current phase', () => {
+    const { planner } = makePlanner();
+    // Phase 1 (jee-core): Day 5, 6, 7 miss → recovery tasks from jee-core only.
+    const jeeState = healthyState();
+    for (const d of [5, 6, 7]) jeeState.taskLogs[isoFromDay(d)] = {};
+    const jeePlan = planner.buildPlan(jeeState, isoFromDay(8), DEFAULT_PROGRESSION_CONFIG);
+    const jeeRecovery = jeePlan.tasks.filter((t) => t.reason.startsWith('recovery:'));
+    expect(jeeRecovery.length).toBeGreaterThan(0);
+    for (const t of jeeRecovery) {
+      expect(t.entry.phase).toBe('jee-core');
+    }
+
+    // Phase 2 (l-mindset): Day 42, 43, 44 miss → recovery tasks from l-mindset only.
+    const lState = healthyState();
+    for (const d of [42, 43, 44]) lState.taskLogs[isoFromDay(d)] = {};
+    const lPlan = planner.buildPlan(lState, isoFromDay(45), DEFAULT_PROGRESSION_CONFIG);
+    expect(lPlan.contextSummary).toContain('recovery');
+    const lRecovery = lPlan.tasks.filter((t) => t.reason.startsWith('recovery:'));
+    expect(lRecovery.length).toBeGreaterThan(0);
+    for (const t of lRecovery) {
+      expect(t.entry.phase).toBe('l-mindset');
     }
   });
 
   it('injects recommended tasks for weak habits without touching required set', () => {
     const { planner, bank } = makePlanner();
     const state = healthyState();
-    // Low-but-not-crashing completion yesterday (60%) → no recovery mode,
-    // but backlog signals may still inject gentle recommendations.
-    const yesterday = '2026-01-07';
-    const base = planner.stats.baseTasksForDay(7);
-    const log: Record<string, boolean> = {};
-    base.forEach((t, i) => {
-      if (i % 2 === 0) log[t.id] = true;
-    });
-    state.taskLogs[yesterday] = log;
+    // Earliest days completed → no 3-miss recovery streak in the background.
+    for (const d of [1, 2, 3, 4]) {
+      state.taskLogs[isoFromDay(d)] = completeLogFor(planner, d);
+    }
+    // Low-but-not-crashing completion for the last 3 days (~50%) → no recovery
+    // mode (partial days, never 3 misses), but backlog signals may still inject
+    // gentle recommendations.
+    for (const d of [5, 6, 7]) {
+      const base = planner.stats.baseTasksForDay(d);
+      const log: Record<string, boolean> = {};
+      base.forEach((t, i) => {
+        if (i % 2 === 0) log[t.id] = true;
+      });
+      state.taskLogs[isoFromDay(d)] = log;
+    }
     const plan = planner.buildPlan(state, '2026-01-08', DEFAULT_PROGRESSION_CONFIG);
+    expect(plan.contextSummary).not.toContain('recovery');
 
     const requiredIds = plan.tasks.filter((t) => t.required).map((t) => t.entry.id);
     const expectedIds = referenceCumulative(bank.getAll(), 8, '2026-01-08');

@@ -840,6 +840,7 @@ export default function ChatScreen({
                 showThinking={showThinking}
                 reveal={m.id === revealId}
                 revealSchedule={m.id === revealId ? revealScheduleRef.current : undefined}
+                scrollRef={scrollRef}
                 onRevealDone={handleRevealDone}
                 onMenu={openMenu}
                 onCopy={(msg) => void copyMessage(msg)}
@@ -1156,6 +1157,7 @@ function MessageBubble({
   showThinking,
   reveal = false,
   revealSchedule,
+  scrollRef,
   onRevealDone,
   ...actions
 }: MessageActions & {
@@ -1164,6 +1166,7 @@ function MessageBubble({
   showThinking?: boolean;
   reveal?: boolean;
   revealSchedule?: RevealSchedule | null;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
   onRevealDone?: () => void;
 }) {
   const isUser = message.role === 'user';
@@ -1227,10 +1230,19 @@ function MessageBubble({
     };
   }, [reveal, isUser, bubbleTexts.length, schedule]);
 
-  // Keep the freshly revealed message in view as its bubbles grow.
+  // Keep the freshly revealed message in view as its bubbles grow. Never use
+  // scrollIntoView here: when .chat-thread can't scroll enough (short chat),
+  // the browser falls back to scrolling the PAGE, which drags the whole
+  // topbar + composer up and down with the screen. Scroll the thread only.
   useEffect(() => {
     if (!reveal) return;
-    msgRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const thread = scrollRef.current;
+    const msg = msgRef.current;
+    if (!thread || !msg) return;
+    const threadRect = thread.getBoundingClientRect();
+    const msgRect = msg.getBoundingClientRect();
+    if (msgRect.top >= threadRect.top && msgRect.bottom <= threadRect.bottom) return;
+    thread.scrollTo({ top: msg.offsetTop - thread.offsetTop - 12, behavior: 'smooth' });
   }, [revealed, thinking, reveal]);
 
   const visibleBubbleTexts = reveal ? bubbleTexts.slice(0, revealed) : bubbleTexts;

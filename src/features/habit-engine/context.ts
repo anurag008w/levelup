@@ -191,13 +191,44 @@ function isExamMonthActive(state: AppState, dateISO: string): boolean {
   return daysLeft >= 0 && daysLeft <= 30;
 }
 
+/**
+ * Recovery mode lifecycle (user-defined spec):
+ *   - ENTER: 3 CONSECUTIVE missed days (completion < recoveryThresholdPct).
+ *   - STAY:  recovery keeps running while the user is not "back on track",
+ *     i.e. until a day reaches RECOVERY_EXIT_PCT completion. Partial days
+ *     (30–69%) break the miss streak but do NOT end recovery.
+ *   - EXIT:  the morning after a day at/above RECOVERY_EXIT_PCT.
+ *   - RE-ARM: another 3 consecutive missed days turns recovery on again.
+ */
+const RECOVERY_TRIGGER_MISS_DAYS = 3;
+const RECOVERY_EXIT_PCT = 70;
+
 function isRecoveryModeActive(state: AppState, dateISO: string, config: ProgressionConfig, deps: ContextDeps): boolean {
   if (!state.startDateISO) return false;
-  const yesterday = isoAddDays(dateISO, -1);
-  const yDayNum = rawDayNumberForDate(yesterday, state.startDateISO);
-  if (yDayNum < 1) return false;
-  const tasks = deps.stats.baseTasksForDay(yDayNum);
-  if (tasks.length === 0) return false;
-  const pct = deps.stats.completionPct(tasks, deps.stats.dayLog(state, yesterday));
-  return pct < config.recoveryThresholdPct;
+  // Scan backwards from yesterday: a recent fully-on-track day means recovery
+  // is off (and must have been off ever since — we can stop there). Otherwise
+  // count consecutive missed days; 3 of them (no on-track day in between)
+  // activate recovery for today.
+  let consecutiveMiss = 0;
+  let cursor = isoAddDays(dateISO, -1);
+  for (let i = 0; i < deps.totalDays; i++) {
+    const dNum = rawDayNumberForDate(cursor, state.startDateISO);
+    if (dNum < 1) break;
+    const tasks = deps.stats.baseTasksForDay(dNum);
+    if (tasks.length === 0) break;
+    const pct = deps.stats.completionPct(tasks, deps.stats.dayLog(state, cursor));
+    // Back on track → recovery ends. Since we scan newest-first, any newer
+    // day already failed the ≥70% check, so returning here is correct.
+    if (pct >= RECOVERY_EXIT_PCT) return false;
+    if (pct < config.recoveryThresholdPct) {
+      consecutiveMiss++;
+      if (consecutiveMiss >= RECOVERY_TRIGGER_MISS_DAYS) return true;
+    } else {
+      // Partial day: resets the miss streak but keeps recovery running if it
+      // was already active (track pe nahi aaye).
+      consecutiveMiss = 0;
+    }
+    cursor = isoAddDays(cursor, -1);
+  }
+  return false;
 }

@@ -106,7 +106,7 @@ export class HabitProgressionService {
     const existing = new Set(planned.map((p) => p.entry.id));
     const recoveryCandidates = this.deps.taskBank
       .search({ unlock: snapshot, activeOnly: true, taskTypes: ['Recovery'] })
-      .filter((t) => !existing.has(t.id) && t.unlockConditions.every((c) => c.type === 'recovery'));
+      .filter((t) => !existing.has(t.id) && t.unlockConditions.some((c) => c.type === 'recovery'));
     const ranked = rankCandidates(recoveryCandidates, {
       dayNumber: context.dayNumber,
       weakHabitIds: context.weakHabitIds,
@@ -119,7 +119,9 @@ export class HabitProgressionService {
     });
     const toAdd = ranked.slice(0, Math.min(2, config.maxInjectedTasks));
     for (const r of toAdd) {
-      planned.push(this.toPlanned(r.entry, context, 'bank', `recovery: ${r.reason}`, false, r.score));
+      // Recovery tasks stay required so they show up with the core tasks
+      // (top of the plan), not buried in the optional bonus group.
+      planned.push(this.toPlanned(r.entry, context, 'bank', `recovery: ${r.reason}`, true, r.score));
     }
   }
 

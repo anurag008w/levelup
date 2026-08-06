@@ -2153,6 +2153,10 @@
       "unlockConditions": [
         {
           "type": "recovery"
+        },
+        {
+          "type": "phase",
+          "phase": "jee-core"
         }
       ],
       "active": true
@@ -2213,6 +2217,220 @@
       "unlockConditions": [
         {
           "type": "recovery"
+        },
+        {
+          "type": "phase",
+          "phase": "jee-core"
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "ai_lm_evidence_reentry",
+      "habitId": "evidence_check",
+      "title": "Evidence reset: pichhle 3 din ke 2 proofs likho (10 min)",
+      "description": "Streak tootne par apne kaam ke 2 concrete proofs likho — mindset wapas evidence-based track pe aa jaata hai.",
+      "phase": "l-mindset",
+      "difficulty": 1,
+      "estimatedDurationMin": 10,
+      "energyLevel": "low",
+      "tags": [
+        "recovery",
+        "reentry"
+      ],
+      "prerequisites": [],
+      "taskType": "Recovery",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "reflection",
+        "analysis"
+      ],
+      "jeeRelevance": {
+        "score": 0.4
+      },
+      "unlockConditions": [
+        {
+          "type": "recovery"
+        },
+        {
+          "type": "phase",
+          "phase": "l-mindset"
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "ai_lm_system_reentry",
+      "habitId": "root_cause_5why",
+      "title": "System restart: ek recurring miss ka 5-Why (10 min)",
+      "description": "Ek baar ka miss koi baat nahi — pattern hai toh system ka issue. Ek recurring miss uthao aur 5-Why lagao.",
+      "phase": "l-mindset",
+      "difficulty": 2,
+      "estimatedDurationMin": 10,
+      "energyLevel": "low",
+      "tags": [
+        "recovery",
+        "reentry"
+      ],
+      "prerequisites": [],
+      "taskType": "Recovery",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 0.7,
+      "thinkingSkills": [
+        "analysis",
+        "systems"
+      ],
+      "jeeRelevance": {
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "recovery"
+        },
+        {
+          "type": "phase",
+          "phase": "l-mindset"
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "ai_le_priority_reentry",
+      "habitId": "priority_rank",
+      "title": "Execution re-entry: top-1 priority chuno + 25-min block (15 min)",
+      "description": "Sab kuch ek saath nahi — aaj sirf ek highest-impact task chuno aur ek focused block laga do.",
+      "phase": "light-execution",
+      "difficulty": 2,
+      "estimatedDurationMin": 15,
+      "energyLevel": "low",
+      "tags": [
+        "recovery",
+        "reentry"
+      ],
+      "prerequisites": [],
+      "taskType": "Recovery",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 0.8,
+      "thinkingSkills": [
+        "planning",
+        "focus"
+      ],
+      "jeeRelevance": {
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "recovery"
+        },
+        {
+          "type": "phase",
+          "phase": "light-execution"
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "ai_le_restart_fast",
+      "habitId": "restart_fast",
+      "title": "Fast restart: slip ke baad ek chhota win (10 min)",
+      "description": "Slip hone par 10-min ka ek achievable task karo — momentum chhote win se wapas aata hai.",
+      "phase": "light-execution",
+      "difficulty": 1,
+      "estimatedDurationMin": 10,
+      "energyLevel": "low",
+      "tags": [
+        "recovery",
+        "reentry"
+      ],
+      "prerequisites": [],
+      "taskType": "Recovery",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 0.6,
+      "thinkingSkills": [
+        "discipline",
+        "focus"
+      ],
+      "jeeRelevance": {
+        "score": 0.4
+      },
+      "unlockConditions": [
+        {
+          "type": "recovery"
+        },
+        {
+          "type": "phase",
+          "phase": "light-execution"
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "ai_pp_energy_recovery",
+      "habitId": "energy_review",
+      "title": "Recovery protocol: 5-min energy audit + sleep plan (10 min)",
+      "description": "Energy kahan gaya? Aaj ki audit karo aur kal ki neend ka plan lock karo.",
+      "phase": "peak-performance",
+      "difficulty": 1,
+      "estimatedDurationMin": 10,
+      "energyLevel": "low",
+      "tags": [
+        "recovery",
+        "reentry"
+      ],
+      "prerequisites": [],
+      "taskType": "Recovery",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "reflection",
+        "planning"
+      ],
+      "jeeRelevance": {
+        "score": 0.5
+      },
+      "unlockConditions": [
+        {
+          "type": "recovery"
+        },
+        {
+          "type": "phase",
+          "phase": "peak-performance"
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "ai_pp_pressure_reset",
+      "habitId": "pressure_review",
+      "title": "Pressure reset: 2-min breathing + ek realistic mini-goal (10 min)",
+      "description": "Pressure ko label karo, breathing se reset karo, aur ek achievable mini-goal set karo — poora system wapas chalne do.",
+      "phase": "peak-performance",
+      "difficulty": 1,
+      "estimatedDurationMin": 10,
+      "energyLevel": "low",
+      "tags": [
+        "recovery",
+        "reentry"
+      ],
+      "prerequisites": [],
+      "taskType": "Recovery",
+      "revisionSuitability": 0.2,
+      "backlogSuitability": 0.5,
+      "thinkingSkills": [
+        "discipline",
+        "reflection"
+      ],
+      "jeeRelevance": {
+        "score": 0.4
+      },
+      "unlockConditions": [
+        {
+          "type": "recovery"
+        },
+        {
+          "type": "phase",
+          "phase": "peak-performance"
         }
       ],
       "active": true

@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { Calendar, Check, Flame, Pencil, Plus, ShieldAlert, ShieldCheck, Siren, Sunrise, Sunset, Target, Timer, Trash2, X, Zap } from 'lucide-react';
+import { Calendar, Check, Flame, Pencil, Plus, ShieldCheck, Siren, Sunrise, Sunset, Target, Timer, Trash2, X, Zap } from 'lucide-react';
 import type { AppState } from '../types';
 import type { EnergyLevel, TaskBankEntry, TaskType } from '../core/domain/task-bank';
 import { PHASES } from '../data/curriculum';
@@ -68,7 +68,6 @@ export default function TodayScreen({
   const pct = plan ? planPct(plan, state) : 0;
   const doneCount = plan ? plan.tasks.filter((t) => isDone(state, t)).length : 0;
   const totalCount = plan ? plan.tasks.length : 0;
-  const recovery = context?.recoveryMode ?? false;
   const examMode = isExamMonthActive(state, today);
   const examLeft = daysUntilExam(state, today);
   const streak = context?.streak ?? 0;
@@ -272,18 +271,6 @@ export default function TodayScreen({
         <div className="card mb-4 flex items-start gap-2.5 p-3.5 text-sm text-muted">
           <SparkleIcon />
           <p>Detailed content coming soon. Keep continuing previous level habits (listed below).</p>
-        </div>
-      )}
-
-      {recovery && (
-        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-danger/40 bg-danger/10 p-3.5 fade-in">
-          <ShieldAlert size={18} color="var(--color-danger)" className="mt-0.5 shrink-0" />
-          <div>
-            <p className="font-display text-sm font-bold text-danger">Recovery Mode</p>
-            <p className="mt-0.5 text-xs leading-relaxed text-muted">
-              Kal ka completion bahut kam tha. Aaj sirf current level ke core tasks required hain — baaki bonus mein optional hain. Momentum wapas banao.
-            </p>
-          </div>
         </div>
       )}
 
