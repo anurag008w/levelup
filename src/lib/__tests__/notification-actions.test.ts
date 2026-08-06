@@ -66,23 +66,33 @@ describe('notification-actions', () => {
     expect(notifyAiReplyMock).toHaveBeenCalledWith('Misa', 'AI reply text', 's1', 3000, true);
     expect(openChat).not.toHaveBeenCalled();
     expect(chatUpdated).toHaveBeenCalled();
-    // Turant minimize (screen kam time ke liye khule) + finally mein double safety.
-    expect(minimizeAppMock).toHaveBeenCalledTimes(2);
+    // Sirf finally mein minimize — send complete hone ke BAAD. Minimize kabhi
+    // bhi send se PEHLE nahi: WebView background ho jata aur AI HTTP call
+    // resolve nahi hota (reply "Sending" pe atak jaata — the original bug).
+    expect(minimizeAppMock).toHaveBeenCalledTimes(1);
+    expect(sendMock).toHaveBeenCalledBefore(minimizeAppMock);
   });
 
-  it('uses the full reveal delay for multi-bubble replies (delayed, not instant)', async () => {
+  it('uses the same per-bubble reveal schedule as the chat for multi-bubble replies (one notification step per bubble, each delayed)', async () => {
     sendMock.mockResolvedValue({ content: 'Pehla paragraph.\n\nDusra paragraph.' });
     await handler!({ actionId: 'reply', inputValue: 'hello again', sessionId: 's1' });
     await flush();
 
-    expect(notifyAiReplyMock).toHaveBeenCalledTimes(1);
-    const [title, body, sessionId, delayMs, force] = notifyAiReplyMock.mock.calls[0];
-    expect(title).toBe('Misa');
-    expect(body).toBe('Pehla paragraph.\n\nDusra paragraph.');
-    expect(sessionId).toBe('s1');
-    // firstDelay (3000) + 3–8s gap → definitely above the single-bubble delay.
-    expect(delayMs).toBeGreaterThan(3000);
-    expect(force).toBe(true);
+    // 2 bubbles → 2 steps, bilkul ChatScreen ke normal flow jaisa:
+    // step 1 = first bubble at 3000ms, step 2 = full reply at firstDelay + gap.
+    expect(notifyAiReplyMock).toHaveBeenCalledTimes(2);
+    const first = notifyAiReplyMock.mock.calls[0];
+    const last = notifyAiReplyMock.mock.calls[1];
+    expect(first[0]).toBe('Misa');
+    expect(first[1]).toBe('Pehla paragraph.');
+    expect(first[2]).toBe('s1');
+    expect(first[3]).toBe(3000);
+    expect(first[4]).toBe(true);
+    // Last step carries the full reply, delayed beyond the single-bubble delay
+    // (firstDelay 3000 + 3–8s gap) — reply notification chat jaisi hi aati hai.
+    expect(last[1]).toBe('Pehla paragraph.\n\nDusra paragraph.');
+    expect(last[3]).toBeGreaterThan(3000);
+    expect(last[4]).toBe(true);
   });
 
   it('still minimizes and cleans up even if the reply send fails', async () => {
@@ -95,8 +105,8 @@ describe('notification-actions', () => {
 
     expect(notifyAiReplyMock).not.toHaveBeenCalled();
     expect(chatUpdated).toHaveBeenCalled();
-    // Turant minimize + finally cleanup — dono.
-    expect(minimizeAppMock).toHaveBeenCalledTimes(2);
+    // finally cleanup — minimize send fail hone par bhi hota hai.
+    expect(minimizeAppMock).toHaveBeenCalledTimes(1);
   });
 
   it('opens the chat when the user taps an "open" action', async () => {

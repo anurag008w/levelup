@@ -291,7 +291,13 @@ export async function notifyAiReply(title: string, body: string, sessionId?: str
   // setTimeout se kabhi fire nahi hogi. OS ko absolute time de do — Android
   // isse alarm ki tarah schedule karta hai aur app background/locked ho tab
   // bhi dikhata hai.
-  if (isNativePlatform() && !appActive && delayMs > 0) {
+  //
+  // `force` bhi isi path ko trigger karta hai: notification-actions.ts reply
+  // flow me send complete hote hi app minimize ho jaati hai, isliye wahan bhi
+  // JS timers fire hone ki guarantee nahi — chahe appActive is moment galat
+  // "true" hi kyu na dikhe (Activity-resume race). force = "user definitely
+  // nahi dekh raha", isliye OS-level scheduling hamesha safe hai.
+  if (isNativePlatform() && (force || !appActive) && delayMs > 0) {
     try {
       await ensureNotificationChannel();
       await LocalNotifications.schedule({
