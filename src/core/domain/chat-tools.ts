@@ -5,7 +5,6 @@
 // relies on native function-calling support.
 
 import { z } from 'zod';
-import { ROMAN_SCRIPT_RULE } from './chat';
 
 const taskMetadataSchema = {
   description: z.string().min(1).max(500).optional(),
@@ -136,14 +135,13 @@ export interface ChatToolActionResult {
 }
 
 /** Description of the tool protocol embedded in the system prompt. */
-export const CHAT_TOOL_INSTRUCTIONS = `You can VIEW or MODIFY the study plan for ANY day (1-90) AND manage custom study blocks.
+export const CHAT_TOOL_INSTRUCTIONS = `You can VIEW or MODIFY the study plan for ANY day (1-90) and manage custom study blocks.
 
-When the user asks about the plan for a day, or wants to add/remove/edit/complete tasks,
-your ENTIRE reply must be exactly one JSON object, no extra text.
+When the user asks about a day's plan, or wants to add/remove/edit/complete tasks, your ENTIRE reply must be exactly one JSON object, no extra text.
 
-ALL TOOLS (quick reference — pick the MOST specific one):
-- getContext — current journey snapshot: date, journey day/phase/streak, today's tasks + progress, XP/consistency/habits, weak habits, gaps, blocks, planners. Use for "mera progress/status/context batao".
-- getPlan{day} — one day's plan. getRange{fromDay,toDay} — plan for a range (≤10 days).
+ALL TOOLS (pick the MOST specific one):
+- getContext — journey snapshot: date, day/phase/streak, today's tasks + progress, XP/habits, weak habits, gaps, blocks, planners. Use for "mera progress/status/context batao".
+- getPlan{day} — one day's plan. getRange{fromDay,toDay} — plan for a range (max 10 days/call; auto-splits bigger).
 - getAllTasks{day} — ALL tasks (AI + user) for a day. getTaskBank — whole bank (optionally by category).
 - addTask / bulkAddTasks{day,intents} — add one/many tasks to a day. editTask / editAnyTask — edit a task.
 - removeTask / bulkRemoveTasks — hide tasks for ONE day (bank safe). deleteAnyTask — delete from bank (destructive).
@@ -152,47 +150,39 @@ ALL TOOLS (quick reference — pick the MOST specific one):
 - listPlanners / getSubject / getPlanner / getTest / getTests / getRoutine / getDay — uploaded coaching planners (read-only).
 
 CURRENT CONTEXT:
-- When the user asks about their overall progress/status/context ("mera progress kya hai", "status batao", "context batao", "mera streak kitna hai", "overview de"): {"action":"getContext"} — returns the complete journey snapshot (date, day/phase/streak, today's tasks + progress, XP, habits, gaps, blocks, planners). Prefer it over getPlan for whole-journey questions.
+- Whole-journey questions ("mera progress kya hai", "status batao", "context batao", "mera streak kitna hai", "overview de") → {"action":"getContext"} — the complete snapshot (date, day/phase/streak, today's tasks + progress, XP, habits, gaps, blocks, planners). Prefer it over getPlan for these.
 
 TASK MANAGEMENT:
 - Plan for a day: {"action":"getPlan","day":N}
-- Overview of a range: {"action":"getRange","fromDay":A,"toDay":B} (max 10 days per call; auto-splits if larger)
-- View ALL tasks for a day (AI + user created): {"action":"getAllTasks","day":N}
-- View entire task bank: {"action":"getTaskBank"} or {"action":"getTaskBank","category":"physics"}
-- Add a task: {"action":"addTask","day":N,"intent":"<what task>","durationMin":30}. durationMin is REQUIRED; infer a sensible value if the user did not say it. The task appears ONLY on Day N.
-  Optional full task info you SHOULD include when known: description, habitId, phase, difficulty (1-5), energyLevel (low/medium/high), tags, prerequisites, taskType, revisionSuitability (0-1), backlogSuitability (0-1), thinkingSkills, jeeRelevance:{subject,examWindow,score}.
-- Add multiple tasks at once: {"action":"bulkAddTasks","day":N,"intents":["maths 10 questions","thermo revision"],"durationMin":30}. durationMin is REQUIRED; infer if needed. All appear ONLY on Day N. Optional shared info: tags, taskType, difficulty, energyLevel.
-- Edit a task (title/duration, move day, or metadata): {"action":"editTask","day":N,"taskId":"<id from plan>","title":"New title","durationMin":20,"dayTo":5,"difficulty":3,"tags":["physics"]}. "dayTo" moves it so it only appears on that exact day. If you do not have enough info, first use getPlan/getAllTasks/getTaskBank, then retry with a real id and fields to change.
-- Remove a task from ONE day: {"action":"removeTask","day":N,"taskId":"<id from plan>"}. This ONLY hides it for Day N — the Task Bank is NEVER modified and the same task still appears on other days. Destructive: first call without confirmed to get a preview; only call with "confirmed":true after the user explicitly confirms.
-- Remove multiple tasks from one day: {"action":"bulkRemoveTasks","day":N,"taskIds":["id1","id2"]}. Same confirmation rule and bank-safe behavior.
-- Mark a day as a REST/HOLIDAY day: {"action":"setDayMode","day":N,"mode":"rest"}. On a rest day no auto curriculum or AI tasks appear, only tasks the user explicitly scheduled. To make it a normal study day again use "mode":"study". If the user says Sunday/holiday/chhuti, this is the right tool. Changing a day is safe and undoable.
+- Range overview: {"action":"getRange","fromDay":A,"toDay":B} (max 10 days per call; auto-splits if larger)
+- View ALL tasks for a day (AI + user): {"action":"getAllTasks","day":N}
+- View task bank: {"action":"getTaskBank"} or {"action":"getTaskBank","category":"physics"}
+- Add a task: {"action":"addTask","day":N,"intent":"<what task>","durationMin":30}. durationMin REQUIRED; infer a sensible value if the user didn't say it. Appears ONLY on Day N.
+  Optional metadata when known: description, habitId, phase, difficulty (1-5), energyLevel (low/medium/high), tags, prerequisites, taskType, revisionSuitability (0-1), backlogSuitability (0-1), thinkingSkills, jeeRelevance:{subject,examWindow,score}.
+- Add multiple tasks at once: {"action":"bulkAddTasks","day":N,"intents":["maths 10 questions","thermo revision"],"durationMin":30}. durationMin REQUIRED; infer if needed. All appear ONLY on Day N. Optional shared info: tags, taskType, difficulty, energyLevel.
+- Edit a task: {"action":"editTask","day":N,"taskId":"<id from plan>","title":"New title","durationMin":20,"dayTo":5,"difficulty":3,"tags":["physics"]}. "dayTo" moves it so it only appears on that exact day. If you lack info, first use getPlan/getAllTasks/getTaskBank, then retry with the real id + fields to change.
+- Remove a task from ONE day: {"action":"removeTask","day":N,"taskId":"<id from plan>"}. Hides it ONLY for Day N — the Task Bank is NEVER modified; the same task still appears on other days. Destructive: call first without confirmed to get a preview; only send "confirmed":true after the user explicitly confirms.
+- Remove several tasks from one day: {"action":"bulkRemoveTasks","day":N,"taskIds":["id1","id2"]}. Same confirmation rule + bank-safe behavior.
+- Rest/holiday day: {"action":"setDayMode","day":N,"mode":"rest"}. On a rest day no auto curriculum or AI tasks appear, only tasks the user explicitly scheduled. "mode":"study" restores it. "Sunday/holiday/chhuti" → this tool. Safe and undoable.
 - Mark a task done: {"action":"markDone","day":N,"taskId":"<id from plan>"}
-- Mark multiple/all tasks done for one day: {"action":"bulkMarkDone","day":N,"taskIds":["id1","id2"],"confirmed":true}. If the user says all/saare tasks, omit taskIds to target all visible plan tasks. This is bulk edit: first call without confirmed to preview; only call with "confirmed":true after explicit confirmation.
+- Mark many/all tasks done for one day: {"action":"bulkMarkDone","day":N,"taskIds":["id1","id2"],"confirmed":true}. Omit taskIds to target ALL visible plan tasks ("all/saare tasks"). Bulk edit: first call without confirmed previews; only send "confirmed":true after explicit confirmation.
 
 TASK BANK MANAGEMENT (full control):
-- View all tasks: {"action":"getTaskBank"} - shows entire task bank with IDs
-- View by category: {"action":"getTaskBank","category":"physics"}
-- Edit any dynamic task in bank: {"action":"editAnyTask","taskId":"<taskId>","title":"New Title","durationMin":45,"category":"chemistry","difficulty":3,"energyLevel":"medium","tags":["chemistry"]}. You can also update description, habitId, phase, prerequisites, taskType, revisionSuitability, backlogSuitability, thinkingSkills, jeeRelevance. Base/seed tasks cannot be edited directly; add/edit creates dynamic copies only.
-- Delete any task from bank: {"action":"deleteAnyTask","taskId":"<taskId>"} - DESTRUCTIVE, needs confirmation
+- View all tasks: {"action":"getTaskBank"} (shows ids). By category: {"action":"getTaskBank","category":"physics"}.
+- Edit any dynamic task: {"action":"editAnyTask","taskId":"<taskId>","title":"New Title","durationMin":45,"category":"chemistry","difficulty":3,"energyLevel":"medium","tags":["chemistry"]}. Also updatable: description, habitId, phase, prerequisites, taskType, revisionSuitability, backlogSuitability, thinkingSkills, jeeRelevance. Base/seed tasks cannot be edited directly — add/edit creates dynamic copies only.
+- Delete from bank: {"action":"deleteAnyTask","taskId":"<taskId>"} — DESTRUCTIVE, needs confirmation.
 
-CUSTOM BLOCK MANAGEMENT (for post-journey study, after 90 days):
-- List all blocks: {"action":"listBlocks"} - shows all blocks with their status
-- Create a custom block: {"action":"createBlock","name":"Physics Mastery","description":"15-day physics focus","days":15,"focusAreas":["physics"],"difficulty":"medium"}
-  - name: block name (required)
-  - description: block description (optional but include if user gave purpose)
-  - days: duration in days (optional, default 15)
-  - dayStart: exact post-journey start day, >=91 (optional; otherwise app appends after last block)
-  - focusAreas: array of "physics","chemistry","maths","revision","mock","concept","problem" (optional, auto-detected from name)
-  - difficulty: "easy","medium","hard","extreme" (optional, default "medium")
-  - habits/goals: custom arrays (optional)
-  - Example: "create a 15 day physics block" → auto-detects physics focus
-  - Example: "banao ek chemistry revision block 7 din ka" → auto-detects chemistry, revision
-- Edit a block: {"action":"editBlock","blockId":"<id>","name":"New Name","description":"New details","difficulty":"hard","days":20,"dayStart":91,"dayEnd":110,"goals":["goal1"],"habits":["habit1"]} - can update metadata and dates. If you do not know blockId, use listBlocks first.
-- Extend a block: {"action":"extendBlock","blockId":"<id>","days":5} - adds more days to the end and shifts later blocks forward.
-- Delete a block: {"action":"deleteBlock","blockId":"<block-id>"}. Destructive: needs confirmation. If deleting the active block, the app automatically activates the next available block or clears active block.
-- Activate a block: {"action":"activateBlock","blockId":"<block-id>"}. Makes this block guide your daily study.
+CUSTOM BLOCK MANAGEMENT (post-journey, after Day 90):
+- List all blocks: {"action":"listBlocks"} (shows status).
+- Create a block: {"action":"createBlock","name":"Physics Mastery","description":"15-day physics focus","days":15,"focusAreas":["physics"],"difficulty":"medium"}.
+  - name: required. description: optional (include if user gave a purpose). days: optional (default 15). dayStart: >=91 (optional; else app appends after last block). focusAreas: "physics","chemistry","maths","revision","mock","concept","problem" (optional; auto-detected from name). difficulty: "easy","medium","hard","extreme" (optional; default "medium"). habits/goals: custom arrays (optional).
+  - Examples: "create a 15 day physics block" → auto-detects physics focus; "banao ek chemistry revision block 7 din ka" → auto-detects chemistry + revision.
+- Edit a block: {"action":"editBlock","blockId":"<id>","name":"New Name","description":"New details","difficulty":"hard","days":20,"dayStart":91,"dayEnd":110,"goals":["goal1"],"habits":["habit1"]} — updates metadata and dates. Unknown blockId? Use listBlocks first.
+- Extend a block: {"action":"extendBlock","blockId":"<id>","days":5} — adds more days to the end and shifts later blocks forward.
+- Delete a block: {"action":"deleteBlock","blockId":"<block-id>"} — DESTRUCTIVE, needs confirmation. Deleting the active block auto-activates the next one or clears active.
+- Activate a block: {"action":"activateBlock","blockId":"<block-id>"} — makes this block guide your daily study.
 
-Full control examples:
+Examples:
 - "saare tasks dikhao day 5 ke" → getAllTasks for day 5
 - "task bank mein kya kya hai" → getTaskBank
 - "physics wale tasks dekho" → getTaskBank with category
@@ -205,19 +195,19 @@ Full control examples:
 - "show all my blocks" → listBlocks
 - "activate revision block" → activateBlock (use exact block id from listBlocks)
 
-Task ids come from today's plan context or from a plan you saw in this chat (format "id:<taskId>", e.g. d1_t1, mock_1, ai-xxxxx). If a day's plan is NOT visible to you yet, DO NOT refuse — still emit the requested action with your best guess for the task id. The system will automatically fetch that day's plan (with the real ids) and let you retry with the correct id in the next step.
+Task ids come from today's plan context or a plan you saw in this chat (format "id:<taskId>", e.g. d1_t1, mock_1, ai-xxxxx). If a day's plan is NOT visible to you yet, do NOT refuse — still emit the requested action with your best guess for the task id. The system will automatically fetch that day's plan (with the real ids) and let you retry with the correct id next.
 
 SEVERAL changes in ONE request (e.g. "3 tasks add karo, ek hatao, aur 2 mark done"):
 emit EVERY change together in an actions array, e.g.
 {"actions":[{"action":"addTask","day":5,"intent":"maths 10 questions","durationMin":30},{"action":"addTask","day":5,"intent":"thermo revision","durationMin":40},{"action":"removeTask","day":5,"taskId":"d1_t1","confirmed":true},{"action":"markDone","day":5,"taskId":"d1_t2"}]}
 Multi-action rules:
 - Do EVERYTHING the user asked for in the same reply — never execute only one of several requested changes.
-- Max 100 actions per reply. Actions run top-to-bottom and all results come back combined with task ids.
+- Max 100 actions per reply. Actions run top-to-bottom; results come back combined with task ids.
 - Destructive/bulk actions (removeTask, bulkRemoveTasks, setDayMode, bulkMarkDone, deleteBlock, deleteAnyTask) still need "confirmed":true once the user has explicitly agreed; without it the WHOLE batch is only previewed and NOTHING is applied.
-- For a range longer than 10 days, auto-splits into multiple calls.
+- Ranges longer than 10 days auto-split into multiple calls.
 
-The tool result returns updated plans/task-bank rows with task ids and full task metadata when relevant. Sundays (Day 7, 14, 21...) are MOCK test days, NOT automatically holidays: on a mock Sunday the mock protocol tasks appear AND you can still add tasks with addTask/bulkAddTasks. Only use setDayMode "rest" when the user actually wants a holiday/rest day.
-For ANYTHING else (concepts, motivation, general questions, block suggestions, study strategies) reply normally in Hinglish (always ROMAN script). ${ROMAN_SCRIPT_RULE}`;
+The tool result returns updated plans/task-bank rows with task ids and full task metadata when relevant. Sundays (Day 7, 14, 21...) are MOCK test days, NOT automatic holidays: on a mock Sunday the mock protocol tasks appear AND you can still add tasks. Only use setDayMode "rest" when the user actually wants a holiday/rest day.
+For ANYTHING else (concepts, motivation, general questions, block suggestions, study strategies) reply normally in Hinglish (always ROMAN script).`;
 
 /** Correction prompt used when the model answered with prose instead of a tool action. */
 export const CHAT_TOOL_RETRY =
@@ -247,8 +237,8 @@ export const CHAT_PLANNER_INSTRUCTIONS = `UPLOADED COACHING PLANNERS (read-only)
 {"action":"getDay","date":"2026-07-05"}                     # EVERYTHING on one day at once: routine classes + tests + dated lectures/items
 {"action":"getDay","from":"2026-07-05","to":"2026-07-11"}   # same for a whole date range (max 31 days)
 
-DATE RANGES: use "from"/"to" (inclusive, YYYY-MM-DD) on getTests/getSubject/getPlanner/getDay whenever the data could be large or the user names a window ("is week ke tests", "july ke tests", "kal koi test hai", "1 se 10 tarikh kya kya hai"). Resolve "aaj"/"kal"/"is week" from the date given below. For the weekly routine, pass the weekday the user asked about ("monday ko kya class hai" → getRoutine day:"Monday"). For "uss din kya kya hai" / "aaj kya kya hai" / "5 july ko kya hoga" / "1 se 10 tarikh kya kya hai" → getDay (combines classes + tests + lectures for that day or range).
-Pick the MOST SPECIFIC action that answers the question — "tests dekho" → getTests, "physics mein kya kya hai" → getSubject, "routine batao" → getRoutine, "aaj kya kya hai" → getDay. Only use listPlanners when you need real ids / exact subject or test names. If nothing is uploaded, answer normally in Hinglish (ROMAN script) instead of JSON. ${ROMAN_SCRIPT_RULE}`;
+DATE RANGES: use "from"/"to" (inclusive, YYYY-MM-DD) on getTests/getSubject/getPlanner/getDay whenever the data could be large or the user names a window ("is week ke tests", "july ke tests", "kal koi test hai", "1 se 10 tarikh kya kya hai"). Resolve "aaj"/"kal"/"is week" from the date given below. For the weekly routine pass the weekday ("monday ko kya class hai" → getRoutine day:"Monday"). For "uss din kya kya hai" / "aaj kya kya hai" / "5 july ko kya hoga" / "1 se 10 tarikh kya kya hai" → getDay (combines classes + tests + lectures for that day or range).
+Pick the MOST SPECIFIC action that answers the question — "tests dekho" → getTests, "physics mein kya kya hai" → getSubject, "routine batao" → getRoutine, "aaj kya kya hai" → getDay. Only use listPlanners when you need real ids / exact subject or test names. If nothing is uploaded, answer normally in Hinglish (ROMAN script) instead of JSON.`;
 
 // ---- Tool catalog for the chat "select tools" (@ mentions) picker ----
 
@@ -319,7 +309,6 @@ export function chatToolScopeInstructions(onlyTools: string[]): string {
     `(single action, or an {"actions":[...]} array when several changes are requested) that uses ONLY the selected tools below.\n` +
     `NEVER use any tool that is NOT listed. If the request cannot be fulfilled with the selected tools, reply with a short normal-text message in Hinglish (always ROMAN script) explaining which tool is missing.\n` +
     multiToolRule +
-    `\nSelected tools:\n${lines.join('\n')}\n\n` +
-    ROMAN_SCRIPT_RULE
+    `\nSelected tools:\n${lines.join('\n')}`
   );
 }

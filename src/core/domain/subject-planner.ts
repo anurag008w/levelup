@@ -15,7 +15,6 @@
 // hai", "AITS-1 mein kya aayega" and "monday ko kya class hai" with real data.
 
 import { z } from 'zod';
-import { ROMAN_SCRIPT_RULE } from './chat';
 
 // ===== Domain types =====
 
@@ -357,7 +356,7 @@ RULES:
 - Call the MOST SPECIFIC action that answers the question directly: "tests dekho" → getTests; "physics mein kya kya hai" → getSubject; "routine batao" → getRoutine; "JEE Main-1 ka syllabus" → getTest; "uss din kya kya hai" / "aaj kya kya hai" / "5 july ko kya hoga" → getDay (it combines classes + tests + lectures for that day). Only call listPlanners when you do NOT know the exact subject name / planner id / test name.
 - Use these tools when the user asks about their uploaded planners/syllabus/subjects/tests/routine (e.g. "physics mein kya kya hai", "kaunsa test kab hai", "tests dekho", "AITS-1 mein kya aayega", "test ka syllabus batao", "is month ke tests batao", "routine batao", "monday ko kya class hai", "aaj kya kya hai", "kal kya hoga").
 - If the user asks about the daily study plan (Day 1-90 tasks) or task management, do NOT use these tools.
-- If nothing is uploaded yet or the question is not about uploaded planners, reply with a short normal Hinglish (ROMAN script) message instead of JSON. ${ROMAN_SCRIPT_RULE}`;
+- If nothing is uploaded yet or the question is not about uploaded planners, reply with a short normal Hinglish (ROMAN script) message instead of JSON.`;
 
 /** Correction prompt used when a planner query got a prose/task-tool reply. */
 export const PLANNER_TOOL_RETRY =
