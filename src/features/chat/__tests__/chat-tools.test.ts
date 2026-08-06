@@ -369,13 +369,17 @@ describe('ChatToolsService', () => {
   it('setDayMode rest empties the plan and study restores it', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    const rest = await tools.run({ action: 'setDayMode', day: 2, mode: 'rest' });
+    const preview = await tools.run({ action: 'setDayMode', day: 2, mode: 'rest' });
+    expect(preview.ok).toBe(false);
+    expect(preview.requiresConfirmation).toBe(true);
+    expect(store.get().restDays).toEqual([]);
+    const rest = await tools.run({ action: 'setDayMode', day: 2, mode: 'rest', confirmed: true });
     expect(rest.ok).toBe(true);
     expect(store.get().restDays).toEqual([2]);
     const restPlan = await tools.run({ action: 'getPlan', day: 2 });
     expect(restPlan.summary).toContain('REST DAY');
     expect(restPlan.summary).not.toContain('id:d');
-    const study = await tools.run({ action: 'setDayMode', day: 2, mode: 'study' });
+    const study = await tools.run({ action: 'setDayMode', day: 2, mode: 'study', confirmed: true });
     expect(study.ok).toBe(true);
     expect(store.get().restDays).toEqual([]);
     const studyPlan = await tools.run({ action: 'getPlan', day: 2 });
@@ -789,6 +793,8 @@ describe('ChatToolsService', () => {
     expect(tools.contextActionFor('day 5 ka summary batao')).toBeNull();
     expect(tools.contextActionFor('aaj ka plan kya hai')).toBeNull();
     expect(tools.contextActionFor('physics revision samjhao')).toBeNull();
+    expect(tools.contextActionFor('progress mat dikhao')).toBeNull();
+    expect(tools.contextActionFor('status nahi batao')).toBeNull();
     expect(tools.contextActionFor('')).toBeNull();
   });
 

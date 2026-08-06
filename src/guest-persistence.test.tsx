@@ -46,3 +46,54 @@ describe('guest mode persistence', () => {
     await waitFor(() => expect(screen.getByText(/Skip — offline mode me chalein/i)).toBeTruthy());
   });
 });
+
+describe('account isolation', () => {
+  beforeEach(() => {
+    cleanup();
+    localStorage.clear();
+    vi.stubGlobal('scrollTo', () => {});
+    container.store.save(emptyAppState());
+    container.chat.replaceStore([]);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('entering guest mode after an account wipes that account local data', async () => {
+    // An account (alice) previously used this device and left data behind.
+    localStorage.setItem('levelup.data-owner', 'alice');
+    const s = emptyAppState();
+    s.startDateISO = '2026-01-01';
+    container.store.save(s);
+    container.chat.createSession('alice ka chat');
+
+    render(React.createElement(App));
+    await waitFor(() => expect(screen.getByText(/Skip — offline mode me chalein/i)).toBeTruthy());
+
+    fireEvent.click(screen.getByText(/Skip — offline mode me chalein/i));
+    await waitFor(() => expect(screen.queryByText(/Skip — offline mode me chalein/i)).toBeNull());
+
+    // alice's state + chat must not be visible to the guest.
+    expect(container.store.get().startDateISO).toBeNull();
+    expect(container.chat.listSessions()).toHaveLength(0);
+    expect(localStorage.getItem('levelup.data-owner')).toBe('guest');
+  });
+
+  it('guest mode preserves its own local data across guest sessions', async () => {
+    localStorage.setItem('levelup.data-owner', 'guest');
+    const s = emptyAppState();
+    s.startDateISO = '2026-01-01';
+    container.store.save(s);
+    container.chat.createSession('guest ka chat');
+
+    render(React.createElement(App));
+    await waitFor(() => expect(screen.getByText(/Skip — offline mode me chalein/i)).toBeTruthy());
+
+    fireEvent.click(screen.getByText(/Skip — offline mode me chalein/i));
+    await waitFor(() => expect(screen.queryByText(/Skip — offline mode me chalein/i)).toBeNull());
+
+    expect(container.store.get().startDateISO).toBe('2026-01-01');
+    expect(container.chat.listSessions()).toHaveLength(1);
+  });
+});

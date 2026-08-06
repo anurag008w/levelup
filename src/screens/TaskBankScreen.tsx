@@ -7,6 +7,8 @@ import { parseTaskBankEntry } from '../features/task-bank/validation';
 import { container } from '../di/container';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import { haptic } from '../lib/haptics';
+import { useMenuFocus } from '../components/useMenuFocus';
+import { MoreButton } from '../components/menu-accessibility';
 
 const ENERGY_LEVELS: EnergyLevel[] = ['low', 'medium', 'high'];
 const ENERGY_LABEL: Record<EnergyLevel, string> = { low: 'Light', medium: 'Balanced', high: 'Intense' };
@@ -30,6 +32,7 @@ export default function TaskBankScreen({ state: _state, update }: { state: AppSt
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; entry: TaskBankEntry } | null>(null);
   const holdTimer = useRef<number | null>(null);
   const firedRef = useRef(false);
+  const { menuRef } = useMenuFocus(rowMenu !== null, () => setRowMenu(null));
 
   function openRowMenu(entry: TaskBankEntry, x: number, y: number) {
     haptic(20);
@@ -332,6 +335,7 @@ export default function TaskBankScreen({ state: _state, update }: { state: AppSt
                         </div>
                       ) : (
                         <>
+                          <MoreButton label={`Open actions for ${entry.title}`} onOpen={(r) => openRowMenu(entry, r.right, r.bottom)} />
                           <div className="flex items-center gap-3">
                             <span
                               className="flex h-10 w-12 shrink-0 flex-col items-center justify-center rounded-lg font-mono leading-none"
@@ -371,7 +375,7 @@ export default function TaskBankScreen({ state: _state, update }: { state: AppSt
       {rowMenu && (
         <>
           <div className="fixed inset-0 z-[59]" onClick={() => setRowMenu(null)} aria-hidden="true" />
-          <div role="menu" className="ctx-menu" style={{ left: rowMenu.x, top: rowMenu.y }}>
+          <div ref={menuRef} role="menu" className="ctx-menu" style={{ left: rowMenu.x, top: rowMenu.y }}>
             <button
               type="button"
               role="menuitem"

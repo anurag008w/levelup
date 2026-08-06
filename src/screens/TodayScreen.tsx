@@ -17,6 +17,8 @@ import DaySwitcher from '../components/DaySwitcher';
 import { phaseAccent } from '../lib/phaseColors';
 import { parseTaskBankEntry } from '../features/task-bank/validation';
 import { haptic } from '../lib/haptics';
+import { useMenuFocus } from '../components/useMenuFocus';
+import { MoreButton } from '../components/menu-accessibility';
 
 const ENERGY_LEVELS: EnergyLevel[] = ['low', 'medium', 'high'];
 const EMPTY_FORM = { title: '', durationMin: 30, energyLevel: 'medium' as EnergyLevel, taskType: 'Beginner' as TaskType };
@@ -571,6 +573,7 @@ const TaskRow = memo(function TaskRow({
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const holdTimer = useRef<number | null>(null);
   const firedRef = useRef(false);
+  const { menuRef } = useMenuFocus(menuPos !== null, () => setMenuPos(null));
 
   function openMenu(clientX: number, clientY: number) {
     haptic(20);
@@ -635,6 +638,7 @@ const TaskRow = memo(function TaskRow({
       onPointerMove={clearHold}
       onPointerLeave={clearHold}
     >
+      <MoreButton label={`Open actions for ${task.entry.title}`} onOpen={(r) => openMenu(r.right, r.bottom)} />
       <span
         className="h-10 w-1 shrink-0 rounded-[1px] transition-colors"
         style={{ backgroundColor: done ? 'var(--color-success)' : accent, opacity: done ? 0.45 : 0.5 }}
@@ -666,7 +670,7 @@ const TaskRow = memo(function TaskRow({
       {menuPos && (
         <>
           <div className="fixed inset-0 z-[59]" onClick={() => setMenuPos(null)} aria-hidden="true" />
-          <div role="menu" className="ctx-menu" style={{ left: menuPos.x, top: menuPos.y }}>
+          <div ref={menuRef} role="menu" className="ctx-menu" style={{ left: menuPos.x, top: menuPos.y }}>
             <button
               type="button"
               role="menuitem"
