@@ -31,6 +31,10 @@ export async function deleteAllData(container: AppContainer, session: AuthSessio
   container.chat.replaceStore([]);
   container.store.save(emptyAppState());
 
+  // The wiped store now belongs to whoever stays signed in (or guest), so a
+  // later switch to a different account still triggers account isolation.
+  localStorage.setItem('levelup.data-owner', session?.username ?? 'guest');
+
   if (session) {
     container.providerSettings.configureServerAuth(ensureV1Base(session.serverUrl), session.apiKey);
     container.syncCoordinator.attach(session, { skipInitialSync: true });

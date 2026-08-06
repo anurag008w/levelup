@@ -8,6 +8,7 @@ import PermissionOnboarding from './components/PermissionOnboarding';
 import { useAppState } from './lib/useAppState';
 import { clearSession, ensureV1Base, loadSession, saveSession, type AuthSession } from './lib/auth';
 import { container } from './di/container';
+import { emptyAppState } from './core/domain/state';
 import { setupNotificationActions } from './lib/notification-actions';
 import { setChatTabActive } from './lib/notifications';
 import { getNotificationPermission } from './lib/notifications';
@@ -24,6 +25,46 @@ const UpdatesScreen = lazy(() => import('./screens/UpdatesScreen'));
 const ChatScreen = lazy(() => import('./screens/ChatScreen'));
 
 const pageSpring = { type: 'tween', duration: 0.32, ease: [0.2, 0, 0, 1] } as const;
+
+/**
+ * Which account the local data (state + chat) belongs to. 'guest' for offline
+ * mode, otherwise the account username. Kept OUTSIDE AppState so it survives
+ * state resets and never leaks into backups. Used to isolate accounts on a
+ * shared device: local data is wiped only when a DIFFERENT owner takes over,
+ * so one account's progress/chat/keys never surface for another account.
+ */
+const DATA_OWNER_KEY = 'levelup.data-owner';
+
+function readDataOwner(): string | null {
+  try {
+    return localStorage.getItem(DATA_OWNER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeDataOwner(owner: string): void {
+  try {
+    localStorage.setItem(DATA_OWNER_KEY, owner);
+  } catch {
+    /* storage blocked/full — owner tracking is best-effort */
+  }
+}
+
+/**
+ * Wipes local state + chat when a different owner starts using the device.
+ * - account A → account B, or account → guest: wipe (A's data is server-backed
+ *   and restored on A's next login via pull).
+ * - guest → account: keep (the guest's work is the same human's own work and
+ *   intentionally carries into their new account).
+ * - same account, or fresh install (null owner): keep.
+ */
+function wipeForNewOwner(previousOwner: string | null, nextOwner: string): void {
+  if (previousOwner === null || previousOwner === nextOwner) return;
+  if (previousOwner === 'guest' && nextOwner !== 'guest') return;
+  container.chat.replaceStore([]);
+  container.store.save(emptyAppState());
+}
 
 export default function App() {
   const { state, today, update, refresh, resetAll, adminUnlocked, unlockAdmin, lockAdmin, setAdminDay } = useAppState();
@@ -105,20 +146,28 @@ export default function App() {
   }
 
   function handleLoggedIn(next: AuthSession) {
+    const prevOwner = readDataOwner();
+    wipeForNewOwner(prevOwner, next.username);
+    writeDataOwner(next.username);
     saveSession(next);
     localStorage.removeItem('levelup:guest');
     setGuest(false);
     setSession(next);
     setTab('today');
+    refresh();
   }
 
   // Guest (skipped login): app runs fully offline — data stays in localStorage,
   // no server model, no sync. Server auth is disabled so nothing leaks.
   function handleGuestMode() {
     container.providerSettings.disableServerAuth();
+    const prevOwner = readDataOwner();
+    wipeForNewOwner(prevOwner, 'guest');
+    writeDataOwner('guest');
     localStorage.setItem('levelup:guest', 'true');
     setGuest(true);
     setTab('today');
+    refresh();
   }
 
   function handleLogout() {

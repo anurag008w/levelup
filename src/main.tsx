@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { Capacitor } from '@capacitor/core'
 import './index.css'
 import App from './App.tsx'
+import RootErrorBoundary from './components/RootErrorBoundary.tsx'
 
 // Web notifications ka real flow: service worker showNotification use karta hai
 // (tab band hone pe bhi kaam karta hai). Native app (Capacitor webview) me SW
@@ -17,6 +18,8 @@ if ('serviceWorker' in navigator && !Capacitor.isNativePlatform()) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <RootErrorBoundary>
+      <App />
+    </RootErrorBoundary>
   </StrictMode>,
 )

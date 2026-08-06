@@ -150,11 +150,11 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
             title="Activity Trends"
             meta={trendView === 'weekly' ? 'last 8 weeks' : monthLabel(today)}
           />
-          <div className="segment shrink-0" role="tablist" aria-label="Chart period">
-            <button type="button" role="tab" className="segment-btn" aria-pressed={trendView === 'weekly'} onClick={() => setTrendView('weekly')}>
+          <div className="segment shrink-0" role="group" aria-label="Chart period">
+            <button type="button" className="segment-btn" aria-pressed={trendView === 'weekly'} onClick={() => setTrendView('weekly')}>
               Weekly
             </button>
-            <button type="button" role="tab" className="segment-btn" aria-pressed={trendView === 'monthly'} onClick={() => setTrendView('monthly')}>
+            <button type="button" className="segment-btn" aria-pressed={trendView === 'monthly'} onClick={() => setTrendView('monthly')}>
               Monthly
             </button>
           </div>

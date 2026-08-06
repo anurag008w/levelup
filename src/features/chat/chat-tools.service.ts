@@ -29,7 +29,7 @@ ACTIONS.register({ id: 'editTask', label: 'Edit task', description: 'Override a 
 ACTIONS.register({ id: 'removeTask', label: 'Remove task from a day', description: 'Hide a task for one day only; the task bank is never modified.', entityType: 'dynamicTaskBank', permissions: ['delete'], confirmationRequired: true });
 ACTIONS.register({ id: 'markDone', label: 'Mark task done', description: 'Update completion log for one task.', entityType: 'taskLogs', permissions: ['edit'] });
 ACTIONS.register({ id: 'bulkMarkDone', label: 'Bulk mark done', description: 'Update completion logs for multiple tasks.', entityType: 'taskLogs', permissions: ['bulk-edit'], confirmationRequired: true, supportsBulk: true });
-ACTIONS.register({ id: 'setDayMode', label: 'Mark rest/study day', description: 'Mark or unmark a journey day as a rest (holiday) day.', entityType: 'restDays', permissions: ['edit'] });
+ACTIONS.register({ id: 'setDayMode', label: 'Mark rest/study day', description: 'Mark or unmark a journey day as a rest (holiday) day.', entityType: 'restDays', permissions: ['edit'], confirmationRequired: true });
 // Task Bank management
 ACTIONS.register({ id: 'editAnyTask', label: 'Edit any task', description: 'Edit any task in the task bank (title, duration, category).', entityType: 'taskBank', permissions: ['edit'] });
 ACTIONS.register({ id: 'deleteAnyTask', label: 'Delete task from bank', description: 'Permanently delete a task from the task bank.', entityType: 'taskBank', permissions: ['delete'], confirmationRequired: true });
@@ -219,6 +219,10 @@ export class ChatToolsService {
     if (!t) return null;
     const EXCLUDED = /\b(day\s*\d+|din\s*\d+|plan|schedule|routine|timetable|syllabus|test|subject|task|block|aaj|kal|parso|is week|hafta|mahina|chapter)\b/;
     if (EXCLUDED.test(t)) return null;
+    // "progress mat dikhao" is a refusal, not a request for context — a naive
+    // keyword match would answer with a full overview the user asked NOT to see.
+    const NEGATION = /\b(mat|nahi|nhi|mata|na hi|don'?t|dont|not|never)\b/;
+    if (NEGATION.test(t)) return null;
     if (/\bcontext\b/.test(t)) return { action: 'getContext' };
     if (
       /\b(overview|status|progress|streak|journey|report|summary)\b/.test(t) &&

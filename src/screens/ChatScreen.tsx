@@ -32,13 +32,15 @@ import {
 import type { ChatAttachment, ChatMessage, ChatPreferences, ChatSession, ChatToolCallRecord } from '../core/domain/chat';
 import type { ChatToolMeta } from '../core/domain/chat-tools';
 import type { ArchivedConversation } from '../core/domain/chat-transcript';
-import type { ModelInfo } from '../core/domain/llm';
+import { isAbortError, type ModelInfo } from '../core/domain/llm';
 import { defaultChatPrefs, globalChatPrefsFromSettings } from '../core/domain/chat';
 import { container } from '../di/container';
 import { redoLastAiAction, undoLastAiAction } from '../core/domain/ai-actions';
 import ChatMarkdown from '../components/ChatMarkdown';
 import FileCard from '../components/FileCard';
 import FileKindBadge from '../components/FileKindBadge';
+import { useMenuFocus } from '../components/useMenuFocus';
+import { MoreButton } from '../components/menu-accessibility';
 import { fileKindOf, shortFileName } from '../lib/file-kind';
 import AddProviderForm from '../components/AddProviderForm';
 import ReadOnlyChatViewer from '../components/ReadOnlyChatViewer';
@@ -162,6 +164,12 @@ export default function ChatScreen({
   );
   const messages = active?.messages ?? [];
   const hasMessages = active !== null && messages.length > 0;
+  // Screen-reader live region: announce when a freshly generated AI reply is
+  // revealed (old chats and session switches never replay their history).
+  const [liveAnnounce, setLiveAnnounce] = useState('');
+  // A monotonically increasing suffix keeps every new reply a distinct value so
+  // the polite region re-announces even when replies arrive back-to-back.
+  const announceSeq = useRef(0);
   const aiEnabled = container.providerSettings.isAiEnabled();
   const showThinking = container.store.get().aiSettings.chat.showThinking;
   // Stable identity so the reveal effect never restarts from its callback.
@@ -169,6 +177,8 @@ export default function ChatScreen({
     // Reveal khatam — shared schedule ab waste hai, slot khaali karo.
     revealScheduleRef.current = null;
     setRevealId(null);
+    announceSeq.current += 1;
+    setLiveAnnounce(`Misa ka naya reply aaya (${announceSeq.current})`);
   }, []);
 
   // This screen stays mounted across tab switches (chatVisited), so provider
@@ -549,7 +559,12 @@ export default function ChatScreen({
     } catch (err) {
       setDraft(pendingDraft);
       setAttachments(pendingAttachments);
-      setError(err instanceof Error ? err.message : String(err));
+      if (isAbortError(err)) {
+        setNotice('Stopped');
+        setError('');
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       if (sent) revokeAttachmentUrls(pendingAttachments);
       abortRef.current = null;
@@ -757,6 +772,8 @@ export default function ChatScreen({
     });
   }
 
+  const { menuRef } = useMenuFocus(menu !== null, () => setMenu(null));
+
   return (
     <div className="chat-shell fade-up">
       {/* Top bar */}
@@ -810,6 +827,7 @@ export default function ChatScreen({
 
       {/* Conversation */}
       <main ref={scrollRef} className="chat-thread" aria-label="Messages">
+        <div role="status" className="sr-only">{liveAnnounce}</div>
         {!hasMessages && !streaming ? (
           <EmptyChat onPick={(t) => setDraft(t)} />
         ) : (
@@ -1056,6 +1074,7 @@ export default function ChatScreen({
 
       {menu && (
         <MessageMenu
+          menuRef={menuRef}
           message={menu.message}
           position={{ x: menu.x, y: menu.y }}
           isLast={menu.message.id === active?.messages[active.messages.length - 1]?.id}
@@ -1259,6 +1278,10 @@ function MessageBubble({
         }
       }}
     >
+      <MoreButton
+        label={`Open actions for message ${isUser ? 'sent' : 'received'}`}
+        onOpen={(r) => actions.onMenu({ clientX: r.right, clientY: r.bottom }, message)}
+      />
       {isUser ? (
         <div className="message-card relative rounded-3xl rounded-br-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-user">
           <UserMessageContent content={message.content} attachments={message.attachments} />
@@ -1957,6 +1980,7 @@ function MessageMenu({
   message,
   position,
   isLast,
+  menuRef,
   onClose,
   onCopy,
   onEdit,
@@ -1968,6 +1992,7 @@ function MessageMenu({
   message: ChatMessage;
   position: { x: number; y: number };
   isLast: boolean;
+  menuRef: React.RefObject<HTMLDivElement | null>;
   onClose: () => void;
   onCopy: (m: ChatMessage) => void;
   onEdit: (m: ChatMessage) => void;
@@ -1992,7 +2017,7 @@ function MessageMenu({
   return (
     <>
       <div className="fixed inset-0 z-[59]" onClick={onClose} aria-hidden="true" />
-      <div role="menu" className="ctx-menu" style={{ left: position.x, top: position.y }}>
+      <div ref={menuRef} role="menu" className="ctx-menu" style={{ left: position.x, top: position.y }}>
         {items.map((item) => (
           <button
             key={item.label}

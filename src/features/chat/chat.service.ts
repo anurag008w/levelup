@@ -48,6 +48,19 @@ const MEMORY_FOR_PROMPT = 8;
 const MAX_TOOL_HOPS = 3;
 
 /**
+ * Canonical, order-independent identity for a tool action. The LLM may re-emit
+ * an action with its JSON keys in a different order; a naive JSON.stringify
+ * would treat the same action as a different one and re-apply it on retry.
+ */
+function actionKey(action: ChatToolAction): string {
+  const sorted: Record<string, unknown> = {};
+  for (const k of Object.keys(action).sort()) {
+    sorted[k] = (action as unknown as Record<string, unknown>)[k];
+  }
+  return JSON.stringify(sorted);
+}
+
+/**
  * Rebuild the retry batch after a rollback. The model is asked to re-emit the
  * ENTIRE original batch with only the failed actions corrected. As a safety
  * net against models that re-emit just the failed subset, the succeeded
@@ -57,11 +70,11 @@ const MAX_TOOL_HOPS = 3;
 function mergeRetryActions(original: ChatToolAction[], results: ChatToolActionResult[], next: ChatToolAction[]): ChatToolAction[] {
   const succeededKeys = new Set<string>();
   results.forEach((r, i) => {
-    if (r.ok && original[i]) succeededKeys.add(JSON.stringify(original[i]));
+    if (r.ok && original[i]) succeededKeys.add(actionKey(original[i]));
   });
-  const nextKeys = new Set(next.map((a) => JSON.stringify(a)));
+  const nextKeys = new Set(next.map((a) => actionKey(a)));
   const missingSucceeded = original.filter((a) => {
-    const key = JSON.stringify(a);
+    const key = actionKey(a);
     return succeededKeys.has(key) && !nextKeys.has(key);
   });
   return [...next, ...missingSucceeded];
