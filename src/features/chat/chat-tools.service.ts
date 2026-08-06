@@ -4,8 +4,8 @@ import type { Difficulty, EnergyLevel, JeeRelevance, PhaseId, TaskBankEntry, Tas
 import type { DailyPlan, ProgressionConfig } from '../../core/domain/progress';
 import { DEFAULT_PROGRESSION_CONFIG } from '../../core/domain/progress';
 import type { ChatToolAction, ChatToolActionResult, ChatToolResult } from '../../core/domain/chat-tools';
+import { CHAT_TOOL_CATALOG, chatToolActionSchema, chatToolBatchSchema, type ChatToolMeta } from '../../core/domain/chat-tools';
 import { AiActionRegistry, executeAiAction } from '../../core/domain/ai-actions';
-import { chatToolActionSchema, chatToolBatchSchema } from '../../core/domain/chat-tools';
 import type { HabitProgressionService } from '../habit-engine/planner';
 import type { TaskBankService } from '../task-bank/task-bank.service';
 import type { TaskGenerationService } from '../ai/task-generation.service';
@@ -20,6 +20,8 @@ import { deviceTimeZone, todayISO, type Clock } from '../../core/ports/clock';
 const MIN_DAY = 1;
 const MAX_DAY = 90;
 const MAX_RANGE_DAYS = 10;
+/** Fallback duration (minutes) when the model omits durationMin on addTask/bulkAddTasks. */
+const DEFAULT_TASK_DURATION_MIN = 45;
 
 const ACTIONS = new AiActionRegistry();
 ACTIONS.register({ id: 'addTask', label: 'Add task', description: 'Create an editable task for one plan day.', entityType: 'dynamicTaskBank', permissions: ['create'] });
@@ -149,6 +151,18 @@ export class ChatToolsService {
     return this.plannerTools ? this.plannerTools.hasPlannerData() : false;
   }
 
+  /** The full user-pickable tool set for the chat "@" tool-scope picker. */
+  listTools(): ChatToolMeta[] {
+    return CHAT_TOOL_CATALOG;
+  }
+
+  /** Picks the tools the user pinned via "@" mentions — validates ids so a
+   *  stale/unknown mention can never slip through into the decision prompt. */
+  resolveToolScope(ids: string[]): string[] {
+    const known = new Set(CHAT_TOOL_CATALOG.map((t) => t.id));
+    return [...new Set(ids)].filter((id) => known.has(id));
+  }
+
   /** Cheap heuristic: does this message plausibly ask about the plan/tasks?
    *  General concept questions ("concept samjhao", "physics kaise padhein")
    *  deliberately do NOT route to tools — only concrete plan/task/block
@@ -161,6 +175,13 @@ export class ChatToolsService {
     if (TASK_QUERY_WORDS.some((w) => t.includes(w))) return true;
     if (!t.includes('block') && !t.includes('phase')) return false;
     return BLOCK_COMMAND_WORDS.some((w) => t.includes(w));
+  }
+
+  /** True when the message is about uploaded coaching planners AND no planner
+   *  data exists — callers use this to keep the LLM hop planner-scoped even
+   *  before an import, so it never drifts to plan/task tools. */
+  isPlannerQueryOnly(text: string): boolean {
+    return this.plannerTools ? this.plannerTools.isPlannerQuery(text) : false;
   }
 
   /**
@@ -387,6 +408,7 @@ export class ChatToolsService {
         case 'getTest':
         case 'getTests':
         case 'getRoutine':
+        case 'getDay':
           return this.runPlanner(action);
       }
     } catch (err) {
@@ -669,22 +691,15 @@ export class ChatToolsService {
   private editAnyTask(state: AppState, action: Extract<ChatToolAction, { action: 'editAnyTask' }>): ChatToolResult {
     const { taskId, title, durationMin, category } = action;
     
-    // Check in dynamic task bank first
+    // Check in dynamic task bank first; base tasks are also editable via the
+    // same id-matched override that the task bank screen uses.
     const dynamicIdx = state.dynamicTaskBank.findIndex(t => t.id === taskId);
-    
-    if (dynamicIdx === -1) {
-      // Check in base task bank
-      const baseTask = this.taskBank.getById(taskId);
-      if (!baseTask) {
-        return { ok: false, retryable: true, summary: `Task "${taskId}" not found in any task bank. Pehle getTaskBank/getAllTasks se valid task id dekh lo, phir retry karo.` };
-      }
-      return { 
-        ok: false, 
-        summary: `Task "${taskId}" is a base task and cannot be edited directly. Add a custom task instead.` 
-      };
+    const baseTask = this.taskBank.getById(taskId);
+    if (dynamicIdx === -1 && !baseTask) {
+      return { ok: false, retryable: true, summary: `Task "${taskId}" not found in any task bank. Pehle getTaskBank/getAllTasks se valid task id dekh lo, phir retry karo.` };
     }
     
-    const task = state.dynamicTaskBank[dynamicIdx];
+    const task = dynamicIdx !== -1 ? state.dynamicTaskBank[dynamicIdx] : baseTask!;
     if (!hasTaskEdit(action) && !category) {
       return { ok: false, retryable: true, summary: `Task "${taskId}": edit ke liye title, durationMin, category ya metadata field chahiye. Pehle getTaskBank/getAllTasks se full info dekho, phir retry karo.` };
     }
@@ -694,11 +709,16 @@ export class ChatToolsService {
         title: title ?? task.title,
         estimatedDurationMin: durationMin ?? task.estimatedDurationMin,
         tags: category ? [category, ...task.tags.filter(t => t !== category)] : task.tags,
+        active: true,
       },
       action,
     );
     
-    const next = state.dynamicTaskBank.map((t, i) => i === dynamicIdx ? updated : t);
+    // A base task edit becomes a full override (same id) so the change is real
+    // and survives — mirroring TaskBankScreen.saveEdit.
+    const next = dynamicIdx !== -1
+      ? state.dynamicTaskBank.map((t, i) => i === dynamicIdx ? updated : t)
+      : [...state.dynamicTaskBank, updated];
     
     this.store.save({ ...state, dynamicTaskBank: next });
     
@@ -709,30 +729,37 @@ export class ChatToolsService {
     
     return {
       ok: true,
-      summary: `✅ Updated task "${updated.title}"!\n\nChanges: ${changes.join(', ')}`,
+      summary: `Updated task "${updated.title}"!\n\nChanges: ${changes.join(', ')}`,
     };
   }
 
   private deleteAnyTask(state: AppState, taskId: string, confirmed: boolean): ChatToolResult {
-    const task = state.dynamicTaskBank.find(t => t.id === taskId);
+    const dynamicIdx = state.dynamicTaskBank.findIndex(t => t.id === taskId);
+    const baseTask = this.taskBank.getById(taskId);
+    const task = dynamicIdx !== -1 ? state.dynamicTaskBank[dynamicIdx] : baseTask;
     
     if (!task) {
-      return { ok: false, retryable: true, summary: `Task "${taskId}" not found in dynamic task bank. Pehle getTaskBank se valid task id dekho, phir retry karo.` };
+      return { ok: false, retryable: true, summary: `Task "${taskId}" not found in any task bank. Pehle getTaskBank se valid task id dekho, phir retry karo.` };
     }
     
     if (!confirmed) {
       return {
         ok: false,
         requiresConfirmation: true,
-        summary: `⚠️ Delete task "${task.title}" (ID: ${taskId})?\n\nThis will permanently remove it from the task bank.\n\nSay the action again with "confirmed":true to confirm.`,
+        summary: `Delete task "${task.title}" (ID: ${taskId})?\n\nSay the action again with "confirmed":true to confirm.`,
       };
     }
     
-    const next = state.dynamicTaskBank.filter(t => t.id !== taskId);
+    // Custom tasks are removed outright; base tasks are hidden with an
+    // active:false override (seed never mutates) — same as TaskBankScreen.deleteTask.
+    const next = dynamicIdx !== -1
+      ? state.dynamicTaskBank.filter(t => t.id !== taskId)
+      : [...state.dynamicTaskBank, { ...task, active: false }];
     
     this.store.save({ ...state, dynamicTaskBank: next });
     
-    return { ok: true, summary: `🗑️ Deleted task "${task.title}".` };
+    const note = dynamicIdx === -1 ? ' (hidden from plans; seed task protected)' : '';
+    return { ok: true, summary: `Deleted task "${task.title}".${note}` };
   }
 
   private detectFocusAreas(text: string): string[] {
@@ -825,6 +852,9 @@ export class ChatToolsService {
   private async addTask(state: AppState, action: Extract<ChatToolAction, { action: 'addTask' }>): Promise<ChatToolResult> {
     const d = clamp(action.day);
     if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
+    // durationMin is optional in the schema — default it here so a model that
+    // omits the field still gets a real task instead of a rejected action.
+    const durationMin = action.durationMin ?? DEFAULT_TASK_DURATION_MIN;
     const existingTitles = this.dayTaskTitles(state, d);
     if (existingTitles.has(normalizeTaskTitle(action.intent))) {
       return {
@@ -837,14 +867,14 @@ export class ChatToolsService {
       const result = await this.taskGeneration.generate(state, {
         intent: action.intent,
         dayNumber: d,
-        durationMin: action.durationMin,
+        durationMin,
       });
       entry = applyTaskMetadata(
         result.source === 'bank' ? cloneBankTask(result.entry, d) : scheduleForDay(result.entry, d),
         action,
       );
     } catch {
-      entry = createLocalTask(action.intent, d, action.durationMin, action);
+      entry = createLocalTask(action.intent, d, durationMin, action);
     }
     if (existingTitles.has(normalizeTaskTitle(entry.title))) {
       return {
@@ -875,6 +905,7 @@ export class ChatToolsService {
   private async bulkAddTasks(state: AppState, action: Extract<ChatToolAction, { action: 'bulkAddTasks' }>): Promise<ChatToolResult> {
     const d = clamp(action.day);
     if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
+    const durationMin = action.durationMin ?? DEFAULT_TASK_DURATION_MIN;
     const existingTitles = this.dayTaskTitles(state, d);
     const added: TaskBankEntry[] = [];
     const failed: string[] = [];
@@ -890,7 +921,7 @@ export class ChatToolsService {
         const result = await this.taskGeneration.generate(state, {
           intent,
           dayNumber: d,
-          durationMin: action.durationMin,
+          durationMin,
         });
         const entry = applyTaskMetadata(
           result.source === 'bank' ? cloneBankTask(result.entry, d) : scheduleForDay(result.entry, d),
@@ -905,7 +936,7 @@ export class ChatToolsService {
       } catch {
         // Provider/model failure must not make a user-visible add fail. Keep
         // the batch moving with a deterministic local task.
-        added.push(createLocalTask(intent, d, action.durationMin, action));
+        added.push(createLocalTask(intent, d, durationMin, action));
         existingTitles.add(normalizeTaskTitle(intent));
         failed.push(intent);
       }
@@ -940,6 +971,7 @@ export class ChatToolsService {
   }
 
   private bulkRemoveTasks(state: AppState, day: number, taskIds: string[] | undefined, confirmed = false): ChatToolResult {
+    if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
     const d = clamp(day);
     const plan = this.planForDay(state, d);
     const visible = new Map(plan.tasks.map((item) => [item.entry.id, item.entry]));
@@ -973,6 +1005,7 @@ export class ChatToolsService {
   }
 
   private removeTask(state: AppState, day: number, taskId: string, confirmed = false): ChatToolResult {
+    if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
     const d = clamp(day);
     const plan = this.planForDay(state, d);
     const planned = plan.tasks.find((t) => t.entry.id === taskId);
@@ -1029,6 +1062,7 @@ export class ChatToolsService {
 
   private editTask(state: AppState, action: Extract<ChatToolAction, { action: 'editTask' }>): ChatToolResult {
     const d = clamp(action.day);
+    if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
     const dynamic = state.dynamicTaskBank.find((e) => e.id === action.taskId);
     const entry = dynamic ?? this.taskBank.getById(action.taskId);
     if (!entry) return { ok: false, retryable: true, summary: `Day ${d}: task id "${action.taskId}" nahi mila.`, missingTaskIdDays: [d] };
@@ -1067,10 +1101,18 @@ export class ChatToolsService {
   }
 
   private markDone(state: AppState, day: number, taskId: string): ChatToolResult {
+    if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
     const d = clamp(day);
     const dateISO = this.dateForDay(state, d);
     const logKey = this.logKeyForTask(state, d, taskId);
-    if (!logKey) return { ok: false, retryable: true, summary: `Day ${d}: task id "${taskId}" nahi mila.`, missingTaskIdDays: [d] };
+    if (!logKey) {
+      return {
+        ok: false,
+        retryable: true,
+        summary: `Day ${d}: task id "${taskId}" is day ke plan mein nahi hai — sirf planned tasks ko done mark kiya ja sakta hai. Pehle getPlan bhejo aur planned task id use karo.`,
+        missingTaskIdDays: [d],
+      };
+    }
     const log = { ...(state.taskLogs[logKey] ?? {}) };
     log[taskId] = true;
     const nextLogs = { ...state.taskLogs, [logKey]: log };
@@ -1089,6 +1131,7 @@ export class ChatToolsService {
 
 
   private bulkMarkDone(state: AppState, day: number, taskIds: string[] | undefined, confirmed = false): ChatToolResult {
+    if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
     const d = clamp(day);
     const dateISO = this.dateForDay(state, d);
     const plan = this.planForDay(state, d);
@@ -1119,9 +1162,11 @@ export class ChatToolsService {
 
 
   private logKeyForTask(state: AppState, day: number, taskId: string): string | null {
+    // Only tasks actually on the day's plan get a completion log. An unlocked
+    // or guessed bank id that was never scheduled must NOT silently log under
+    // today's date — that would be a fake success.
     const planned = this.planForDay(state, day).tasks.find((task) => task.entry.id === taskId);
-    if (planned) return planned.logKey;
-    return this.taskBank.getById(taskId) ? this.dateForDay(state, day) : null;
+    return planned ? planned.logKey : null;
   }
 
   /** Compact after-mutation view of a day's plan so the AI can narrate results. */

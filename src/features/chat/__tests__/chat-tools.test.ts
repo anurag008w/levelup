@@ -4,6 +4,7 @@ import { emptyAppState } from '../../../core/domain/state';
 import { LEVELS, TOTAL_DAYS } from '../../../data/curriculum';
 import type { ChatRepository, StateStore, StateRepository } from '../../../core/ports/repositories';
 import type { ChatStoreState } from '../../../core/domain/chat';
+import { chatToolScopeInstructions } from '../../../core/domain/chat-tools';
 import type { LLMProvider, LLMResponse, LLMRequest, HealthCheckResult, ModelInfo, ProviderId, ContentPart } from '../../../core/domain/llm';
 import type { ProviderFactory } from '../../../infra/ai/provider-factory';
 import { buildSeed, TaskBankRepositoryImpl } from '../../task-bank/task-bank.repository';
@@ -550,6 +551,72 @@ describe('ChatToolsService', () => {
     expect(store.get().dynamicTaskBank).toHaveLength(0);
   });
 
+  it('addTask defaults the duration when the model omits durationMin', async () => {
+    const store = makeStore();
+    const { tools, taskGeneration } = makeTools(store);
+    // Force the local-fallback path so the tool itself applies the default.
+    taskGeneration.generate = async () => { throw new Error('provider down'); };
+    const result = await tools.run({ action: 'addTask', day: 3, intent: 'no duration task' });
+    expect(result.ok).toBe(true);
+    const added = store.get().dynamicTaskBank.find((e) => e.title === 'no duration task');
+    expect(added).toBeDefined();
+    expect(added?.estimatedDurationMin).toBe(45);
+  });
+
+  it('bulkAddTasks defaults the duration when the model omits durationMin', async () => {
+    const store = makeStore();
+    const { tools, taskGeneration } = makeTools(store);
+    // Force the local-fallback path so the tool itself applies the default.
+    taskGeneration.generate = async () => { throw new Error('provider down'); };
+    const result = await tools.run({ action: 'bulkAddTasks', day: 3, intents: ['no duration task'] });
+    expect(result.ok).toBe(true);
+    const added = store.get().dynamicTaskBank.find((e) => e.title === 'no duration task');
+    expect(added).toBeDefined();
+    expect(added?.estimatedDurationMin).toBe(45);
+  });
+
+  it('markDone on an unlocked-but-unscheduled bank task fails retryable instead of fake-logging', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    // d11_t1 exists in the seed bank but only unlocks at Day 11 — on Day 3 it
+    // is NOT planned. The old code logged it under Day 3 anyway (fake success);
+    // now it must fail retryable with no log written.
+    const result = await tools.run({ action: 'markDone', day: 3, taskId: 'd11_t1' });
+    expect(result.ok).toBe(false);
+    expect(result.retryable).toBe(true);
+    expect(result.missingTaskIdDays).toEqual([3]);
+    expect(store.get().taskLogs['2026-07-03']?.['d11_t1']).toBeUndefined();
+  });
+
+  it('markDone on an unknown id fails retryable and writes nothing', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const result = await tools.run({ action: 'markDone', day: 1, taskId: 'd1_nope' });
+    expect(result.ok).toBe(false);
+    expect(result.retryable).toBe(true);
+    expect(store.get().taskLogs['2026-07-01']?.['d1_nope']).toBeUndefined();
+  });
+
+  it('editAnyTask edits a base seed task via an id-matched override', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const result = await tools.run({ action: 'editAnyTask', taskId: 'd1_t1', title: 'Physics Fundamentals', durationMin: 50 });
+    expect(result.ok).toBe(true);
+    const override = store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1');
+    expect(override).toMatchObject({ title: 'Physics Fundamentals', estimatedDurationMin: 50, active: true });
+  });
+
+  it('deleteAnyTask hides a base seed task with an active:false override', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const preview = await tools.run({ action: 'deleteAnyTask', taskId: 'd1_t1' });
+    expect(preview.requiresConfirmation).toBe(true);
+    const deleted = await tools.run({ action: 'deleteAnyTask', taskId: 'd1_t1', confirmed: true });
+    expect(deleted.ok).toBe(true);
+    const override = store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1');
+    expect(override?.active).toBe(false);
+  });
+
   it('routes uploaded-planner questions to the SAME tools hop and runs getTests/getSubject/getRoutine', async () => {
     const store = makeStore();
     const stateRepo: StateRepository = { load: () => store.get(), save: (s) => store.save(s), clear: () => undefined };
@@ -641,6 +708,72 @@ describe('ChatToolsService', () => {
     // A guessed subject that is NOT in the data falls back to the LLM hop.
     expect(tools.plannerActionFor('biology mein kya kya hai', today)).toBeNull();
     expect(tools.plannerActionFor('concept samjhao', today)).toBeNull();
+  });
+
+  it('routes date-range phrasing to getDay and runs getDay/getPlanner ranges', async () => {
+    const store = makeStore();
+    const stateRepo: StateRepository = { load: () => store.get(), save: (s) => store.save(s), clear: () => undefined };
+    const taskBankRepo = new TaskBankRepositoryImpl(stateRepo, buildSeed());
+    const taskBank = new TaskBankServiceImpl(taskBankRepo);
+    const planner = new HabitProgressionService({ taskBank, habits: taskBankRepo, levels: LEVELS, totalDays: TOTAL_DAYS });
+    const taskGeneration = { generate: async () => ({ entry: null as never, source: 'ai' as const }) } as unknown as TaskGenerationService;
+
+    const plannerService = new PlannerService(store);
+    plannerService.importPlanners(
+      JSON.stringify({
+        version: 2,
+        type: 'levelup-subject-planner',
+        planners: [
+          {
+            kind: 'routine',
+            subject: 'Class Timetable',
+            title: 'Lakshya Weekly Routine',
+            routine: [{ day: 'Friday', slots: [{ time: '04:00 PM - 05:45 PM', activity: 'Physics' }] }],
+          },
+          {
+            kind: 'test',
+            subject: 'Full Test Schedule',
+            title: 'JEE 2027 Tests',
+            tests: [
+              { name: 'Short Test-1', date: '2026-07-10', testType: 'Part Test', pattern: 'JEE Advanced', syllabus: { Physics: ['Electrostatic Potential'] } },
+              { name: 'JEE Main-1', date: '2026-07-28', testType: 'Full Syllabus', pattern: 'JEE Main', syllabus: { Physics: ['Electrostatics of Conductor'] } },
+            ],
+          },
+          {
+            kind: 'subject',
+            subject: 'Maths',
+            title: 'Algebra',
+            items: [
+              { title: 'Determinants', type: 'chapter', week: 4, date: '2026-07-10' },
+              { title: 'Matrices', type: 'chapter', week: 5, date: '2026-07-13' },
+            ],
+          },
+        ],
+      }),
+    );
+    const plannerTools = new PlannerToolsService(store, plannerService);
+    const tools = new ChatToolsService(store, planner, taskBank, taskGeneration, undefined, plannerTools);
+    const today = '2026-08-05';
+
+    // Deterministic range routing — planner-scoped so the LLM hop stays clean.
+    expect(tools.plannerActionFor('aaj se 5 din mein kya kya hai', today)).toEqual({ action: 'getDay', from: '2026-08-05', to: '2026-08-09' });
+    expect(tools.plannerActionFor('1 se 10 tarikh kya kya hai', today)).toEqual({ action: 'getDay', from: '2026-08-01', to: '2026-08-10' });
+    expect(tools.plannerActionFor('1 july se 10 july kya kya hai', today)).toEqual({ action: 'getDay', from: '2026-07-01', to: '2026-07-10' });
+    expect(tools.isPlannerQueryOnly('uss din kya kya hai')).toBe(true);
+    expect(tools.isPlannerQueryOnly('concept samjhao')).toBe(false);
+
+    // getDay combines that weekday's classes + tests on the date.
+    const day = await tools.run({ action: 'getDay', date: '2026-07-10' });
+    expect(day.ok).toBe(true);
+    expect(day.summary).toContain('Short Test-1');
+    expect(day.summary).toContain('Physics');
+
+    // getPlanner range keeps only dated rows inside the window.
+    const testPlannerId = plannerService.list().find((p) => p.kind === 'test')!.id;
+    const plannerRange = await tools.run({ action: 'getPlanner', plannerId: testPlannerId, from: '2026-07-01', to: '2026-07-15' });
+    expect(plannerRange.ok).toBe(true);
+    expect(plannerRange.summary).toContain('Short Test-1');
+    expect(plannerRange.summary).not.toContain('JEE Main-1');
   });
 
   it('resolves whole-journey overview questions deterministically to getContext', () => {
@@ -1111,6 +1244,42 @@ describe('ChatService tool retry + reasoning', () => {
     expect(reply.content).toBe('Nahi ho paya.');
   });
 
+  it('error-retry re-applies the whole batch so a succeeded action is not dropped', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    await tools.run({ action: 'createBlock', name: 'Physics Block', days: 7, focusAreas: ['physics'], difficulty: 'medium' });
+    const blockId = store.get().postJourney.customPhases[0].id;
+    let calls = 0;
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => {
+        calls += 1;
+        if (calls === 1) {
+          return { text: '{"actions":[{"action":"addTask","day":3,"intent":"retry batch add","durationMin":20},{"action":"editBlock","blockId":"block-bogus","days":5}]}', model: 'a' };
+        }
+        // Re-emits the ENTIRE batch with only the failed block id corrected.
+        return { text: `{"actions":[{"action":"addTask","day":3,"intent":"retry batch add","durationMin":20},{"action":"editBlock","blockId":"${blockId}","days":5}]}`, model: 'a' };
+      },
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        req.onDelta?.('Dono ho gaye.');
+        return { text: 'Dono ho gaye.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    const reply = await chat.send(session.id, 'day 3 mein task add karo aur block ko 5 din badhao');
+    expect(calls).toBe(2);
+    expect(reply.content).toBe('Dono ho gaye.');
+    // The succeeded addTask must survive the retry rollback…
+    expect(store.get().dynamicTaskBank.some((e) => e.id === 'ai-chat-test')).toBe(true);
+    // …and the corrected editBlock must also apply (91 + 5 - 1 = 95).
+    expect(store.get().postJourney.customPhases[0].dayEnd).toBe(95);
+  });
+
   it('captures reasoning on the assistant message and forwards deltas', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
@@ -1194,7 +1363,12 @@ describe('ChatService tool retry + reasoning', () => {
     expect(tools.parseTools('ok so {"actions":[{"action":"getPlan","day":9}]} done')).toEqual([
       { action: 'getPlan', day: 9 },
     ]);
-    expect(tools.parseTools('{"actions":[{"action":"addTask","day":5,"intent":"maths"},{"action":"removeTask","day":5,"taskId":"d1_t1","confirmed":true}]}')).toEqual([]);
+    // durationMin is optional — an addTask that omits it parses and gets a
+    // sensible default at execution time instead of rejecting the whole batch.
+    expect(tools.parseTools('{"actions":[{"action":"addTask","day":5,"intent":"maths"},{"action":"removeTask","day":5,"taskId":"d1_t1","confirmed":true}]}')).toEqual([
+      { action: 'addTask', day: 5, intent: 'maths' },
+      { action: 'removeTask', day: 5, taskId: 'd1_t1', confirmed: true },
+    ]);
     expect(tools.parseTools('koi json nahi')).toEqual([]);
   });
 
@@ -1291,5 +1465,256 @@ describe('ChatService tool retry + reasoning', () => {
     const log = store.get().taskLogs['2026-07-01'];
     expect(log['d1_t1']).toBe(true);
     expect(log['d1_t2']).toBe(true);
+  });
+});
+
+describe('"@" tool scoping', () => {
+  it('listTools exposes the full user-pickable catalog with schema-safe ids', () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const catalog = tools.listTools();
+    expect(catalog.length).toBeGreaterThan(0);
+    const ids = catalog.map((t) => t.id);
+    expect(ids).toContain('addTask');
+    expect(ids).toContain('getPlan');
+    expect(ids).toContain('getDay');
+    // Every entry the picker shows must carry a human label + description.
+    for (const t of catalog) {
+      expect(t.label.length).toBeGreaterThan(0);
+      expect(t.description.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('resolveToolScope keeps only known ids and drops unknown mentions', () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    expect(tools.resolveToolScope(['getDay', 'listPlanners'])).toEqual(['getDay', 'listPlanners']);
+    expect(tools.resolveToolScope(['bogus-tool'])).toEqual([]);
+    expect(tools.resolveToolScope(['addTask', 'unknown'])).toEqual(['addTask']);
+  });
+
+  it('blocks an out-of-scope action even when the model emits it', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    // The model ignores the scope and tries addTask — the pinned set says no.
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({
+        text: 'print(addTask(day=3, intent="physics revision", durationMin=40))',
+        model: 'a',
+      }),
+      stream: async (_req: LLMRequest): Promise<LLMResponse> => ({
+        text: 'Day 3 mein physics revision add ho gaya.',
+        model: 'a',
+      }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+
+    // User pinned only the READ-ONLY planner tools via "@".
+    const reply = await chat.send(session.id, 'day 3 mein physics revision add karo', undefined, undefined, undefined, undefined, undefined, [
+      'getDay',
+    ]);
+
+    // Nothing was added — the out-of-scope action never executed.
+    expect(reply.tool).toBeUndefined();
+    expect(store.get().dynamicTaskBank.some((t) => t.id === 'ai-chat-test')).toBe(false);
+    // The tool JSON is scrubbed from the reply (leak sanitizer) — it must not
+    // reach the user as fake success either.
+    expect(reply.content).not.toContain('addTask');
+  });
+
+  it('runs a pinned context fast-path action when the query matches it', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    // "mera progress kya hai" resolves deterministically to getContext — and
+    // the user pinned getContext, so it must run WITHOUT any LLM round-trip.
+    let completeCalled = false;
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => {
+        completeCalled = true;
+        return { text: '', model: 'a' };
+      },
+      stream: async (_req: LLMRequest): Promise<LLMResponse> => ({ text: 'Day 30 tak ka progress summary', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    const reply = await chat.send(session.id, 'mera progress kya hai', undefined, undefined, undefined, undefined, undefined, ['getContext']);
+    expect(reply.tool).toBe('getContext');
+    expect(completeCalled).toBe(false);
+    expect(reply.content).toContain('Day 30');
+  });
+
+  it('skips the fast-path action when its tool is NOT pinned', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({
+        text: 'print(addTask(day=3, intent="physics revision", durationMin=40))',
+        model: 'a',
+      }),
+      stream: async (_req: LLMRequest): Promise<LLMResponse> => ({ text: 'stream', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    // "mera progress kya hai" maps to getContext — user pinned only addTask, so
+    // the fast path is skipped and the decision hop runs. The model emits
+    // addTask which IS pinned, so it executes (the scope says yes).
+    const reply = await chat.send(session.id, 'mera progress kya hai', undefined, undefined, undefined, undefined, undefined, ['addTask']);
+    expect(reply.tool).toBe('addTask');
+    expect(reply.tool).not.toBe('getContext');
+    expect(store.get().dynamicTaskBank.some((t) => t.id === 'ai-chat-test')).toBe(true);
+  });
+
+  it('runs EVERY selected tool the request needs — a combined actions array', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    // The model answers with an actions array covering BOTH pinned tools:
+    // getDay (view) first, then addTask (modify).
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({
+        text: 'print({"actions":[{"action":"getDay","date":"2026-07-31"},{"action":"addTask","day":3,"intent":"physics revision","durationMin":40}]})',
+        model: 'a',
+      }),
+      stream: async (_req: LLMRequest): Promise<LLMResponse> => ({ text: 'Dono kar diye.', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+
+    const reply = await chat.send(
+      session.id,
+      'aaj ke tasks batao aur ek revision add karo',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ['getDay', 'addTask'],
+    );
+
+    // BOTH actions ran, not just one. getDay may be out-of-range for that
+    // date (ok:false), but the important thing is it was ATTEMPTED — neither
+    // pinned tool was silently dropped for addTask.
+    expect(reply.toolCalls?.length).toBe(2);
+    const byAction = Object.fromEntries(reply.toolCalls!.map((c) => [c.action, c]));
+    expect(byAction['getDay']).toBeDefined();
+    expect(byAction['addTask']).toMatchObject({ action: 'addTask', ok: true });
+    expect(store.get().dynamicTaskBank.some((t) => t.id === 'ai-chat-test')).toBe(true);
+    expect(reply.content).toContain('Dono kar diye');
+  });
+
+  it('falls back to the deterministic fast-path action when the multi-tool model gives up', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    // "mera progress kya hai" maps deterministically to getContext. User pinned
+    // getContext + addTask (multiple tools), so the fast path is NOT taken
+    // directly — but the model fails to emit JSON, so the fast path must be
+    // the safety net instead of an error.
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({ text: '', model: 'a' }),
+      stream: async (_req: LLMRequest): Promise<LLMResponse> => ({ text: 'Day 30 tak ka progress summary', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+
+    const reply = await chat.send(session.id, 'mera progress kya hai', undefined, undefined, undefined, undefined, undefined, [
+      'getContext',
+      'addTask',
+    ]);
+
+    expect(reply.tool).toBe('getContext');
+    expect(reply.content).toContain('Day 30');
+  });
+
+  it('multi-tool scoped prompt tells the model to use every relevant selected tool', () => {
+    const instructions = chatToolScopeInstructions(['getDay', 'addTask']);
+    expect(instructions).toContain('MULTIPLE tools are selected');
+    expect(instructions).toContain('Use EVERY selected tool');
+    expect(instructions).toContain('getDay');
+    expect(instructions).toContain('addTask');
+  });
+});
+
+describe('notification reply flow', () => {
+  // Mirrors src/lib/notification-actions.ts exactly: a notification "Reply"
+  // action calls `container.chat.send(sessionId, inputValue.trim())` — 2
+  // positional args, no signal, on an EXISTING session. This must resolve
+  // (not hang on "Sending") and produce content notifyAiReply can display.
+  it('replies to an existing chat session like the notification action does', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({ text: '', model: 'a' }),
+      stream: async (_req: LLMRequest): Promise<LLMResponse> => ({ text: 'Achha, theek hai!', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+
+    // A normal in-app message first (so the session is not fresh).
+    await chat.send(session.id, 'hello, kaise ho?');
+
+    // Now the notification-style reply — send resolves with usable content.
+    const reply = await chat.send(session.id, 'thank you');
+
+    expect(reply.role).toBe('assistant');
+    expect(reply.content).toContain('theek hai');
+    // The reply is appended to the same session so it shows up in chat later.
+    const msgs = chat.listSessions().find((s) => s.id === session.id)?.messages ?? [];
+    expect(msgs.filter((m) => m.role === 'assistant').length).toBe(2);
+  });
+
+  it('notification reply to a TASK message also resolves through the tool hop', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({
+        text: 'print(addTask(day=3, intent="notification se task", durationMin=40))',
+        model: 'a',
+      }),
+      stream: async (_req: LLMRequest): Promise<LLMResponse> => ({ text: 'Day 3 mein add ho gaya.', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+
+    const reply = await chat.send(session.id, 'day 3 mein physics revision add karo');
+
+    expect(reply.tool).toBe('addTask');
+    expect(reply.content).toContain('add ho gaya');
+    // The tool really ran — so the notification summary reflects real state.
+    expect(store.get().dynamicTaskBank.some((t) => t.id === 'ai-chat-test')).toBe(true);
   });
 });

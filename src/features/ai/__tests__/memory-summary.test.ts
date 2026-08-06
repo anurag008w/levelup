@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { parseMemoryBlocks, MAX_BLOCK_LINES, shouldPinMemoryBlock } from '../../../core/domain/memory-summary';
+import {
+  parseMemoryBlocks,
+  MAX_BLOCK_LINES,
+  shouldPinMemoryBlock,
+  MEMORY_SUMMARY_INSTRUCTIONS,
+} from '../../../core/domain/memory-summary';
 
 describe('parseMemoryBlocks', () => {
   it('parses JSON blocks', () => {
@@ -52,6 +57,24 @@ describe('parseMemoryBlocks', () => {
     expect(parseMemoryBlocks('   ')).toEqual([]);
     expect(parseMemoryBlocks('no blocks here at all')).toEqual([]);
     expect(parseMemoryBlocks('{"foo":"bar"}')).toEqual([]);
+  });
+});
+
+describe('MEMORY_SUMMARY_INSTRUCTIONS', () => {
+  it('demands exact, lossless recall of student facts', () => {
+    expect(MEMORY_SUMMARY_INSTRUCTIONS).toContain('PRESERVE MEANING EXACTLY');
+    expect(MEMORY_SUMMARY_INSTRUCTIONS).toContain('must stay EXACTLY as the student wrote them');
+    expect(MEMORY_SUMMARY_INSTRUCTIONS).toContain('Never drop negations or qualifiers');
+    expect(MEMORY_SUMMARY_INSTRUCTIONS).toContain('SKIP it — never guess');
+  });
+
+  it('never lets the line-length guide override correctness', () => {
+    expect(MEMORY_SUMMARY_INSTRUCTIONS).toContain('that is a GUIDE');
+    expect(MEMORY_SUMMARY_INSTRUCTIONS).toContain('a longer accurate line is always better than a shorter wrong one');
+  });
+
+  it('still forbids repeating facts already present in prior memory', () => {
+    expect(MEMORY_SUMMARY_INSTRUCTIONS).toContain('Do NOT repeat facts already present there');
   });
 });
 

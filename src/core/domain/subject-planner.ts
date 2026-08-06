@@ -15,6 +15,7 @@
 // hai", "AITS-1 mein kya aayega" and "monday ko kya class hai" with real data.
 
 import { z } from 'zod';
+import { ROMAN_SCRIPT_RULE } from './chat';
 
 // ===== Domain types =====
 
@@ -299,7 +300,7 @@ export function normalizePlanners(raw: unknown): SubjectPlanner[] {
 export const plannerToolActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('listPlanners'), type: z.enum(['subject', 'test', 'routine']).optional() }),
   z.object({ action: z.literal('getSubject'), subject: z.string().min(1).max(60), from: z.string().max(60).optional(), to: z.string().max(60).optional() }),
-  z.object({ action: z.literal('getPlanner'), plannerId: z.string().min(1) }),
+  z.object({ action: z.literal('getPlanner'), plannerId: z.string().min(1), from: z.string().max(60).optional(), to: z.string().max(60).optional() }),
   z.object({ action: z.literal('getTest'), testName: z.string().min(1).max(160) }),
   z.object({
     action: z.literal('getTests'),
@@ -308,6 +309,12 @@ export const plannerToolActionSchema = z.discriminatedUnion('action', [
     subject: z.string().max(60).optional(),
   }),
   z.object({ action: z.literal('getRoutine'), day: z.string().max(60).optional() }),
+  z.object({
+    action: z.literal('getDay'),
+    date: z.string().max(60).optional(),
+    from: z.string().max(60).optional(),
+    to: z.string().max(60).optional(),
+  }),
 ]);
 
 export type PlannerToolAction = z.infer<typeof plannerToolActionSchema>;
@@ -341,14 +348,23 @@ Available actions (reply with exactly ONE JSON object, no prose, no markdown):
 {"action":"getTests"}                                      # ALL tests, sorted by date
 {"action":"getTests","from":"2026-07-01","to":"2026-08-15","subject":"Physics"}   # tests inside a date range, optionally for one subject
 {"action":"getRoutine","day":"Monday"}                     # weekly routine (omit day for the full week)
+{"action":"getDay","date":"2026-07-05"}                    # EVERYTHING on one day at once: that day's routine classes + tests + dated lectures/items
+{"action":"getDay","from":"2026-07-05","to":"2026-07-11"}  # same for a whole date range (max 31 days)
 
 Date filters: write dates as YYYY-MM-DD or any normal format ("July 5, 2026"). "from"/"to" are inclusive, both optional. Use them for "is month ke tests", "kal se 15 din mein kya hai", "July mein physics mein kya kya hai".
 
 RULES:
-- Call the MOST SPECIFIC action that answers the question directly: "tests dekho" → getTests; "physics mein kya kya hai" → getSubject; "routine batao" → getRoutine; "JEE Main-1 ka syllabus" → getTest. Only call listPlanners when you do NOT know the exact subject name / planner id / test name.
-- Use these tools when the user asks about their uploaded planners/syllabus/subjects/tests/routine (e.g. "physics mein kya kya hai", "kaunsa test kab hai", "tests dekho", "AITS-1 mein kya aayega", "test ka syllabus batao", "is month ke tests batao", "routine batao", "monday ko kya class hai").
+- Call the MOST SPECIFIC action that answers the question directly: "tests dekho" → getTests; "physics mein kya kya hai" → getSubject; "routine batao" → getRoutine; "JEE Main-1 ka syllabus" → getTest; "uss din kya kya hai" / "aaj kya kya hai" / "5 july ko kya hoga" → getDay (it combines classes + tests + lectures for that day). Only call listPlanners when you do NOT know the exact subject name / planner id / test name.
+- Use these tools when the user asks about their uploaded planners/syllabus/subjects/tests/routine (e.g. "physics mein kya kya hai", "kaunsa test kab hai", "tests dekho", "AITS-1 mein kya aayega", "test ka syllabus batao", "is month ke tests batao", "routine batao", "monday ko kya class hai", "aaj kya kya hai", "kal kya hoga").
 - If the user asks about the daily study plan (Day 1-90 tasks) or task management, do NOT use these tools.
-- If nothing is uploaded yet or the question is not about uploaded planners, reply with a short normal Hinglish message instead of JSON.`;
+- If nothing is uploaded yet or the question is not about uploaded planners, reply with a short normal Hinglish (ROMAN script) message instead of JSON. ${ROMAN_SCRIPT_RULE}`;
+
+/** Correction prompt used when a planner query got a prose/task-tool reply. */
+export const PLANNER_TOOL_RETRY =
+  'You just answered with normal text (or a plan/task tool), but this message was about the uploaded coaching planners and MUST be a planner tool action. ' +
+  'Do NOT refuse, do NOT explain limitations. Reply with EXACTLY one JSON planner action from the list above — ' +
+  'getDay (a date/range: "date" for one day, "from"/"to" for a range), getTests, getSubject, getRoutine, getTest, getPlanner or listPlanners. ' +
+  'Never use getPlan/getAllTasks/getTaskBank/block tools for planner questions.';
 
 /** Message → planner decision hop router. Conservative by design so concept
  *  questions and daily-plan queries never get hijacked by this hop. "study
@@ -390,6 +406,21 @@ export function isPlannerQuery(text: string): boolean {
   // "kal koi test ya class hai kya", "aaj lecture hai kya", "july mein tests",
   // "test kab hai", "aits kab hai" — schedule questions with a time reference.
   if (SCHEDULE_NOUN_PATTERN.test(t) && (RELATIVE_TIME_PATTERN.test(t) || MONTH_NAME_PATTERN.test(t) || /\bkab\b/.test(t))) return true;
+  // "uss din / <date> kya kya hai" — getDay: classes + tests + dated lectures
+  // on a day/range at once. Test-only/class-only questions are excluded so they
+  // stay on their specific tools.
+  if (
+    DAY_SUMMARY_STRONG.test(t) &&
+    (RELATIVE_TIME_PATTERN.test(t) ||
+      DATE_LITERAL_PATTERN.test(t) ||
+      MONTH_NAME_PATTERN.test(t) ||
+      /\b(uss din|us din|un din)\b/.test(t) ||
+      /\b\d{1,2}\s+(se|to|lekar|leke|tak)\s+\d{1,2}\s+(tak|lekar|leke)\b/.test(t))
+  )
+    return true;
+  if (DATE_LITERAL_PATTERN.test(t) && DAY_SUMMARY_SOFT.test(t) && !SCHEDULE_NOUN_EXCLUDE.test(t)) return true;
+  // "date wise kya kya hai" / "tarikh ke hisaab se" — date-ordered overviews.
+  if (/\b(date wise|date ke hisaab|tarikh ke hisaab|tarikh wise|date order|date-wise)\b/.test(t) && DAY_SUMMARY_SOFT.test(t)) return true;
   if (WEEKDAY_PATTERN.test(t) && ROUTINE_ANCHOR_PATTERN.test(t)) return true;
   // "kya kya subjects hai" / "sab subjects dikha" — subject list questions.
   if (/\bsubjects?\b/.test(t) && SUBJECT_VERB_PATTERN.test(t)) return true;
@@ -484,6 +515,31 @@ export function plannerActionForQuery(text: string, todayISO: string): PlannerTo
     }
   }
 
+  // 1b. Day/date + "what's happening" phrasing → getDay: the day's classes +
+  //     tests + dated lectures in ONE result ("aaj kya kya hai", "5 july ko kya
+  //     hoga", "july mein kya kya hai", "1 se 10 tarikh kya kya hai"). Test-only
+  //     and class-only questions are excluded so they keep landing on
+  //     getTests/getRoutine.
+  if (DAY_SUMMARY_STRONG.test(t)) {
+    const range = resolveDayRange(t, todayISO);
+    if (range && !SCHEDULE_NOUN_EXCLUDE.test(t) && (!PLAN_DAY_WORD.test(t) || DAY_COUNT_RANGE.test(t))) {
+      return { action: 'getDay', from: range.from, to: range.to };
+    }
+    const single = resolveDayDate(t, todayISO);
+    if (single && !SCHEDULE_NOUN_EXCLUDE.test(t) && !PLAN_DAY_WORD.test(t)) {
+      return { action: 'getDay', date: single };
+    }
+    if ((RELATIVE_TIME_PATTERN.test(t) || MONTH_NAME_PATTERN.test(t)) && !SCHEDULE_NOUN_EXCLUDE.test(t) && !PLAN_DAY_WORD.test(t)) {
+      const range = resolveTestRange(t, todayISO);
+      if (range) return { action: 'getDay', from: range.from, to: range.to };
+    }
+  }
+  // Explicit written date + a summary ask ("5 july ko kya hai") → getDay.
+  if (DATE_LITERAL_PATTERN.test(t) && DAY_SUMMARY_SOFT.test(t) && !SCHEDULE_NOUN_EXCLUDE.test(t) && !PLAN_DAY_WORD.test(t)) {
+    const single = resolveDayDate(t, todayISO);
+    if (single) return { action: 'getDay', date: single };
+  }
+
   // 2. Plain routine/timetable request (no weekday, no plan/task intent) →
   //    the full weekly routine.
   if (ROUTINE_LIST_PHRASE.test(t) && !PLAN_DAY_WORD.test(t) && !WEEKDAY_PATTERN.test(t)) {
@@ -517,6 +573,138 @@ const MONTHS: Record<string, number> = {
   oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
 };
 const WEEKDAY_PREFIX = /^(sunday|monday|tuesday|wednesday|thursday|friday|saturday),?\s+/i;
+
+// ===== getDay routing — "uss din / <date> kya kya hai" =====
+//
+// getDay answers "is date ko kya kya hai" in ONE call: the day's routine
+// classes + tests on that date + dated subject items/lectures, all grouped by
+// date. These phrases must never hijack test-only ("kal koi test hai kya"),
+// class-only ("monday ko kya class hai") or daily-plan ("aaj ka plan") queries.
+
+/** Strong "what's happening" phrasing — unambiguously a day/date summary ask. */
+const DAY_SUMMARY_STRONG = /\b(kya kya|kya-kya|kya hoga|kya hua|kya chal raha|kya kuch|kya chalega)\b/i;
+/** Softer summary ask used only when an explicit written date is present. */
+const DAY_SUMMARY_SOFT = /\b(kya|batao|batana|dikhao|dikha|dekhna|program|programme|kya hai|kya hoga)\b/i;
+/** A written calendar date ("5 July", "July 5, 2026", "2026-07-05", "05/07/2026"). */
+const DATE_LITERAL_PATTERN =
+  /\b(\d{1,2}[\s/-](january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}\/\d{4}|(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2})\b/i;
+/** Test/class-specific questions stay on getTests/getRoutine — never getDay. */
+const SCHEDULE_NOUN_EXCLUDE = /\b(test(s)?|exam(s)?|lecture(s)?|mock)\b/i;
+/** "aaj se 5 din" / "kal se 3 din" — "din" here is a day COUNT, not a plan day. */
+const DAY_COUNT_RANGE = /\b(aaj|kal|parso)\s+(se|to|lekar|leke|tak)\s+\d{1,2}\s+din\b/i;
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+
+/** Resolves a single day from aaj/kal/parso or a written date in the message. */
+function resolveDayDate(t: string, todayISO: string): string | null {
+  if (/\baaj\b/.test(t)) return todayISO;
+  if (/\bkal\b/.test(t)) return isoAddDaysUTC(todayISO, 1);
+  if (/\b(parso|parson)\b/.test(t)) return isoAddDaysUTC(todayISO, 2);
+
+  // "5 July" / "5 July 2026"
+  const dm = t.match(
+    /\b(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b[,\s]*(\d{4})?\b/i,
+  );
+  if (dm) {
+    const month = MONTHS[dm[2].toLowerCase()];
+    if (!month) return null;
+    const year = dm[3] ? Number(dm[3]) : Number(todayISO.slice(0, 4));
+    return `${year}-${pad2(month)}-${pad2(Number(dm[1]))}`;
+  }
+  // "July 5, 2026"
+  const md = t.match(
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+(\d{1,2})[,\s]+(\d{4})\b/i,
+  );
+  if (md) {
+    const month = MONTHS[md[1].toLowerCase()];
+    if (!month) return null;
+    return `${md[3]}-${pad2(month)}-${pad2(Number(md[2]))}`;
+  }
+  return normalizeDate(t);
+}
+
+/** Month name alternatives for range regexes. */
+const MONTH_ALT =
+  '(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)';
+
+/**
+ * Resolves a date RANGE from the message — "aaj se 5 din", "kal se 3 din",
+ * "1 se 10 tarikh", "1 se 10 july", "1 july se 10 july" — to an inclusive
+ * ["from","to"]. Single-day/written-date phrases return null here (they use
+ * resolveDayDate). Returns null when no range can be resolved.
+ */
+function resolveDayRange(t: string, todayISO: string): { from: string; to: string } | null {
+  // "aaj se N din" / "kal se N din" — forward windows from today/tomorrow.
+  if (/\baaj\b\s+(se|to|lekar|leke|tak)\b/.test(t) || /\bkal\b\s+(se|to|lekar|leke|tak)\b/.test(t)) {
+    const nMatch = t.match(/(\d{1,2})\s+din/);
+    const days = nMatch ? Math.min(Math.max(Number(nMatch[1]), 1), MAX_DAY_RANGE) : 1;
+    const start = /\bkal\b\s+(se|to|lekar|leke|tak)\b/.test(t) ? isoAddDaysUTC(todayISO, 1) : todayISO;
+    return { from: start, to: isoAddDaysUTC(start, days - 1) };
+  }
+
+  // "1 july se 10 july" / "1 july 2026 se 10 july 2026" — two written dates.
+  const dm = t.match(
+    new RegExp(`\\b(\\d{1,2})\\s+${MONTH_ALT}[a-z]*\\b[,\\s]*(\\d{4})?\\s+(se|to|lekar|leke|tak)\\s+(\\d{1,2})\\s+${MONTH_ALT}[a-z]*\\b[,\\s]*(\\d{4})?`, 'i'),
+  );
+  if (dm) {
+    const m1 = MONTHS[dm[2].toLowerCase()];
+    const m2 = MONTHS[dm[6].toLowerCase()];
+    if (m1 && m2) {
+      const year = dm[3] ? Number(dm[3]) : Number(todayISO.slice(0, 4));
+      const a = `${year}-${pad2(m1)}-${pad2(Number(dm[1]))}`;
+      const b = `${year}-${pad2(m2)}-${pad2(Number(dm[5]))}`;
+      return a <= b ? { from: a, to: b } : { from: b, to: a };
+    }
+  }
+
+  // "1 se 10 tarikh" / "1 se 10 july" / "1 se 10 ko" — day-of-month window
+  // (anchored by tarikh/date/ko or an explicit month so "5 se 10 baje" never hits).
+  const dom = t.match(
+    new RegExp(`\\b(\\d{1,2})\\s+(se|to|lekar|leke|tak)\\s+(\\d{1,2})(?:\\s+(tarikh|date|ko)\\b|\\s+(?:${MONTH_ALT})[a-z]*\\b)?`, 'i'),
+  );
+  if (dom) {
+    const a = Number(dom[1]);
+    const b = Number(dom[3]);
+    if (a >= 1 && a <= 31 && b >= 1 && b <= 31 && (dom[4] || dom[5])) {
+      let month: number;
+      if (dom[5]) {
+        month = MONTHS[dom[5].toLowerCase()];
+        if (!month) return null;
+      } else {
+        month = Number(todayISO.slice(5, 7));
+      }
+      const year = Number(todayISO.slice(0, 4));
+      const low = Math.min(a, b);
+      const high = Math.max(a, b);
+      return { from: `${year}-${pad2(month)}-${pad2(low)}`, to: `${year}-${pad2(month)}-${pad2(high)}` };
+    }
+  }
+
+  // "5 se 14 tak kya kya hai" — bare day-of-month window (current month).
+  // "tak/lekar/leke" + a day-summary anchor keeps clock time ("5 se 10 baje")
+  // and time-slot plans ("5 se 10 tak padhunga") out.
+  const bare = t.match(/\b(\d{1,2})\s+(se|to|lekar|leke|tak)\s+(\d{1,2})\s+(tak|lekar|leke)\b/i);
+  if (bare) {
+    const a = Number(bare[1]);
+    const b = Number(bare[3]);
+    if (a >= 1 && a <= 31 && b >= 1 && b <= 31 && !/\bbaje\b|\bghante\b|\b(am|pm)\b/i.test(t)) {
+      const month = Number(todayISO.slice(5, 7));
+      const year = Number(todayISO.slice(0, 4));
+      const low = Math.min(a, b);
+      const high = Math.max(a, b);
+      return { from: `${year}-${pad2(month)}-${pad2(low)}`, to: `${year}-${pad2(month)}-${pad2(high)}` };
+    }
+  }
+
+  // Two explicit ISO / D-M-YYYY dates "2026-07-01 se 2026-07-10".
+  const iso = t.match(/\b(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}\/\d{4})\s+(se|to|lekar|leke|tak)\s+(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}\/\d{4})\b/i);
+  if (iso) {
+    const from = normalizeDate(iso[1]);
+    const to = normalizeDate(iso[3]);
+    if (from && to) return from <= to ? { from, to } : { from: to, to: from };
+  }
+
+  return null;
+}
 
 /**
  * Parses a written date into a sortable "YYYY-MM-DD" key, or null when it can't
@@ -647,12 +835,13 @@ export function plannerToText(planner: SubjectPlanner): string {
     return [head, desc, `Weekly routine (${routine.length} days):`, routineToText(routine)].filter(Boolean).join('\n');
   }
   const lines = [head, desc, `Items (${planner.items.length}):`].filter(Boolean);
-  const sorted = [...planner.items].sort((a, b) => (a.week ?? 0) - (b.week ?? 0) || a.title.localeCompare(b.title));
+  const sorted = sortPlannerItems(planner.items);
   for (const item of sorted.slice(0, MAX_ITEMS_TEXT)) {
     const typeTag = item.type === 'topic' ? '' : ` [${item.type}]`;
     const weekTag = item.week !== undefined ? ` Week ${item.week}:` : '';
+    const dateTag = item.date ? ` 📅 ${item.date}` : '';
     const doneTag = item.done ? ' ✅ done' : '';
-    lines.push(`  -${weekTag} ${item.title}${typeTag}${doneTag}${item.details ? ` — ${item.details}` : ''}`);
+    lines.push(`  -${weekTag}${dateTag} ${item.title}${typeTag}${doneTag}${item.details ? ` — ${item.details}` : ''}`);
   }
   if (planner.items.length > MAX_ITEMS_TEXT) {
     lines.push(`  … aur ${planner.items.length - MAX_ITEMS_TEXT} items (total ${planner.items.length})`);
@@ -668,6 +857,22 @@ export function groupBySubject(planners: SubjectPlanner[]): Map<string, SubjectP
     map.set(p.subject, list);
   }
   return map;
+}
+
+/**
+ * Display order for subject items: dated items first (chronological), then
+ * undated items by week + title. Keeps a lecture schedule readable as a
+ * calendar instead of grouped by week/title.
+ */
+export function sortPlannerItems(items: PlannerItem[]): PlannerItem[] {
+  return [...items].sort((a, b) => {
+    const da = normalizeDate(a.date);
+    const db = normalizeDate(b.date);
+    if (da && db) return da.localeCompare(db) || a.title.localeCompare(b.title);
+    if (da) return -1;
+    if (db) return 1;
+    return (a.week ?? 0) - (b.week ?? 0) || a.title.localeCompare(b.title);
+  });
 }
 
 export function subjectToText(planners: SubjectPlanner[]): string {
@@ -711,6 +916,115 @@ export function routineToText(rows: { batch?: string; day: string; slots: { time
   });
   if (rows.length > MAX_ROUTINE_DAYS_TEXT) lines.push(`… aur ${rows.length - MAX_ROUTINE_DAYS_TEXT} days (total ${rows.length})`);
   return lines.join('\n\n');
+}
+
+// ===== getDay — "uss din kya kya hai" (classes + tests + lectures at once) =====
+
+const MAX_DAY_RANGE = 31;
+
+/** Weekday name ("Monday") for an ISO date. */
+export function weekdayForISO(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+}
+
+function formatISODate(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', {
+    timeZone: 'UTC',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+/**
+ * Everything scheduled on each date in [from, to], in one result:
+ * routine classes for the weekday + tests on that date + dated subject items.
+ * Dates with nothing scheduled are skipped (single-day queries still say so).
+ */
+export function dayScheduleToText(planners: SubjectPlanner[], from: string, to: string): string {
+  const dates: string[] = [];
+  let cursor = from;
+  while (cursor <= to && dates.length < MAX_DAY_RANGE) {
+    dates.push(cursor);
+    cursor = isoAddDaysUTC(cursor, 1);
+  }
+
+  const classesByWeekday = new Map<string, { batch: string; time: string; activity: string }[]>();
+  for (const p of planners) {
+    if (p.kind !== 'routine') continue;
+    for (const row of p.routine ?? []) {
+      const key = row.day.trim().toLowerCase();
+      const list = classesByWeekday.get(key) ?? [];
+      for (const slot of row.slots ?? []) list.push({ batch: p.subject, time: slot.time, activity: slot.activity });
+      classesByWeekday.set(key, list);
+    }
+  }
+
+  const testsByISO = new Map<string, PlannerTestRow[]>();
+  for (const p of planners) {
+    for (const test of p.tests ?? []) {
+      const iso = normalizeDate(test.date);
+      if (!iso) continue;
+      const list = testsByISO.get(iso) ?? [];
+      list.push(test);
+      testsByISO.set(iso, list);
+    }
+  }
+
+  const itemsByISO = new Map<string, { subject: string; title: string; type: PlannerItemType; details?: string }[]>();
+  for (const p of planners) {
+    if (p.kind !== 'subject') continue;
+    for (const item of p.items) {
+      const iso = normalizeDate(item.date);
+      if (!iso) continue;
+      const list = itemsByISO.get(iso) ?? [];
+      list.push({ subject: p.subject, title: item.title, type: item.type, details: item.details });
+      itemsByISO.set(iso, list);
+    }
+  }
+
+  const lines: string[] = [];
+  let any = false;
+  for (const d of dates) {
+    const parts: string[] = [];
+    const classes = classesByWeekday.get(weekdayForISO(d).toLowerCase()) ?? [];
+    if (classes.length > 0) {
+      parts.push(`  🏫 Classes: ${classes.map((c) => `${c.time} ${c.activity}${c.batch ? ` (${c.batch})` : ''}`).join('; ')}`);
+    }
+    for (const test of (testsByISO.get(d) ?? []).slice(0, 3)) {
+      const meta = [test.pattern, test.testType].filter(Boolean).join(' · ');
+      const syllabi = Object.entries(test.syllabus ?? {})
+        .filter(([, topics]) => topics.length > 0)
+        .map(([subject, topics]) => `${subject}: ${topics.join(', ')}`)
+        .join(' | ');
+      parts.push(`  🧪 Test: ${test.name}${meta ? ` (${meta})` : ''}${syllabi ? ` — ${syllabi}` : ''}`);
+    }
+    const items = itemsByISO.get(d) ?? [];
+    if (items.length > 0) {
+      const grouped = new Map<string, string[]>();
+      for (const item of items.slice(0, 8)) {
+        const tag = item.type === 'topic' ? '' : ` [${item.type}]`;
+        const list = grouped.get(item.subject) ?? [];
+        list.push(`${item.title}${tag}`);
+        grouped.set(item.subject, list);
+      }
+      parts.push(`  📖 ${[...grouped.entries()].map(([subject, titles]) => `${subject}: ${titles.join(', ')}`).join('; ')}`);
+    }
+    if (parts.length === 0) {
+      if (dates.length === 1) {
+        return `${formatISODate(d)} (${d}): is din koi class, test ya lecture scheduled nahi hai.`;
+      }
+      continue;
+    }
+    any = true;
+    lines.push(`${formatISODate(d)} (${d}):`);
+    lines.push(...parts);
+  }
+  if (!any) return `Is range (${from} se ${to}) mein koi class, test ya lecture schedule nahi mila.`;
+  return lines.join('\n');
 }
 
 /** Available subject names for retry suggestions: subject-kind subjects + test syllabus subjects. */

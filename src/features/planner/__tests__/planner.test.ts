@@ -512,6 +512,72 @@ describe('planner tools across kinds', () => {
     expect(none.retryable).toBe(true);
   });
 
+  it('getDay returns a whole day at once: tests + dated items + that weekday\'s classes', async () => {
+    const { tools } = setup();
+    // Sunday 5 July has the Short Test-1 and no routine classes.
+    const day = await tools.runMany(tools.parseTools('{"action":"getDay","date":"2026-07-05"}'));
+    expect(day.ok).toBe(true);
+    expect(day.summary).toContain('Short Test-1');
+    expect(day.summary).toContain('Sunday, July 5, 2026');
+    // Routine only covers MONDAY/TUESDAY, so no class lines on Sunday.
+    expect(day.summary).not.toContain('04.00 PM');
+
+    // Friday 10 July has the dated "Determinants" chapter item.
+    const fri = await tools.runMany(tools.parseTools('{"action":"getDay","date":"2026-07-10"}'));
+    expect(fri.ok).toBe(true);
+    expect(fri.summary).toContain('Determinants');
+  });
+
+  it('getDay covers a range and merges classes, tests and lectures per date', async () => {
+    const { tools } = setup();
+    const range = await tools.runMany(tools.parseTools('{"action":"getDay","from":"2026-07-05","to":"2026-07-11"}'));
+    expect(range.ok).toBe(true);
+    // Sunday 5 → Short Test-1.
+    expect(range.summary).toContain('Short Test-1');
+    // Monday 6 → routine Physics + Maths classes.
+    expect(range.summary).toContain('PHYSICS');
+    expect(range.summary).toContain('MATHEMATICS');
+    // Friday 10 → Determinants chapter.
+    expect(range.summary).toContain('Determinants');
+    // Matrices is 13 July — outside the window.
+    expect(range.summary).not.toContain('Matrices');
+  });
+
+  it('getDay says when a single day is empty and is retryable on bad input', async () => {
+    const { tools } = setup();
+    // Wednesday 8 July: no routine, no test, no dated item.
+    const empty = await tools.runMany(tools.parseTools('{"action":"getDay","date":"2026-07-08"}'));
+    expect(empty.ok).toBe(true);
+    expect(empty.summary).toContain('koi class, test ya lecture scheduled nahi');
+
+    const bad = await tools.runMany(tools.parseTools('{"action":"getDay","date":"xyz"}'));
+    expect(bad.ok).toBe(false);
+    expect(bad.retryable).toBe(true);
+    expect(bad.summary).toContain('valid date');
+
+    const inverted = await tools.runMany(tools.parseTools('{"action":"getDay","from":"2026-07-10","to":"2026-07-01"}'));
+    expect(inverted.ok).toBe(false);
+    expect(inverted.retryable).toBe(true);
+    expect(inverted.summary).toContain('range galat');
+  });
+
+  it('getPlanner filters dated items and tests by a from/to range', async () => {
+    const { tools, state } = setup();
+    const subjectId = state.subjectPlanners.find((p) => p.kind === 'subject')!.id;
+    const testId = state.subjectPlanners.find((p) => p.kind === 'test')!.id;
+
+    const subj = await tools.runMany(tools.parseTools(`{"action":"getPlanner","plannerId":"${subjectId}","from":"2026-07-01","to":"2026-07-11"}`));
+    expect(subj.ok).toBe(true);
+    expect(subj.summary).toContain('Determinants');
+    // Matrices is dated 13 July — filtered out by the window.
+    expect(subj.summary).not.toContain('Matrices');
+
+    const tests = await tools.runMany(tools.parseTools(`{"action":"getPlanner","plannerId":"${testId}","from":"2026-07-01","to":"2026-07-10"}`));
+    expect(tests.ok).toBe(true);
+    expect(tests.summary).toContain('Short Test-1');
+    expect(tests.summary).not.toContain('JEE Main-1');
+  });
+
   it('runs a 100-action mixed batch without failing and caps oversized batches', async () => {
     const { tools } = setup();
     const actions = Array.from({ length: 100 }, (_, i) =>
@@ -586,6 +652,59 @@ describe('planner routing + sync integration', () => {
     expect(isPlannerQuery('mock test ki tyari kaise kare')).toBe(false);
     expect(isPlannerQuery('test kaise diya jaye')).toBe(false);
     expect(isPlannerQuery('hello')).toBe(false);
+  });
+
+  it('routes date-range and "uss din" queries to the planner (never task tools)', () => {
+    expect(isPlannerQuery('1 se 10 tarikh kya kya hai')).toBe(true);
+    expect(isPlannerQuery('1 se 10 july kya kya hai')).toBe(true);
+    expect(isPlannerQuery('1 july se 10 july kya kya hai')).toBe(true);
+    expect(isPlannerQuery('aaj se 5 din mein kya kya hai')).toBe(true);
+    expect(isPlannerQuery('kal se 3 din kya chalega')).toBe(true);
+    expect(isPlannerQuery('5 se 14 tak kya kya hai')).toBe(true);
+    expect(isPlannerQuery('5 se 14 tak kya hoga')).toBe(true);
+    expect(isPlannerQuery('uss din kya kya hai')).toBe(true);
+    expect(isPlannerQuery('date wise kya kya hai')).toBe(true);
+    expect(isPlannerQuery('tarikh ke hisaab se batao')).toBe(true);
+
+    // Time-of-day phrasing must NOT become a date range.
+    expect(isPlannerQuery('5 se 10 baje kya kare')).toBe(false);
+    expect(isPlannerQuery('5 se 14 tak padhunga')).toBe(false);
+  });
+
+  it('deterministically maps date-range phrasing to a getDay from/to range', () => {
+    const today = '2026-08-05'; // Wednesday
+    expect(plannerActionForQuery('1 se 10 tarikh kya kya hai', today)).toEqual({
+      action: 'getDay',
+      from: '2026-08-01',
+      to: '2026-08-10',
+    });
+    expect(plannerActionForQuery('1 se 10 july kya kya hai', today)).toEqual({
+      action: 'getDay',
+      from: '2026-07-01',
+      to: '2026-07-10',
+    });
+    expect(plannerActionForQuery('1 july se 10 july kya kya hai', today)).toEqual({
+      action: 'getDay',
+      from: '2026-07-01',
+      to: '2026-07-10',
+    });
+    expect(plannerActionForQuery('aaj se 5 din mein kya kya hai', today)).toEqual({
+      action: 'getDay',
+      from: '2026-08-05',
+      to: '2026-08-09',
+    });
+    expect(plannerActionForQuery('kal se 3 din kya chalega', today)).toEqual({
+      action: 'getDay',
+      from: '2026-08-06',
+      to: '2026-08-08',
+    });
+    expect(plannerActionForQuery('5 se 14 tak kya kya hai', today)).toEqual({
+      action: 'getDay',
+      from: '2026-08-05',
+      to: '2026-08-14',
+    });
+    // Bare ranges resolve to the CURRENT month; clock-time stays a no-match.
+    expect(plannerActionForQuery('5 se 10 baje kya kare', today)).toBeNull();
   });
 
   it('deterministically maps unambiguous planner questions to the exact planner tool', () => {

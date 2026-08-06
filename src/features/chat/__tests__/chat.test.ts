@@ -1200,6 +1200,22 @@ describe('ChatService', () => {
     expect(custom.prefs.systemPrompt).toBe('Mera apna gaya persona');
   });
 
+  it('rolls the pre-script-rule persona forward so existing chats get the Roman-script rule', async () => {
+    const { chat } = buildService({});
+    // The exact compressed persona BEFORE the strict Roman-script rule existed —
+    // sessions created before this change still carry it verbatim.
+    const oldPersona =
+      'LevelUp ki study partner — cute, friendly, thodi cheesy aur curious JEE topper (PCM), khud bhi learner, kabhi superior nahi. Hinglish me warm, direct, actionable; chhote paragraphs, sirf useful, emojis nahi.\n\n' +
+      'Har baat first person me bolo (main/mujhe/mera/maine); naam sirf jab user pooche. Formulas LaTeX me: inline \\(...\\), display \\[...\\]; kabhi code fence me nahi. Chat history + attachments use karo; hidden timestamps, verbatim repeat, reference-context numbers mat dohrao. Files ka extracted text padho; na dikhe to bolo aur .txt/.md export maango. Notes/PDF/formula sheets/images → clean downloadable Markdown. Tasks sirf tool actions se; tool confirm na ho to "kar diya"/"ho gaya" mat bolo; sirf maanga hua karo. Marathi me user bole to Roman Marathi me jawab do — Hindi ke "hai/kya/aa" jaise words kabhi mix mat karo (jab tak user khud na bole).';
+    const upgraded = chat.createSession('old-script', { ...defaultChatPrefs(), systemPrompt: oldPersona, userPersona: '' });
+    expect(upgraded.prefs.systemPrompt).toBe(INTERNAL_SYSTEM_PROMPT);
+
+    // Custom personas are left untouched even if they mention the Marathi rule.
+    const customText = 'Mera apna persona — sab kuch thoda different';
+    const custom = chat.createSession('custom-script', { ...defaultChatPrefs(), systemPrompt: customText, userPersona: '' });
+    expect(custom.prefs.systemPrompt).toBe(customText);
+  });
+
   it('injects a user-added persona into the actual LLM system prompt', async () => {
     const store = makeStore({
       providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },

@@ -5,6 +5,7 @@
 // relies on native function-calling support.
 
 import { z } from 'zod';
+import { ROMAN_SCRIPT_RULE } from './chat';
 
 const taskMetadataSchema = {
   description: z.string().min(1).max(500).optional(),
@@ -24,12 +25,12 @@ const taskMetadataSchema = {
 export const chatToolActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('getPlan'), day: z.number().int() }),
   z.object({ action: z.literal('getRange'), fromDay: z.number().int(), toDay: z.number().int() }),
-  z.object({ action: z.literal('addTask'), day: z.number().int(), intent: z.string().min(1), durationMin: z.number().int().min(1).max(600), ...taskMetadataSchema }),
+  z.object({ action: z.literal('addTask'), day: z.number().int(), intent: z.string().min(1), durationMin: z.number().int().min(1).max(600).optional(), ...taskMetadataSchema }),
   z.object({
     action: z.literal('bulkAddTasks'),
     day: z.number().int(),
     intents: z.array(z.string().min(1)).min(1).max(100),
-    durationMin: z.number().int().min(1).max(600),
+    durationMin: z.number().int().min(1).max(600).optional(),
     tags: taskMetadataSchema.tags,
     taskType: taskMetadataSchema.taskType,
     difficulty: taskMetadataSchema.difficulty,
@@ -74,7 +75,7 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
   // Read-only uploaded-coaching-planner actions (subjects / tests / routine).
   z.object({ action: z.literal('listPlanners'), type: z.enum(['subject', 'test', 'routine']).optional() }),
   z.object({ action: z.literal('getSubject'), subject: z.string().min(1).max(60), from: z.string().max(60).optional(), to: z.string().max(60).optional() }),
-  z.object({ action: z.literal('getPlanner'), plannerId: z.string().min(1) }),
+  z.object({ action: z.literal('getPlanner'), plannerId: z.string().min(1), from: z.string().max(60).optional(), to: z.string().max(60).optional() }),
   z.object({ action: z.literal('getTest'), testName: z.string().min(1).max(160) }),
   z.object({
     action: z.literal('getTests'),
@@ -83,6 +84,12 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
     subject: z.string().max(60).optional(),
   }),
   z.object({ action: z.literal('getRoutine'), day: z.string().max(60).optional() }),
+  z.object({
+    action: z.literal('getDay'),
+    date: z.string().max(60).optional(),
+    from: z.string().max(60).optional(),
+    to: z.string().max(60).optional(),
+  }),
   z.object({ action: z.literal('getContext') }),
 ]);
 
@@ -142,7 +149,7 @@ ALL TOOLS (quick reference — pick the MOST specific one):
 - removeTask / bulkRemoveTasks — hide tasks for ONE day (bank safe). deleteAnyTask — delete from bank (destructive).
 - markDone / bulkMarkDone — complete tasks. setDayMode{day,mode:rest|study} — holiday toggle.
 - listBlocks / createBlock / editBlock / extendBlock / activateBlock / deleteBlock — custom study blocks.
-- listPlanners / getSubject / getPlanner / getTest / getTests / getRoutine — uploaded coaching planners (read-only).
+- listPlanners / getSubject / getPlanner / getTest / getTests / getRoutine / getDay — uploaded coaching planners (read-only).
 
 CURRENT CONTEXT:
 - When the user asks about their overall progress/status/context ("mera progress kya hai", "status batao", "context batao", "mera streak kitna hai", "overview de"): {"action":"getContext"} — returns the complete journey snapshot (date, day/phase/streak, today's tasks + progress, XP, habits, gaps, blocks, planners). Prefer it over getPlan for whole-journey questions.
@@ -210,7 +217,7 @@ Multi-action rules:
 - For a range longer than 10 days, auto-splits into multiple calls.
 
 The tool result returns updated plans/task-bank rows with task ids and full task metadata when relevant. Sundays (Day 7, 14, 21...) are MOCK test days, NOT automatically holidays: on a mock Sunday the mock protocol tasks appear AND you can still add tasks with addTask/bulkAddTasks. Only use setDayMode "rest" when the user actually wants a holiday/rest day.
-For ANYTHING else (concepts, motivation, general questions, block suggestions, study strategies) reply normally in Hinglish.`;
+For ANYTHING else (concepts, motivation, general questions, block suggestions, study strategies) reply normally in Hinglish (always ROMAN script). ${ROMAN_SCRIPT_RULE}`;
 
 /** Correction prompt used when the model answered with prose instead of a tool action. */
 export const CHAT_TOOL_RETRY =
@@ -232,10 +239,87 @@ export const CHAT_PLANNER_INSTRUCTIONS = `UPLOADED COACHING PLANNERS (read-only)
 {"action":"getSubject","subject":"Physics"}                 # a subject's planner items AND the tests covering it
 {"action":"getSubject","subject":"Physics","from":"2026-07-01","to":"2026-07-31"}  # only items/tests inside the date range
 {"action":"getPlanner","plannerId":"<id>"}                  # one planner's full content (id comes from listPlanners)
+{"action":"getPlanner","plannerId":"<id>","from":"2026-07-01","to":"2026-07-31"}  # same, only dated items/tests inside the range
 {"action":"getTest","testName":"JEE Main-1"}                # one test by name (exact or partial)
 {"action":"getTests"}                                       # ALL tests, sorted by date
 {"action":"getTests","from":"2026-07-01","to":"2026-08-15","subject":"Maths"}  # tests inside a date range, optionally one subject
 {"action":"getRoutine","day":"Monday"}                      # weekly routine (omit day for the full week)
+{"action":"getDay","date":"2026-07-05"}                     # EVERYTHING on one day at once: routine classes + tests + dated lectures/items
+{"action":"getDay","from":"2026-07-05","to":"2026-07-11"}   # same for a whole date range (max 31 days)
 
-DATE RANGES: use "from"/"to" (inclusive, YYYY-MM-DD) on getTests/getSubject whenever the data could be large or the user names a window ("is week ke tests", "july ke tests", "kal koi test hai"). Resolve "aaj"/"kal"/"is week" from the date given below. For the weekly routine, pass the weekday the user asked about ("monday ko kya class hai" → getRoutine day:"Monday").
-Pick the MOST SPECIFIC action that answers the question — "tests dekho" → getTests, "physics mein kya kya hai" → getSubject, "routine batao" → getRoutine. Only use listPlanners when you need real ids / exact subject or test names. If nothing is uploaded, answer normally in Hinglish instead of JSON.`;
+DATE RANGES: use "from"/"to" (inclusive, YYYY-MM-DD) on getTests/getSubject/getPlanner/getDay whenever the data could be large or the user names a window ("is week ke tests", "july ke tests", "kal koi test hai", "1 se 10 tarikh kya kya hai"). Resolve "aaj"/"kal"/"is week" from the date given below. For the weekly routine, pass the weekday the user asked about ("monday ko kya class hai" → getRoutine day:"Monday"). For "uss din kya kya hai" / "aaj kya kya hai" / "5 july ko kya hoga" / "1 se 10 tarikh kya kya hai" → getDay (combines classes + tests + lectures for that day or range).
+Pick the MOST SPECIFIC action that answers the question — "tests dekho" → getTests, "physics mein kya kya hai" → getSubject, "routine batao" → getRoutine, "aaj kya kya hai" → getDay. Only use listPlanners when you need real ids / exact subject or test names. If nothing is uploaded, answer normally in Hinglish (ROMAN script) instead of JSON. ${ROMAN_SCRIPT_RULE}`;
+
+// ---- Tool catalog for the chat "select tools" (@ mentions) picker ----
+
+export interface ChatToolMeta {
+  id: string;
+  label: string;
+  description: string;
+  example: string;
+  /** Destructive / bulk tools still require the user's explicit "confirmed":true. */
+  confirmationRequired?: boolean;
+  /** Read-only tools never mutate the student's plan/bank/blocks. */
+  readOnly?: boolean;
+}
+
+/** The full, user-pickable tool set — mirrors CHAT_TOOL_INSTRUCTIONS + planner tools. */
+export const CHAT_TOOL_CATALOG: ChatToolMeta[] = [
+  { id: 'getContext', label: 'Journey status', description: 'Current journey snapshot: date, day/phase/streak, today\'s tasks + progress, XP/habits, gaps, blocks, planners.', example: '{"action":"getContext"}', readOnly: true },
+  { id: 'getPlan', label: 'Day plan', description: 'One day ka plan with real task ids.', example: '{"action":"getPlan","day":3}', readOnly: true },
+  { id: 'getRange', label: 'Range overview', description: 'Plan overview for a day range (max 10 days).', example: '{"action":"getRange","fromDay":1,"toDay":7}', readOnly: true },
+  { id: 'getAllTasks', label: 'All tasks of a day', description: 'AI + user tasks for one day.', example: '{"action":"getAllTasks","day":3}', readOnly: true },
+  { id: 'getTaskBank', label: 'Task bank', description: 'Poora task bank (category filter optional).', example: '{"action":"getTaskBank","category":"physics"}', readOnly: true },
+  { id: 'addTask', label: 'Add task', description: 'Ek task add karo ek day ke plan mein (sirf usi din).', example: '{"action":"addTask","day":3,"intent":"physics revision","durationMin":40}' },
+  { id: 'bulkAddTasks', label: 'Bulk add tasks', description: 'Ek saath kai tasks add karo ek day par.', example: '{"action":"bulkAddTasks","day":3,"intents":["maths 10 questions","thermo revision"],"durationMin":30}' },
+  { id: 'editTask', label: 'Edit day task', description: 'Ek day ke planned task ka title/duration/dayTo/metadata badlo.', example: '{"action":"editTask","day":3,"taskId":"d1_t1","durationMin":25}' },
+  { id: 'editAnyTask', label: 'Edit bank task', description: 'Task bank ke kisi bhi task ko edit karo (title, duration, category, metadata).', example: '{"action":"editAnyTask","taskId":"ai-123","title":"New title","durationMin":45}' },
+  { id: 'removeTask', label: 'Remove from day', description: 'Ek task ko sirf is day se hatao (bank kabhi delete nahi hota).', example: '{"action":"removeTask","day":3,"taskId":"d1_t1"}', confirmationRequired: true },
+  { id: 'bulkRemoveTasks', label: 'Bulk remove from day', description: 'Kai tasks ko ek day se hatao.', example: '{"action":"bulkRemoveTasks","day":3,"taskIds":["d1_t1","d1_t2"]}', confirmationRequired: true },
+  { id: 'deleteAnyTask', label: 'Delete bank task', description: 'Task bank se task permanently delete karo.', example: '{"action":"deleteAnyTask","taskId":"ai-123"}', confirmationRequired: true },
+  { id: 'markDone', label: 'Mark done', description: 'Ek task ko complete mark karo.', example: '{"action":"markDone","day":3,"taskId":"d1_t1"}' },
+  { id: 'bulkMarkDone', label: 'Bulk mark done', description: 'Kai tasks ko complete mark karo.', example: '{"action":"bulkMarkDone","day":3,"taskIds":["d1_t1","d1_t2"]}', confirmationRequired: true },
+  { id: 'setDayMode', label: 'Rest/study day', description: 'Day ko rest (chhuti) ya study day banao.', example: '{"action":"setDayMode","day":3,"mode":"rest"}' },
+  { id: 'listBlocks', label: 'List blocks', description: 'Saare custom study blocks dikhao.', example: '{"action":"listBlocks"}', readOnly: true },
+  { id: 'createBlock', label: 'Create block', description: 'Custom study block banao (post-journey).', example: '{"action":"createBlock","name":"Physics Mastery","days":15,"focusAreas":["physics"],"difficulty":"medium"}' },
+  { id: 'editBlock', label: 'Edit block', description: 'Block ka naam/days/difficulty/habits badlo.', example: '{"action":"editBlock","blockId":"bk-1","days":20,"difficulty":"hard"}' },
+  { id: 'extendBlock', label: 'Extend block', description: 'Block mein extra days jodo.', example: '{"action":"extendBlock","blockId":"bk-1","days":5}' },
+  { id: 'activateBlock', label: 'Activate block', description: 'Block ko active banao.', example: '{"action":"activateBlock","blockId":"bk-1"}' },
+  { id: 'deleteBlock', label: 'Delete block', description: 'Custom block delete karo.', example: '{"action":"deleteBlock","blockId":"bk-1"}', confirmationRequired: true },
+  { id: 'listPlanners', label: 'List planners', description: 'Uploaded coaching planners dikhao.', example: '{"action":"listPlanners"}', readOnly: true },
+  { id: 'getSubject', label: 'Subject detail', description: 'Uploaded planner se subject detail (topics, chapters, tests).', example: '{"action":"getSubject","subject":"Physics"}', readOnly: true },
+  { id: 'getPlanner', label: 'Planner detail', description: 'Kisi planner ka poora structure.', example: '{"action":"getPlanner","plannerId":"<id>"}', readOnly: true },
+  { id: 'getTest', label: 'Test detail', description: 'Uploaded planner se ek test ka detail.', example: '{"action":"getTest","testName":"JEE Main-1"}', readOnly: true },
+  { id: 'getTests', label: 'Tests list', description: 'Uploaded planner se tests list (date range optional).', example: '{"action":"getTests","from":"2026-07-01","to":"2026-07-31"}', readOnly: true },
+  { id: 'getRoutine', label: 'Routine', description: 'Uploaded planner se weekly routine.', example: '{"action":"getRoutine","day":"Monday"}', readOnly: true },
+  { id: 'getDay', label: 'Day detail', description: 'Uploaded planner se ek din ka poora detail (classes + tests + lectures).', example: '{"action":"getDay","date":"2026-07-05"}', readOnly: true },
+];
+
+/**
+ * Decision-hop system prompt when the user pinned a set of tools with "@"
+ * mentions: ONLY those tools may be used this run, and the model must reply
+ * with exactly one JSON object (or an actions array) built from them.
+ */
+export function chatToolScopeInstructions(onlyTools: string[]): string {
+  const selected = CHAT_TOOL_CATALOG.filter((t) => onlyTools.includes(t.id));
+  const lines = selected.map((t) => {
+    const confirm = t.confirmationRequired ? ' [needs the user\'s "confirmed":true first]' : '';
+    const ro = t.readOnly ? ' (read-only)' : '';
+    return `- ${t.id} — ${t.description}${ro}${confirm}. Example: ${t.example}`;
+  });
+  const multiToolRule =
+    selected.length > 1
+      ? `\nMULTIPLE tools are selected. Use EVERY selected tool that the user's request touches — never run just one when the request needs several. ` +
+        `When several are needed, emit them TOGETHER in one {"actions":[...]} array: READ/view tools first (getPlan, getDay, getTests, getSubject, getTaskBank, getContext...), then MODIFY tools after them (addTask, editTask, markDone, removeTask...). ` +
+        `Example: request "aaj ke tasks batao aur ek revision add karo" with getDay+addTask selected → {"actions":[{"action":"getDay",...},{"action":"addTask",...}]}. ` +
+        `Do NOT silently drop a selected tool the request asks about.\n`
+      : '';
+  return (
+    `The user selected ONLY these tools for this run. Your ENTIRE reply must be exactly one JSON object ` +
+    `(single action, or an {"actions":[...]} array when several changes are requested) that uses ONLY the selected tools below.\n` +
+    `NEVER use any tool that is NOT listed. If the request cannot be fulfilled with the selected tools, reply with a short normal-text message in Hinglish (always ROMAN script) explaining which tool is missing.\n` +
+    multiToolRule +
+    `\nSelected tools:\n${lines.join('\n')}\n\n` +
+    ROMAN_SCRIPT_RULE
+  );
+}
