@@ -113,6 +113,21 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
+    try {
+      return await this.generateOnce(request, false);
+    } catch (err) {
+      // The endpoint may reject `{"type": "web_search"}` (Groq Gemma/Llama,
+      // OpenRouter, custom gateways). Retry once without the search tool so
+      // the user still gets a (non-search) answer instead of an error.
+      if (request.websearch && looksLikeToolError(err)) {
+        return this.generateOnce({ ...request, websearch: false }, false);
+      }
+      throw err;
+    }
+  }
+
+  /** Single non-streaming chat completion with the given websearch setting. */
+  private async generateOnce(request: LLMRequest, stream: boolean): Promise<LLMResponse> {
     // Convert ContentPart arrays to OpenAI format
     const messages = request.messages.map(msg => {
       if (typeof msg.content === 'string') return msg;
@@ -127,14 +142,20 @@ export class OpenAICompatibleProvider implements LLMProvider {
       };
     });
 
-    const body = {
+    const body: Record<string, unknown> = {
       model: request.model ?? this.config.model,
       messages,
       temperature: request.temperature ?? this.config.temperature,
       max_tokens: request.maxTokens ?? this.config.maxTokens,
-      stream: false,
+      stream,
       ...this.reasoningFields(request),
     };
+    // Native web search tool (OpenAI-style). Endpoints that support it —
+    // OpenAI, some OpenRouter models, the SmartRotator gateway, Groq's
+    // compound systems — run a live search and ground the answer. Endpoints
+    // that don't support it reject the request; the caller retries without
+    // the tool (graceful degradation, the model just answers from training).
+    if (request.websearch) body.tools = [{ type: 'web_search' }];
     const res = await this.http.requestJson<OpenAICompletionResponse>(
       {
         url: `${this.requireBaseUrl()}/chat/completions`,
@@ -165,6 +186,20 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   async stream(request: LLMRequest): Promise<LLMResponse> {
+    try {
+      return await this.streamOnce(request);
+    } catch (err) {
+      // Same graceful fallback as complete(): some endpoints reject the
+      // web_search tool — retry once without it before surfacing the error.
+      if (request.websearch && looksLikeToolError(err)) {
+        return this.streamOnce({ ...request, websearch: false });
+      }
+      throw err;
+    }
+  }
+
+  /** Single streaming chat completion (falls back to non-stream on empty SSE). */
+  private async streamOnce(request: LLMRequest): Promise<LLMResponse> {
     // Convert ContentPart arrays to OpenAI format
     const messages = request.messages.map(msg => {
       if (typeof msg.content === 'string') return msg;
@@ -179,7 +214,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       };
     });
 
-    const body = {
+    const body: Record<string, unknown> = {
       model: request.model ?? this.config.model,
       messages,
       temperature: request.temperature ?? this.config.temperature,
@@ -187,6 +222,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       stream: true,
       ...this.reasoningFields(request),
     };
+    if (request.websearch) body.tools = [{ type: 'web_search' }];
     let full = '';
     let reasoning = '';
     const onData = (payload: string) => {
@@ -309,6 +345,16 @@ function extractReasoning(message: OpenAIResponseMessage | undefined): string {
     : typeof message.reasoning === 'string'
       ? message.reasoning
       : '';
+}
+
+/**
+ * True when an endpoint rejected the `web_search` tool — typically a 400 like
+ * "Unknown type: web_search" / "invalid tool" / "not supported". The caller
+ * then retries once without the tool so non-search answers still work.
+ */
+function looksLikeToolError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /web.?search|not supported|does not support|invalid argument|unknown type/i.test(message);
 }
 
 interface OpenAIModelsList {

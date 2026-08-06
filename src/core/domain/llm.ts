@@ -60,6 +60,15 @@ export interface LLMRequest {
   thinking?: ThinkingLevel;
   /** External abort signal (chat stop button). */
   signal?: AbortSignal;
+  /**
+   * Enable live web search for this request. Provider-specific: Gemini maps
+   * this to the native `googleSearchRetrieval` tool (Google Search grounding,
+   * zero extra key) and gracefully retries without it when the model doesn't
+   * support the tool; other providers ignore the flag. The model decides when
+   * fresh/current information is actually needed — raw search results are
+   * never shown to the user, only the model's synthesized answer.
+   */
+  websearch?: boolean;
 }
 
 export interface LLMUsage {
