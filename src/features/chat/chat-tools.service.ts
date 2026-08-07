@@ -27,13 +27,7 @@ const ACTIONS = new AiActionRegistry();
 ACTIONS.register({ id: 'addTask', label: 'Add task', description: 'Create an editable task for one plan day.', entityType: 'dynamicTaskBank', permissions: ['create'] });
 ACTIONS.register({ id: 'editTask', label: 'Edit task', description: 'Override a built-in or dynamic task.', entityType: 'dynamicTaskBank', permissions: ['edit'] });
 ACTIONS.register({ id: 'removeTask', label: 'Remove task from a day', description: 'Hide a task for one day only; the task bank is never modified.', entityType: 'dynamicTaskBank', permissions: ['delete'], confirmationRequired: true });
-// Registered separately from 'removeTask' (even though the handler reuses that
-// metadata for the actual executeAiAction call) so runMany()'s upfront batch
-// preview — which looks actions up by their OWN id — catches bulkRemoveTasks
-// before running anything else in a mixed batch. Without this entry the id
-// lookup returns undefined and the whole-batch confirmation gate silently
-// skips it, letting earlier actions in the same batch apply first.
-ACTIONS.register({ id: 'bulkRemoveTasks', label: 'Bulk remove from a day', description: 'Hide multiple tasks for one day only; the task bank is never modified.', entityType: 'dynamicTaskBank', permissions: ['bulk-edit'], confirmationRequired: true, supportsBulk: true });
+ACTIONS.register({ id: 'bulkRemoveTasks', label: 'Bulk remove from day', description: 'Hide multiple tasks for one day only; the task bank is never modified.', entityType: 'dynamicTaskBank', permissions: ['bulk-edit'], confirmationRequired: true, supportsBulk: true });
 ACTIONS.register({ id: 'markDone', label: 'Mark task done', description: 'Update completion log for one task.', entityType: 'taskLogs', permissions: ['edit'] });
 ACTIONS.register({ id: 'bulkMarkDone', label: 'Bulk mark done', description: 'Update completion logs for multiple tasks.', entityType: 'taskLogs', permissions: ['bulk-edit'], confirmationRequired: true, supportsBulk: true });
 ACTIONS.register({ id: 'setDayMode', label: 'Mark rest/study day', description: 'Mark or unmark a journey day as a rest (holiday) day.', entityType: 'restDays', permissions: ['edit'], confirmationRequired: true });
@@ -999,7 +993,7 @@ export class ChatToolsService {
     }
     const resultAction = executeAiAction({
       state,
-      action: ACTIONS.require('removeTask'),
+      action: ACTIONS.require('bulkRemoveTasks'),
       entityId: `${this.dateForDay(state, d)}:bulk:${ids.join(',')}`,
       summary: `remove ${ids.length} task(s) from Day ${d} (bank untouched)`,
       beforeState: state.dynamicTaskBank,
