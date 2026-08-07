@@ -146,6 +146,7 @@ function buildFullState(): AppState {
     },
     aiEnabled: true,
     chat,
+    websearch: { enabled: true, providerId: 'google', model: 'gemini-2.5-flash', apiKey: 'AIza-test', baseUrl: '' },
   };
 
   // Phase task bank — dynamic (AI/user) tasks in every phase.

@@ -55,18 +55,13 @@ export function normalizeState(raw: unknown): AppState {
             ...base.aiSettings,
             ...(r.aiSettings as Partial<AppState['aiSettings']>),
             websearch: isRecord((r.aiSettings as { websearch?: unknown }).websearch)
-              ? {
-                  ...base.aiSettings.websearch,
-                  ...((r.aiSettings as { websearch: unknown }).websearch as Partial<AppState['aiSettings']['websearch']>),
-                  providerId:
-                    ((r.aiSettings as { websearch: unknown }).websearch as Partial<AppState['aiSettings']['websearch']>)
-                      .providerId === 'google' ||
-                    ((r.aiSettings as { websearch: unknown }).websearch as Partial<AppState['aiSettings']['websearch']>)
-                      .providerId === 'smartrotator'
-                      ? ((r.aiSettings as { websearch: unknown }).websearch as Partial<AppState['aiSettings']['websearch']>)
-                          .providerId
-                      : base.aiSettings.websearch.providerId,
-                }
+              ? (() => {
+                  const storedWs = (r.aiSettings as { websearch?: unknown }).websearch as Partial<AppState['aiSettings']['websearch']>;
+                  const merged = { ...base.aiSettings.websearch, ...storedWs };
+                  const rawProvider = storedWs.providerId;
+                  if (rawProvider === 'google' || rawProvider === 'smartrotator') return { ...merged, providerId: rawProvider };
+                  return { ...merged, providerId: base.aiSettings.websearch.providerId };
+                })()
               : base.aiSettings.websearch,
             chat: isRecord((r.aiSettings as { chat?: unknown }).chat)
               ? (() => {

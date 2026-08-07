@@ -52,7 +52,11 @@ const SEARCH_PROMPT =
   'Web search kar aur user ke sawal ka jawab de. Sirf search results se mile current facts use karo — dates, numbers, names, official statements. Agar results me jawab na ho to clearly bolo ki search results me nahi mila. End me "Sources:" list karo.';
 
 export class WebSearchService {
-  constructor(private readonly http: HttpClient) {}
+  private readonly http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.http = http;
+  }
 
   async search(ctx: WebSearchContext, messages: LLMMessage[], signal?: AbortSignal): Promise<WebSearchResult> {
     if (!ctx.apiKey) return { ok: false, text: '', error: 'no api key' };
