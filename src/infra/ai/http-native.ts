@@ -31,6 +31,17 @@ export class CapacitorHttpClient implements HttpClient {
           const message = extractErrorMessage(res.data) ?? `HTTP ${status}`;
           throw new HttpError(message, status, statusToKind(status), res.data);
         }
+        // The native plugin returns the body as a raw string whenever the
+        // response Content-Type isn't detected as JSON — mirror the web client,
+        // which always JSON.parses the text, so provider responses parse the
+        // same way on every platform.
+        if (typeof res.data === 'string') {
+          try {
+            return JSON.parse(res.data) as T;
+          } catch {
+            return res.data as T;
+          }
+        }
         return res.data as T;
       } catch (err) {
         lastError = err;

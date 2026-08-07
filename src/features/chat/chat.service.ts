@@ -1239,7 +1239,9 @@ export class ChatService {
   /**
    * Resolves the effective search backend from Settings. Google needs a
    * user-supplied key; SmartRotator reuses the logged-in session's sk- key
-   * against the server's /v1 base. Returns null when nothing usable is
+   * against the server's /v1 base, falling back to the hidden gateway default
+   * (env-injected or configureServerAuth) so search also works in the app
+   * without a sync session attached. Returns null when nothing usable is
    * configured — the caller then falls back to native Gemini grounding.
    *
    * The `enabled` switch only gates AUTO mode (search every reply); a pinned
@@ -1253,10 +1255,11 @@ export class ChatService {
       return { providerId: 'google', apiKey: ws.apiKey.trim(), baseUrl: ws.baseUrl.trim(), model: ws.model.trim() || undefined };
     }
     const session = this.getWebSearchSession?.();
-    if (!session?.serverUrl) return null;
-    const root = session.serverUrl.replace(/\/+$/, '');
+    const gateway = this.settings.getHiddenDefaultFull();
+    const root = session?.serverUrl ?? (gateway?.baseUrl ? gateway.baseUrl.replace(/\/+$/, '') : '');
+    if (!root) return null;
     const baseUrl = /\/v1$/.test(root) ? root : `${root}/v1`;
-    const key = ws.apiKey.trim() || session.apiKey;
+    const key = ws.apiKey.trim() || session?.apiKey || gateway?.apiKey || '';
     if (!key) return null;
     return { providerId: 'smartrotator', apiKey: key, baseUrl, model: ws.model.trim() || undefined };
   }

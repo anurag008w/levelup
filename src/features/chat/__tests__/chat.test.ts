@@ -1,5 +1,4 @@
-import { describe, it, expect } from 'vitest';
-import type { AppState } from '../../../core/domain/state';
+import { describe, it, expect, vi, afterEach } from 'vitest';import type { AppState } from '../../../core/domain/state';
 import { emptyAppState } from '../../../core/domain/state';
 import type { ChatRepository } from '../../../core/ports/repositories';
 import { defaultChatPrefs, INTERNAL_SYSTEM_PROMPT, LEGACY_DIVYA_SYSTEM_PROMPT, LEGACY_MISA_SYSTEM_PROMPT, MISA_IDENTITY_GUARD, type ChatStoreState } from '../../../core/domain/chat';
@@ -15,6 +14,8 @@ import { ChatService } from '../chat.service';
 import { MemoryToolsService } from '../memory-tools.service';
 import type { ChatToolsService } from '../chat-tools.service';
 import type { WebSearchService, WebSearchResult } from '../../../infra/ai/websearch.service';
+
+afterEach(() => vi.unstubAllEnvs());
 
 class MemoryChatRepository implements ChatRepository {
   private state: ChatStoreState = { version: 1, sessions: [] };
@@ -2061,6 +2062,54 @@ describe('ChatService', () => {
       expect(req).not.toBeNull();
       expect(req!.messages[0].content as string).toContain('Live web search results');
       expect(req!.messages[0].content as string).toContain('OpenAI ka naya model');
+    });
+
+    it('falls back to the hidden gateway default when no sync login session exists (mobile app case)', async () => {
+      vi.stubEnv('VITE_DEFAULT_AI_BASE_URL', 'https://smartrotator.onrender.com/v1');
+      vi.stubEnv('VITE_DEFAULT_AI_API_KEY', 'sk-gateway');
+      vi.stubEnv('VITE_DEFAULT_AI_MODEL', 'internal-gateway-model');
+      let last: LLMRequest | null = null;
+      const provider: LLMProvider = {
+        id: 'openrouter',
+        label: 'OpenRouter',
+        isConfigured: () => true,
+        complete: async (): Promise<LLMResponse> => ({ text: '', model: 'a' }),
+        stream: async (req: LLMRequest): Promise<LLMResponse> => {
+          last = req;
+          const text = 'answer';
+          if (req.onDelta) for (const ch of text) req.onDelta(ch);
+          return { text, model: 'a' };
+        },
+        fetchModels: async (): Promise<ModelInfo[]> => [],
+        healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+      };
+      const store = makeStore({
+        providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+        aiEnabled: true,
+        websearch: { enabled: true, providerId: 'smartrotator', model: '', apiKey: '', baseUrl: '' },
+      });
+      const repo = new MemoryChatRepository();
+      const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+      const settings = new ProviderSettingsService(store, factory);
+      const llm = new LLMService(factory, settings);
+      let n = 0;
+      const ws = {
+        search: async (): Promise<WebSearchResult> => {
+          n += 1;
+          return { ok: true, text: 'NEET 2026 results 15 June ko aaye.' };
+        },
+      } as unknown as WebSearchService;
+      // No auth session — exactly what an app user without a sync login hits.
+      const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), null, null, store, undefined, null, ws, () => null);
+      const s = chat.createSession('q');
+      const result = await chat.send(s.id, 'results kab aaye?');
+      expect(n).toBe(1);
+      expect(result.tool).toBe('websearch');
+      expect(result.toolCalls?.[0].ok).toBe(true);
+      const req: LLMRequest | null = last;
+      expect(req).not.toBeNull();
+      expect(req!.messages[0].content as string).toContain('Live web search results');
+      expect(req!.messages[0].content as string).toContain('NEET 2026');
     });
   });
 });

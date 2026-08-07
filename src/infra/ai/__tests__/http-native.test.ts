@@ -18,6 +18,20 @@ describe('CapacitorHttpClient', () => {
     expect(requestMock).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://x/models', method: 'GET' }));
   });
 
+  it('parses a JSON string body when the native plugin returns raw text', async () => {
+    requestMock.mockResolvedValue({ status: 200, data: '{"ok":1}', headers: {}, url: 'u' });
+    const client = new CapacitorHttpClient();
+    const out = await client.requestJson({ url: 'https://x/models', method: 'GET' });
+    expect(out).toEqual({ ok: 1 });
+  });
+
+  it('keeps a non-JSON string body verbatim', async () => {
+    requestMock.mockResolvedValue({ status: 200, data: 'plain text', headers: {}, url: 'u' });
+    const client = new CapacitorHttpClient();
+    const out = await client.requestJson({ url: 'https://x/models', method: 'GET' });
+    expect(out).toBe('plain text');
+  });
+
   it('throws HttpError with the extracted message for non-2xx', async () => {
     requestMock.mockResolvedValue({ status: 401, data: { error: { message: 'bad key' } }, headers: {}, url: 'u' });
     const client = new CapacitorHttpClient();
