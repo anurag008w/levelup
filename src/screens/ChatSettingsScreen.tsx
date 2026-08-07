@@ -49,8 +49,21 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
   // opening/closing it never touches the persisted settings.
   const [showDefaultPrompt, setShowDefaultPrompt] = useState(false);
 
-  function updateChat(partial: Partial<ChatSettings>) {
-    haptic();
+  // Chat settings that flow into EVERY session via applyGlobalPrefs. Fields
+  // outside this set (tool decisions, memory summary, memory toggles) are
+  // stored globally only — no need to walk every session on each change.
+  const PREF_FIELDS: ReadonlyArray<keyof ChatSettings> = [
+    'temperature',
+    'maxTokens',
+    'systemPrompt',
+    'userPersona',
+    'includeJourneyContext',
+    'thinking',
+  ];
+
+  function updateChat(partial: Partial<ChatSettings>, opts?: { quiet?: boolean }) {
+    // Text typing already vibrates on the keyboard — skip haptic there.
+    if (!opts?.quiet) haptic();
     // Propagate from the LATEST store state, not the render-time `chat` prop:
     // rapid keystrokes could otherwise race and push a stale persona snapshot
     // into every session.
@@ -62,6 +75,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
         chat: { ...s.aiSettings.chat, ...partial },
       },
     }));
+    if (!PREF_FIELDS.some((k) => k in partial)) return;
     const needsDebounce = typeof partial.userPersona === 'string' || typeof partial.systemPrompt === 'string';
     if (needsDebounce) {
       if (propagateTimer.current) window.clearTimeout(propagateTimer.current);
@@ -341,7 +355,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                     placeholder="Default instructions use hoti hain — custom style ke liye apna prompt likho (khali = default)"
                     value={chat.memorySummaryPrompt ?? ''}
                     onChange={(e) =>
-                      updateChat({ memorySummaryPrompt: e.target.value || undefined })
+                      updateChat({ memorySummaryPrompt: e.target.value || undefined }, { quiet: true })
                     }
                   />
                   <p className="mt-1 text-[10px] text-muted">
@@ -458,7 +472,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
               <textarea
                 className="field min-h-[96px] resize-none"
                 value={chat.userPersona}
-                onChange={(e) => updateChat({ userPersona: e.target.value })}
+                onChange={(e) => updateChat({ userPersona: e.target.value }, { quiet: true })}
                 placeholder="Blank by default — optional personal instructions yahan likho."
               />
               <button
@@ -479,7 +493,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                 <textarea
                   className="field min-h-[120px] resize-none"
                   value={chat.systemPrompt}
-                  onChange={(e) => updateChat({ systemPrompt: e.target.value })}
+                  onChange={(e) => updateChat({ systemPrompt: e.target.value }, { quiet: true })}
                   placeholder="Misa persona, tone, Markdown/LaTeX rules..."
                 />
                 <div className="mt-2 flex items-center justify-between">

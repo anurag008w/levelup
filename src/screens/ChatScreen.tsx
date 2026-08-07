@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Archive,
@@ -114,6 +114,11 @@ export default function ChatScreen({
 }) {
   const [sessions, setSessions] = useState<ChatSession[]>(() => container.chat.listSessions());
   const [activeId, setActiveId] = useState<string | null>(null);
+  /** Stable ref for the memoized MessageBubble's action callbacks. The
+   *  callbacks close over mutable state (draft, active, streaming), so they
+   *  live behind a ref: the ref identity never changes, letting React.memo
+   *  skip re-rendering every bubble on each keystroke (the typing-lag fix). */
+  const actionsRef = useRef<MessageActions>(null!);
   const [draft, setDraft] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState('');
@@ -804,6 +809,19 @@ export default function ChatScreen({
 
   const { menuRef } = useMenuFocus(menu !== null, () => setMenu(null));
 
+  // Refresh the ref with the latest closures on every render — the ref object
+  // itself stays the same, so memoized MessageBubble instances never re-render
+  // just because these identities changed.
+  actionsRef.current = {
+    onMenu: openMenu,
+    onCopy: (m) => void copyMessage(m),
+    onEdit: editMessage,
+    onRegenerate: regenerate,
+    onDelete: deleteMessage,
+    onDownload: downloadMessage,
+    onShare: (m) => shareMessage(m),
+  };
+
   return (
     <div className="chat-shell fade-up">
       {/* Top bar */}
@@ -872,13 +890,7 @@ export default function ChatScreen({
                 revealSchedule={m.id === revealId ? revealScheduleRef.current : undefined}
                 scrollRef={scrollRef}
                 onRevealDone={handleRevealDone}
-                onMenu={openMenu}
-                onCopy={(msg) => void copyMessage(msg)}
-                onEdit={editMessage}
-                onRegenerate={regenerate}
-                onDelete={deleteMessage}
-                onDownload={downloadMessage}
-                onShare={(msg) => shareMessage(msg)}
+                actionsRef={actionsRef}
               />
             ))}
           </div>
@@ -1181,7 +1193,7 @@ interface MessageActions {
   onShare: (m: ChatMessage) => void;
 }
 
-function MessageBubble({
+const MessageBubble = memo(function MessageBubble({
   message,
   isLast: _isLast,
   showThinking,
@@ -1189,8 +1201,8 @@ function MessageBubble({
   revealSchedule,
   scrollRef,
   onRevealDone,
-  ...actions
-}: MessageActions & {
+  actionsRef,
+}: {
   message: ChatMessage;
   isLast: boolean;
   showThinking?: boolean;
@@ -1198,7 +1210,12 @@ function MessageBubble({
   revealSchedule?: RevealSchedule | null;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   onRevealDone?: () => void;
+  actionsRef: React.RefObject<MessageActions>;
 }) {
+  // Latest action callbacks from the parent — the ref identity is stable, so
+  // React.memo still skips re-rendering this bubble on unrelated state changes
+  // (e.g. typing in the composer).
+  const actions = actionsRef.current;
   const isUser = message.role === 'user';
   const holdTimer = useRef<number | null>(null);
   const firedRef = useRef(false);
@@ -1395,7 +1412,7 @@ function MessageBubble({
       )}
     </motion.div>
   );
-}
+});
 
 function ThinkingBlock({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
