@@ -6,7 +6,7 @@ import type { ThinkingLevel } from '../core/domain/llm';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
 import { haptic } from '../lib/haptics';
-import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, globalChatPrefsFromSettings } from '../core/domain/chat';
+import { DEFAULT_USER_PERSONA, GLOBAL_PREF_SETTING_FIELDS, INTERNAL_SYSTEM_PROMPT, globalChatPrefsFromSettings } from '../core/domain/chat';
 import { MEMORY_SUMMARY_INSTRUCTIONS } from '../core/domain/memory-summary';
 import { deviceTimeZone } from '../core/ports/clock';
 import { container } from '../di/container';
@@ -52,14 +52,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
   // Chat settings that flow into EVERY session via applyGlobalPrefs. Fields
   // outside this set (tool decisions, memory summary, memory toggles) are
   // stored globally only — no need to walk every session on each change.
-  const PREF_FIELDS: ReadonlyArray<keyof ChatSettings> = [
-    'temperature',
-    'maxTokens',
-    'systemPrompt',
-    'userPersona',
-    'includeJourneyContext',
-    'thinking',
-  ];
+  const PREF_FIELDS: ReadonlyArray<keyof ChatSettings> = GLOBAL_PREF_SETTING_FIELDS;
 
   function updateChat(partial: Partial<ChatSettings>, opts?: { quiet?: boolean }) {
     // Text typing already vibrates on the keyboard — skip haptic there.

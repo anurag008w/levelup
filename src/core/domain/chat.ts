@@ -170,6 +170,21 @@ export interface GlobalChatPrefs {
 }
 
 /** Maps the global ChatSettings shape onto the shared per-session fields. */
+/** ChatSettings fields that propagate to EVERY session via
+ *  `applyGlobalPrefs`. Keep this list in sync with the keys read by
+ *  `globalChatPrefsFromSettings` below — a field added to one and not the
+ *  other silently stops (or starts) propagating on every settings change.
+ *  Fields outside this set (tool decisions, memory summary, memory toggles)
+ *  are global-only and never need a per-session walk. */
+export const GLOBAL_PREF_SETTING_FIELDS = [
+  'temperature',
+  'maxTokens',
+  'systemPrompt',
+  'userPersona',
+  'includeJourneyContext',
+  'thinking',
+] as const;
+
 export function globalChatPrefsFromSettings(global: {
   temperature: number;
   maxTokens: number;
