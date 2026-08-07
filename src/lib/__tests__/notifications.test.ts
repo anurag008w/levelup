@@ -40,6 +40,7 @@ import {
   setNotificationPreference,
   trackAppState,
 } from '../notifications';
+import { container } from '../../di/container';
 
 function setDocumentHidden(hidden: boolean): void {
   Object.defineProperty(document, 'hidden', {
@@ -174,10 +175,41 @@ describe('notifications — chat-tab suppression', () => {
     expect(n.extra).toEqual({
       sessionId: 'session-1',
       messages: [
-        { text: 'Pehla', at: 1000 },
-        { text: 'Dusra', at: 2000 },
+        { text: 'Pehla', at: 1000, sender: 'ai' },
+        { text: 'Dusra', at: 2000, sender: 'ai' },
       ],
     });
+  });
+
+  it('tags the MessagingStyle owner with the app username (not the AI name)', async () => {
+    localStorage.setItem(
+      'levelup.auth.session',
+      JSON.stringify({ serverUrl: 'https://x', apiKey: 'k', username: 'Anurag', role: 'user', token: 't', loggedInAt: 'now' }),
+    );
+    await setNotificationPreference(true);
+    setChatTabActive(false);
+    await notifyAiReply('Misa', 'Dusra', 'session-1', 0, true, 'Pehla\n\nDusra', [
+      { text: 'Mera reply', at: 900, sender: 'user' },
+      { text: 'Pehla', at: 1000 },
+    ]);
+    await flush();
+    const n = scheduleMock.mock.calls[0][0].notifications[0];
+    expect(n.extra.userName).toBe('Anurag');
+    expect(n.extra.messages).toEqual([
+      { text: 'Mera reply', at: 900, sender: 'user' },
+      { text: 'Pehla', at: 1000, sender: 'ai' },
+    ]);
+  });
+
+  it('falls back to the Settings > Profile name when logged out', async () => {
+    const state = container.store.get();
+    container.store.save({ ...state, userProfile: { ...state.userProfile, name: 'Ravi' } });
+    await setNotificationPreference(true);
+    setChatTabActive(false);
+    await notifyAiReply('Misa', 'Dusra', 'session-1', 0, true, 'Pehla\n\nDusra', [{ text: 'Pehla', at: 1000 }]);
+    await flush();
+    const n = scheduleMock.mock.calls[0][0].notifications[0];
+    expect(n.extra.userName).toBe('Ravi');
   });
 
   it('keeps the extra payload unchanged when no bubbles are given (existing behavior untouched)', async () => {

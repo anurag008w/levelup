@@ -87,6 +87,8 @@ export interface NotificationMessage {
   text: string;
   /** Unix ms timestamp when that bubble lands — MessagingStyle ko "sent at" time. */
   at: number;
+  /** Kaun bhej raha hai — 'ai' (Misa) ya 'user' (username). */
+  sender: 'ai' | 'user';
 }
 
 export interface NotificationStep {
@@ -109,11 +111,16 @@ export interface NotificationStep {
  * far with real reveal timestamps (for the native MessagingStyle expand —
  * scrollable, full-length). Same sessionId → same notification id on the
  * native side, so every step updates/merges into one notification.
+ *
+ * `user` (optional) = the user's own message that started this reply — it's
+ * prepended to the conversation tagged as `sender: 'user'`, so the expanded
+ * notification reads like a real chat (user's reply + Misa's bubbles).
  */
 export function buildNotificationSteps(
   bubbles: string[],
   schedule: RevealSchedule,
   now = Date.now(),
+  user?: { text: string; at: number },
 ): NotificationStep[] {
   const delays: number[] = [];
   let delay = schedule.firstDelay;
@@ -124,6 +131,9 @@ export function buildNotificationSteps(
     }
   }
   const bubbleTexts = bubbles.map((b) => b.trim());
+  const userMessage: NotificationMessage | null = user
+    ? { text: user.text, at: user.at, sender: 'user' }
+    : null;
   return delays.map((delayMs, i) => ({
     delayMs,
     latest: bubbleTexts[i],
@@ -131,6 +141,9 @@ export function buildNotificationSteps(
       .slice(0, i + 1)
       .join('\n\n')
       .trim(),
-    messages: bubbleTexts.slice(0, i + 1).map((text, j) => ({ text, at: now + delays[j] })),
+    messages: [
+      ...(userMessage ? [userMessage] : []),
+      ...bubbleTexts.slice(0, i + 1).map((text, j) => ({ text, at: now + delays[j], sender: 'ai' as const })),
+    ],
   }));
 }
