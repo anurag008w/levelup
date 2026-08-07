@@ -1,5 +1,5 @@
 diff --git a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
-index 0b826a5..445f56e 100644
+index 0b826a5..eeb9f48 100644
 --- a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
 +++ b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
 @@ -17,6 +17,7 @@ import androidx.annotation.NonNull;
@@ -10,7 +10,7 @@ index 0b826a5..445f56e 100644
  import androidx.core.app.RemoteInput;
  import com.getcapacitor.CapConfig;
  import com.getcapacitor.JSObject;
-@@ -173,7 +174,29 @@ public class LocalNotificationManager {
+@@ -173,7 +174,38 @@ public class LocalNotificationManager {
              .setPriority(NotificationCompat.PRIORITY_DEFAULT)
              .setGroupSummary(localNotification.isGroupSummary());
  
@@ -18,21 +18,30 @@ index 0b826a5..445f56e 100644
 +        // Custom: jab JS `extra.messages` bheje to WhatsApp-style MessagingStyle
 +        // use karo — expanded me poora conversation scroll hota hai. Messages na
 +        // ho to neeche ka existing BigTextStyle behavior bilkul waise hi rehta hai.
++        // MessagingStyle ka "user" = phone owner (extra.userName, ya title
++        // fallback) — AI ke messages "Misa" (title) se aate hain, user ke apne
++        // messages username se.
 +        JSObject notificationExtra = localNotification.getExtra();
 +        JSONArray messageList = notificationExtra != null ? notificationExtra.optJSONArray("messages") : null;
 +        if (messageList != null && messageList.length() > 0) {
-+            Person sender = new Person.Builder().setName(localNotification.getTitle()).build();
-+            NotificationCompat.MessagingStyle messagingStyle = new NotificationCompat.MessagingStyle(sender);
++            String userName = notificationExtra != null ? notificationExtra.optString("userName", "") : "";
++            if (userName.isEmpty()) {
++                userName = localNotification.getTitle();
++            }
++            Person user = new Person.Builder().setName(userName).build();
++            Person aiSender = new Person.Builder().setName(localNotification.getTitle()).build();
++            NotificationCompat.MessagingStyle messagingStyle = new NotificationCompat.MessagingStyle(user);
 +            for (int i = 0; i < messageList.length(); i++) {
 +                JSONObject message = messageList.optJSONObject(i);
 +                if (message == null) {
 +                    continue;
 +                }
++                Person from = "user".equals(message.optString("sender")) ? user : aiSender;
 +                messagingStyle.addMessage(
 +                    new NotificationCompat.MessagingStyle.Message(
 +                        message.optString("text"),
 +                        message.optLong("at", System.currentTimeMillis()),
-+                        sender
++                        from
 +                    )
 +                );
 +            }

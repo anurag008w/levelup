@@ -12,7 +12,9 @@ import { Capacitor, type PermissionState } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import { LocalNotifications, type PendingLocalNotificationSchema } from '@capacitor/local-notifications';
 import { IntentLauncher, ActivityAction } from '@capgo/capacitor-intent-launcher';
+import { container } from '../di/container';
 import { persistentStorage } from '../infra/storage/persistent-storage';
+import { loadSession } from './auth';
 
 export type NotificationPermissionStatus = 'granted' | 'denied' | 'prompt' | 'unsupported';
 
@@ -21,6 +23,8 @@ export interface NotificationBubble {
   text: string;
   /** Unix ms timestamp when the bubble lands — default: fire moment. */
   at?: number;
+  /** Kaun bhej raha hai — 'ai' (Misa) ya 'user' (username). Default: 'ai'. */
+  sender?: 'ai' | 'user';
 }
 
 /** Web pe notification unsupported kyun hai — isse UI targeted message dikha sakta hai. */
@@ -311,11 +315,16 @@ export async function notifyAiReply(
   const expanded = largeBody ?? body;
   // Native patch ko MessagingStyle ke liye conversation chahiye (`messages`).
   // Siraf jab bubbles diye hain tab `extra` me jaata hai — nahi diye to payload
-  // pehle jaisa hi rehta hai (existing behavior untouched).
+  // pehle jaisa hi rehta hai (existing behavior untouched). `userName` = phone
+  // owner (MessagingStyle ka "user") — AI ke messages "Misa" se aate hain,
+  // user ke apne messages owner name se. Owner name: login username pehle,
+  // warna Settings > Profile ka naam; dono na ho to native title fallback.
   const extra: Record<string, unknown> = {};
   if (sessionId) extra.sessionId = sessionId;
   if (messages && messages.length > 0) {
-    extra.messages = messages.map((m) => ({ text: m.text, at: m.at ?? Date.now() }));
+    extra.messages = messages.map((m) => ({ text: m.text, at: m.at ?? Date.now(), sender: m.sender ?? 'ai' }));
+    const ownerName = loadSession()?.username || container.store.get().userProfile?.name?.trim() || undefined;
+    if (ownerName) extra.userName = ownerName;
   }
 
   // Background + delayed notification: JS timers throttled hote hain, isliye

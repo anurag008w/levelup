@@ -551,8 +551,9 @@ export default function ChatScreen({
       // bubble-by-bubble merge hoti rehti hai.
       // Body = latest bubble (collapsed/heads-up — warna Android cumulative
       // text ka pehla line har popup me dikhata), largeBody = poora reply so
-      // far, messages = native MessagingStyle expand ke liye (scrollable).
-      for (const step of buildNotificationSteps(bubbles, schedule)) {
+      // far, messages = native MessagingStyle expand ke liye (scrollable) —
+      // user ka message username se, Misa ke bubbles 'ai' se.
+      for (const step of buildNotificationSteps(bubbles, schedule, undefined, { text, at: Date.now() })) {
         setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', sessionId, 0, undefined, step.text, step.messages), step.delayMs);
       }
       // Koi visible bubble nahi (sirf whitespace reply) — ek turant notification.

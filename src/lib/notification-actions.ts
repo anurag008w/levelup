@@ -121,6 +121,10 @@ export function setupNotificationActions(): void {
         return;
       }
       void (async () => {
+        // User ka reply conversation me username ke saath dikhe (MessagingStyle),
+        // isliye send ka exact time yahan capture karo — AI bubbles ke reveal
+        // timestamps se pehle ka hai.
+        const replySentAt = Date.now();
         try {
           // Send turant shuru karo, phir request dispatch hone ke liye chhota
           // grace dekar app turant minimize — user notification shade se reply
@@ -151,8 +155,9 @@ export function setupNotificationActions(): void {
             // Body = latest bubble (collapsed/heads-up — warna Android har
             // popup me cumulative text ka pehla line dikhata, "pehla message
             // har popup me" wala bug), largeBody = poora reply so far, messages
-            // = native MessagingStyle expand ke liye (scrollable, full-length).
-            for (const step of buildNotificationSteps(bubbles, schedule)) {
+            // = native MessagingStyle expand ke liye (scrollable, full-length)
+            // — user ka reply pehle, phir Misa ke bubbles.
+            for (const step of buildNotificationSteps(bubbles, schedule, undefined, { text: inputValue.trim(), at: replySentAt })) {
               setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', sessionId, 0, true, step.text, step.messages), step.delayMs);
             }
           } else {

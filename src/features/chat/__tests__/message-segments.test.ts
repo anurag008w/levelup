@@ -149,10 +149,25 @@ describe('buildNotificationSteps', () => {
     const now = 1_700_000_000_000;
     const schedule = computeRevealSchedule(2, () => 0);
     const steps = buildNotificationSteps(['Pehla', 'Dusra'], schedule, now);
-    expect(steps[0].messages).toEqual([{ text: 'Pehla', at: now + FIRST_BUBBLE_DELAY_MS }]);
+    expect(steps[0].messages).toEqual([{ text: 'Pehla', at: now + FIRST_BUBBLE_DELAY_MS, sender: 'ai' }]);
     expect(steps[1].messages).toEqual([
-      { text: 'Pehla', at: now + FIRST_BUBBLE_DELAY_MS },
-      { text: 'Dusra', at: now + FIRST_BUBBLE_DELAY_MS + BUBBLE_GAP_MIN_MS },
+      { text: 'Pehla', at: now + FIRST_BUBBLE_DELAY_MS, sender: 'ai' },
+      { text: 'Dusra', at: now + FIRST_BUBBLE_DELAY_MS + BUBBLE_GAP_MIN_MS, sender: 'ai' },
+    ]);
+  });
+
+  it('prepends the user message tagged as `user` when given, for a real two-sided conversation', () => {
+    const now = 1_700_000_000_000;
+    const schedule = computeRevealSchedule(2, () => 0);
+    const steps = buildNotificationSteps(['Pehla', 'Dusra'], schedule, now, { text: 'Mera sawal', at: now - 5000 });
+    expect(steps[0].messages).toEqual([
+      { text: 'Mera sawal', at: now - 5000, sender: 'user' },
+      { text: 'Pehla', at: now + FIRST_BUBBLE_DELAY_MS, sender: 'ai' },
+    ]);
+    expect(steps[1].messages).toEqual([
+      { text: 'Mera sawal', at: now - 5000, sender: 'user' },
+      { text: 'Pehla', at: now + FIRST_BUBBLE_DELAY_MS, sender: 'ai' },
+      { text: 'Dusra', at: now + FIRST_BUBBLE_DELAY_MS + BUBBLE_GAP_MIN_MS, sender: 'ai' },
     ]);
   });
 
