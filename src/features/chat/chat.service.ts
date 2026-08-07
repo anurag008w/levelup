@@ -41,6 +41,8 @@ import type { ChatToolsService } from './chat-tools.service';
 import type { MemoryToolsService } from './memory-tools.service';
 import { MEMORY_TOOL_INSTRUCTIONS } from '../../core/domain/memory-tools';
 import type { MemoryToolResult, MemoryToolAction } from '../../core/domain/memory-tools';
+import type { WebSearchService, WebSearchContext } from '../../infra/ai/websearch.service';
+import type { WebSearchSettings } from '../../core/domain/state';
 
 const HISTORY_FOR_PROMPT = 30;
 const MEMORY_FOR_PROMPT = 8;
@@ -101,6 +103,10 @@ export class ChatService {
   private readonly store: StateStore | null;
   /** Lazily extracts text from a raw file (blob URL) when the direct file path fails. */
   private readonly extractAttachmentText?: (blobUrl: string, name: string) => Promise<string>;
+  /** Live web search runner (two-step: search first, ground the answer). */
+  private readonly websearch?: WebSearchService;
+  /** The logged-in SmartRotator session (serverUrl + apiKey) for the gateway search. */
+  private readonly getWebSearchSession?: () => { serverUrl: string; apiKey: string } | null;
   /** Sessions where a direct file send already fell back to text — use text from now on. */
   private readonly fileFallbackSessions = new Set<string>();
   /** In-memory snapshot so mutations survive across persist() calls. */
@@ -132,6 +138,8 @@ export class ChatService {
     store: StateStore | null = null,
     extractAttachmentText?: (blobUrl: string, name: string) => Promise<string>,
     memoryTools: MemoryToolsService | null = null,
+    websearch?: WebSearchService,
+    getWebSearchSession?: () => { serverUrl: string; apiKey: string } | null,
   ) {
     this.repo = repo;
     this.llm = llm;
@@ -143,6 +151,8 @@ export class ChatService {
     this.store = store;
     this.extractAttachmentText = extractAttachmentText;
     this.memoryTools = memoryTools;
+    this.websearch = websearch;
+    this.getWebSearchSession = getWebSearchSession;
   }
 
   private state(): ChatStoreState {
@@ -635,6 +645,18 @@ export class ChatService {
 
       // Default streaming path.
       let reasoning = '';
+      // Two-step live web search (Settings > Web Search): when a search backend
+      // is configured, the question is searched first and the grounded summary
+      // is fed into the chat request as context. Pinned @web-search always
+      // searches; auto mode searches when the Web Search switch is ON. When no
+      // backend is configured, native Gemini grounding / the adapter's search
+      // tool stay as before.
+      const searchCtx = this.resolveWebSearchContext();
+      let searchResults: string | null = null;
+      if (searchCtx && (onlyWebSearch || this.webSearchEnabled())) {
+        onStatus?.('Web search kar raha hoon…');
+        searchResults = await this.maybeRunWebSearch(session, signal);
+      }
       const runStream = async (): Promise<LLMResponse> => {
         const streamSani = createStreamSanitizer();
         const request = await this.buildRequest(session, (delta) => {
@@ -646,7 +668,7 @@ export class ChatService {
         }, signal, (delta) => {
           reasoning += delta;
           onReasoningDelta?.(delta);
-        }, onlyWebSearch ? 'pinned' : 'auto');
+        }, onlyWebSearch ? 'pinned' : 'auto', searchResults);
         const resp = await this.llm.stream(request);
         // Release any trailing chunk the sanitizer held back as a possible
         // partial timestamp — otherwise the streamed tail is silently dropped.
@@ -678,7 +700,7 @@ export class ChatService {
       }
       let finalResp = resp;
       if (!finalResp.text && !finalResp.reasoning) {
-        const fallbackReq = await this.buildRequest(session, undefined, signal, undefined, onlyWebSearch ? 'pinned' : 'auto');
+        const fallbackReq = await this.buildRequest(session, undefined, signal, undefined, onlyWebSearch ? 'pinned' : 'auto', searchResults);
         fallbackReq.thinking = 'off';
         fallbackReq.maxTokens = 16384;
         finalResp = await this.llm.stream(fallbackReq);
@@ -1118,10 +1140,11 @@ export class ChatService {
     signal?: AbortSignal,
     onReasoningDelta?: (d: string) => void,
     webSearchMode: 'auto' | 'pinned' = 'auto',
+    searchResults?: string | null,
   ): Promise<LLMRequest> {
     const thinking = this.resolveThinking(session);
     const request: LLMRequest = {
-      messages: await this.buildMessages(session),
+      messages: await this.buildMessages(session, searchResults ?? ''),
       temperature: session.prefs.temperature,
       maxTokens: this.effectiveMaxTokens(session, thinking),
       providerId: session.prefs.providerId,
@@ -1134,14 +1157,14 @@ export class ChatService {
       // to the user, only the model's synthesized answer. Plan/decision hops
       // stay tool-free.
       //
-      // 'auto'   → Gemini only (native googleSearchRetrieval grounding, model
-      //            decides). OpenAI-compatible endpoints stay tool-free so we
-      //            don't burn a request on every message for models that
-      //            reject `{"type": "web_search"}` (Groq Gemma/Llama, ...).
+      // 'auto'   → Gemini only (native google_search grounding, model
+      //            decides) — unless a two-step Web Search backend is
+      //            configured (Settings > Web Search), which already ran and
+      //            injected results above.
       // 'pinned' → user explicitly pinned @web-search: enable for ANY
       //            provider; the adapter sends the search tool + gracefully
       //            falls back when the endpoint doesn't support it.
-      websearch: webSearchMode === 'pinned' || this.isGeminiProvider(session),
+      websearch: (webSearchMode === 'pinned' || this.isGeminiProvider(session)) && !searchResults,
     };
     const model = this.resolveModel(session);
     if (model) request.model = model;
@@ -1155,6 +1178,65 @@ export class ChatService {
       ? this.settings.getProviderById(session.prefs.providerId)
       : this.settings.getActiveProvider();
     return config?.id === 'gemini';
+  }
+
+  /** Web Search settings from app state (off by default, so older saved states behave unchanged). */
+  private webSearchSettings(): WebSearchSettings {
+    const ws = this.store?.get().aiSettings.websearch;
+    return ws ?? { enabled: false, providerId: null, model: '', apiKey: '', baseUrl: '' };
+  }
+
+  private webSearchEnabled(): boolean {
+    return this.webSearchSettings().enabled;
+  }
+
+  /**
+   * Resolves the effective search backend from Settings. Google needs a
+   * user-supplied key; SmartRotator reuses the logged-in session's sk- key
+   * against the server's /v1 base. Returns null when nothing usable is
+   * configured — the caller then falls back to native Gemini grounding.
+   */
+  private resolveWebSearchContext(): WebSearchContext | null {
+    const ws = this.webSearchSettings();
+    if (!ws.enabled || !ws.providerId) return null;
+    if (ws.providerId === 'google') {
+      if (!ws.apiKey.trim()) return null;
+      return { providerId: 'google', apiKey: ws.apiKey.trim(), baseUrl: ws.baseUrl.trim(), model: ws.model.trim() || undefined };
+    }
+    const session = this.getWebSearchSession?.();
+    if (!session?.serverUrl) return null;
+    const root = session.serverUrl.replace(/\/+$/, '');
+    const baseUrl = /\/v1$/.test(root) ? root : `${root}/v1`;
+    const key = ws.apiKey.trim() || session.apiKey;
+    if (!key) return null;
+    return { providerId: 'smartrotator', apiKey: key, baseUrl, model: ws.model.trim() || undefined };
+  }
+
+  /**
+   * Runs the two-step search for the current question. Returns a grounded
+   * summary (or null when no search happened / nothing usable came back) that
+   * is injected into the chat request as context. Never throws — a failed
+   * search must not block the chat answer.
+   */
+  private async maybeRunWebSearch(session: ChatSession, signal?: AbortSignal): Promise<string | null> {
+    if (!this.websearch) return null;
+    if (signal?.aborted) return null;
+    const ctx = this.resolveWebSearchContext();
+    if (!ctx) return null;
+    const turns = session.messages.slice(-5).map((m) => ({
+      role: m.role,
+      content: typeof m.content === 'string' ? m.content : m.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n'),
+    }));
+    if (turns.length === 0) return null;
+    const res = await this.websearch.search(ctx, turns, signal);
+    if (!res.ok || !res.text.trim()) return null;
+    return (
+      'Live web search results (retrieved just now, current facts):\n' +
+      res.text.trim() +
+      '\n\nRules: for anything recent/current, base your answer on these results. ' +
+      'Include concrete specifics (dates, numbers, names) from the results. ' +
+      'If the results do not answer the user, say so honestly — never invent facts.'
+    );
   }
 
   /**

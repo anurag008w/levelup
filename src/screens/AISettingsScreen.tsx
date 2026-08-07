@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useRef, useState, lazy } from 'react';
-import { Bell, BellOff, Check, ChevronRight, Database, Download, ExternalLink, KeyRound, ListChecks, LogIn, LogOut, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff, X } from 'lucide-react';
+import { Bell, BellOff, Check, ChevronRight, Database, Download, ExternalLink, Globe, KeyRound, ListChecks, LogIn, LogOut, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff, X } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ProviderConfig, ModelInfo } from '../core/domain/llm';
 import type { AuthSession } from '../lib/auth';
@@ -46,6 +46,12 @@ export default function AISettingsScreen({
   const visibleProviders = hiddenDefault ? [hiddenDefault, ...providers] : providers;
   const effectiveActive = container.providerSettings.getActiveProvider()?.id ?? null;
   const aiEnabled = settings.aiEnabled;
+  const ws = settings.websearch;
+
+  const updateWebsearch = (patch: Partial<AppState['aiSettings']['websearch']>) => {
+    haptic();
+    update((s) => ({ ...s, aiSettings: { ...s.aiSettings, websearch: { ...s.aiSettings.websearch, ...patch } } }));
+  };
 
   // Navigation state for sub-screens
   const [showChatSettings, setShowChatSettings] = useState(false);
@@ -453,6 +459,139 @@ export default function AISettingsScreen({
         </div>
         <ChevronRight size={18} className="text-muted" />
       </button>
+
+      <div className="mb-2.5">
+        <SectionHeader
+          icon={<Globe size={14} color="var(--color-l)" />}
+          accent="var(--color-l)"
+          title="Web Search"
+          meta={ws.enabled ? 'on' : 'off'}
+        />
+      </div>
+
+      <div className="card mb-4 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
+              <Globe size={19} />
+            </span>
+            <div className="min-w-0">
+              <p className="font-display text-[15px] font-bold">Live web search</p>
+              <p className="text-xs leading-snug text-muted">Reply se pehle live search — current info (news, syllabus, results).</p>
+            </div>
+          </div>
+          <label className="toggle mt-1 shrink-0" title="Toggle live web search">
+            <input
+              type="checkbox"
+              checked={ws.enabled}
+              onChange={(e) => updateWebsearch({ enabled: e.target.checked, providerId: e.target.checked ? ws.providerId ?? 'google' : ws.providerId })}
+              aria-label="Toggle live web search"
+            />
+            <span className="track">
+              <span className="thumb" />
+            </span>
+          </label>
+        </div>
+
+        {ws.enabled && (
+          <div className="mt-3 space-y-3 text-sm">
+            <div>
+              <span className="field-label">Search provider</span>
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                {(
+                  [
+                    { id: 'google', label: 'Google (Gemini)' },
+                    { id: 'smartrotator', label: 'SmartRotator' },
+                  ] as const
+                ).map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => updateWebsearch({ providerId: p.id })}
+                    className={`rounded-xl px-3 py-1.5 text-xs font-semibold ${
+                      ws.providerId === p.id ? 'text-white' : 'text-muted'
+                    }`}
+                    style={
+                      ws.providerId === p.id
+                        ? { backgroundColor: 'var(--color-l)' }
+                        : { backgroundColor: 'rgba(239,233,223,0.08)' }
+                    }
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {ws.providerId === 'google' ? (
+              <>
+                <Field label="Google API key">
+                  <input
+                    type="password"
+                    className="field"
+                    value={ws.apiKey}
+                    placeholder="AIzaSy..."
+                    onChange={(e) => updateWebsearch({ apiKey: e.target.value })}
+                  />
+                </Field>
+                <Field label="Model">
+                  <input
+                    className="field"
+                    list="ws-gemini-models"
+                    value={ws.model}
+                    placeholder="gemini-2.5-flash"
+                    onChange={(e) => updateWebsearch({ model: e.target.value })}
+                  />
+                  <datalist id="ws-gemini-models">
+                    <option value="gemini-2.5-flash" />
+                    <option value="gemini-2.5-pro" />
+                    <option value="gemini-2.5-flash-lite" />
+                    <option value="gemini-2.0-flash" />
+                  </datalist>
+                </Field>
+                <Field label="Base URL (optional)">
+                  <input
+                    className="field"
+                    value={ws.baseUrl}
+                    placeholder="https://generativelanguage.googleapis.com"
+                    onChange={(e) => updateWebsearch({ baseUrl: e.target.value })}
+                  />
+                </Field>
+              </>
+            ) : (
+              <>
+                <Field label="SmartRotator API key">
+                  <input
+                    type="password"
+                    className="field"
+                    value={ws.apiKey || session?.apiKey || ''}
+                    placeholder={session ? 'Login key (prefilled)' : 'Login karke key milegi'}
+                    onChange={(e) => updateWebsearch({ apiKey: e.target.value })}
+                  />
+                </Field>
+                <Field label="Model (optional)">
+                  <input
+                    className="field"
+                    value={ws.model}
+                    placeholder="e.g. gemini-2.5-flash"
+                    onChange={(e) => updateWebsearch({ model: e.target.value })}
+                  />
+                </Field>
+                {!session && (
+                  <p className="rounded-xl px-3 py-2 text-xs" style={{ backgroundColor: 'rgba(216,31,20,0.1)', color: 'var(--color-danger)' }}>
+                    SmartRotator web search ke liye login karna padega — login key se search chalti hai.
+                  </p>
+                )}
+              </>
+            )}
+
+            <p className="text-[11px] leading-relaxed text-muted-dim">
+              ON = har reply se pehle live search chalta hai (thoda slow ho sakta hai). Raw results kabhi nahi dikhte — Misa sirf current
+              facts ke liye use karti hai.
+            </p>
+          </div>
+        )}
+      </div>
 
       <div className="mb-2.5">
         <SectionHeader

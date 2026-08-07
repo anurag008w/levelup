@@ -13,6 +13,7 @@ import { MemoryService } from '../../ai/memory.service';
 import { ProviderSettingsService } from '../../ai/provider-settings.service';
 import { ChatService } from '../chat.service';
 import { MemoryToolsService } from '../memory-tools.service';
+import type { WebSearchService, WebSearchResult } from '../../../infra/ai/websearch.service';
 
 class MemoryChatRepository implements ChatRepository {
   private state: ChatStoreState = { version: 1, sessions: [] };
@@ -1851,6 +1852,112 @@ describe('ChatService', () => {
     for (const id of ids) {
       expect(repo.load().sessions.find((s) => s.id === id)?.aiSummarizedAt).toBeDefined();
     }
+  });
+
+  describe('two-step web search', () => {
+    function makeRecordingProvider(): { provider: LLMProvider; lastRequest: () => LLMRequest | null } {
+      let last: LLMRequest | null = null;
+      const provider: LLMProvider = {
+        id: 'openrouter',
+        label: 'OpenRouter',
+        isConfigured: () => true,
+        complete: async (): Promise<LLMResponse> => ({ text: '', model: 'a' }),
+        stream: async (req: LLMRequest): Promise<LLMResponse> => {
+          last = req;
+          const text = 'answer';
+          if (req.onDelta) for (const ch of text) req.onDelta(ch);
+          return { text, model: 'a' };
+        },
+        fetchModels: async (): Promise<ModelInfo[]> => [],
+        healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+      };
+      return { provider, lastRequest: () => last };
+    }
+
+    function makeWs(result: WebSearchResult): { service: WebSearchService; calls: () => number } {
+      let n = 0;
+      const service = {
+        search: async (): Promise<WebSearchResult> => {
+          n += 1;
+          return result;
+        },
+      } as unknown as WebSearchService;
+      return { service, calls: () => n };
+    }
+
+    function buildChat(store: StateStore, ws: { service: WebSearchService; calls: () => number }) {
+      const repo = new MemoryChatRepository();
+      const { provider, lastRequest } = makeRecordingProvider();
+      const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+      const settings = new ProviderSettingsService(store, factory);
+      const llm = new LLMService(factory, settings);
+      const chat = new ChatService(
+        repo,
+        llm,
+        settings,
+        () => 'ctx',
+        new FakeClock(),
+        null,
+        null,
+        store,
+        undefined,
+        null,
+        ws.service,
+        () => ({ serverUrl: 'https://smartrotator.onrender.com', apiKey: 'sk-test' }),
+      );
+      return { chat, lastRequest };
+    }
+
+    it('injects live search results into the chat request when a backend is configured', async () => {
+      const store = makeStore({
+        providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+        aiEnabled: true,
+        websearch: { enabled: true, providerId: 'smartrotator', model: '', apiKey: '', baseUrl: '' },
+      });
+      const ws = makeWs({ ok: true, text: 'NEET 2026 results 15 June ko aaye.' });
+      const { chat, lastRequest } = buildChat(store, ws);
+      const s = chat.createSession('q');
+      await chat.send(s.id, 'results kab aaye?');
+      expect(ws.calls()).toBe(1);
+      const req = lastRequest();
+      expect(req).not.toBeNull();
+      const system = req!.messages[0].content as string;
+      expect(system).toContain('Live web search results');
+      expect(system).toContain('NEET 2026');
+      // Two-step already grounded the answer — no native adapter grounding on top.
+      expect(req!.websearch).toBeFalsy();
+    });
+
+    it('skips injection when the search returns nothing usable', async () => {
+      const store = makeStore({
+        providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+        aiEnabled: true,
+        websearch: { enabled: true, providerId: 'smartrotator', model: '', apiKey: '', baseUrl: '' },
+      });
+      const ws = makeWs({ ok: false, text: '', error: 'endpoint rejected web_search tool' });
+      const { chat, lastRequest } = buildChat(store, ws);
+      const s = chat.createSession('q');
+      await chat.send(s.id, 'results kab aaye?');
+      expect(ws.calls()).toBe(1);
+      const req = lastRequest();
+      const system = req!.messages[0].content as string;
+      expect(system).not.toContain('Live web search results');
+    });
+
+    it('does not search when web search is disabled (default state)', async () => {
+      const store = makeStore({
+        providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+        aiEnabled: true,
+      });
+      const ws = makeWs({ ok: true, text: 'kuch' });
+      const { chat, lastRequest } = buildChat(store, ws);
+      const s = chat.createSession('q');
+      await chat.send(s.id, 'hello');
+      expect(ws.calls()).toBe(0);
+      const req = lastRequest();
+      const system = req!.messages[0].content as string;
+      expect(system).not.toContain('Live web search results');
+    });
   });
 });
 
