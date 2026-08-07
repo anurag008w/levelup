@@ -71,7 +71,7 @@ function build(store: StateStore, provider: LLMProvider): { chat: ChatService; r
 
 describe('show thinking end-to-end', () => {
   it('thinking level is sent in the request and reasoning lands in the message + repo', async () => {
-    let captured: LLMRequest | null = null;
+    let captured: LLMRequest | undefined;
     const store = makeStore({
       providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
       aiEnabled: true,
@@ -87,7 +87,7 @@ describe('show thinking end-to-end', () => {
   });
 
   it('no thinking level -> no reasoning requested and no reasoning in message', async () => {
-    let captured: LLMRequest | null = null;
+    let captured: LLMRequest | undefined;
     const store = makeStore({
       providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
       aiEnabled: true,
