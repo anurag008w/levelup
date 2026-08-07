@@ -16,6 +16,13 @@ import { persistentStorage } from '../infra/storage/persistent-storage';
 
 export type NotificationPermissionStatus = 'granted' | 'denied' | 'prompt' | 'unsupported';
 
+/** One bubble of the AI reply, for the native MessagingStyle conversation expand. */
+export interface NotificationBubble {
+  text: string;
+  /** Unix ms timestamp when the bubble lands — default: fire moment. */
+  at?: number;
+}
+
 /** Web pe notification unsupported kyun hai — isse UI targeted message dikha sakta hai. */
 export type NotificationUnsupportedReason = 'insecure' | 'api' | 'webview';
 
@@ -254,6 +261,12 @@ function sessionToNotificationId(sessionId?: string): number {
  * Native me LocalNotifications.schedule; web me browser Notification.
  * Same sessionId -> updates existing notification for that chat session (WhatsApp style).
  *
+ * `body` (collapsed/heads-up text) aur optional `largeBody` (expandable full
+ * text). Bubble reveal ke liye `body` = latest bubble rakho — Android collapsed
+ * view multi-paragraph text ka pehla line hi dikhata hai, isliye cumulative
+ * text ko body rakhne par har popup me pehla bubble hi dikhta hai. `largeBody`
+ * (BigTextStyle) = poora reply so far, expand karne pe poora dikhta hai.
+ *
  * `delayMs` (optional): notification ko itne milliseconds baad dikhao. Chat UI
  * reply ko bubble-by-bubble reveal karta hai (pehla bubble 3s baad, phir har
  * paragraph ke beech 3–8s) — doSend/reply-flow har bubble ke reveal moment pe
@@ -272,7 +285,15 @@ function sessionToNotificationId(sessionId?: string): number {
  * rehta hai. Note: schedule.at same id ke andar previous pending schedule ko
  * cancel kar deta hai, isliye isse bubble-sequence ke liye use mat karo.
  */
-export async function notifyAiReply(title: string, body: string, sessionId?: string, delayMs = 0, force = false): Promise<void> {
+export async function notifyAiReply(
+  title: string,
+  body: string,
+  sessionId?: string,
+  delayMs = 0,
+  force = false,
+  largeBody?: string,
+  messages?: NotificationBubble[],
+): Promise<void> {
   if (!isNotificationSupported()) return;
   try {
     if (!(await getNotificationPreference())) return;
@@ -284,6 +305,18 @@ export async function notifyAiReply(title: string, body: string, sessionId?: str
 
   const notificationId = sessionToNotificationId(sessionId);
   const tag = sessionId ? `levelup-chat-${sessionId}` : 'levelup-ai';
+  // Collapsed/heads-up body = `body`; expandable BigText = `largeBody` (ya body,
+  // agar alag na diya ho). Bubble updates body me latest paragraph rakhte hain,
+  // taaki har popup current message dikhaye (aur hamesha first bubble na).
+  const expanded = largeBody ?? body;
+  // Native patch ko MessagingStyle ke liye conversation chahiye (`messages`).
+  // Siraf jab bubbles diye hain tab `extra` me jaata hai — nahi diye to payload
+  // pehle jaisa hi rehta hai (existing behavior untouched).
+  const extra: Record<string, unknown> = {};
+  if (sessionId) extra.sessionId = sessionId;
+  if (messages && messages.length > 0) {
+    extra.messages = messages.map((m) => ({ text: m.text, at: m.at ?? Date.now() }));
+  }
 
   // Background + delayed notification: JS timers throttled hote hain, isliye
   // setTimeout se kabhi fire nahi hogi. OS ko absolute time de do — Android
@@ -304,11 +337,11 @@ export async function notifyAiReply(title: string, body: string, sessionId?: str
             id: notificationId,
             title,
             body,
-            largeBody: body,
+            largeBody: expanded,
             summaryText: title,
             channelId: CHANNEL_ID,
             actionTypeId: ACTION_TYPE_ID,
-            extra: { sessionId },
+            extra,
             schedule: { at: new Date(Date.now() + delayMs), allowWhileIdle: true },
           },
         ],
@@ -351,12 +384,12 @@ export async function notifyAiReply(title: string, body: string, sessionId?: str
               body,
               // largeBody = BigTextStyle — expand/swipe-down karne par poora
               // (multi-line) message dikhta hai instead of cut-off single line.
-              largeBody: body,
+              largeBody: expanded,
               summaryText: title,
               channelId: CHANNEL_ID,
               // Reply/Open actions + session id — tap/reply se app usi chat pe khule.
               actionTypeId: ACTION_TYPE_ID,
-              extra: { sessionId },
+              extra,
             },
           ],
         });

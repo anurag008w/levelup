@@ -82,34 +82,55 @@ export function totalRevealDelay(schedule: RevealSchedule): number {
   return schedule.firstDelay + schedule.gapDelays.reduce((sum, d) => sum + d, 0);
 }
 
+export interface NotificationMessage {
+  /** One bubble's text (trimmed). */
+  text: string;
+  /** Unix ms timestamp when that bubble lands — MessagingStyle ko "sent at" time. */
+  at: number;
+}
+
 export interface NotificationStep {
   /** When (ms after reply completion) this merged update should fire. */
   delayMs: number;
+  /** Newest bubble text — Android collapsed/heads-up body (current message). */
+  latest: string;
   /** Merged reply text so far — bubble 0..i joined, ending with the full reply. */
   text: string;
+  /** Full conversation so far, each bubble with its real reveal timestamp. */
+  messages: NotificationMessage[];
 }
 
 /**
  * Builds the notification updates for a reply: one per bubble, at the exact
- * reveal moment of that bubble, each carrying the content merged so far. The
- * last step holds the whole reply. Same sessionId → same notification id on
- * the native side, so every step updates/merges into one notification.
+ * reveal moment of that bubble. `latest` = the newest bubble (for the collapsed
+ * body — Android heads-up otherwise keeps showing the first line of a
+ * multi-paragraph text), `text` = everything merged so far (for the expandable
+ * BigText body, ending with the whole reply), `messages` = the conversation so
+ * far with real reveal timestamps (for the native MessagingStyle expand —
+ * scrollable, full-length). Same sessionId → same notification id on the
+ * native side, so every step updates/merges into one notification.
  */
-export function buildNotificationSteps(bubbles: string[], schedule: RevealSchedule): NotificationStep[] {
-  const steps: NotificationStep[] = [];
+export function buildNotificationSteps(
+  bubbles: string[],
+  schedule: RevealSchedule,
+  now = Date.now(),
+): NotificationStep[] {
+  const delays: number[] = [];
   let delay = schedule.firstDelay;
   for (let i = 0; i < bubbles.length; i++) {
-    steps.push({
-      delayMs: delay,
-      text: bubbles
-        .slice(0, i + 1)
-        .map((b) => b.trim())
-        .join('\n\n')
-        .trim(),
-    });
+    delays.push(delay);
     if (i + 1 < bubbles.length) {
       delay += schedule.gapDelays[i];
     }
   }
-  return steps;
+  const bubbleTexts = bubbles.map((b) => b.trim());
+  return delays.map((delayMs, i) => ({
+    delayMs,
+    latest: bubbleTexts[i],
+    text: bubbleTexts
+      .slice(0, i + 1)
+      .join('\n\n')
+      .trim(),
+    messages: bubbleTexts.slice(0, i + 1).map((text, j) => ({ text, at: now + delays[j] })),
+  }));
 }

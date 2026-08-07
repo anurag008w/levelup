@@ -150,6 +150,45 @@ describe('notifications — chat-tab suppression', () => {
     expect(scheduled.schedule.allowWhileIdle).toBe(true);
   });
 
+  it('shows the latest bubble as collapsed body while largeBody holds the full merged reply', async () => {
+    await setNotificationPreference(true);
+    setChatTabActive(false);
+    await notifyAiReply('Misa', 'Dusra', 'session-1', 0, true, 'Pehla\n\nDusra');
+    await flush();
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    const n = scheduleMock.mock.calls[0][0].notifications[0];
+    expect(n.body).toBe('Dusra');
+    expect(n.largeBody).toBe('Pehla\n\nDusra');
+  });
+
+  it('passes the conversation to native MessagingStyle via extra.messages when bubbles are given', async () => {
+    await setNotificationPreference(true);
+    setChatTabActive(false);
+    await notifyAiReply('Misa', 'Dusra', 'session-1', 0, true, 'Pehla\n\nDusra', [
+      { text: 'Pehla', at: 1000 },
+      { text: 'Dusra', at: 2000 },
+    ]);
+    await flush();
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    const n = scheduleMock.mock.calls[0][0].notifications[0];
+    expect(n.extra).toEqual({
+      sessionId: 'session-1',
+      messages: [
+        { text: 'Pehla', at: 1000 },
+        { text: 'Dusra', at: 2000 },
+      ],
+    });
+  });
+
+  it('keeps the extra payload unchanged when no bubbles are given (existing behavior untouched)', async () => {
+    await setNotificationPreference(true);
+    setChatTabActive(false);
+    await notifyAiReply('Misa', 'reply', 'session-1', 0, true, 'full reply');
+    await flush();
+    const n = scheduleMock.mock.calls[0][0].notifications[0];
+    expect(n.extra).toEqual({ sessionId: 'session-1' });
+  });
+
   it('keeps foreground delayed notifications on JS timers when force is NOT set (normal chat reveal flow)', async () => {
     await setNotificationPreference(true);
     setChatTabActive(true);

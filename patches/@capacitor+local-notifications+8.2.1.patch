@@ -1,0 +1,43 @@
+diff --git a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
+index 0b826a5..445f56e 100644
+--- a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
++++ b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
+@@ -17,6 +17,7 @@ import androidx.annotation.NonNull;
+ import androidx.annotation.Nullable;
+ import androidx.core.app.NotificationCompat;
+ import androidx.core.app.NotificationManagerCompat;
++import androidx.core.app.Person;
+ import androidx.core.app.RemoteInput;
+ import com.getcapacitor.CapConfig;
+ import com.getcapacitor.JSObject;
+@@ -173,7 +174,29 @@ public class LocalNotificationManager {
+             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+             .setGroupSummary(localNotification.isGroupSummary());
+ 
+-        if (localNotification.getLargeBody() != null) {
++        // Custom: jab JS `extra.messages` bheje to WhatsApp-style MessagingStyle
++        // use karo — expanded me poora conversation scroll hota hai. Messages na
++        // ho to neeche ka existing BigTextStyle behavior bilkul waise hi rehta hai.
++        JSObject notificationExtra = localNotification.getExtra();
++        JSONArray messageList = notificationExtra != null ? notificationExtra.optJSONArray("messages") : null;
++        if (messageList != null && messageList.length() > 0) {
++            Person sender = new Person.Builder().setName(localNotification.getTitle()).build();
++            NotificationCompat.MessagingStyle messagingStyle = new NotificationCompat.MessagingStyle(sender);
++            for (int i = 0; i < messageList.length(); i++) {
++                JSONObject message = messageList.optJSONObject(i);
++                if (message == null) {
++                    continue;
++                }
++                messagingStyle.addMessage(
++                    new NotificationCompat.MessagingStyle.Message(
++                        message.optString("text"),
++                        message.optLong("at", System.currentTimeMillis()),
++                        sender
++                    )
++                );
++            }
++            mBuilder.setStyle(messagingStyle);
++        } else if (localNotification.getLargeBody() != null) {
+             // support multiline text
+             mBuilder.setStyle(
+                 new NotificationCompat.BigTextStyle()

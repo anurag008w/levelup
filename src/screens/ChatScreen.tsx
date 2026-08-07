@@ -549,8 +549,11 @@ export default function ChatScreen({
       // Capacitor KeepRunning=true (default) background me bhi timers chalata
       // hai, isliye user ke tab-switch/app-minimize karne pe bhi notification
       // bubble-by-bubble merge hoti rehti hai.
+      // Body = latest bubble (collapsed/heads-up — warna Android cumulative
+      // text ka pehla line har popup me dikhata), largeBody = poora reply so
+      // far, messages = native MessagingStyle expand ke liye (scrollable).
       for (const step of buildNotificationSteps(bubbles, schedule)) {
-        setTimeout(() => void notifyAiReply('Misa', step.text || 'Naya AI reply aaya', sessionId, 0), step.delayMs);
+        setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', sessionId, 0, undefined, step.text, step.messages), step.delayMs);
       }
       // Koi visible bubble nahi (sirf whitespace reply) — ek turant notification.
       if (bubbles.length === 0) {
