@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { emptyAppState } from '../../core/domain/state';
 import type { KeyValueRepository } from '../../core/ports/repositories';
 import {
@@ -194,6 +194,10 @@ describe('LocalStateRepository', () => {
 });
 
 describe('CachedStateStore', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('loads once from the repository and caches', () => {
     const store = memoryStore();
     const repo = new LocalStateRepository(store);
@@ -206,5 +210,29 @@ describe('CachedStateStore', () => {
     // save updates the cache immediately.
     cached.save({ ...emptyAppState(), startDateISO: '2026-03-03' });
     expect(cached.get().startDateISO).toBe('2026-03-03');
+  });
+
+  it('trailing-debounces repository writes and flushes on demand', () => {
+    vi.useFakeTimers();
+    const kv = memoryStore();
+    const repo = new LocalStateRepository(kv);
+    const cached = new CachedStateStore(repo, 400);
+    // Cache is always fresh even though the repo write is deferred.
+    cached.save({ ...emptyAppState(), startDateISO: '2026-04-04' });
+    expect(cached.get().startDateISO).toBe('2026-04-04');
+    expect(repo.load().startDateISO).toBeNull();
+    // Trailing: rapid saves collapse into ONE write with the LATEST state.
+    vi.advanceTimersByTime(100);
+    cached.save({ ...emptyAppState(), startDateISO: '2026-05-05' });
+    vi.advanceTimersByTime(300);
+    expect(repo.load().startDateISO).toBeNull(); // still inside the window
+    vi.advanceTimersByTime(100);
+    expect(repo.load().startDateISO).toBe('2026-05-05');
+    // flush() writes any pending state immediately.
+    cached.save({ ...emptyAppState(), startDateISO: '2026-06-06' });
+    cached.flush();
+    expect(repo.load().startDateISO).toBe('2026-06-06');
+    // flush with nothing pending is a safe no-op.
+    expect(() => cached.flush()).not.toThrow();
   });
 });

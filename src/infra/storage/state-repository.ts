@@ -170,9 +170,13 @@ export function hasV2Shape(raw: unknown): boolean {
 export class CachedStateStore implements StateStore {
   private cache: AppState | null = null;
   private readonly repo: StateRepository;
+  /** Trailing debounce window for repository writes (ms). */
+  private readonly persistDelayMs: number;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(repo: StateRepository) {
+  constructor(repo: StateRepository, persistDelayMs = 400) {
     this.repo = repo;
+    this.persistDelayMs = persistDelayMs;
   }
 
   get(): AppState {
@@ -181,7 +185,30 @@ export class CachedStateStore implements StateStore {
   }
 
   save(state: AppState): void {
+    // The in-memory cache is the source of truth for the UI and every
+    // service, so it updates immediately. The repository (localStorage) write
+    // is TRAILING-DEBOUNCED: without this, every UI interaction — toggles,
+    // slider drags, selects, keystrokes, tab switches — serializes the whole
+    // state (potentially MBs of memory/summaries) and synchronously writes it
+    // to localStorage, which is what made the app hang on low-end devices.
+    // Behavior is unchanged: the cache always has the latest state; the
+    // debounced write is invisible except that storage catches up ~400ms later
+    // (or immediately on flush()/page hide).
     this.cache = state;
-    this.repo.save(state);
+    if (this.persistTimer !== null) clearTimeout(this.persistTimer);
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      this.repo.save(state);
+    }, this.persistDelayMs);
+  }
+
+  /** Writes any pending state to the repository immediately. No-op when the
+   *  last save already hit the repository. Safe to call at any time. */
+  flush(): void {
+    if (this.persistTimer !== null && this.cache) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+      this.repo.save(this.cache);
+    }
   }
 }

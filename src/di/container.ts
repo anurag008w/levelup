@@ -74,6 +74,17 @@ export function createContainer(
   
   const stateRepository = new LocalStateRepository(storage);
   const innerStore = new CachedStateStore(stateRepository);
+  // State writes are trailing-debounced (see CachedStateStore) so rapid UI
+  // interactions never serialize+write the whole state per keystroke. The
+  // in-memory cache always has the latest data — these hooks only guarantee
+  // the last write reaches localStorage when the app is hidden/closed.
+  if (typeof window !== 'undefined') {
+    const flushStore = () => innerStore.flush();
+    window.addEventListener('pagehide', flushStore);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flushStore();
+    });
+  }
   const http: HttpClient = httpOverride ?? (isNativePlatform() ? new CapacitorHttpClient() : new FetchHttpClient());
   const factory = new ProviderFactory(http);
   const clock = new SystemClock();
