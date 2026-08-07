@@ -301,6 +301,9 @@ describe('full app data backup (production-grade)', () => {
     applyBackup(parseBackup(serializeBackup(buildBackupPayload(sourceRepo.load(), { version: 1, sessions: [] }))), {
       store: freshStore,
     });
+    // CachedStateStore defers repo writes — flush so the repo read below sees
+    // the imported state (same durability as before, just explicit).
+    freshStore.flush();
 
     const restoredBank = new TaskBankRepositoryImpl(freshRepo, buildSeed());
     const all = restoredBank.getAll();
