@@ -1175,7 +1175,7 @@ interface MessageActions {
 
 function MessageBubble({
   message,
-  isLast,
+  isLast: _isLast,
   showThinking,
   reveal = false,
   revealSchedule,
@@ -1265,7 +1265,7 @@ function MessageBubble({
     const msgRect = msg.getBoundingClientRect();
     if (msgRect.top >= threadRect.top && msgRect.bottom <= threadRect.bottom) return;
     thread.scrollTo({ top: msg.offsetTop - thread.offsetTop - 12, behavior: 'smooth' });
-  }, [revealed, thinking, reveal]);
+  }, [revealed, thinking, reveal, scrollRef]);
 
   const visibleBubbleTexts = reveal ? bubbleTexts.slice(0, revealed) : bubbleTexts;
 

@@ -16,6 +16,10 @@ class PersistentStorage {
   }
 
   private loadFromLocalStorage(): void {
+    // Non-browser environments (SSR, node-based test runners) have no
+    // localStorage — skip seeding the cache instead of logging an error at
+    // module import time. Browsers take the normal path below.
+    if (typeof localStorage === 'undefined') return;
     try {
       const keys = Object.keys(localStorage);
       keys.forEach(key => {
