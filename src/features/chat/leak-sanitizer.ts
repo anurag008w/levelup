@@ -22,7 +22,7 @@ const SLASH_TOOL_CALL_INLINE_PATTERN = /\/[a-zA-Z_][\w-]*\s*\([^)\n]*\)/g;
 const TOOL_MARKER_LINE_PATTERN = /^\s*\[\s*(?:tool(?:\s+execut\w*|\s+call\w*|\s+run\w*)?|tool-result|tool-result-text|system)\s*:?[^\]]*\]\s*$/gim;
 
 const TOOL_CALL_OBJECT_PATTERN = /^\s*(?:call_plan_manager_[\w-]+|plan_manager\.[\w-]+)\s*\([\s\S]*?\)\s*;?\s*$/gim;
-const TOOL_JSON_ACTION_PATTERN = /^\s*\{\s*"action"\s*:\s*"(?:getPlan|getRange|addTask|bulkAddTasks|removeTask|bulkRemoveTasks|setDayMode|editTask|markDone|bulkMarkDone|getAllTasks|getTaskBank|editAnyTask|deleteAnyTask|createBlock|deleteBlock|activateBlock|editBlock|listBlocks|extendBlock|listPlanners|getSubject|getPlanner|getTest|getTests|getRoutine|getContext)"[\s\S]*?\}\s*,?\s*$/gim;
+const TOOL_JSON_ACTION_PATTERN = /^\s*\{\s*"action"\s*:\s*"(?:getPlan|getRange|addTask|bulkAddTasks|removeTask|bulkRemoveTasks|setDayMode|editTask|markDone|bulkMarkDone|getAllTasks|getTaskBank|editAnyTask|deleteAnyTask|createBlock|deleteBlock|activateBlock|editBlock|listBlocks|extendBlock|listPlanners|getSubject|getPlanner|getTest|getTests|getRoutine|getContext|websearch)"[\s\S]*?\}\s*,?\s*$/gim;
 const TOOL_JSON_BATCH_PATTERN = /^\s*\{\s*"actions"\s*:\s*\[[\s\S]*?\]\s*\}\s*,?\s*$/gim;
 
 /** Known tool names used by the JSON/python call strippers below. */

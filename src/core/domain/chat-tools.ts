@@ -207,7 +207,8 @@ Multi-action rules:
 - Ranges longer than 10 days auto-split into multiple calls.
 
 The tool result returns updated plans/task-bank rows with task ids and full task metadata when relevant. Sundays (Day 7, 14, 21...) are MOCK test days, NOT automatic holidays: on a mock Sunday the mock protocol tasks appear AND you can still add tasks. Only use setDayMode "rest" when the user actually wants a holiday/rest day.
-For ANYTHING else (concepts, motivation, general questions, block suggestions, study strategies) reply normally in Hinglish (always ROMAN script).`;
+There is NO web search tool here. Never emit an action like {"action":"websearch",...} — it does not exist and will be ignored.
+For ANYTHING else (concepts, motivation, general questions, block suggestions, study strategies, or requests for fresh/latest/current information) reply normally in Hinglish (always ROMAN script).`;
 
 /** Correction prompt used when the model answered with prose instead of a tool action. */
 export const CHAT_TOOL_RETRY =
