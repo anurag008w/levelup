@@ -137,6 +137,25 @@ describe('buildNotificationSteps', () => {
     expect(steps[2].text).toBe('Pehla\n\nDusra\n\nTeen');
   });
 
+  it('marks the newest bubble as `latest` (collapsed body) on every step', () => {
+    const schedule = computeRevealSchedule(3, () => 0);
+    const steps = buildNotificationSteps(['Pehla', 'Dusra', 'Teen'], schedule);
+    expect(steps[0].latest).toBe('Pehla');
+    expect(steps[1].latest).toBe('Dusra');
+    expect(steps[2].latest).toBe('Teen');
+  });
+
+  it('builds the conversation (`messages`) with real reveal timestamps for native MessagingStyle', () => {
+    const now = 1_700_000_000_000;
+    const schedule = computeRevealSchedule(2, () => 0);
+    const steps = buildNotificationSteps(['Pehla', 'Dusra'], schedule, now);
+    expect(steps[0].messages).toEqual([{ text: 'Pehla', at: now + FIRST_BUBBLE_DELAY_MS }]);
+    expect(steps[1].messages).toEqual([
+      { text: 'Pehla', at: now + FIRST_BUBBLE_DELAY_MS },
+      { text: 'Dusra', at: now + FIRST_BUBBLE_DELAY_MS + BUBBLE_GAP_MIN_MS },
+    ]);
+  });
+
   it('returns a single step for a one-bubble reply', () => {
     const schedule = computeRevealSchedule(1);
     const steps = buildNotificationSteps(['Ek hi paragraph'], schedule);
@@ -154,6 +173,8 @@ describe('buildNotificationSteps', () => {
     const schedule = computeRevealSchedule(2, () => 0);
     const steps = buildNotificationSteps(['  pehla  ', '  dusra  '], schedule);
     expect(steps[0].text).toBe('pehla');
+    expect(steps[0].latest).toBe('pehla');
     expect(steps[1].text).toBe('pehla\n\ndusra');
+    expect(steps[1].latest).toBe('dusra');
   });
 });

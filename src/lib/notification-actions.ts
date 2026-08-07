@@ -147,8 +147,13 @@ export function setupNotificationActions(): void {
             // kar deta hai, isliye pehle se schedule kiye steps me se sirf aakhri
             // fire hota (poora reply, total reveal delay ke baad) aur bubble
             // reveal kabhi dikhta nahi.
+            //
+            // Body = latest bubble (collapsed/heads-up — warna Android har
+            // popup me cumulative text ka pehla line dikhata, "pehla message
+            // har popup me" wala bug), largeBody = poora reply so far, messages
+            // = native MessagingStyle expand ke liye (scrollable, full-length).
             for (const step of buildNotificationSteps(bubbles, schedule)) {
-              setTimeout(() => void notifyAiReply('Misa', step.text || 'Naya AI reply aaya', sessionId, 0, true), step.delayMs);
+              setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', sessionId, 0, true, step.text, step.messages), step.delayMs);
             }
           } else {
             // Koi visible bubble nahi (sirf whitespace reply) — ek turant notification.

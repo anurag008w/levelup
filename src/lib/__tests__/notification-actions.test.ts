@@ -69,7 +69,11 @@ describe('notification-actions', () => {
     // Pehla bubble 3s thinking pause ke baad (chat jaisa reveal).
     await vi.advanceTimersByTimeAsync(3000);
     // Fire-time bubble (delayMs=0) + force=true — same id turant merge hota hai.
-    expect(notifyAiReplyMock).toHaveBeenCalledWith('Misa', 'AI reply text', 's1', 0, true);
+    // Body = latest bubble, largeBody (6th arg) = cumulative text, messages
+    // (7th arg) = native MessagingStyle conversation.
+    expect(notifyAiReplyMock).toHaveBeenCalledWith('Misa', 'AI reply text', 's1', 0, true, 'AI reply text', [
+      { text: 'AI reply text', at: expect.any(Number) },
+    ]);
     expect(openChat).not.toHaveBeenCalled();
     expect(chatUpdated).toHaveBeenCalled();
     expect(sendMock).toHaveBeenCalledBefore(minimizeAppMock);
@@ -85,17 +89,27 @@ describe('notification-actions', () => {
     expect(notifyAiReplyMock).toHaveBeenCalledTimes(1);
     const first = notifyAiReplyMock.mock.calls[0];
     expect(first[0]).toBe('Misa');
+    // Body = LATEST bubble (collapsed/heads-up), not the first one.
     expect(first[1]).toBe('Pehla paragraph.');
     expect(first[2]).toBe('s1');
     expect(first[3]).toBe(0);
     expect(first[4]).toBe(true);
-    // Gap (Math.random=0 → exactly 3000ms) ke baad second bubble = poora reply.
+    expect(first[5]).toBe('Pehla paragraph.');
+    expect(first[6]).toEqual([{ text: 'Pehla paragraph.', at: expect.any(Number) }]);
+    // Gap (Math.random=0 → exactly 3000ms) ke baad second bubble.
     await vi.advanceTimersByTimeAsync(3000);
     expect(notifyAiReplyMock).toHaveBeenCalledTimes(2);
     const last = notifyAiReplyMock.mock.calls[1];
-    expect(last[1]).toBe('Pehla paragraph.\n\nDusra paragraph.');
+    // Body ab LATEST bubble hai (pehla nahi), largeBody = poora reply, messages
+    // = poora conversation so far (MessagingStyle).
+    expect(last[1]).toBe('Dusra paragraph.');
     expect(last[3]).toBe(0);
     expect(last[4]).toBe(true);
+    expect(last[5]).toBe('Pehla paragraph.\n\nDusra paragraph.');
+    expect(last[6]).toEqual([
+      { text: 'Pehla paragraph.', at: expect.any(Number) },
+      { text: 'Dusra paragraph.', at: expect.any(Number) },
+    ]);
     randomSpy.mockRestore();
   });
 
