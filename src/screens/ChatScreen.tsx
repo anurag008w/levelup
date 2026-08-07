@@ -238,11 +238,34 @@ export default function ChatScreen({
     return () => window.removeEventListener('levelup:chat-updated', onUpdated);
   }, []);
 
+  // Keyboard / URL-bar inset. The composer must stay pinned above the on-screen
+  // keyboard on every platform: Android resizes the layout viewport itself
+  // (adjustResize / interactive-widget), iOS Safari and some WebViews only
+  // shrink the VISUAL viewport. Track the difference and expose it as
+  // --kb-inset so .chat-shell can pad its bottom by exactly that much. When the
+  // layout viewport already resized, the difference is ~0 and nothing double-pads.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => {
+      const inset = Math.max(0, window.innerHeight - vv.height);
+      document.documentElement.style.setProperty('--kb-inset', `${inset}px`);
+    };
+    update();
+    vv.addEventListener('resize', update);
+    window.addEventListener('resize', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      window.removeEventListener('resize', update);
+    };
+  }, []);
+
   // Keep every session's shared prefs in line with the global chat settings
   // (Settings tab -> Chat Experience) whenever the coach screen mounts.
   useEffect(() => {
     container.chat.applyGlobalPrefs(globalChatPrefsFromSettings(container.store.get().aiSettings.chat));
     setSessions(container.chat.listSessions());
+
     // Mark the session the user lands on as active BEFORE the fallback dump, so
     // the currently-open chat is never silently archived — it is only copied to
     // memory when the user says so via the switch prompt.
