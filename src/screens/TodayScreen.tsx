@@ -50,12 +50,12 @@ export default function TodayScreen({
   const [notice, setNotice] = useState('');
   const [confettiKey, setConfettiKey] = useState(0);
   const celebratedRef = useRef(false);
-  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
 
   // Clear any pending notice-dismiss timer on unmount so a late tick can't
   // call setState after the environment is gone (crashes test teardown).
   useEffect(() => () => {
-    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
   }, []);
 
   const dayNumber = getCurrentDayNumber(state, today);
@@ -97,7 +97,7 @@ export default function TodayScreen({
 
   function flash(msg: string) {
     setNotice(msg);
-    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
     noticeTimerRef.current = window.setTimeout(() => setNotice(''), 2500);
   }
 

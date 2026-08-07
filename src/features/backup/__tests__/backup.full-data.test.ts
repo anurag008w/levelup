@@ -132,6 +132,8 @@ function buildFullState(): AppState {
     conversationHistoryLength: 8,
     includeJourneyContext: true,
     showThinking: false,
+    toolMaxTokens: 1024,
+    memorySummaryMaxTokens: 8000,
   };
   state.aiSettings = {
     providers: {
