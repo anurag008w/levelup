@@ -823,12 +823,13 @@ export class ChatService {
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),
       temperature: this.decisionTemperature(session),
-      maxTokens: 1024,
+      maxTokens: this.resolveToolMaxTokens(),
       providerId: session.prefs.providerId,
       signal,
       // Decision hops must be fast, deterministic JSON — thinking only risks
-      // a budget clash and prose contamination.
-      thinking: 'off',
+      // a budget clash and prose contamination. Users can enable it from
+      // Chat Settings > Tool Decisions (toolThinking) for reasoning models.
+      thinking: this.resolveToolThinking(),
     };
     const model = this.resolveModel(session);
     if (model) request.model = model;
@@ -842,10 +843,10 @@ export class ChatService {
     const request: LLMRequest = {
       messages: await this.buildMessages(session, `${PLANNER_TOOL_INSTRUCTIONS}\n\n${this.plannerDateContext()}`),
       temperature: this.decisionTemperature(session),
-      maxTokens: 1024,
+      maxTokens: this.resolveToolMaxTokens(),
       providerId: session.prefs.providerId,
       signal,
-      thinking: 'off',
+      thinking: this.resolveToolThinking(),
     };
     const model = this.resolveModel(session);
     if (model) request.model = model;
@@ -859,10 +860,10 @@ export class ChatService {
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),
       temperature: this.decisionTemperature(session),
-      maxTokens: 1024,
+      maxTokens: this.resolveToolMaxTokens(),
       providerId: session.prefs.providerId,
       signal,
-      thinking: 'off',
+      thinking: this.resolveToolThinking(),
     };
     const model = this.resolveModel(session);
     if (model) request.model = model;
@@ -876,10 +877,10 @@ export class ChatService {
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),
       temperature: this.decisionTemperature(session),
-      maxTokens: 1024,
+      maxTokens: this.resolveToolMaxTokens(),
       providerId: session.prefs.providerId,
       signal,
-      thinking: 'off',
+      thinking: this.resolveToolThinking(),
     };
     const model = this.resolveModel(session);
     if (model) request.model = model;
@@ -919,10 +920,10 @@ export class ChatService {
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),
       temperature: this.decisionTemperature(session),
-      maxTokens: 1024,
+      maxTokens: this.resolveToolMaxTokens(),
       providerId: session.prefs.providerId,
       signal,
-      thinking: 'off',
+      thinking: this.resolveToolThinking(),
     };
     const model = this.resolveModel(session);
     if (model) request.model = model;
@@ -969,10 +970,10 @@ export class ChatService {
     const request: LLMRequest = {
       messages,
       temperature: this.decisionTemperature(session),
-      maxTokens: 1024,
+      maxTokens: this.resolveToolMaxTokens(),
       providerId: session.prefs.providerId,
       signal,
-      thinking: 'off',
+      thinking: this.resolveToolThinking(),
     };
     const model = this.resolveModel(session);
     if (model) request.model = model;
@@ -1008,10 +1009,10 @@ export class ChatService {
     const request: LLMRequest = {
       messages,
       temperature: this.decisionTemperature(session),
-      maxTokens: 1024,
+      maxTokens: this.resolveToolMaxTokens(),
       providerId: session.prefs.providerId,
       signal,
-      thinking: 'off',
+      thinking: this.resolveToolThinking(),
     };
     const model = this.resolveModel(session);
     if (model) request.model = model;
@@ -1199,6 +1200,52 @@ export class ChatService {
       ? this.settings.getProviderById(session.prefs.providerId)
       : this.settings.getActiveProvider();
     return provider?.thinking;
+  }
+
+  /** Tool DECISION hops are 'off' by default (fast, cheap, deterministic JSON).
+   *  The user can raise it to low/medium/high from Chat Settings — "Provider
+   *  default" is deliberately NOT offered here: silently inheriting a
+   *  provider's thinking on every multi-hop tool flow would multiply latency
+   *  and cost for a step that only needs compact JSON. */
+  private resolveToolThinking(): ThinkingLevel {
+    return this.store?.get().aiSettings.chat.toolThinking ?? 'off';
+  }
+
+  /** Tool decision-hop token budget. Default 1024 (one compact JSON batch);
+   *  clamped 256-8192 for safety. With thinking ON the budget doubles (the
+   *  reasoning tokens are billed against the same output window) up to 16384. */
+  private resolveToolMaxTokens(): number {
+    const chat = this.store?.get().aiSettings.chat;
+    const base =
+      typeof chat?.toolMaxTokens === 'number' && Number.isFinite(chat.toolMaxTokens)
+        ? Math.max(256, Math.min(Math.floor(chat.toolMaxTokens), 8192))
+        : 1024;
+    return this.resolveToolThinking() !== 'off' ? Math.min(base * 2, 16384) : base;
+  }
+
+  /** Background memory summaries: thinking level from Chat Settings
+   *  (default medium). A single complete() call per chunk of unread chats. */
+  private memorySummaryThinking(): ThinkingLevel {
+    return this.store?.get().aiSettings.chat.memorySummaryThinking ?? 'medium';
+  }
+
+  /** Background memory summaries: token budget from Chat Settings
+   *  (default 8000), clamped 1024-32768 so a bad saved value can never
+   *  explode the request. */
+  private memorySummaryMaxTokens(): number {
+    const chat = this.store?.get().aiSettings.chat;
+    return typeof chat?.memorySummaryMaxTokens === 'number' && Number.isFinite(chat.memorySummaryMaxTokens)
+      ? Math.max(1024, Math.min(Math.floor(chat.memorySummaryMaxTokens), 32768))
+      : 8000;
+  }
+
+  /** Background memory summaries: system prompt from Chat Settings
+   *  (undefined = the built-in instructions). Blank/whitespace falls back
+   *  to the default too, so the settings editor can never blank it out. */
+  private memorySummaryInstructions(): string {
+    const chat = this.store?.get().aiSettings.chat;
+    const custom = chat?.memorySummaryPrompt?.trim();
+    return custom ? custom : MEMORY_SUMMARY_INSTRUCTIONS;
   }
 
   private async buildRequest(
@@ -1697,12 +1744,12 @@ export class ChatService {
     ].join('\n');
     const request: LLMRequest = {
       messages: [
-        { role: 'system', content: MEMORY_SUMMARY_INSTRUCTIONS },
+        { role: 'system', content: this.memorySummaryInstructions() },
         { role: 'user', content: user },
       ],
       temperature: 0.3,
-      maxTokens: 4096,
-      thinking: 'off',
+      maxTokens: this.memorySummaryMaxTokens(),
+      thinking: this.memorySummaryThinking(),
     };
     if (opts?.providerId) request.providerId = opts.providerId;
     if (opts?.model) request.model = opts.model;

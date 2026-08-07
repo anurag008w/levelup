@@ -1,5 +1,5 @@
-import { useRef, type CSSProperties } from 'react';
-import { Brain, ChevronLeft, Clock, MessageSquare, Save, Sparkles, Type } from 'lucide-react';
+import { useRef, useState, type CSSProperties } from 'react';
+import { Brain, ChevronLeft, Clock, MessageSquare, Save, Sparkles, Type, Wrench } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ChatSettings } from '../core/domain/state';
 import type { ThinkingLevel } from '../core/domain/llm';
@@ -7,6 +7,7 @@ import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
 import { haptic } from '../lib/haptics';
 import { DEFAULT_USER_PERSONA, INTERNAL_SYSTEM_PROMPT, globalChatPrefsFromSettings } from '../core/domain/chat';
+import { MEMORY_SUMMARY_INSTRUCTIONS } from '../core/domain/memory-summary';
 import { deviceTimeZone } from '../core/ports/clock';
 import { container } from '../di/container';
 
@@ -44,6 +45,9 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
   // session with a short debounce so typing doesn't trigger a repo save per
   // keystroke. Immediate fields (sliders, toggles, selects) stay instant.
   const propagateTimer = useRef<number | null>(null);
+  // "View default" for the memory summary prompt — local UI-only state, so
+  // opening/closing it never touches the persisted settings.
+  const [showDefaultPrompt, setShowDefaultPrompt] = useState(false);
 
   function updateChat(partial: Partial<ChatSettings>) {
     haptic();
@@ -166,6 +170,66 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
         </div>
       </div>
 
+      {/* Tool Decisions */}
+      <div className="mb-6">
+        <SectionHeader
+          icon={<Wrench size={14} color="var(--color-peak)" />}
+          accent="var(--color-peak)"
+          title="Tool Decisions"
+        />
+
+        <div className="gradient-border rounded-2xl p-px" data-tone="blood">
+          <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4 space-y-5">
+            {/* Tool thinking */}
+            <div>
+              <label htmlFor="tool-thinking-level" className="mb-2 block text-sm font-medium">Tool thinking</label>
+              <select
+                id="tool-thinking-level"
+                className="field"
+                value={chat.toolThinking ?? 'off'}
+                onChange={(e) =>
+                  updateChat({ toolThinking: (e.target.value || undefined) as ThinkingLevel | undefined })
+                }
+              >
+                <option value="off">Off</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+              <p className="mt-1 text-[10px] text-muted">
+                Tool pick karne wale JSON decision pe thinking budget. Default Off = fast, sasta, deterministic JSON.
+              </p>
+            </div>
+
+            {/* Tool decision tokens */}
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <label htmlFor="tool-decision-tokens" className="text-sm font-medium">Decision tokens</label>
+                <span className="font-mono text-xs text-muted">{chat.toolMaxTokens ?? 1024}</span>
+              </div>
+              <input
+                id="tool-decision-tokens"
+                type="range"
+                min="256"
+                max="8192"
+                step="256"
+                value={chat.toolMaxTokens ?? 1024}
+                onChange={(e) => updateChat({ toolMaxTokens: parseInt(e.target.value) })}
+                className="slider w-full"
+                style={{ '--slider-fill': `${(((chat.toolMaxTokens ?? 1024) - 256) / (8192 - 256)) * 100}%` } as CSSProperties}
+              />
+              <div className="mt-1 flex justify-between text-[10px] text-muted">
+                <span>Compact</span>
+                <span>Bada batch</span>
+              </div>
+              <p className="mt-1 text-[10px] text-muted">
+                Ek decision JSON ki max length. 1024 default — chhote batch ke liye kaafi. Bade multi-tool batch ke liye badhao.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Memory & Context */}
       <div className="mb-6">
         <SectionHeader
@@ -173,7 +237,6 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
           accent="var(--color-l)"
           title="Memory & Context"
         />
-
         <div className="gradient-border rounded-2xl p-px" data-tone="blood">
           <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4 space-y-4">
             {/* Memory Toggle */}
@@ -214,6 +277,101 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                 style={{ '--slider-fill': `${(chat.conversationHistoryLength / 50) * 100}%` } as CSSProperties}
               />
               <p className="mt-1 text-[10px] text-muted">0 = full history; N = last N messages only</p>
+            </div>
+
+            {/* Memory summary quality */}
+            <div className="border-t border-border/70 pt-4">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">Memory summary</p>
+              <div className="space-y-4">
+                {/* Summary thinking */}
+                <div>
+                  <label htmlFor="memory-summary-thinking" className="mb-2 block text-sm font-medium">Summary thinking</label>
+                  <select
+                    id="memory-summary-thinking"
+                    className="field"
+                    value={chat.memorySummaryThinking ?? 'medium'}
+                    onChange={(e) =>
+                      updateChat({ memorySummaryThinking: (e.target.value || undefined) as ThinkingLevel | undefined })
+                    }
+                  >
+                    <option value="off">Off</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                  <p className="mt-1 text-[10px] text-muted">
+                    Background memory summary pe thinking budget. Default Medium — better memory blocks.
+                  </p>
+                </div>
+
+                {/* Summary tokens */}
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <label htmlFor="memory-summary-tokens" className="text-sm font-medium">Summary tokens</label>
+                    <span className="font-mono text-xs text-muted">{chat.memorySummaryMaxTokens ?? 8000}</span>
+                  </div>
+                  <input
+                    id="memory-summary-tokens"
+                    type="range"
+                    min="1024"
+                    max="32768"
+                    step="512"
+                    value={chat.memorySummaryMaxTokens ?? 8000}
+                    onChange={(e) => updateChat({ memorySummaryMaxTokens: parseInt(e.target.value) })}
+                    className="slider w-full"
+                    style={{ '--slider-fill': `${(((chat.memorySummaryMaxTokens ?? 8000) - 1024) / (32768 - 1024)) * 100}%` } as CSSProperties}
+                  />
+                  <div className="mt-1 flex justify-between text-[10px] text-muted">
+                    <span>Compact</span>
+                    <span>Detailed</span>
+                  </div>
+                  <p className="mt-1 text-[10px] text-muted">
+                    Ek summary request ki max length. 8000 default.
+                  </p>
+                </div>
+
+                {/* Summary prompt */}
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <label htmlFor="memory-summary-prompt" className="text-sm font-medium">Summary prompt</label>
+                  </div>
+                  <textarea
+                    id="memory-summary-prompt"
+                    className="field min-h-[110px] resize-y text-xs leading-relaxed"
+                    placeholder="Default instructions use hoti hain — custom style ke liye apna prompt likho (khali = default)"
+                    value={chat.memorySummaryPrompt ?? ''}
+                    onChange={(e) =>
+                      updateChat({ memorySummaryPrompt: e.target.value || undefined })
+                    }
+                  />
+                  <p className="mt-1 text-[10px] text-muted">
+                    AI ko batata hai memory blocks kaise banane hain. Khali chhodo to built-in instructions lagti hain.
+                  </p>
+                  <div className="mt-2 flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowDefaultPrompt((v) => !v)}
+                      className="text-xs text-peak hover:opacity-80"
+                    >
+                      {showDefaultPrompt ? 'Hide default' : 'View default instructions'}
+                    </button>
+                    {chat.memorySummaryPrompt ? (
+                      <button
+                        type="button"
+                        onClick={() => updateChat({ memorySummaryPrompt: undefined })}
+                        className="text-xs text-muted hover:text-peak"
+                      >
+                        Reset to default
+                      </button>
+                    ) : null}
+                  </div>
+                  {showDefaultPrompt ? (
+                    <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded-lg border border-border/70 bg-panel p-3 font-mono text-[10px] leading-relaxed text-muted">
+                      {MEMORY_SUMMARY_INSTRUCTIONS}
+                    </pre>
+                  ) : null}
+                </div>
+              </div>
             </div>
           </div>
         </div>
