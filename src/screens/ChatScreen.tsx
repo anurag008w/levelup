@@ -540,12 +540,17 @@ export default function ChatScreen({
       // merge hoke naya ban jata hai). Last update me POORA reply hota hai —
       // chahe reply kitna bhi bada ho, koi character cut-off nahi.
       // Title = "Misa" (sender), body = poora reply — reply/open actions same
-      // sessionId se hi kaam karte hain. Background me bhi wahi bubble-timing
-      // schedule jaata hai — notifyAiReply background me use OS-level
-      // (schedule.at) pe schedule karta hai taaki JS timers pause hone par bhi
-      // fire ho.
+      // sessionId se hi kaam karte hain.
+      //
+      // Har bubble apne reveal moment pe JS timer se fire hota hai (delayMs=0 →
+      // turant show/merge), OS-level pre-scheduling nahi — Android plugin same
+      // id ke pending alarms cancel kar deta hai, isliye pehle se schedule kiye
+      // steps me se sirf aakhri fire hota aur bubble reveal kabhi dikhta nahi.
+      // Capacitor KeepRunning=true (default) background me bhi timers chalata
+      // hai, isliye user ke tab-switch/app-minimize karne pe bhi notification
+      // bubble-by-bubble merge hoti rehti hai.
       for (const step of buildNotificationSteps(bubbles, schedule)) {
-        void notifyAiReply('Misa', step.text || 'Naya AI reply aaya', sessionId, step.delayMs);
+        setTimeout(() => void notifyAiReply('Misa', step.text || 'Naya AI reply aaya', sessionId, 0), step.delayMs);
       }
       // Koi visible bubble nahi (sirf whitespace reply) — ek turant notification.
       if (bubbles.length === 0) {

@@ -256,23 +256,21 @@ function sessionToNotificationId(sessionId?: string): number {
  *
  * `delayMs` (optional): notification ko itne milliseconds baad dikhao. Chat UI
  * reply ko bubble-by-bubble reveal karta hai (pehla bubble 3s baad, phir har
- * paragraph ke beech 3–8s) — doSend har bubble ke reveal moment pe isse call
- * karta hai. Same sessionId = same notification id = har update purani ko merge
- * kar deta hai, last me poora reply ek hi notification me.
+ * paragraph ke beech 3–8s) — doSend/reply-flow har bubble ke reveal moment pe
+ * isse call karte hain (caller JS timer se, delayMs=0 → turant show/merge,
+ * same sessionId = same notification id = purana merge). Ye fire-time approach
+ * zaroori hai: OS-level pre-scheduling (delayMs>0) same id ke multiple pending
+ * alarms ko plugin cancel kar deta hai, isliye sirf aakhri fire hota aur
+ * bubble reveal kabhi dikhta nahi.
  *
- * Note: foreground me delay native pe bhi JS setTimeout se manage hota hai (na
- * ki schedule.at) — kyunki Android plugin same id ke pending schedule ko cancel
- * kar deta hai, isliye multiple future updates pre-schedule nahi ho sakte.
- * Chat reveal bhi JS timers se chalta hai, isliye dono sath-sath sync rehte
- * hain.
- *
- * BACKGROUND (native): Android WebView JS timers ko pause/throttle kar deta
- * hai, isliye setTimeout-based delay kabhi fire nahi hoti — reply complete hone
- * par bhi notification nahi aati. Isliye jab app background me ho to
- * notification ko OS-level absolute time pe schedule karte hain
- * (schedule.at + allowWhileIdle) — lock screen / Doze me bhi fire hoti hai.
- * Same id ka matlab plugin purani pending schedule ko cancel kar deta hai,
- * isliye multiple bubble updates me se sirf aakhri (poora reply) bachegi.
+ * BACKGROUND (native): Capacitor `KeepRunning` default true hai — WebView
+ * background me JS timers pause nahi karta, isliye caller ke setTimeout-based
+ * bubble updates app minimized/locked hone par bhi fire hote hain. Sirf jab
+ * screen lambe time off ho (Doze) to timers throttle ho sakte hain; isliye
+ * single delayed notifications ke liye OS-level absolute-time scheduling
+ * (schedule.at + allowWhileIdle) — lock screen / Doze me bhi fire — ek option
+ * rehta hai. Note: schedule.at same id ke andar previous pending schedule ko
+ * cancel kar deta hai, isliye isse bubble-sequence ke liye use mat karo.
  */
 export async function notifyAiReply(title: string, body: string, sessionId?: string, delayMs = 0, force = false): Promise<void> {
   if (!isNotificationSupported()) return;

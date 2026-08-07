@@ -9,18 +9,20 @@
  *    Reply ka native path (stock plugin) Activity launch karta hai
  *    (PendingIntent.getActivity) — OS requirement hai taaki RemoteInput
  *    reliably deliver ho. Ye INTENTIONAL hai: Activity launch se WebView
- *    resume/init hota hai, jisse AI ka HTTP call (chat.send) kisi paused/
- *    frozen WebView me phansne ke bajaye complete ho pata hai. Broadcast
- *    path (notification action ko Activity launch kiye bina JS bridge ko
- *    dena) isi liye rejected hai — background me WebView JS pause ho sakta
- *    hai aur phir reply "Sending" pe atak jaata hai (kabhi complete nahi
- *    hota). Reply process hone ke baad app hamesha wapas minimize ho jaati
- *    hai, taaki visually app "khuli" na mehsoos ho.
+ *    resume/init hota hai, jisse reply hamesha JS tak pahunchta hai aur AI ka
+ *    HTTP call complete ho pata hai. Broadcast path (notification action ko
+ *    Activity launch kiye bina JS bridge ko dena) rejected hai — background me
+ *    WebView ready na ho to reply kabhi JS tak nahi pahunchta aur "Sending" pe
+ *    atak jaata hai.
  *
- *    IMPORTANT: minimize ko kabhi bhi `chat.send` se PEHLE mat karo —
- *    Activity/WebView background ho jaane par AI HTTP call resolve nahi hota
- *    aur reply hamesha "Sending" pe stuck rehta hai. Pehle send poora karo,
- *    phir minimize (finally me).
+ *    Minimize policy: app UI khula nahi rehna chahiye — user notification
+ *    shade se reply kar raha hai. Isliye send shuru karte hi chhota grace
+ *    (REPLY_GRACE_MS) dekar app turant minimize ho jaati hai (~1s). Capacitor
+ *    default `KeepRunning=true` hai, isliye WebView background me JS timers aur
+ *    fetch-streams continue karta hai — send minimize ke BAAD bhi complete hota
+ *    hai. (Pehle "minimize karne se send freeze ho jaata hai" maana jaata tha;
+ *    v0605/0606 ka stuck asli me broadcast path ki headless delivery ka issue
+ *    tha, minimize ka nahi.)
  *
  *    Note: "reply se pehle app already foreground thi" wala check (`isAppActive`)
  *    reliable nahi hai — reply action Activity ko launch/resume kar deta hai,
@@ -33,10 +35,16 @@
  *    dono true hone par notification skip kar deta hai ("user already dekh raha
  *    hai"), par yahan wo dono galat-se true dikh sakte hain (upar wala note
  *    dekho), jisse reply-notification hi kabhi na aata — force isko bypass
- *    karta hai taaki reply hamesha notification pe aaye. Delay ke saath reply
- *    notification hamesha OS-level schedule.at pe jaati hai (force flag),
- *    kyunki send complete hone ke turant baad app minimize ho jaati hai aur
- *    JS timers fire hone ki guarantee nahi.
+ *    karta hai taaki reply hamesha notification pe aaye.
+ *
+ *    Reply notification bubble-by-bubble aati hai, bilkul chat UI jaisa reveal
+ *    schedule (pehla bubble 3s, phir har paragraph ke beech 3–8s). HAR bubble
+ *    apne reveal moment pe JS timer se fire hota hai (delayMs=0 → turant
+ *    show/update, same sessionId = same id = merge). OS-level pre-scheduling
+ *    (schedule.at) yahan use nahi hota — Android plugin same id ke pending
+ *    alarms cancel kar deta hai, isliye pehle se schedule kiye steps me se sirf
+ *    aakhri fire hota tha (poora reply, total delay ke baad — bubble reveal
+ *    kabhi dikhta hi nahi tha).
  *
  *  - Tap / "Open chat" action → `levelup:open-chat` event dispatch hota hai,
  *    jise App.tsx sunke Chat tab khol deta hai aur usi session pe le jaata hai.
@@ -61,6 +69,14 @@ let setup = false;
  */
 const dedupeWindowMs = 30_000;
 const seenReplies = new Map<string, number>();
+
+/**
+ * Reply aane par send shuru karte hi app ko minimize karne se pehle ka chhota
+ * grace — AI request ko WebView se dispatch hone ka mauka. Iske baad app turant
+ * background ho jaati hai (~1s); KeepRunning=true (Capacitor default) ki wajah
+ * se send aur bubble timers background me chalte rahte hain.
+ */
+export const REPLY_GRACE_MS = 600;
 
 function isDuplicateReply(sessionId: string, inputValue: string): boolean {
   const key = `${sessionId}:${inputValue.trim()}`;
@@ -106,43 +122,43 @@ export function setupNotificationActions(): void {
       }
       void (async () => {
         try {
-          // NO minimize yahan — pehle send poora karo. Reply action Activity
-          // ko launch/resume kar chuka hai (stock plugin), isliye WebView alive
-          // hai aur AI HTTP call resolve ho sakta hai. Agar yahan turant
-          // minimize kar diya to WebView background/frozen ho jata hai aur
-          // chat.send kabhi resolve nahi hota — reply hamesha "Sending" pe
-          // atak jaata hai. Minimize sirf finally me (send complete hone ke
-          // baad) hota hai.
-          const assistant = await container.chat.send(sessionId, inputValue.trim());
-          // Reply ko bhi chat UI jaisa hi reveal schedule mile: pehla bubble
-          // 3s thinking pause ke baad, phir har paragraph ke beech 3–8s —
-          // poora reply ek saath turant nahi, delay ke saath. Wohi schedule
-          // notification ko bhi jaata hai (buildNotificationSteps — ek step
-          // har bubble ke reveal moment pe, merged text ke saath), bilkul
-          // ChatScreen ke normal flow jaisa. Jab app minimized/background ho,
-          // notifyAiReply is delay ko OS-level (schedule.at) pe schedule
-          // karta hai — JS timers throttle hone par bhi reply notification
-          // fire hoti hai.
+          // Send turant shuru karo, phir request dispatch hone ke liye chhota
+          // grace dekar app turant minimize — user notification shade se reply
+          // kar raha hai, app UI khula nahi rehna chahiye. Capacitor
+          // KeepRunning=true (default) → background WebView JS timers +
+          // fetch-streams continue karte hain, isliye send minimize ke baad
+          // bhi complete hota hai.
+          const sendPromise = container.chat.send(sessionId, inputValue.trim());
+          await new Promise((resolve) => setTimeout(resolve, REPLY_GRACE_MS));
+          await minimizeIfNative();
+
+          const assistant = await sendPromise;
+          // Reply ko bhi chat UI jaisa hi reveal schedule mile: pehla bubble 3s
+          // thinking pause ke baad, phir har paragraph ke beech 3–8s — poora
+          // reply ek saath turant nahi, delay ke saath.
           const bubbles = splitReplyIntoBubbles(assistant.content);
           const schedule = computeRevealSchedule(bubbles.length);
-          // force=true: Activity-resume ke baad appActive/chatTabActive dono
-          // "true" dikh sakte hain (comment below), jo default guard ko galat
-          // trigger karke reply-notification hi skip kara deta — force isse
-          // bypass karta hai. Force ke saath delay hamesha OS-level schedule.at
-          // hota hai, kyunki send ke baad app turant minimize ho jaati hai —
-          // setTimeout-based delivery guarantee nahi hoti.
-          for (const step of buildNotificationSteps(bubbles, schedule)) {
-            void notifyAiReply('Misa', step.text || 'Naya AI reply aaya', sessionId, step.delayMs, true);
+          if (bubbles.length > 0) {
+            // HAR bubble apne reveal moment pe JS timer se fire hota hai
+            // (delayMs=0 + force=true → turant show/update, same sessionId =
+            // same notification id = purana merge hoke update hota hai), bilkul
+            // ChatScreen ke normal flow jaisa. OS-level pre-scheduling yahan
+            // kaam nahi karta — Android plugin same id ke pending alarms cancel
+            // kar deta hai, isliye pehle se schedule kiye steps me se sirf aakhri
+            // fire hota (poora reply, total reveal delay ke baad) aur bubble
+            // reveal kabhi dikhta nahi.
+            for (const step of buildNotificationSteps(bubbles, schedule)) {
+              setTimeout(() => void notifyAiReply('Misa', step.text || 'Naya AI reply aaya', sessionId, 0, true), step.delayMs);
+            }
+          } else {
+            // Koi visible bubble nahi (sirf whitespace reply) — ek turant notification.
+            void notifyAiReply('Misa', assistant.content.trim() || 'Naya AI reply aaya', sessionId, 0, true);
           }
         } catch {
           // session delete ho gaya ya AI off — chup rehna, koi error nahi dikhana
         } finally {
           // Chat UI agar khula ho to refresh ho jaye.
           window.dispatchEvent(new Event('levelup:chat-updated'));
-          // Reply action Activity ko launch/resume kar chuka hai (user ab bhi
-          // notification shade se interact kar raha tha, app UI me nahi) —
-          // hamesha wapas minimize karo.
-          await minimizeIfNative();
         }
       })();
     }
