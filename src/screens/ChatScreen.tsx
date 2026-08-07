@@ -185,13 +185,21 @@ export default function ChatScreen({
   // changes made in AI Settings would never show here. Poll the store so the
   // provider + model lists stay in sync with Settings.
   useEffect(() => {
+    // `disposed` guards against a tick that was already queued when the
+    // component unmounts — clearInterval only stops FUTURE firings, and a
+    // queued callback would otherwise call setState after teardown.
+    let disposed = false;
     const id = setInterval(() => {
+      if (disposed) return;
       setProviderSig((prev) => {
         const next = providerSigOf(container.providerSettings.listStoredProviders());
         return next === prev ? prev : next;
       });
     }, 300);
-    return () => clearInterval(id);
+    return () => {
+      disposed = true;
+      clearInterval(id);
+    };
   }, []);
 
   // "@" tool picker: close when the user interacts OUTSIDE the picker + input

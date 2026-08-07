@@ -36,6 +36,8 @@ export const PHASES: Phase[] = [
 ];
 
 // Helper for levels whose detailed lessons are lighter but task-bank missions are live.
+// These are NOT authored: the UI shows "coming soon" messaging and the engine
+// reports 'pending-content' until the full lesson content is written.
 function placeholder(id: number, dayStart: number, dayEnd: number, phase: Level['phase'], title: string): Level {
   return {
     id,
@@ -48,7 +50,7 @@ function placeholder(id: number, dayStart: number, dayEnd: number, phase: Level[
     unlockCondition: 'Automatic after this level window.',
     commonMistakes: [],
     jeeBenefit: 'Daily task-bank missions train this phase skill through concrete study actions.',
-    authored: true,
+    authored: false,
   };
 }
 
