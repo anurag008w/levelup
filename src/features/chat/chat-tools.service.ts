@@ -55,6 +55,13 @@ const TASK_QUERY_WORDS = [
   'test', 'questions', 'problems', 'notes', 'formula', 'jee', 'exam', 'rank', 'percentile',
   // Block-related anchors
   'block', 'phase', 'activate', 'extend', 'list',
+  // Real-user Hinglish/English — high-precision plan/task/rest intent.
+  // Deliberately generic conversation words (batao/dekh/kya/next/left) are
+  // excluded: each match costs an extra decision-hop LLM call, so only words
+  // with strong plan/task/rest intent belong here.
+  'tomorrow', 'bacha', 'bache', 'remaining', 'chutti', 'holiday', 'rest', 'skip', 'chhod',
+  'cancel', 'adjust', 'postpone', 'delay', 'routine', 'timetable', 'time table',
+  'taiyari', 'preparation', 'revise', 'planner', 'deadline', 'due',
 ];
 
 // Words that look like plan words but are ALSO general-chat subjects

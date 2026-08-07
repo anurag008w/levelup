@@ -155,6 +155,26 @@ describe('ChatToolsService', () => {
     expect(tools.parseTool('{"action":"hack"}')).toBeNull();
   });
 
+  it('routes real-user plan/task/rest phrasings to the tool hop', () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    // Real Hinglish/English phrasings users actually type (high-precision set).
+    expect(tools.isTaskQuery('aaj ke kitne tasks bache hain?')).toBe(true);
+    expect(tools.isTaskQuery('kal chutti rakhni hai')).toBe(true);
+    expect(tools.isTaskQuery('aaj rest day hai?')).toBe(true);
+    expect(tools.isTaskQuery('yeh task skip karo')).toBe(true);
+    expect(tools.isTaskQuery('kal ka test cancel karo')).toBe(true);
+    expect(tools.isTaskQuery('plan postpone karo')).toBe(true);
+    expect(tools.isTaskQuery('routine batao')).toBe(true);
+    expect(tools.isTaskQuery('exam ki taiyari kaise karein')).toBe(true);
+    expect(tools.isTaskQuery('kab tak complete karna hai deadline?')).toBe(true);
+    // Generic conversation must STILL stay off the tool hop (cost guard).
+    expect(tools.isTaskQuery('concept samjhao')).toBe(false);
+    expect(tools.isTaskQuery('is problem ka solution batao')).toBe(false);
+    expect(tools.isTaskQuery('physics kaise padhein')).toBe(false);
+    expect(tools.isTaskQuery('what comes next in the story?')).toBe(false);
+  });
+
   it('getPlan returns the deterministic plan for any day with ids', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
