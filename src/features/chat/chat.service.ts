@@ -1061,7 +1061,11 @@ export class ChatService {
   private async buildMessages(session: ChatSession, extraSystemPrompt = ''): Promise<LLMMessage[]> {
     const prefs = normalizePrefs(session.prefs);
     const messages: LLMMessage[] = [{ role: 'system', content: composeSystemPrompt(prefs.systemPrompt, prefs.userPersona, extraSystemPrompt) }];
-    if (session.prefs.includeContext) {
+    // Use the NORMALIZED prefs here — legacy sessions / imported backups can
+    // lack the `includeContext` field entirely; normalizePrefs defaults it to
+    // true, but reading the raw session field would silently skip the journey
+    // context even though the user never turned it off.
+    if (prefs.includeContext) {
       const ctx = this.contextProvider();
       if (ctx) messages.push({ role: 'system', content: `Today's LevelUp context: ${ctx}` });
     }
