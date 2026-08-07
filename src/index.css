@@ -1528,15 +1528,25 @@ label.field-label {
 .chat-shell {
   display: flex;
   flex-direction: column;
-  height: 100dvh; /* dynamic viewport: tracks URL bar / keyboard, composer stays pinned to the visible bottom */
-  height: 100svh; /* fallback: WebViews without dvh support */
+  /* Viewport sizing: order matters — the LAST unit the browser understands
+     wins, so the preferred unit must come last. iOS Safari's 100vh includes
+     the collapsed URL bar (taller than the visible screen) and silently
+     pushes the composer off-screen; 100dvh tracks the live visible viewport
+     instead. */
   height: 100vh; /* fallback: WebViews without svh support */
+  height: 100svh; /* fallback: WebViews without dvh support */
+  height: 100dvh; /* preferred: tracks URL bar / keyboard, composer stays pinned */
   width: 100%;
   max-width: min(56rem, 100vw);
   margin-inline: auto;
   overflow: hidden;
   padding-top: env(safe-area-inset-top, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  /* --kb-inset is set from the visual viewport (see ChatScreen): it grows by
+     the keyboard height on platforms where the layout viewport does NOT
+     resize (iOS Safari / WebViews ignoring adjustResize), so the composer
+     always sits above the keyboard. On Android with adjustResize the layout
+     viewport resizes instead, the inset stays ~0 and nothing double-pads. */
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--kb-inset, 0px));
 }
 .chat-topbar {
   display: flex;
