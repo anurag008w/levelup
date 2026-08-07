@@ -13,6 +13,7 @@ import { MemoryService } from '../../ai/memory.service';
 import { ProviderSettingsService } from '../../ai/provider-settings.service';
 import { ChatService } from '../chat.service';
 import { MemoryToolsService } from '../memory-tools.service';
+import type { ChatToolsService } from '../chat-tools.service';
 import type { WebSearchService, WebSearchResult } from '../../../infra/ai/websearch.service';
 
 class MemoryChatRepository implements ChatRepository {
@@ -1917,7 +1918,7 @@ describe('ChatService', () => {
       const ws = makeWs({ ok: true, text: 'NEET 2026 results 15 June ko aaye.' });
       const { chat, lastRequest } = buildChat(store, ws);
       const s = chat.createSession('q');
-      await chat.send(s.id, 'results kab aaye?');
+      const result = await chat.send(s.id, 'results kab aaye?');
       expect(ws.calls()).toBe(1);
       const req = lastRequest();
       expect(req).not.toBeNull();
@@ -1926,6 +1927,9 @@ describe('ChatService', () => {
       expect(system).toContain('NEET 2026');
       // Two-step already grounded the answer — no native adapter grounding on top.
       expect(req!.websearch).toBeFalsy();
+      // The reply carries the search as a normal tool-use bubble record.
+      expect(result.tool).toBe('websearch');
+      expect(result.toolCalls).toEqual([{ action: 'websearch', ok: true, message: 'NEET 2026 results 15 June ko aaye.' }]);
     });
 
     it('skips injection when the search returns nothing usable', async () => {
@@ -1937,11 +1941,14 @@ describe('ChatService', () => {
       const ws = makeWs({ ok: false, text: '', error: 'endpoint rejected web_search tool' });
       const { chat, lastRequest } = buildChat(store, ws);
       const s = chat.createSession('q');
-      await chat.send(s.id, 'results kab aaye?');
+      const result = await chat.send(s.id, 'results kab aaye?');
       expect(ws.calls()).toBe(1);
       const req = lastRequest();
       const system = req!.messages[0].content as string;
       expect(system).not.toContain('Live web search results');
+      // Failed search is still surfaced as a tool bubble (same as other tools).
+      expect(result.tool).toBe('websearch');
+      expect(result.toolCalls?.[0].ok).toBe(false);
     });
 
     it('does not search when web search is disabled (default state)', async () => {
@@ -1957,6 +1964,103 @@ describe('ChatService', () => {
       const req = lastRequest();
       const system = req!.messages[0].content as string;
       expect(system).not.toContain('Live web search results');
+    });
+
+    it('pinned @websearch forces the search even when the auto switch is off', async () => {
+      const store = makeStore({
+        providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+        aiEnabled: true,
+        // Auto mode is OFF — but a backend is configured, so the pin must search.
+        websearch: { enabled: false, providerId: 'smartrotator', model: '', apiKey: '', baseUrl: '' },
+      });
+      const ws = makeWs({ ok: true, text: 'OpenAI ka naya model kal launch hua.' });
+      const { chat, lastRequest } = buildChat(store, ws);
+      const s = chat.createSession('q');
+      const result = await chat.send(s.id, 'OpenAI kya naya aaya?', undefined, undefined, undefined, undefined, undefined, ['websearch']);
+      expect(ws.calls()).toBe(1);
+      expect(result.tool).toBe('websearch');
+      expect(result.toolCalls).toEqual([{ action: 'websearch', ok: true, message: 'OpenAI ka naya model kal launch hua.' }]);
+      const req = lastRequest();
+      const system = req!.messages[0].content as string;
+      expect(system).toContain('Live web search results');
+      // Two-step grounded — no native adapter grounding on top.
+      expect(req!.websearch).toBeFalsy();
+    });
+
+    it('never leaks raw tool JSON from the decision hop — routes to the web search path', async () => {
+      const store = makeStore({
+        providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+        aiEnabled: true,
+        websearch: { enabled: true, providerId: 'smartrotator', model: '', apiKey: '', baseUrl: '' },
+      });
+      const repo = new MemoryChatRepository();
+      let last: LLMRequest | null = null;
+      let searchCalls = 0;
+      const provider: LLMProvider = {
+        id: 'openrouter',
+        label: 'OpenRouter',
+        isConfigured: () => true,
+        // The decision hop keeps inventing a websearch action that is NOT a
+        // valid plan/task JSON tool — this used to leak the raw JSON as the reply.
+        complete: async (): Promise<LLMResponse> => ({
+          text: '{"action":"websearch","query":"OpenAI new model announcement yesterday"}',
+          model: 'a',
+        }),
+        stream: async (req: LLMRequest): Promise<LLMResponse> => {
+          last = req;
+          const text = 'OpenAI ne kal naya model announce kiya.';
+          if (req.onDelta) for (const ch of text) req.onDelta(ch);
+          return { text, model: 'a' };
+        },
+        fetchModels: async (): Promise<ModelInfo[]> => [],
+        healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+      };
+      const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+      const settings = new ProviderSettingsService(store, factory);
+      const llm = new LLMService(factory, settings);
+      const tools = {
+        isTaskQuery: () => true,
+        isPlannerQueryOnly: () => false,
+        hasPlannerData: () => false,
+        plannerActionFor: () => null,
+        contextActionFor: () => null,
+        parseTools: () => [],
+        resolveToolScope: () => [],
+      } as unknown as ChatToolsService;
+      const ws = {
+        search: async (): Promise<WebSearchResult> => {
+          searchCalls += 1;
+          return { ok: true, text: 'OpenAI ka naya model kal launch hua — abhi preview me.' };
+        },
+      } as unknown as WebSearchService;
+      const chat = new ChatService(
+        repo,
+        llm,
+        settings,
+        () => 'ctx',
+        new FakeClock(),
+        tools,
+        null,
+        store,
+        undefined,
+        null,
+        ws,
+        () => ({ serverUrl: 'https://smartrotator.onrender.com', apiKey: 'sk-test' }),
+      );
+      const s = chat.createSession('q');
+      const result = await chat.send(s.id, 'OpenAI new model announcement yesterday');
+      // No raw JSON in the reply.
+      expect(result.content).not.toContain('{"action"');
+      // The question reached the default streaming path instead of shorting out.
+      expect(result.content).toContain('naya model');
+      // And the real two-step web search actually ran — surfaced as a bubble.
+      expect(searchCalls).toBe(1);
+      expect(result.tool).toBe('websearch');
+      expect(result.toolCalls?.[0].ok).toBe(true);
+      const req = last;
+      expect(req).not.toBeNull();
+      expect(req!.messages[0].content as string).toContain('Live web search results');
+      expect(req!.messages[0].content as string).toContain('OpenAI ka naya model');
     });
   });
 });

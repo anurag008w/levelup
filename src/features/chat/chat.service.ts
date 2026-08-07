@@ -6,7 +6,7 @@ import {
   MISA_IDENTITY_GUARD,
   ROMAN_SCRIPT_RULE,
 } from '../../core/domain/chat';
-import type { ChatMessage, ChatSession, ChatPreferences, ChatStoreState, ChatAttachment, GlobalChatPrefs } from '../../core/domain/chat';
+import type { ChatMessage, ChatSession, ChatPreferences, ChatStoreState, ChatAttachment, ChatToolCallRecord, GlobalChatPrefs } from '../../core/domain/chat';
 import {
   MAX_MESSAGES_PER_SESSION,
   MAX_SESSIONS,
@@ -60,6 +60,29 @@ function actionKey(action: ChatToolAction): string {
     sorted[k] = (action as unknown as Record<string, unknown>)[k];
   }
   return JSON.stringify(sorted);
+}
+
+/**
+ * True when a model reply is RAW tool JSON (an action object / batch / python
+ * call echo) rather than natural language. Used to catch decision-hop outputs
+ * that never parsed into a valid plan/task action — e.g. the model inventing
+ * `{"action":"websearch",...}` or an unknown tool — so the raw JSON is never
+ * shown to the user and the message falls through to the normal chat path.
+ */
+function looksLikeToolOutput(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  const objStart = t.indexOf('{');
+  const objEnd = t.lastIndexOf('}');
+  const inner = objStart !== -1 && objEnd > objStart ? t.slice(objStart, objEnd + 1) : t;
+  if (/"action"\s*:/.test(inner)) return true;
+  if (!t.startsWith('{') && !t.startsWith('[')) return false;
+  try {
+    const parsed: unknown = JSON.parse(inner);
+    return typeof parsed === 'object' && parsed !== null;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -495,6 +518,11 @@ export class ChatService {
         // scoped action, so planner/today questions keep working on weak models.
         let actions: ChatToolAction[] | null = toolScope.length <= 1 && fastAction ? [fastAction] : null;
         const fastFallback: ChatToolAction[] | null = toolScope.length > 1 && fastAction ? [fastAction] : null;
+        // When the decision hop produces raw tool JSON that isn't a valid plan/
+        // task action (e.g. the model invents a websearch action), skip the tool
+        // execution below and fall through to the default streaming path instead
+        // of leaking the JSON as the reply.
+        let skipToolExecution = false;
         let answer = '';
         let decisionModel: string | undefined;
         if (!actions) {
@@ -531,7 +559,8 @@ export class ChatService {
           }
         }
         if (actions.length === 0) {
-          if (answer) {
+          if (answer && !looksLikeToolOutput(answer)) {
+            // The model talked instead of emitting an action — show that answer.
             const assistant: ChatMessage = {
               id: uid(),
               role: 'assistant',
@@ -542,8 +571,18 @@ export class ChatService {
             this.appendAssistant(session, assistant);
             return assistant;
           }
-          throw new Error('AI ne JSON nahi diya — API key + model check karo, ya simple language mein pucho.');
+          if (answer) {
+            // Raw tool JSON that never parsed into a plan/task action — e.g.
+            // the model invented {"action":"websearch",...} or an unknown tool.
+            // Never leak the JSON: fall through to the default streaming path,
+            // which runs the real web search when configured and otherwise
+            // answers the question normally.
+            skipToolExecution = true;
+          } else {
+            throw new Error('AI ne JSON nahi diya — API key + model check karo, ya simple language mein pucho.');
+          }
         }
+        if (!skipToolExecution) {
         onStatus?.(
           actions.length > 1
             ? `${actions.length} tools chala raha hai…`
@@ -641,6 +680,7 @@ export class ChatService {
         };
         this.appendAssistant(session, assistant);
         return assistant;
+        }
       }
 
       // Default streaming path.
@@ -653,9 +693,14 @@ export class ChatService {
       // tool stay as before.
       const searchCtx = this.resolveWebSearchContext();
       let searchResults: string | null = null;
+      let websearchRecord: ChatToolCallRecord | null = null;
       if (searchCtx && (onlyWebSearch || this.webSearchEnabled())) {
         onStatus?.('Web search kar raha hoon…');
-        searchResults = await this.maybeRunWebSearch(session, signal);
+        const run = await this.maybeRunWebSearch(session, signal);
+        searchResults = run.context;
+        // Surface the search as a normal tool-use bubble (same UI as plan
+        // tools): expandable block with the grounded facts + sources.
+        websearchRecord = run.record;
       }
       const runStream = async (): Promise<LLMResponse> => {
         const streamSani = createStreamSanitizer();
@@ -715,6 +760,7 @@ export class ChatService {
         createdAt: this.clock.now().toISOString(),
         model: finalResp.model,
         reasoning: (finalResp.reasoning ?? reasoning) || undefined,
+        ...(websearchRecord ? { tool: 'websearch', toolCalls: [websearchRecord] } : {}),
       };
       this.appendAssistant(session, assistant);
       return assistant;
@@ -1195,10 +1241,13 @@ export class ChatService {
    * user-supplied key; SmartRotator reuses the logged-in session's sk- key
    * against the server's /v1 base. Returns null when nothing usable is
    * configured — the caller then falls back to native Gemini grounding.
+   *
+   * The `enabled` switch only gates AUTO mode (search every reply); a pinned
+   * `@websearch` forces the two-step search whenever a backend is configured.
    */
   private resolveWebSearchContext(): WebSearchContext | null {
     const ws = this.webSearchSettings();
-    if (!ws.enabled || !ws.providerId) return null;
+    if (!ws.providerId) return null;
     if (ws.providerId === 'google') {
       if (!ws.apiKey.trim()) return null;
       return { providerId: 'google', apiKey: ws.apiKey.trim(), baseUrl: ws.baseUrl.trim(), model: ws.model.trim() || undefined };
@@ -1213,30 +1262,39 @@ export class ChatService {
   }
 
   /**
-   * Runs the two-step search for the current question. Returns a grounded
-   * summary (or null when no search happened / nothing usable came back) that
-   * is injected into the chat request as context. Never throws — a failed
-   * search must not block the chat answer.
+   * Runs the two-step search for the current question. Returns the grounded
+   * summary injected into the chat request as context, plus a tool-use record
+   * shown in the chat bubble (same UI as the plan tools). Never throws — a
+   * failed search must not block the chat answer.
    */
-  private async maybeRunWebSearch(session: ChatSession, signal?: AbortSignal): Promise<string | null> {
-    if (!this.websearch) return null;
-    if (signal?.aborted) return null;
+  private async maybeRunWebSearch(
+    session: ChatSession,
+    signal?: AbortSignal,
+  ): Promise<{ context: string | null; record: ChatToolCallRecord }> {
+    const fail = (message: string): { context: null; record: ChatToolCallRecord } => ({
+      context: null,
+      record: { action: 'websearch', ok: false, message },
+    });
+    if (!this.websearch) return fail('Web search service available nahi hai.');
+    if (signal?.aborted) return fail('Web search cancel ho gaya.');
     const ctx = this.resolveWebSearchContext();
-    if (!ctx) return null;
+    if (!ctx) return fail('Web search configure nahi hua — Settings > Web Search me provider + key check karo.');
     const turns = session.messages.slice(-5).map((m) => ({
       role: m.role,
       content: typeof m.content === 'string' ? m.content : m.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n'),
     }));
-    if (turns.length === 0) return null;
+    if (turns.length === 0) return fail('Web search ke liye koi message nahi mila.');
     const res = await this.websearch.search(ctx, turns, signal);
-    if (!res.ok || !res.text.trim()) return null;
-    return (
-      'Live web search results (retrieved just now, current facts):\n' +
-      res.text.trim() +
-      '\n\nRules: for anything recent/current, base your answer on these results. ' +
-      'Include concrete specifics (dates, numbers, names) from the results. ' +
-      'If the results do not answer the user, say so honestly — never invent facts.'
-    );
+    if (!res.ok || !res.text.trim()) return fail(`Web search fail: ${res.error ?? 'khaali result'}`);
+    return {
+      context:
+        'Live web search results (retrieved just now, current facts):\n' +
+        res.text.trim() +
+        '\n\nRules: for anything recent/current, base your answer on these results. ' +
+        'Include concrete specifics (dates, numbers, names) from the results. ' +
+        'If the results do not answer the user, say so honestly — never invent facts.',
+      record: { action: 'websearch', ok: true, message: res.text.trim() },
+    };
   }
 
   /**

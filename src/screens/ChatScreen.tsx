@@ -1483,6 +1483,7 @@ const TOOL_LABELS: Record<string, string> = {
   editBlock: 'Block edit kiya',
   listBlocks: 'Blocks dekhe',
   extendBlock: 'Block extend kiya',
+  websearch: 'Web search hua',
 };
 
 /* =====================================================================
