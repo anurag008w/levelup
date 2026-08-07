@@ -266,15 +266,11 @@ export default function ChatScreen({
     container.chat.applyGlobalPrefs(globalChatPrefsFromSettings(container.store.get().aiSettings.chat));
     setSessions(container.chat.listSessions());
 
-    // Mark the session the user lands on as active BEFORE the fallback dump, so
-    // the currently-open chat is never silently archived — it is only copied to
-    // memory when the user says so via the switch prompt.
+    // Mark the session the user lands on as active so it is never silently
+    // archived — a chat only ever enters AI memory when the user explicitly
+    // chooses "Copy to memory" on switch, or via the manual memory panel.
     const landingId = activeId ?? container.chat.listSessions()[0]?.id ?? null;
     container.chat.setActiveSessionId(landingId);
-    // Persist any unread chats into memory as raw transcripts — cheap and
-    // safe to rerun (sessions already stored are skipped). Only the
-    // deterministic fallback; when AI is on the summarizer button owns this.
-    maybeAutoDumpChats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -339,16 +335,10 @@ export default function ChatScreen({
   }
 
   /**
-   * Archives every finished chat into AI memory as a structured, timestamped
-   * read-only transcript. Runs unconditionally — the AI summarizer condenses
-   * those same chats into durable blocks later (tracked by a separate marker),
-   * so the read-only archive never blocks it.
+   * Loads the memory archive and opens the chat history sheet. Chats only enter
+   * memory on explicit "Copy to memory" or the manual memory panel — switching
+   * chats never auto-archives them.
    */
-  function maybeAutoDumpChats() {
-    void container.chat.summarizePriorChats();
-  }
-
-  /** Loads the memory archive and opens the chat history sheet. */
   function openHistory() {
     setMemoryChats(container.chat.listMemoryConversations());
     setShowHistory(true);

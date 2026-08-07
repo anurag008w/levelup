@@ -30,6 +30,7 @@ import {
   type ArchivedConversation,
 } from '../../core/domain/chat-transcript';
 import { isoAddDays } from '../habit-engine/dates';
+import { truncateMeaningful } from '../../lib/text';
 import type { Clock } from '../../core/ports/clock';
 import { isoDate, deviceTimeZone } from '../../core/ports/clock';
 import type { ChatRepository, StateStore } from '../../core/ports/repositories';
@@ -109,6 +110,12 @@ function mergeRetryActions(original: ChatToolAction[], results: ChatToolActionRe
 const AI_SUMMARY_CHUNK_SIZE = 4;
 /** …or ~this many transcript chars, whichever hits first (bounds prompt size). */
 const AI_SUMMARY_CHUNK_CHARS = 14_000;
+/**
+ * Per-chat transcript budget fed to the AI summarizer. 3500 chars silently cut
+ * long conversations mid-sentence; 6000 keeps meaning while staying inside the
+ * 14K chunk budget (a 6000-char chat pairs with shorter ones in one chunk).
+ */
+const MEMORY_SUMMARY_TRANSCRIPT_CHARS = 6000;
 
 /**
  * Chat feature service: session persistence + LLM streaming. Chat data lives in
@@ -1633,8 +1640,9 @@ export class ChatService {
     let current: ChatSession[] = [];
     let chars = 0;
     for (const t of targets) {
-      // buildRawTranscript caps each transcript at 3500 chars — mirror that.
-      const approx = Math.min(this.rawTranscriptChars(t), 3500) + 60;
+      // buildRawTranscript caps each transcript — mirror that so the char
+      // budget tracks what the AI actually reads.
+      const approx = Math.min(this.rawTranscriptChars(t), MEMORY_SUMMARY_TRANSCRIPT_CHARS) + 60;
       if (current.length > 0 && (current.length >= AI_SUMMARY_CHUNK_SIZE || chars + approx > AI_SUMMARY_CHUNK_CHARS)) {
         chunks.push(current);
         current = [];
@@ -1663,7 +1671,7 @@ export class ChatService {
     opts?: { providerId?: string | null; model?: string | null },
   ): LLMRequest {
     const transcripts = unread
-      .map((s, i) => `### Chat ${i + 1}: ${s.title || 'Untitled'} (${s.updatedAt.slice(0, 10)})\n${this.buildRawTranscript(s, 3500)}`)
+      .map((s, i) => `### Chat ${i + 1}: ${s.title || 'Untitled'} (${s.updatedAt.slice(0, 10)})\n${this.buildRawTranscript(s, MEMORY_SUMMARY_TRANSCRIPT_CHARS)}`)
       .join('\n\n');
     const user = [
       'Neeche diye gaye sabhi unread chats ko poori tarah padho aur unme se yaad rakhne layak baatein condensed memory blocks mein likho.',
@@ -1734,12 +1742,23 @@ export class ChatService {
     }
   }
 
-  /** Both sides verbatim (Student / Misa lines), capped to a sane size. */
+  /** Both sides verbatim (Student / Misa lines). Keeps WHOLE messages until the
+   * budget is reached so a transcript is never cut mid-sentence — the tail of a
+   * long chat is dropped at a message boundary instead of breaking a point. */
   private buildRawTranscript(session: ChatSession, maxChars = 6000): string {
-    const body = session.messages
-      .map((m) => `${m.role === 'user' ? 'Student' : 'Misa'}: ${m.content}`)
-      .join('\n');
-    return body.length > maxChars ? `${body.slice(0, maxChars)}…` : body;
+    const lines: string[] = [];
+    let chars = 0;
+    for (const m of session.messages) {
+      const line = `${m.role === 'user' ? 'Student' : 'Misa'}: ${m.content}`;
+      if (chars + line.length > maxChars) {
+        if (lines.length === 0) return truncateMeaningful(line, maxChars);
+        lines.push('…');
+        break;
+      }
+      lines.push(line);
+      chars += line.length;
+    }
+    return lines.join('\n');
   }
 
   /** Recent memories from OTHER sessions, so history stays in the transcript. */
@@ -1875,8 +1894,9 @@ function composeSystemPrompt(systemPersona: string, userPersona = '', extraSyste
   return blocks.join('\n\n');
 }
 
+/** Meaning-safe recall: never cuts a memory point mid-word. */
 function truncateMemory(s: string, max = 300): string {
-  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+  return truncateMeaningful(s, max);
 }
 
 /** Compares the shared (global-driven) preference fields only. */

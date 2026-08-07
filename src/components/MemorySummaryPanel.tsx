@@ -105,7 +105,8 @@ export default function MemorySummaryPanel() {
       </div>
       <p className="mb-3 text-[11px] leading-relaxed text-muted">
         Reads all unread chats in one pass, checks last 7 days of memory, saves small blocks
-        (max 8 lines, '----' separated). Open chat stays internal. Each chat is read once only.
+        (max 8 lines each, topics alag blocks mein; zyada lines wale blocks auto-split ho jate
+        hain, koi point drop nahi hota). Open chat stays internal. Each chat is read once only.
       </p>
 
       <button

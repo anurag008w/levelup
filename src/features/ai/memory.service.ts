@@ -8,6 +8,7 @@ import {
   pruneMemoryToBudget,
 } from '../../core/domain/memory';
 import { SESSION_TAG_PREFIX, sessionMemoryTag } from '../../core/domain/chat-transcript';
+import { truncateMeaningful } from '../../lib/text';
 import { isoAddDays } from '../habit-engine/dates';
 import { isoDate, type Clock } from '../../core/ports/clock';
 
@@ -32,6 +33,10 @@ export interface AddMemoryInput {
 export { MEMORY_MAX_ENTRIES } from '../../core/domain/memory';
 export const MEMORY_SUMMARIZE_THRESHOLD = 120;
 export const IMPORTANCE_KEEP_VERBATIM = 0.8;
+/** Weekly rollups keep the top points per week — 5, not 3, so less is lost. */
+const ROLLUP_KEEP_PER_WEEK = 5;
+/** Per-point cap inside a rollup. Truncation is sentence-aware (never mid-word). */
+const ROLLUP_ITEM_MAX_CHARS = 200;
 
 /**
  * Persistent AI memory (M4). Entries are appended to state; when the store
@@ -97,15 +102,16 @@ export class MemoryService {
     for (const [week, group] of [...byWeek.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
       const important = group
         .sort((a, b) => b.importance - a.importance)
-        .slice(0, 3)
-        .map((e) => truncate(e.content, 120))
-        .join(' | ');
+        .slice(0, ROLLUP_KEEP_PER_WEEK)
+        .map((e) => truncateMeaningful(e.content, ROLLUP_ITEM_MAX_CHARS))
+        .filter(Boolean)
+        .join('\n- ');
       if (!important) continue;
       rollups.push({
         id: uid(),
         type: 'summary',
         createdAt: week,
-        content: `Week of ${week}: ${important}`,
+        content: `Week of ${week}:\n- ${important}`,
         importance: 0.5,
         summarized: true,
         source: 'system',
@@ -317,10 +323,6 @@ function prune(store: MemoryStore): MemoryStore {
 
 function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
-}
-
-function truncate(s: string, max: number): string {
-  return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
 function uid(): string {
