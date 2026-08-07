@@ -2057,7 +2057,7 @@ describe('ChatService', () => {
       expect(searchCalls).toBe(1);
       expect(result.tool).toBe('websearch');
       expect(result.toolCalls?.[0].ok).toBe(true);
-      const req = last;
+      const req: LLMRequest | null = last;
       expect(req).not.toBeNull();
       expect(req!.messages[0].content as string).toContain('Live web search results');
       expect(req!.messages[0].content as string).toContain('OpenAI ka naya model');

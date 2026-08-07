@@ -1281,7 +1281,7 @@ export class ChatService {
     if (!ctx) return fail('Web search configure nahi hua — Settings > Web Search me provider + key check karo.');
     const turns = session.messages.slice(-5).map((m) => ({
       role: m.role,
-      content: typeof m.content === 'string' ? m.content : m.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n'),
+      content: m.content,
     }));
     if (turns.length === 0) return fail('Web search ke liye koi message nahi mila.');
     const res = await this.websearch.search(ctx, turns, signal);

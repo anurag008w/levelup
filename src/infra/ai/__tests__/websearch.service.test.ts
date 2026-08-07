@@ -26,7 +26,7 @@ const messages = [{ role: 'user' as const, content: 'kab aaye results?' }];
 
 describe('WebSearchService', () => {
   it('calls Gemini generateContent with google_search grounding and parses grounded text + sources', async () => {
-    const http = jsonHttp((url, body) => {
+    const http = jsonHttp(async (url, body) => {
       expect(url).toContain('/v1beta/models/gemini-2.5-flash:generateContent');
       expect((body as { tools?: unknown }).tools).toEqual([{ google_search: {} }]);
       return {
@@ -53,7 +53,7 @@ describe('WebSearchService', () => {
   });
 
   it('calls SmartRotator /chat/completions with the web_search tool', async () => {
-    const http = jsonHttp((url, body) => {
+    const http = jsonHttp(async (url, body) => {
       expect(url).toBe('https://smartrotator.onrender.com/v1/chat/completions');
       const b = body as { tools?: unknown; messages?: unknown[] };
       expect(b.tools).toEqual([{ type: 'web_search' }]);
