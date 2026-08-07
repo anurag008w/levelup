@@ -74,6 +74,22 @@ export interface ChatSettings {
   showThinking: boolean;
   /** Reasoning effort / thinking budget for chat replies */
   thinking?: ThinkingLevel;
+  /** Thinking budget for tool DECISION hops (undefined = off: fast, cheap,
+   *  deterministic JSON). Applying "provider default" here would silently
+   *  enable thinking on providers that ship with it — tool picks stay off by
+   *  default so multi-hop tool flows stay cheap and reliable. */
+  toolThinking?: ThinkingLevel;
+  /** Max output tokens for tool decision hops (default 1024 — one compact JSON
+   *  batch; raise it for very large batches / multi-tool requests). */
+  toolMaxTokens: number;
+  /** Max output tokens for background memory summaries (default 8000). */
+  memorySummaryMaxTokens: number;
+  /** Thinking level for background memory summaries (default medium — the
+   *  condensed blocks are worth the extra reasoning tokens). */
+  memorySummaryThinking?: ThinkingLevel;
+  /** Custom system prompt for background memory summaries (undefined = the
+   *  built-in instructions). Advanced users can tailor the block style here. */
+  memorySummaryPrompt?: string;
 }
 
 export interface UserProfile {
@@ -105,6 +121,9 @@ export function defaultChatSettings(): ChatSettings {
     conversationHistoryLength: 10,
     includeJourneyContext: true,
     showThinking: false,
+    toolMaxTokens: 1024,
+    memorySummaryMaxTokens: 8000,
+    memorySummaryThinking: 'medium',
   };
 }
 
