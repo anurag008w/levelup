@@ -163,7 +163,7 @@ TASK MANAGEMENT:
 - Edit a task: {"action":"editTask","day":N,"taskId":"<id from plan>","title":"New title","durationMin":20,"dayTo":5,"difficulty":3,"tags":["physics"]}. "dayTo" moves it so it only appears on that exact day. If you lack info, first use getPlan/getAllTasks/getTaskBank, then retry with the real id + fields to change.
 - Remove a task from ONE day: {"action":"removeTask","day":N,"taskId":"<id from plan>"}. Hides it ONLY for Day N — the Task Bank is NEVER modified; the same task still appears on other days. Destructive: call first without confirmed to get a preview; only send "confirmed":true after the user explicitly confirms.
 - Remove several tasks from one day: {"action":"bulkRemoveTasks","day":N,"taskIds":["id1","id2"]}. Same confirmation rule + bank-safe behavior.
-- Rest/holiday day: {"action":"setDayMode","day":N,"mode":"rest"}. On a rest day no auto curriculum or AI tasks appear, only tasks the user explicitly scheduled. "mode":"study" restores it. "Sunday/holiday/chhuti" → this tool. Safe and undoable.
+- Rest/holiday day: {"action":"setDayMode","day":N,"mode":"rest"}. On a rest day no auto curriculum or AI tasks appear, only tasks the user explicitly scheduled. "mode":"study" restores it. "Sunday/holiday/chhuti" → this tool. Undoable, but still needs confirmation: call first without "confirmed" to get a preview; only send "confirmed":true after the user explicitly confirms.
 - Mark a task done: {"action":"markDone","day":N,"taskId":"<id from plan>"}
 - Mark many/all tasks done for one day: {"action":"bulkMarkDone","day":N,"taskIds":["id1","id2"],"confirmed":true}. Omit taskIds to target ALL visible plan tasks ("all/saare tasks"). Bulk edit: first call without confirmed previews; only send "confirmed":true after explicit confirmation.
 
@@ -270,7 +270,7 @@ export const CHAT_TOOL_CATALOG: ChatToolMeta[] = [
   { id: 'deleteAnyTask', label: 'Delete bank task', description: 'Task bank se task permanently delete karo.', example: '{"action":"deleteAnyTask","taskId":"ai-123"}', confirmationRequired: true },
   { id: 'markDone', label: 'Mark done', description: 'Ek task ko complete mark karo.', example: '{"action":"markDone","day":3,"taskId":"d1_t1"}' },
   { id: 'bulkMarkDone', label: 'Bulk mark done', description: 'Kai tasks ko complete mark karo.', example: '{"action":"bulkMarkDone","day":3,"taskIds":["d1_t1","d1_t2"]}', confirmationRequired: true },
-  { id: 'setDayMode', label: 'Rest/study day', description: 'Day ko rest (chhuti) ya study day banao.', example: '{"action":"setDayMode","day":3,"mode":"rest"}' },
+  { id: 'setDayMode', label: 'Rest/study day', description: 'Day ko rest (chhuti) ya study day banao.', example: '{"action":"setDayMode","day":3,"mode":"rest"}', confirmationRequired: true },
   { id: 'listBlocks', label: 'List blocks', description: 'Saare custom study blocks dikhao.', example: '{"action":"listBlocks"}', readOnly: true },
   { id: 'createBlock', label: 'Create block', description: 'Custom study block banao (post-journey).', example: '{"action":"createBlock","name":"Physics Mastery","days":15,"focusAreas":["physics"],"difficulty":"medium"}' },
   { id: 'editBlock', label: 'Edit block', description: 'Block ka naam/days/difficulty/habits badlo.', example: '{"action":"editBlock","blockId":"bk-1","days":20,"difficulty":"hard"}' },

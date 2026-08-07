@@ -535,9 +535,19 @@ export class ChatService {
         if (!actions) {
           // Uploaded-planner questions that fell past the deterministic fast
           // path get a scoped decision hop. When the user pinned tools with
-          // "@", that scope wins (lists ONLY the pinned tools); otherwise a
-          // planner-only hop keeps a drifting model away from Day 1-90 tools.
-          const plannerScoped = toolScope.length === 0 && this.tools.isPlannerQueryOnly(text);
+          // "@", that scope wins (lists ONLY the pinned tools). A pure planner
+          // question is ALSO kept narrowly planner-scoped, but ONLY before any
+          // planner has been imported — that's the one case where the merged
+          // toolSystem() below wouldn't include planner instructions at all,
+          // so the model needs the dedicated planner-only prompt to reply
+          // sensibly ("upload a planner first") instead of drifting to Day
+          // 1-90 tools. Once a planner IS imported, toolSystem() already
+          // merges CHAT_PLANNER_INSTRUCTIONS into the full tool list, so a
+          // mixed request ("day 3 mein task add karo aur physics planner
+          // check karo") must use the FULL decision hop — narrowing it here
+          // would hand the model a prompt that explicitly forbids task tools
+          // and silently drops the task half of the request.
+          const plannerScoped = toolScope.length === 0 && !this.tools.hasPlannerData() && this.tools.isPlannerQueryOnly(text);
           onStatus?.('AI soch raha hai…');
           const decision = await this.llm.complete(
             await (plannerScoped ? this.buildPlannerDecisionRequest(session, signal) : this.buildDecisionRequest(session, signal, toolScope)),

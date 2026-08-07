@@ -4,7 +4,7 @@ import { emptyAppState } from '../../../core/domain/state';
 import { LEVELS, TOTAL_DAYS } from '../../../data/curriculum';
 import type { ChatRepository, StateStore, StateRepository } from '../../../core/ports/repositories';
 import type { ChatStoreState } from '../../../core/domain/chat';
-import { chatToolScopeInstructions } from '../../../core/domain/chat-tools';
+import { chatToolScopeInstructions, CHAT_TOOL_CATALOG } from '../../../core/domain/chat-tools';
 import type { LLMProvider, LLMResponse, LLMRequest, HealthCheckResult, ModelInfo, ProviderId, ContentPart } from '../../../core/domain/llm';
 import type { ProviderFactory } from '../../../infra/ai/provider-factory';
 import { buildSeed, TaskBankRepositoryImpl } from '../../task-bank/task-bank.repository';
@@ -1662,6 +1662,20 @@ describe('"@" tool scoping', () => {
     expect(instructions).toContain('Use EVERY selected tool');
     expect(instructions).toContain('getDay');
     expect(instructions).toContain('addTask');
+  });
+
+  // Regression: CHAT_TOOL_CATALOG (used to build the @-scope prompt + picker)
+  // and the ACTIONS registry (used at execution time) are two separate lists
+  // that must agree on confirmationRequired — a mismatch means the model is
+  // never told a pinned tool needs "confirmed":true, so execution silently
+  // rejects it as a preview and the tool looks broken from the "@" flow.
+  it('every confirmation-required tool in the catalog is flagged in its scoped prompt', () => {
+    const confirmationTools = CHAT_TOOL_CATALOG.filter((t) => t.confirmationRequired).map((t) => t.id);
+    expect(confirmationTools).toEqual(expect.arrayContaining(['removeTask', 'bulkRemoveTasks', 'deleteAnyTask', 'bulkMarkDone', 'deleteBlock', 'setDayMode']));
+    for (const id of confirmationTools) {
+      const instructions = chatToolScopeInstructions([id]);
+      expect(instructions).toContain('needs the user\'s "confirmed":true first');
+    }
   });
 });
 

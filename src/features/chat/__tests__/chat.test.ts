@@ -2112,5 +2112,104 @@ describe('ChatService', () => {
       expect(req!.messages[0].content as string).toContain('NEET 2026');
     });
   });
-});
 
+  // Regression: once a planner is uploaded, a message that mixes a
+  // task-management request with a planner question ("day 3 mein task add
+  // karo aur physics planner check karo") must NOT get scoped down to
+  // planner-only tools -- that scope explicitly forbids task tools, so the
+  // task half of the request would be silently dropped. Before any planner
+  // exists the narrow planner-only prompt is still correct (per
+  // isPlannerQueryOnly's own contract), since the merged prompt wouldn't
+  // otherwise mention planners at all pre-upload.
+  describe('mixed task + planner requests (no "@" pinning)', () => {
+    function toolsMock(overrides: Partial<ChatToolsService>): ChatToolsService {
+      return {
+        isTaskQuery: () => true,
+        isPlannerQueryOnly: () => true,
+        plannerActionFor: () => null,
+        contextActionFor: () => null,
+        // Parses whatever JSON the mock provider actually returned, so the
+        // test verifies which PROMPT the model was given (full vs narrow) via
+        // which actions it was able to emit — not a hardcoded stub action.
+        parseTools: (text: string) => {
+          const start = text.indexOf('{');
+          const end = text.lastIndexOf('}');
+          if (start === -1 || end <= start) return [];
+          try {
+            const parsed = JSON.parse(text.slice(start, end + 1));
+            if (Array.isArray(parsed?.actions)) return parsed.actions;
+            if (parsed?.action) return [parsed];
+          } catch {
+            /* fall through */
+          }
+          return [];
+        },
+        resolveToolScope: () => [],
+        runMany: async (actions: { action: string }[]) => ({ ok: true, summary: 'done', results: actions.map((a) => ({ action: a.action, ok: true, summary: 'ok' })) }),
+        ...overrides,
+      } as unknown as ChatToolsService;
+    }
+
+    it('uses the FULL tool prompt (task + planner) once a planner has been imported', async () => {
+      const store = makeStore({ providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } }, aiEnabled: true });
+      const repo = new MemoryChatRepository();
+      let seenSystem = '';
+      const provider: LLMProvider = {
+        id: 'openrouter',
+        label: 'OpenRouter',
+        isConfigured: () => true,
+        complete: async (req: LLMRequest): Promise<LLMResponse> => {
+          seenSystem = (req.messages.find((m) => m.role === 'system')?.content as string) ?? '';
+          return { text: '{"actions":[{"action":"addTask","day":3,"intent":"physics revision","durationMin":30},{"action":"getSubject","subject":"Physics"}]}', model: 'a' };
+        },
+        stream: async (req: LLMRequest): Promise<LLMResponse> => {
+          req.onDelta?.('Done!');
+          return { text: 'Done!', model: 'a' };
+        },
+        fetchModels: async (): Promise<ModelInfo[]> => [],
+        healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+      };
+      const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+      const settings = new ProviderSettingsService(store, factory);
+      const llm = new LLMService(factory, settings);
+      const tools = toolsMock({ hasPlannerData: () => true });
+      const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), tools, null, store);
+      const s = chat.createSession('q');
+      const result = await chat.send(s.id, 'day 3 mein ek revision task add karo aur physics planner check karo');
+      expect(seenSystem).toContain('"action":"addTask"');
+      expect(seenSystem).toContain('getSubject');
+      expect(result.tool).toContain('addTask');
+      expect(result.tool).toContain('getSubject');
+    });
+
+    it('keeps the NARROW planner-only prompt when no planner has been imported yet', async () => {
+      const store = makeStore({ providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } }, aiEnabled: true });
+      const repo = new MemoryChatRepository();
+      let seenSystem = '';
+      const provider: LLMProvider = {
+        id: 'openrouter',
+        label: 'OpenRouter',
+        isConfigured: () => true,
+        complete: async (req: LLMRequest): Promise<LLMResponse> => {
+          seenSystem = (req.messages.find((m) => m.role === 'system')?.content as string) ?? '';
+          return { text: 'Abhi tak koi planner upload nahi hua.', model: 'a' };
+        },
+        stream: async (req: LLMRequest): Promise<LLMResponse> => {
+          req.onDelta?.('x');
+          return { text: 'x', model: 'a' };
+        },
+        fetchModels: async (): Promise<ModelInfo[]> => [],
+        healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+      };
+      const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+      const settings = new ProviderSettingsService(store, factory);
+      const llm = new LLMService(factory, settings);
+      const tools = toolsMock({ hasPlannerData: () => false });
+      const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), tools, null, store);
+      const s = chat.createSession('q');
+      await chat.send(s.id, 'physics planner check karo');
+      expect(seenSystem).not.toContain('"action":"addTask"');
+      expect(seenSystem).toContain('uploaded coaching planners');
+    });
+  });
+});
