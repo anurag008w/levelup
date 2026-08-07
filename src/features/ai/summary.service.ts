@@ -247,10 +247,11 @@ function parseObservations(text: string): { observations: string[]; planForTomor
     const planForTomorrow = toStrArray(data.planForTomorrow);
     return { observations, planForTomorrow };
   }
-  // Fallback: treat each non-empty line as an observation.
+  // Fallback: treat each non-empty line as an observation. Only markdown list
+  // markers ("- x", "1. x") are stripped — never leading digits of real content.
   const lines = text
     .split('\n')
-    .map((l) => l.replace(/^[-*\d.)\s]+/, '').trim())
+    .map((l) => l.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '').trim())
     .filter(Boolean)
     .slice(0, 3);
   return { observations: lines, planForTomorrow: [] };

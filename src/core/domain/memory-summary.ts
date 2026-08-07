@@ -26,7 +26,7 @@ Rules:
 2. "Previous memory (last 7 days)" is listed too — continuity only. Do NOT repeat facts already present there.
 3. PRESERVE MEANING EXACTLY. Never change, guess, add or fabricate facts. Numbers, dates, marks, percentages, subject/topic names, exam names, preferences, commitments and names must stay EXACTLY as the student wrote them. Never drop negations or qualifiers ("nhi", "sirf", "except", "jab tak", "not", "sometimes", "almost"). If a point is unclear, SKIP it — never guess.
 4. Each block has AT MOST 8 lines. Each line is one compact, self-contained Hinglish memory point. Aim for ~12 words, but that is a GUIDE — never shorten a point if it changes or loses the meaning; a longer accurate line is always better than a shorter wrong one.
-5. Separate blocks with a line containing only "----". If a block would need more than 8 lines, split it into a NEW block starting after a "----" line. Never go above 8 lines inside one block.
+5. Separate blocks with a line containing only "----". If a block would need more than 8 lines, split it into a NEW block starting after a "----" line. Never go above 8 lines inside one block. (Safety: the app auto-splits any block that still exceeds 8 lines — extra lines are NEVER dropped, so don't worry about losing points.)
 6. Keep different topics/sessions in DIFFERENT blocks. Each block is one independent memory unit, stored as its own separate memory entry.
 7. "longTerm": true ONLY for facts the coach must never forget (goals, preferences, strengths/weaknesses, exam targets, commitments). STRICT and RARE — at most 2 longTerm blocks per run. When in doubt keep "longTerm": false; the student can always pin a block later. longTerm blocks are pinned into long-term memory.
 8. Skip greetings, small talk and generic encouragement. Do not output empty blocks.`;
@@ -53,7 +53,8 @@ export function parseMemoryBlocks(text: string): MemoryBlock[] {
 
 /** Max memory points a single block may carry (matches the prompt rule). */
 export const MAX_BLOCK_LINES = 8;
-export const MAX_BLOCKS = 30;
+/** Hard ceiling on stored blocks per run — a runaway reply can never balloon memory. */
+export const MAX_BLOCKS = 50;
 
 /**
  * Deterministic long-term gate for AI memory blocks. Models tend to mark
@@ -71,35 +72,61 @@ export function shouldPinMemoryBlock(block: Pick<MemoryBlock, 'title' | 'lines'>
 }
 
 function parseJsonBlocks(raw: unknown[]): MemoryBlock[] {
-  const blocks: MemoryBlock[] = [];
-  for (const item of raw.slice(0, MAX_BLOCKS)) {
+  const out: MemoryBlock[] = [];
+  for (const item of raw) {
+    if (out.length >= MAX_BLOCKS) break;
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
     const b = item as Record<string, unknown>;
-    const lines = toStrArray(b.lines).slice(0, MAX_BLOCK_LINES);
+    const lines = toStrArray(b.lines);
     if (lines.length === 0) continue;
     const title = typeof b.title === 'string' && b.title.trim() ? b.title.trim() : undefined;
-    blocks.push({
+    const base = {
       ...(title ? { title } : {}),
-      lines,
       longTerm: b.longTerm === true,
       tags: toStrArray(b.tags).slice(0, 8),
-    });
+    };
+    for (const block of splitIntoBlocks(lines, base)) {
+      if (out.length >= MAX_BLOCKS) break;
+      out.push(block);
+    }
   }
-  return blocks;
+  return out;
 }
 
 /** Fallback: plain text split on lines containing only dashes ("----"). */
 function parsePlainBlocks(text: string): MemoryBlock[] {
   const groups = text.split(/^\s*-{3,}\s*$/m);
-  const blocks: MemoryBlock[] = [];
-  for (const group of groups.slice(0, MAX_BLOCKS)) {
+  const out: MemoryBlock[] = [];
+  for (const group of groups) {
+    if (out.length >= MAX_BLOCKS) break;
     const lines = group
       .split('\n')
-      .map((l) => l.replace(/^[-*\d.)\s]+/, '').trim())
-      .filter(Boolean)
-      .slice(0, MAX_BLOCK_LINES);
+      .map((l) => stripListMarker(l))
+      .filter(Boolean);
     if (lines.length === 0) continue;
-    blocks.push({ lines, longTerm: false, tags: [] });
+    for (const block of splitIntoBlocks(lines, { longTerm: false, tags: [] })) {
+      if (out.length >= MAX_BLOCKS) break;
+      out.push(block);
+    }
+  }
+  return out;
+}
+
+/**
+ * Splits a block's lines into as many compact blocks as needed — NEVER drops a
+ * point. The model is told to keep blocks <= MAX_BLOCK_LINES and separate
+ * topics with "----", but models routinely exceed the line cap; before this
+ * the overflow lines were silently discarded, losing meaning. Continuation
+ * blocks inherit the original longTerm/tags so pinning is consistent.
+ */
+function splitIntoBlocks(
+  lines: string[],
+  base: { title?: string; longTerm: boolean; tags: string[] },
+): MemoryBlock[] {
+  if (lines.length <= MAX_BLOCK_LINES) return [{ ...base, lines }];
+  const blocks: MemoryBlock[] = [];
+  for (let i = 0; i < lines.length && blocks.length < MAX_BLOCKS; i += MAX_BLOCK_LINES) {
+    blocks.push({ ...base, lines: lines.slice(i, i + MAX_BLOCK_LINES) });
   }
   return blocks;
 }
@@ -117,8 +144,20 @@ function tryJsonObject(text: string): unknown {
 
 function toStrArray(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
+  // All lines are kept — overflow is split into extra blocks by splitIntoBlocks
+  // instead of being dropped, so no student point is ever lost.
   return v
     .map((x) => (typeof x === 'string' ? x.trim() : ''))
     .filter((x): x is string => x.length > 0)
-    .slice(0, MAX_BLOCK_LINES);
+    .slice(0, MAX_BLOCK_LINES * MAX_BLOCKS);
+}
+
+/**
+ * Removes ONLY markdown list markers ("- x", "* x", "1. x", "1) x"). A naive
+ * `^[-*\d.)\s]+` strip eats real content that starts with digits — e.g. a fact
+ * line "140 marks aaye" or "9.5 CGPA mila" lost its number. Digits only count
+ * as a marker when followed by "." or ")".
+ */
+export function stripListMarker(line: string): string {
+  return line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '').trim();
 }

@@ -74,6 +74,35 @@ describe('MemoryService', () => {
     expect(summarized.summaries.some((s) => s.content.includes('Week of'))).toBe(true);
   });
 
+  it('rolls up 5 points per week (not 3) and keeps each point verbatim', () => {
+    const memory = makeService();
+    let state = emptyAppState();
+    const contents = [
+      'A: target hai IIT Delhi crack karna',
+      'B: physics rotation weak hai',
+      'C: mock mein 140 marks aaye',
+      'D: roz 2 ghante padhna',
+      'E: organic chemistry strong',
+      'F: integration revision baki',
+    ];
+    for (let i = 0; i < contents.length; i++) {
+      state = memory.add(state, {
+        type: 'journal',
+        content: contents[i],
+        source: 'user',
+        importance: 0.1 + i * 0.02,
+        createdAt: '2026-02-20',
+      });
+    }
+    const summarized = memory.summarize(state.memory);
+    const rollup = summarized.summaries[0];
+    expect(rollup).toBeDefined();
+    // 6 candidates, only the top-5 by importance survive into the rollup.
+    expect(contents.filter((c) => rollup.content.includes(c))).toHaveLength(5);
+    // Bulleted rollup (readable, sentence-safe) — not a pipe-joined blob.
+    expect(rollup.content).toMatch(/Week of 2026-02-\d\d:\n- /);
+  });
+
   it('returns relevant entries newest first', () => {
     const memory = makeService();
     let state = emptyAppState();
