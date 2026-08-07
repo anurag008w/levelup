@@ -7,6 +7,7 @@ import { CachedStateStore, LocalStateRepository, normalizeState } from '../infra
 import { FetchHttpClient, type HttpClient } from '../infra/ai/http';
 import { CapacitorHttpClient, isNativePlatform } from '../infra/ai/http-native';
 import { ProviderFactory } from '../infra/ai/provider-factory';
+import { WebSearchService } from '../infra/ai/websearch.service';
 import { ProviderSettingsService } from '../features/ai/provider-settings.service';
 import { ModelCacheService } from '../features/ai/model-cache.service';
 import { LLMService } from '../features/ai/llm.service';
@@ -77,6 +78,7 @@ export function createContainer(
   const factory = new ProviderFactory(http);
   const clock = new SystemClock();
   const memory = new MemoryService(clock);
+  const websearch = new WebSearchService(http);
 
   // Server-side backup (offline-first). `chat` is assigned below — the
   // coordinator only touches it at runtime (after login), so a lazy closure is
@@ -182,6 +184,11 @@ export function createContainer(
       }
     },
     memoryTools,
+    websearch,
+    () => {
+      const s = syncCoordinator.getSession();
+      return s ? { serverUrl: s.serverUrl, apiKey: s.apiKey } : null;
+    },
   );
   chatRef = chat;
 

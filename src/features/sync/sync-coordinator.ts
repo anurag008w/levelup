@@ -122,6 +122,11 @@ export class SyncCoordinator {
     this.emit();
   }
 
+  /** The active login session, or null when logged out. */
+  getSession(): AuthSession | null {
+    return this.session;
+  }
+
   /** Called by storage wrappers whenever app data changes. */
   markDirty(scope: SyncScope): void {
     if (!this.session) return;

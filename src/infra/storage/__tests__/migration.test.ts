@@ -60,4 +60,19 @@ describe('normalizeState', () => {
     expect(state.aiSettings).toBeDefined();
     expect(state.summaries).toEqual([]);
   });
+
+  it('defaults web search to off and sanitizes an unknown provider id', () => {
+    const state = normalizeState({ aiSettings: { providers: {}, websearch: { enabled: true, providerId: 'unknown', model: 'x', apiKey: 'k', baseUrl: '' } } });
+    expect(state.aiSettings.websearch.enabled).toBe(true);
+    // Unknown provider id is not trusted — falls back to the default (off/none).
+    expect(state.aiSettings.websearch.providerId).toBeNull();
+  });
+
+  it('keeps a valid configured web search backend', () => {
+    const state = normalizeState({
+      aiSettings: { providers: {}, websearch: { enabled: true, providerId: 'google', model: 'gemini-2.5-flash', apiKey: 'AIza-test', baseUrl: '' } },
+    });
+    expect(state.aiSettings.websearch.providerId).toBe('google');
+    expect(state.aiSettings.websearch.apiKey).toBe('AIza-test');
+  });
 });

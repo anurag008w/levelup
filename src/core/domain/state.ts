@@ -22,6 +22,34 @@ export interface AiSettings {
   aiEnabled: boolean;
   /** Chat-specific settings */
   chat: ChatSettings;
+  /** Live web search: which provider/search is used and how it's configured. */
+  websearch: WebSearchSettings;
+}
+
+/** Search backends available for live web search. */
+export type WebSearchProviderId = 'google' | 'smartrotator';
+
+export interface WebSearchSettings {
+  /** Master switch — ON = the AI live-searches before answering. */
+  enabled: boolean;
+  /** Which search backend to use. */
+  providerId: WebSearchProviderId | null;
+  /** Model used by the chosen search backend (Gemini model for Google). */
+  model: string;
+  /** User-supplied API key (Google). SmartRotator reuses the login key. */
+  apiKey: string;
+  /** Optional base URL override (Google). Empty = official endpoint. */
+  baseUrl: string;
+}
+
+export function defaultWebSearchSettings(): WebSearchSettings {
+  return {
+    enabled: false,
+    providerId: null,
+    model: 'gemini-2.5-flash',
+    apiKey: '',
+    baseUrl: '',
+  };
 }
 
 /** Global AI chat settings */
@@ -223,6 +251,7 @@ export function defaultAiSettings(): AiSettings {
     modelCache: {}, 
     aiEnabled: true,
     chat: defaultChatSettings(),
+    websearch: defaultWebSearchSettings(),
   };
 }
 
