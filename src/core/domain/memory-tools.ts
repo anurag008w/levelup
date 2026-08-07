@@ -50,7 +50,7 @@ Available actions (reply with exactly ONE JSON object, no prose, no markdown):
 {"action":"addMemory","content":"<fact to remember>"}          # save a NEW fact ("yaad rakho X")
 {"action":"addMemory","content":"<fact>","type":"goal"}        # save as a goal/preference/observation (optional)
 {"action":"editMemory","id":"<entryId>","content":"<new text>"} # rewrite an entry (user asked to change it)
-{"action":"deleteMemory","id":"<entryId>","confirmed":true}     # delete an entry
+{"action":"deleteMemory","id":"<entryId>"}                      # request a delete (app will ask user to confirm)
 {"action":"pinMemory","id":"<entryId>"}                         # keep this in long-term memory
 {"action":"unpinMemory","id":"<entryId>"}                       # remove from long-term memory
 
@@ -59,6 +59,7 @@ RULES:
 - When the user says "yaad rakho X" / "yaad rakhna X" / "mat bhoolna X", ADD it with addMemory instead of just talking.
 - For edits/deletes you MUST use the real entry id from readMemory. Never invent ids.
 - Deleting is destructive: if the user did not explicitly ask to delete, do nothing.
+- NEVER include a "confirmed" field on deleteMemory — the app always asks the user to confirm before deleting; you cannot skip that step.
 - After executing, explain what you did in short Hinglish (always ROMAN script).`;
 
 /** Keywords that route a user message to the memory tool decision hop. */
