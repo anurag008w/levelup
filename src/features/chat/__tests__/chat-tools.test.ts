@@ -1458,6 +1458,23 @@ describe('ChatService tool retry + reasoning', () => {
     expect(store.get().taskLogs).toEqual(before);
   });
 
+  it('runMany previews the WHOLE batch when bulkRemoveTasks (bulk-destructive) lacks confirmation — regression for missing ACTIONS registration', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const before = store.get().dynamicTaskBank;
+    const result = await tools.runMany([
+      { action: 'bulkRemoveTasks', day: 1, taskIds: ['d1_t1', 'd1_t2'] },
+      { action: 'addTask', day: 4, intent: 'add hona chahiye', durationMin: 20 },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.requiresConfirmation).toBe(true);
+    // Nothing applied: the addTask sharing the batch with an unconfirmed
+    // bulkRemoveTasks must NOT have run either — whole-batch atomicity.
+    const planDay4 = await tools.run({ action: 'getPlan', day: 4 });
+    expect(planDay4.summary).not.toContain('ai-chat-test');
+    expect(store.get().dynamicTaskBank).toEqual(before);
+  });
+
   it('runMany applies destructive actions once confirmed', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
