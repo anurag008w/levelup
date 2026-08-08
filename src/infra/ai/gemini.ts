@@ -31,7 +31,7 @@ interface GeminiGenerateRequest {
   generationConfig: {
     temperature?: number;
     maxOutputTokens?: number;
-    thinkingConfig?: { thinkingBudget: number };
+    thinkingConfig?: { thinkingBudget: number; includeThoughts: boolean };
   };
 }interface GeminiGenerateResponse {
   candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
@@ -131,7 +131,7 @@ export class GeminiProvider implements LLMProvider {
     }
     if (contents.length === 0) contents.push({ role: 'user', parts: [{ text: 'Continue.' }] });
     const maxTokens = request.maxTokens ?? this.config.maxTokens;
-    let thinkingConfig: { thinkingBudget: number } | undefined;
+    let thinkingConfig: { thinkingBudget: number; includeThoughts: boolean } | undefined;
     if (request.thinking && request.thinking !== 'off') {
       const requested = THINKING_BUDGETS[request.thinking];
       // Gemini requires thinkingBudget < maxOutputTokens. Reserve a guaranteed
@@ -139,10 +139,20 @@ export class GeminiProvider implements LLMProvider {
       // thinking (which surfaces as a blank reply). When there isn't enough
       // room to leave that window, skip thinking entirely.
       if (maxTokens !== undefined) {
-        const room = maxTokens - 512;
-        thinkingConfig = room >= 256 ? { thinkingBudget: Math.min(requested, room) } : undefined;
+        // Reserve was a flat 512 before — on a small maxTokens (e.g. a low
+        // tool-call budget) that ate the entire window and silently dropped
+        // thinkingConfig altogether (no error, reasoning just never came
+        // back). Scale the reserve instead so a budget is still requested
+        // whenever there's ANY real room left.
+        const reserve = Math.min(512, Math.floor(maxTokens / 4));
+        const room = maxTokens - reserve;
+        // includeThoughts:true is required or Gemini spends the budget
+        // internally but never sends thought text back — showThinking would
+        // stay blank at EVERY level (low/medium/high), which is exactly the
+        // "not showing" bug.
+        thinkingConfig = room > 0 ? { thinkingBudget: Math.min(requested, room), includeThoughts: true } : undefined;
       } else {
-        thinkingConfig = { thinkingBudget: requested };
+        thinkingConfig = { thinkingBudget: requested, includeThoughts: true };
       }
     }
     return {
