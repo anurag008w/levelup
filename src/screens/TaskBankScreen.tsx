@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Check, ListTodo, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import type { AppState } from '../types';
 import type { EnergyLevel, TaskBankEntry, TaskType } from '../core/domain/task-bank';
@@ -32,7 +32,11 @@ export default function TaskBankScreen({ state: _state, update }: { state: AppSt
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; entry: TaskBankEntry } | null>(null);
   const holdTimer = useRef<number | null>(null);
   const firedRef = useRef(false);
-  const { menuRef } = useMenuFocus(rowMenu !== null, () => setRowMenu(null));
+  const closeRowMenu = useCallback(() => {
+    setRowMenu(null);
+    firedRef.current = false;
+  }, []);
+  const { menuRef } = useMenuFocus(rowMenu !== null, closeRowMenu);
 
   function openRowMenu(entry: TaskBankEntry, x: number, y: number) {
     haptic(20);
@@ -301,12 +305,12 @@ export default function TaskBankScreen({ state: _state, update }: { state: AppSt
                       key={entry.id}
                       className="card p-3 text-sm"
                       onContextMenu={(e) => {
-                        if (isEditing) return;
+                        if (isEditing || rowMenu) return;
                         e.preventDefault();
                         if (!firedRef.current) openRowMenu(entry, e.clientX, e.clientY);
                       }}
                       onPointerDown={(e) => {
-                        if (isEditing || e.pointerType !== 'touch') return;
+                        if (isEditing || e.pointerType !== 'touch' || rowMenu) return;
                         firedRef.current = false;
                         holdTimer.current = window.setTimeout(() => {
                           firedRef.current = true;
@@ -374,7 +378,7 @@ export default function TaskBankScreen({ state: _state, update }: { state: AppSt
       )}
       {rowMenu && (
         <>
-          <div className="fixed inset-0 z-[59]" onClick={() => setRowMenu(null)} aria-hidden="true" />
+          <div className="fixed inset-0 z-[59]" onClick={closeRowMenu} aria-hidden="true" />
           <div ref={menuRef} role="menu" className="ctx-menu" style={{ left: rowMenu.x, top: rowMenu.y }}>
             <button
               type="button"
@@ -383,7 +387,7 @@ export default function TaskBankScreen({ state: _state, update }: { state: AppSt
               onClick={() => {
                 haptic();
                 startEdit(rowMenu.entry);
-                setRowMenu(null);
+                closeRowMenu();
               }}
             >
               <Pencil size={15} />
@@ -396,7 +400,7 @@ export default function TaskBankScreen({ state: _state, update }: { state: AppSt
               onClick={() => {
                 haptic();
                 deleteTask(rowMenu.entry);
-                setRowMenu(null);
+                closeRowMenu();
               }}
             >
               <Trash2 size={15} />

@@ -1,4 +1,5 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Calendar, Check, Flame, Pencil, Plus, ShieldCheck, Siren, Sunrise, Sunset, Target, Timer, Trash2, X, Zap } from 'lucide-react';
 import type { AppState } from '../types';
 import type { EnergyLevel, TaskBankEntry, TaskType } from '../core/domain/task-bank';
@@ -16,7 +17,8 @@ import AdminLogin from '../components/AdminLogin';
 import DaySwitcher from '../components/DaySwitcher';
 import { phaseAccent } from '../lib/phaseColors';
 import { parseTaskBankEntry } from '../features/task-bank/validation';
-import { haptic } from '../lib/haptics';
+import { haptic, hapticSuccess } from '../lib/haptics';
+import type { AdminVerifyResult } from '../lib/admin';
 import { useMenuFocus } from '../components/useMenuFocus';
 import { MoreButton } from '../components/menu-accessibility';
 
@@ -28,6 +30,8 @@ export default function TodayScreen({
   today,
   update,
   adminUnlocked,
+  canAutoUnlock,
+  onAutoUnlock,
   onUnlockAdmin,
   onLockAdmin,
   onSetAdminDay,
@@ -37,7 +41,10 @@ export default function TodayScreen({
   today: string;
   update: (fn: (s: AppState) => AppState) => void;
   adminUnlocked: boolean;
-  onUnlockAdmin: (username: string, password: string) => boolean;
+  /** The logged-in session is a server super admin — shield unlocks directly. */
+  canAutoUnlock: boolean;
+  onAutoUnlock: () => boolean;
+  onUnlockAdmin: (username: string, password: string) => Promise<AdminVerifyResult>;
   onLockAdmin: () => void;
   onSetAdminDay: (day: number | null) => void;
   onNavigate?: (tab: 'task-bank' | 'progress' | 'chat') => void;
@@ -203,7 +210,18 @@ export default function TodayScreen({
               aria-label={adminUnlocked ? 'Admin panel khula hai (lock karo)' : 'Admin login'}
               className="icon-btn"
               style={adminUnlocked ? { color: 'var(--color-peak)' } : undefined}
-              onClick={() => (adminUnlocked ? onLockAdmin() : setShowAdminLogin(true))}
+              onClick={() => {
+                if (adminUnlocked) {
+                  onLockAdmin();
+                  return;
+                }
+                // Super admins get in without a password dialog.
+                if (canAutoUnlock && onAutoUnlock()) {
+                  hapticSuccess();
+                  return;
+                }
+                setShowAdminLogin(true);
+              }}
             >
               <ShieldCheck size={16} />
             </button>
@@ -568,7 +586,11 @@ const TaskRow = memo(function TaskRow({
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const holdTimer = useRef<number | null>(null);
   const firedRef = useRef(false);
-  const { menuRef } = useMenuFocus(menuPos !== null, () => setMenuPos(null));
+  const closeMenu = useCallback(() => {
+    setMenuPos(null);
+    firedRef.current = false;
+  }, []);
+  const { menuRef } = useMenuFocus(menuPos !== null, closeMenu);
 
   function openMenu(clientX: number, clientY: number) {
     haptic(20);
@@ -619,10 +641,13 @@ const TaskRow = memo(function TaskRow({
       }}
       onContextMenu={(e) => {
         e.preventDefault();
-        if (!firedRef.current) openMenu(e.clientX, e.clientY);
+        // Menu already open or a long-press already fired on this gesture —
+        // don't let the row re-trigger while the user is interacting with it.
+        if (menuPos || firedRef.current) return;
+        openMenu(e.clientX, e.clientY);
       }}
       onPointerDown={(e) => {
-        if (e.pointerType !== 'touch') return;
+        if (e.pointerType !== 'touch' || menuPos) return;
         firedRef.current = false;
         holdTimer.current = window.setTimeout(() => {
           firedRef.current = true;
@@ -661,40 +686,44 @@ const TaskRow = memo(function TaskRow({
       </div>
       {/* Edit / Delete are reached via long-press (or right-click) — see the
           ctx-menu below — so the row stays clean instead of showing
-          always-on icon buttons. */}
-      {menuPos && (
-        <>
-          <div className="fixed inset-0 z-[59]" onClick={() => setMenuPos(null)} aria-hidden="true" />
-          <div ref={menuRef} role="menu" className="ctx-menu" style={{ left: menuPos.x, top: menuPos.y }}>
-            <button
-              type="button"
-              role="menuitem"
-              className="ctx-item"
-              onClick={() => {
-                haptic();
-                onStartEdit();
-                setMenuPos(null);
-              }}
-            >
-              <Pencil size={15} />
-              Edit
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              className="ctx-item danger"
-              onClick={() => {
-                haptic();
-                onDelete();
-                setMenuPos(null);
-              }}
-            >
-              <Trash2 size={15} />
-              Delete
-            </button>
-          </div>
-        </>
-      )}
+          always-on icon buttons. Portal to <body> so the menu is outside the
+          row's DOM: the row's :active transform and pointer handlers can't
+          shift/cancel the tap that lands on these buttons. */}
+      {menuPos &&
+        createPortal(
+          <>
+            <div className="fixed inset-0 z-[59]" onClick={closeMenu} aria-hidden="true" />
+            <div ref={menuRef} role="menu" className="ctx-menu" style={{ left: menuPos.x, top: menuPos.y }}>
+              <button
+                type="button"
+                role="menuitem"
+                className="ctx-item"
+                onClick={() => {
+                  haptic();
+                  onStartEdit();
+                  closeMenu();
+                }}
+              >
+                <Pencil size={15} />
+                Edit
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="ctx-item danger"
+                onClick={() => {
+                  haptic();
+                  onDelete();
+                  closeMenu();
+                }}
+              >
+                <Trash2 size={15} />
+                Delete
+              </button>
+            </div>
+          </>,
+          document.body,
+        )}
     </div>
   );
 });

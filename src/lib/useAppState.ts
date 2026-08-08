@@ -3,7 +3,8 @@ import type { AppState } from '../types';
 import { emptyAppState } from '../core/domain/state';
 import { container } from '../di/container';
 import { isoAddDays } from '../features/habit-engine/dates';
-import { isAdminUnlocked, setAdminUnlocked, verifyAdmin } from './admin';
+import { canAutoUnlockSession, isAdminUnlocked, setAdminUnlocked, verifyAdminLogin, type AdminVerifyResult } from './admin';
+import { loadSession } from './auth';
 import { todayISO } from './storage';
 
 /**
@@ -18,7 +19,7 @@ import { todayISO } from './storage';
 export function useAppState() {
   const [state, setState] = useState<AppState>(() => container.store.get());
   const [realToday, setRealToday] = useState<string>(() => todayISO(container.store.get().timeZone));
-  const [adminUnlocked, setAdminUnlockedState] = useState<boolean>(() => isAdminUnlocked());
+  const [adminUnlocked, setAdminUnlockedState] = useState<boolean>(() => isAdminUnlocked(loadSession()?.username ?? null));
   const [adminDay, setAdminDayState] = useState<number | null>(null);
 
   // Listen for external store updates (e.g., from chat tools) and sync state
@@ -68,17 +69,27 @@ export function useAppState() {
     }
   }
 
-  /** Tries the admin credentials; returns true and unlocks on success. */
-  function unlockAdmin(username: string, password: string): boolean {
-    if (!verifyAdmin(username, password)) return false;
-    setAdminUnlocked(true);
+  /** Unlocks straight away when the logged-in session is a server super admin. */
+  function autoUnlock(): boolean {
+    const session = loadSession();
+    if (!canAutoUnlockSession(session)) return false;
+    setAdminUnlocked(session?.username ?? null, true);
     setAdminUnlockedState(true);
     return true;
   }
 
+  /** Verifies credentials against the server; unlocks only for a super admin. */
+  async function unlockAdmin(username: string, password: string): Promise<AdminVerifyResult> {
+    const result = await verifyAdminLogin(username, password);
+    if (!result.ok) return result;
+    setAdminUnlocked(username.trim(), true);
+    setAdminUnlockedState(true);
+    return { ok: true };
+  }
+
   /** Locks the panel and drops any previewed day. */
   function lockAdmin() {
-    setAdminUnlocked(false);
+    setAdminUnlocked(loadSession()?.username ?? null, false);
     setAdminUnlockedState(false);
     setAdminDayState(null);
   }
@@ -88,5 +99,5 @@ export function useAppState() {
     setAdminDayState(day);
   }
 
-  return { state, today, update, refresh, startJourney, resetAll, adminUnlocked, adminDay, unlockAdmin, lockAdmin, setAdminDay };
+  return { state, today, update, refresh, startJourney, resetAll, adminUnlocked, adminDay, unlockAdmin, autoUnlock, lockAdmin, setAdminDay };
 }
