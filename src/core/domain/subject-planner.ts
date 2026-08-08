@@ -133,17 +133,30 @@ export type PlannerImportPayload = z.infer<typeof plannerImportSchema>;
  * Parses + validates a raw import payload into ready-to-store planners.
  * Throws a friendly Error when the JSON isn't a valid LevelUp planner export,
  * so the upload screen can show exactly what went wrong.
+ *
+ * Tolerates real-world copy/paste noise that is NOT part of the JSON spec but
+ * is extremely common when users copy from external AIs or download files:
+ *  - UTF-8 BOM ("\uFEFF") — file pickers/FileReader often prepend it.
+ *  - Markdown code fences ("```json ... ```") — ChatGPT/Claude/Gemini wrap
+ *    their JSON answer in fences by default.
+ *  - Leading/trailing whitespace and blank lines.
  */
 export function parsePlannerImport(text: string): SubjectPlanner[] {
+  let raw = text.replace(/^\uFEFF/, '').trim();
+  // Strip a single ```json / ``` markdown fence wrapper if present.
+  const fence = raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  if (fence) raw = fence[1].trim();
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(raw);
   } catch {
     throw new Error('JSON valid nahi hai — file/paste ko check karo.');
   }
   const result = plannerImportSchema.safeParse(parsed);
   if (!result.success) {
-    throw new Error('Ye LevelUp planner format nahi hai. Copy prompt use karke external AI se sahi JSON banwao.');
+    const firstIssue = result.error.issues[0];
+    const where = firstIssue ? `${firstIssue.path.join('.') || 'root'} — ${firstIssue.message}` : 'unknown field';
+    throw new Error(`Ye LevelUp planner format nahi hai (${where}). Copy prompt use karke external AI se sahi JSON banwao.`);
   }
   const now = new Date().toISOString();
   return result.data.planners.map((p) => {
