@@ -21,6 +21,7 @@
 //   Scoped imports MERGE into the current store and never touch chat.
 
 import { z } from 'zod';
+import { cleanImportText } from '../../core/domain/import-utils';
 import type { AppState } from '../../core/domain/state';
 import { defaultChatPrefs, MAX_MESSAGES_PER_SESSION, MAX_SESSIONS, type ChatMessage, type ChatPreferences, type ChatSession, type ChatStoreState } from '../../core/domain/chat';
 import type { StateStore } from '../../core/ports/repositories';
@@ -237,7 +238,7 @@ export function serializeBackup(payload: BackupPayload): string {
 export function parseBackup(json: string): BackupPayload {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(json);
+    parsed = JSON.parse(cleanImportText(json));
   } catch {
     throw new BackupError('File valid JSON nahi hai. Sahi backup file select karo.', 'INVALID_JSON');
   }

@@ -107,6 +107,14 @@ describe('backup round-trip', () => {
     expect(parsed.data.state).toBeDefined();
   });
 
+  it('accepts backup JSON wrapped in markdown fences or with a UTF-8 BOM', () => {
+    const payload = buildBackupPayload(emptyAppState(), null);
+    const plain = serializeBackup(payload);
+    expect(parseBackup('```json\n' + plain + '\n```').kind).toBe('levelup-backup');
+    expect(parseBackup('\uFEFF' + plain).kind).toBe('levelup-backup');
+    expect(parseBackup('  ' + plain + '\n').kind).toBe('levelup-backup');
+  });
+
   it('defaults scope to full for legacy backups that omit it', () => {
     const legacy = JSON.stringify({ app: 'levelup', kind: 'levelup-backup', version: 1, exportedAt: 'x', data: { state: {} } });
     const parsed = parseBackup(legacy);
