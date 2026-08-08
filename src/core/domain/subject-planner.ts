@@ -15,6 +15,7 @@
 // hai", "AITS-1 mein kya aayega" and "monday ko kya class hai" with real data.
 
 import { z } from 'zod';
+import { cleanImportText } from './import-utils';
 
 // ===== Domain types =====
 
@@ -142,10 +143,7 @@ export type PlannerImportPayload = z.infer<typeof plannerImportSchema>;
  *  - Leading/trailing whitespace and blank lines.
  */
 export function parsePlannerImport(text: string): SubjectPlanner[] {
-  let raw = text.replace(/^\uFEFF/, '').trim();
-  // Strip a single ```json / ``` markdown fence wrapper if present.
-  const fence = raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
-  if (fence) raw = fence[1].trim();
+  const raw = cleanImportText(text);
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);

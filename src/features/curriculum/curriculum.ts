@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { cleanImportText } from '../../core/domain/import-utils';
 import type { AppState, CustomPhase } from '../../core/domain/state';
 import type { Habit } from '../../core/domain/habit';
 import type { TaskBankEntry } from '../../core/domain/task-bank';
@@ -81,7 +82,7 @@ export function serializeCurriculum(tasks: TaskBankEntry[], habits: Habit[], blo
 export function parseCurriculum(json: string): CurriculumParseReport {
   let raw: unknown;
   try {
-    raw = JSON.parse(json);
+    raw = JSON.parse(cleanImportText(json));
   } catch {
     throw new Error('File valid JSON nahi hai. Sahi curriculum file select karo.');
   }

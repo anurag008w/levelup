@@ -4,6 +4,7 @@
 // after the live session is gone. The encoder is deterministic and the parser
 // is defensive: any malformed/legacy payload is skipped, never thrown on.
 
+import { cleanImportText } from './import-utils';
 import type { ChatMessage, ChatSession } from './chat';
 
 /** Memory tag that links an entry to its chat session, e.g. "session:abc". */
@@ -68,7 +69,7 @@ export function parseChatTranscript(content: string): ChatTranscript | null {
   if (typeof content !== 'string' || !content.trim()) return null;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(content);
+    parsed = JSON.parse(cleanImportText(content));
   } catch {
     return null;
   }

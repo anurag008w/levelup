@@ -52,6 +52,13 @@ describe('chat-transcript encoding', () => {
     expect(parsed!.messages[1].model).toBe('gemini');
   });
 
+  it('accepts transcript JSON wrapped in markdown fences or with a UTF-8 BOM', () => {
+    const session = makeSession();
+    const json = buildChatTranscript(session);
+    expect(parseChatTranscript('```json\n' + json + '\n```')?.sessionId).toBe('s1');
+    expect(parseChatTranscript('\uFEFF' + json)?.sessionId).toBe('s1');
+  });
+
   it('buildChatTranscript archives attachments, reasoning, tool and stopped state', () => {
     const session = makeSession({
       messages: [
