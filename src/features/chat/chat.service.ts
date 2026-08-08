@@ -487,12 +487,36 @@ export class ChatService {
           this.appendAssistant(session, memoryAssistant);
           return memoryAssistant;
         }
+        // readMemory returns the RAW internal dump ("- [type] content (id:xxx)")
+        // — that was going straight into the chat bubble verbatim, leaking
+        // internal ids/type-tags to the user. Route it through the same
+        // summary hop the plan/task tools use so the reply is a normal
+        // Hinglish sentence instead of the raw memory format.
+        const memorySummaryRequest = await this.buildSummaryRequest(
+          session,
+          memoryResult.summary,
+          (delta) => {
+            partial += delta;
+            onDelta?.(delta);
+          },
+          signal,
+          onReasoningDelta,
+        );
+        let memoryReply: LLMResponse;
+        try {
+          memoryReply = await this.llm.stream(memorySummaryRequest);
+        } catch {
+          memoryReply = { text: '', model: decision.model ?? '' };
+        }
         const memoryAssistant: ChatMessage = {
           id: uid(),
           role: 'assistant',
-          content: sanitizeAssistantLeaks(memoryResult.summary),
+          // Fall back to the raw summary only if the synthesis call came back
+          // empty — better an ugly reply than a silently dropped one.
+          content: sanitizeAssistantLeaks(memoryReply.text || memoryResult.summary),
           createdAt: this.clock.now().toISOString(),
-          model: decision.model,
+          model: memoryReply.model || decision.model,
+          reasoning: memoryReply.reasoning || undefined,
         };
         this.appendAssistant(session, memoryAssistant);
         return memoryAssistant;
