@@ -1444,7 +1444,7 @@ function ThinkingBlock({ text }: { text: string }) {
  * JSON.
  */
 function ToolCallsBlock({ calls }: { calls: ChatToolCallRecord[] }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const okCount = calls.filter((c) => c.ok).length;
   return (
     <div className="mb-2 overflow-hidden rounded-lg border border-peak/20 bg-peak/5">
