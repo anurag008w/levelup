@@ -2009,7 +2009,16 @@ function AiActivityPanel({ onHistoryChanged }: { onHistoryChanged: () => void })
       <p className="section-label mb-2">AI Activity</p>
       <div className="rounded-xl border border-border bg-panel px-3.5 py-3">
         <div className="mb-1 flex items-center justify-between gap-2">
-          <p className="text-xs font-semibold text-muted">AI Activity & Undo</p>
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-muted">
+            AI Activity & Undo
+            <span
+              className="badge !px-1.5 !py-px !text-[10px] font-medium lowercase"
+              title="Experimental — kuch AI changes ka undo supported hai"
+              style={{ backgroundColor: 'rgba(155,138,168,0.16)', color: 'var(--color-tag-revision)' }}
+            >
+              dev
+            </span>
+          </p>
           <span className="font-mono text-[10px] text-light">{history.versions.length} versions</span>
         </div>
         {latest ? (
