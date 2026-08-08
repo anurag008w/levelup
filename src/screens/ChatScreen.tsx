@@ -1444,7 +1444,7 @@ function ThinkingBlock({ text }: { text: string }) {
  * JSON.
  */
 function ToolCallsBlock({ calls }: { calls: ChatToolCallRecord[] }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const okCount = calls.filter((c) => c.ok).length;
   return (
     <div className="mb-2 overflow-hidden rounded-lg border border-peak/20 bg-peak/5">
@@ -1503,6 +1503,14 @@ function ToolBadge({ tool }: { tool: string }) {
 const TOOL_LABELS: Record<string, string> = {
   getPlan: 'Plan dekha',
   getRange: 'Range dekhi',
+  getContext: 'Journey status dekha',
+  listPlanners: 'Planners dekhe',
+  getSubject: 'Subject detail dekha',
+  getPlanner: 'Planner detail dekha',
+  getTest: 'Test detail dekha',
+  getTests: 'Tests dekhe',
+  getRoutine: 'Routine dekhi',
+  getDay: 'Day detail dekha',
   addTask: 'Task add kiya',
   bulkAddTasks: 'Tasks add kiye',
   removeTask: 'Task hata diya',
