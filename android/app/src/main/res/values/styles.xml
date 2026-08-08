@@ -13,6 +13,10 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- App dark hai (#060506) — transient status bar (swipe pe dikhta hai)
+             bhi dark ho taaki white bar na dikhe. -->
+        <item name="android:statusBarColor">#060506</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 
 

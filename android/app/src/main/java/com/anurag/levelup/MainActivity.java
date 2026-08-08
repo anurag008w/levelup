@@ -1,5 +1,6 @@
 package com.anurag.levelup;
 
+import android.graphics.Color;
 import android.os.Bundle;
 import android.view.View;
 import android.view.Window;
@@ -11,6 +12,9 @@ import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+    /** App ka dark background — status bar isse match karta hai (#060506). */
+    private static final int STATUS_BAR_COLOR = Color.rgb(0x06, 0x05, 0x06);
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BackgroundPermissionPlugin.class);
@@ -42,12 +46,25 @@ public class MainActivity extends BridgeActivity {
      *    hide() supported hai (official immersive-mode docs).
      *  - Navigation bar (bottom) intentionally untouched — app ka existing
      *    layout/logic waisa hi rehta hai.
+     *
+     * Transient bar (swipe pe aata hai) app ke dark theme se match karta hai:
+     *  - Background: STATUS_BAR_COLOR (app ka --color-bg) — API 34 tak direct;
+     *    Android 15+ pe edge-to-edge enforced hai, isliye status bar
+     *    transparent hi rehta hai aur webview ka dark background dikhta hai.
+     *  - Icons: light (white) — setAppearanceLightStatusBars(false), jo
+     *    dark background pe readable rehte hain (API 23+).
      */
     private void hideStatusBar() {
         Window window = getWindow();
         if (window == null) return;
         WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, window.getDecorView());
         if (controller == null) return;
+
+        // Dark bg pe light icons — Android 15/16 pe bhi icons sahi dikhein.
+        controller.setAppearanceLightStatusBars(false);
+
+        // Transient bar ka background app ke dark theme se match karo.
+        window.setStatusBarColor(STATUS_BAR_COLOR);
 
         controller.hide(WindowInsetsCompat.Type.statusBars());
         // Transient bars: swipe se dikhe, timeout ke baad auto-hide.
