@@ -403,10 +403,9 @@ export class ChatService {
       const hasAttachments = (attachments?.length ?? 0) > 0;
       // Tools the user pinned with "@" mentions for THIS run. When present, the
       // AI may ONLY execute those tools — every other tool is unavailable.
-      // `websearch` is NOT a JSON tool action: it maps to live Google Search
-      // grounding on capable models. It is filtered out of the JSON tool scope
-      // and handled as a separate flag (auto on the default chat path; forced
-      // when pinned).
+      // `websearch` is NOT a JSON tool action: it maps to live search. It is
+      // filtered out of the JSON tool scope and handled as a separate flag
+      // (active only when the user pins @websearch — never on its own).
       const pinnedWebSearch = onlyTools?.includes('websearch') ?? false;
       const jsonOnlyTools = (onlyTools ?? []).filter((t) => t !== 'websearch');
       const toolScope = jsonOnlyTools.length ? this.tools?.resolveToolScope(jsonOnlyTools) ?? [] : [];
@@ -664,7 +663,7 @@ export class ChatService {
         }, signal, (delta) => {
           reasoning += delta;
           onReasoningDelta?.(delta);
-        }, pinnedWebSearch);
+        }, pinnedWebSearch && this.webSearchEnabled());
         const summary = await this.llm.stream(summaryRequest);
         // Release any trailing chunk the sanitizer held back as a possible
         // partial timestamp — otherwise the streamed tail is silently dropped.
@@ -702,16 +701,14 @@ export class ChatService {
 
       // Default streaming path.
       let reasoning = '';
-      // Two-step live web search (Settings > Web Search): when a search backend
-      // is configured, the question is searched first and the grounded summary
-      // is fed into the chat request as context. Pinned @web-search always
-      // searches; auto mode searches when the Web Search switch is ON. When no
-      // backend is configured, native Gemini grounding / the adapter's search
-      // tool stay as before.
+      // Two-step live web search (Settings > Web Search): runs ONLY when the
+      // user explicitly pins @websearch AND the switch is ON — a guaranteed
+      // search before answering (unlike the attached auto tool, where the model
+      // decides). With the switch OFF nothing searches, not even a pin.
       const searchCtx = this.resolveWebSearchContext();
       let searchResults: string | null = null;
       let websearchRecord: ChatToolCallRecord | null = null;
-      if (searchCtx && (onlyWebSearch || this.webSearchEnabled())) {
+      if (searchCtx && onlyWebSearch && this.webSearchEnabled()) {
         onStatus?.('Web search kar raha hoon…');
         const run = await this.maybeRunWebSearch(session, signal);
         searchResults = run.context;
@@ -730,7 +727,7 @@ export class ChatService {
         }, signal, (delta) => {
           reasoning += delta;
           onReasoningDelta?.(delta);
-        }, onlyWebSearch ? 'pinned' : 'auto', searchResults);
+        }, searchResults);
         const resp = await this.llm.stream(request);
         // Release any trailing chunk the sanitizer held back as a possible
         // partial timestamp — otherwise the streamed tail is silently dropped.
@@ -762,7 +759,7 @@ export class ChatService {
       }
       let finalResp = resp;
       if (!finalResp.text && !finalResp.reasoning) {
-        const fallbackReq = await this.buildRequest(session, undefined, signal, undefined, onlyWebSearch ? 'pinned' : 'auto', searchResults);
+        const fallbackReq = await this.buildRequest(session, undefined, signal, undefined, searchResults);
         fallbackReq.thinking = 'off';
         fallbackReq.maxTokens = 16384;
         finalResp = await this.llm.stream(fallbackReq);
@@ -1253,7 +1250,6 @@ export class ChatService {
     onDelta: ((d: string) => void) | undefined,
     signal?: AbortSignal,
     onReasoningDelta?: (d: string) => void,
-    webSearchMode: 'auto' | 'pinned' = 'auto',
     searchResults?: string | null,
   ): Promise<LLMRequest> {
     const thinking = this.resolveThinking(session);
@@ -1265,33 +1261,27 @@ export class ChatService {
       onDelta,
       onReasoningDelta,
       signal,
-      // Web search: the default chat path may use live search grounding
-      // (Gemini) whenever the model decides fresh/current info is needed —
-      // news, syllabus changes, results, dates. Raw results are never shown
-      // to the user, only the model's synthesized answer. Plan/decision hops
-      // stay tool-free.
+      // Web search is a master-switched tool: when Settings > Web Search is ON
+      // the native grounding / adapter search tool is attached to normal
+      // replies too — the MODEL decides when fresh info is needed (news,
+      // syllabus changes, results, dates), exactly like the other tools. It is
+      // NOT a per-reply blind search; that only happens when the user pins
+      // @websearch (two-step backend above). Plan/decision hops stay tool-free.
       //
-      // 'auto'   → Gemini only (native google_search grounding, model
-      //            decides) — unless a two-step Web Search backend is
-      //            configured (Settings > Web Search), which already ran and
-      //            injected results above.
-      // 'pinned' → user explicitly pinned @web-search: enable for ANY
-      //            provider; the adapter sends the search tool + gracefully
-      //            falls back when the endpoint doesn't support it.
-      websearch: (webSearchMode === 'pinned' || this.isGeminiProvider(session)) && !searchResults,
+      // 'auto'   → attached whenever the switch is ON (any provider; the
+      //            adapter sends the provider's search tool — google_search
+      //            for Gemini, web_search for OpenAI-compatible — and falls
+      //            back gracefully when the endpoint doesn't support it).
+      // 'pinned' → same, for an explicit @websearch run.
+      //
+      // When the two-step backend already ran and injected grounded results,
+      // nothing extra is attached on top.
+      websearch: this.webSearchEnabled() && !searchResults,
     };
     const model = this.resolveModel(session);
     if (model) request.model = model;
     if (thinking) request.thinking = thinking;
     return request;
-  }
-
-  /** True when the active provider is the native Gemini adapter. */
-  private isGeminiProvider(session: ChatSession): boolean {
-    const config = session.prefs.providerId
-      ? this.settings.getProviderById(session.prefs.providerId)
-      : this.settings.getActiveProvider();
-    return config?.id === 'gemini';
   }
 
   /** Web Search settings from app state (off by default, so older saved states behave unchanged). */
@@ -1312,8 +1302,10 @@ export class ChatService {
    * without a sync session attached. Returns null when nothing usable is
    * configured — the caller then falls back to native Gemini grounding.
    *
-   * The `enabled` switch only gates AUTO mode (search every reply); a pinned
-   * `@websearch` forces the two-step search whenever a backend is configured.
+   * The `enabled` switch is the master gate: OFF = no web search anywhere
+   * (no auto tool, no pinned two-step). ON = the auto tool attaches to normal
+   * replies (model decides) and a pinned `@websearch` runs the guaranteed
+   * two-step search through the configured backend.
    */
   private resolveWebSearchContext(): WebSearchContext | null {
     const ws = this.webSearchSettings();

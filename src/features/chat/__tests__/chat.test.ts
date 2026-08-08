@@ -1910,7 +1910,7 @@ describe('ChatService', () => {
       return { chat, lastRequest };
     }
 
-    it('injects live search results into the chat request when a backend is configured', async () => {
+    it('injects live search results into the chat request when @websearch is pinned', async () => {
       const store = makeStore({
         providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
         aiEnabled: true,
@@ -1919,7 +1919,7 @@ describe('ChatService', () => {
       const ws = makeWs({ ok: true, text: 'NEET 2026 results 15 June ko aaye.' });
       const { chat, lastRequest } = buildChat(store, ws);
       const s = chat.createSession('q');
-      const result = await chat.send(s.id, 'results kab aaye?');
+      const result = await chat.send(s.id, 'results kab aaye?', undefined, undefined, undefined, undefined, undefined, ['websearch']);
       expect(ws.calls()).toBe(1);
       const req = lastRequest();
       expect(req).not.toBeNull();
@@ -1933,7 +1933,29 @@ describe('ChatService', () => {
       expect(result.toolCalls).toEqual([{ action: 'websearch', ok: true, message: 'NEET 2026 results 15 June ko aaye.' }]);
     });
 
-    it('skips injection when the search returns nothing usable', async () => {
+    it('auto mode attaches the search tool (model decides) without running the two-step backend', async () => {
+      const store = makeStore({
+        providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+        aiEnabled: true,
+        websearch: { enabled: true, providerId: 'smartrotator', model: '', apiKey: '', baseUrl: '' },
+      });
+      const ws = makeWs({ ok: true, text: 'NEET 2026 results 15 June ko aaye.' });
+      const { chat, lastRequest } = buildChat(store, ws);
+      const s = chat.createSession('q');
+      // No @websearch pin — the two-step backend must NOT run on its own…
+      const result = await chat.send(s.id, 'results kab aaye?');
+      expect(ws.calls()).toBe(0);
+      expect(result.tool).toBeUndefined();
+      // …but the adapter's search tool IS attached: the model decides when to
+      // search, exactly like the other tools.
+      const req = lastRequest();
+      expect(req).not.toBeNull();
+      expect(req!.websearch).toBe(true);
+      const system = req!.messages[0].content as string;
+      expect(system).not.toContain('Live web search results');
+    });
+
+    it('skips injection when the pinned search returns nothing usable', async () => {
       const store = makeStore({
         providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
         aiEnabled: true,
@@ -1942,7 +1964,7 @@ describe('ChatService', () => {
       const ws = makeWs({ ok: false, text: '', error: 'endpoint rejected web_search tool' });
       const { chat, lastRequest } = buildChat(store, ws);
       const s = chat.createSession('q');
-      const result = await chat.send(s.id, 'results kab aaye?');
+      const result = await chat.send(s.id, 'results kab aaye?', undefined, undefined, undefined, undefined, undefined, ['websearch']);
       expect(ws.calls()).toBe(1);
       const req = lastRequest();
       const system = req!.messages[0].content as string;
@@ -1952,7 +1974,7 @@ describe('ChatService', () => {
       expect(result.toolCalls?.[0].ok).toBe(false);
     });
 
-    it('does not search when web search is disabled (default state)', async () => {
+    it('does not search when no tool is pinned (default state)', async () => {
       const store = makeStore({
         providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
         aiEnabled: true,
@@ -1967,12 +1989,11 @@ describe('ChatService', () => {
       expect(system).not.toContain('Live web search results');
     });
 
-    it('pinned @websearch forces the search even when the auto switch is off', async () => {
+    it('pinned @websearch runs the search when the backend switch is on', async () => {
       const store = makeStore({
         providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
         aiEnabled: true,
-        // Auto mode is OFF — but a backend is configured, so the pin must search.
-        websearch: { enabled: false, providerId: 'smartrotator', model: '', apiKey: '', baseUrl: '' },
+        websearch: { enabled: true, providerId: 'smartrotator', model: '', apiKey: '', baseUrl: '' },
       });
       const ws = makeWs({ ok: true, text: 'OpenAI ka naya model kal launch hua.' });
       const { chat, lastRequest } = buildChat(store, ws);
@@ -1986,6 +2007,22 @@ describe('ChatService', () => {
       expect(system).toContain('Live web search results');
       // Two-step grounded — no native adapter grounding on top.
       expect(req!.websearch).toBeFalsy();
+    });
+
+    it('pinned @websearch stays silent when the backend switch is off', async () => {
+      const store = makeStore({
+        providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+        aiEnabled: true,
+        websearch: { enabled: false, providerId: 'smartrotator', model: '', apiKey: '', baseUrl: '' },
+      });
+      const ws = makeWs({ ok: true, text: 'OpenAI ka naya model kal launch hua.' });
+      const { chat } = buildChat(store, ws);
+      const s = chat.createSession('q');
+      const result = await chat.send(s.id, 'OpenAI kya naya aaya?', undefined, undefined, undefined, undefined, undefined, ['websearch']);
+      expect(ws.calls()).toBe(0);
+      // No backend search ran — the reply goes out normally (native grounding
+      // may still attach for capable providers, that's the adapter's choice).
+      expect(result.tool).toBeUndefined();
     });
 
     it('never leaks raw tool JSON from the decision hop — routes to the web search path', async () => {
@@ -2049,7 +2086,7 @@ describe('ChatService', () => {
         () => ({ serverUrl: 'https://smartrotator.onrender.com', apiKey: 'sk-test' }),
       );
       const s = chat.createSession('q');
-      const result = await chat.send(s.id, 'OpenAI new model announcement yesterday');
+      const result = await chat.send(s.id, 'OpenAI new model announcement yesterday', undefined, undefined, undefined, undefined, undefined, ['websearch']);
       // No raw JSON in the reply.
       expect(result.content).not.toContain('{"action"');
       // The question reached the default streaming path instead of shorting out.
@@ -2102,7 +2139,7 @@ describe('ChatService', () => {
       // No auth session — exactly what an app user without a sync login hits.
       const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), null, null, store, undefined, null, ws, () => null);
       const s = chat.createSession('q');
-      const result = await chat.send(s.id, 'results kab aaye?');
+      const result = await chat.send(s.id, 'results kab aaye?', undefined, undefined, undefined, undefined, undefined, ['websearch']);
       expect(n).toBe(1);
       expect(result.tool).toBe('websearch');
       expect(result.toolCalls?.[0].ok).toBe(true);
