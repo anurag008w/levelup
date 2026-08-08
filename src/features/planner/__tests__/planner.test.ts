@@ -147,6 +147,29 @@ describe('PlannerService', () => {
     expect(() => planner.importPlanners('not json at all')).toThrow(/JSON valid nahi/);
   });
 
+  it('accepts valid import JSON wrapped in markdown fences or with a UTF-8 BOM', () => {
+    let state = emptyAppState();
+    const store = makeStore(state);
+    const planner = new PlannerService(store);
+    // External AIs (ChatGPT/Claude/Gemini) wrap JSON in ```json fences by default.
+    planner.importPlanners('```json\n' + SAMPLE_IMPORT + '\n```');
+    expect(store.get().subjectPlanners).toHaveLength(2);
+    // File pickers / FileReader can prepend a UTF-8 BOM.
+    let bomState = emptyAppState();
+    const bomStore = makeStore(bomState);
+    const bomPlanner = new PlannerService(bomStore);
+    bomPlanner.importPlanners('\uFEFF' + SAMPLE_IMPORT);
+    expect(bomStore.get().subjectPlanners).toHaveLength(2);
+  });
+
+  it('reports the exact schema field on a format error', () => {
+    let state = emptyAppState();
+    const store = makeStore(state);
+    const planner = new PlannerService(store);
+    const bad = JSON.stringify({ version: 2, type: 'levelup-subject-planner', planners: [{ subject: '', title: 'No name', items: [] }] });
+    expect(() => planner.importPlanners(bad)).toThrow(/planners\.0\.subject/);
+  });
+
   it('removes and toggles items through the store', () => {
     let state = emptyAppState();
     const store = makeStore(state);
