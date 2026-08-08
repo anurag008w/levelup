@@ -20,6 +20,7 @@ const SESSION: AuthSession = {
   serverUrl: 'https://sync.test',
   username: 'testuser',
   role: 'user',
+  isSuperAdmin: false,
   apiKey: 'sk-test',
   token: 'jwt-test',
   loggedInAt: '2026-01-01T00:00:00.000Z',

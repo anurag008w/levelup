@@ -67,7 +67,7 @@ function wipeForNewOwner(previousOwner: string | null, nextOwner: string): void 
 }
 
 export default function App() {
-  const { state, today, update, refresh, resetAll, adminUnlocked, unlockAdmin, lockAdmin, setAdminDay } = useAppState();
+  const { state, today, update, refresh, resetAll, adminUnlocked, unlockAdmin, autoUnlock, lockAdmin, setAdminDay } = useAppState();
   const [tab, setTab] = useState<Tab>('today');
   // Once the user has opened the coach, keep it mounted across tab switches so
   // an in-flight AI stream survives (a fresh chat reply must not die just
@@ -214,6 +214,8 @@ export default function App() {
             today={today}
             update={update}
             adminUnlocked={adminUnlocked}
+            canAutoUnlock={session?.isSuperAdmin ?? false}
+            onAutoUnlock={autoUnlock}
             onUnlockAdmin={unlockAdmin}
             onLockAdmin={lockAdmin}
             onSetAdminDay={setAdminDay}

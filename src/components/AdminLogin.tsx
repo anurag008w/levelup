@@ -1,24 +1,32 @@
 import { useState } from 'react';
 import { Lock, LogIn, ShieldAlert, X } from 'lucide-react';
+import type { AdminVerifyResult } from '../lib/admin';
 
 /**
- * Minimal on-device admin gate. Credentials are checked locally — this is a
- * personal control-panel unlock, not an auth boundary.
+ * Admin gate for non-super-admin sessions. Credentials are verified against
+ * the server (/auth/login) — the panel unlocks only for server super admins.
+ * Super admins skip this dialog entirely (see TodayScreen's auto-unlock).
  */
 export default function AdminLogin({
   onLogin,
   onClose,
 }: {
-  onLogin: (username: string, password: string) => boolean;
+  onLogin: (username: string, password: string) => Promise<AdminVerifyResult>;
   onClose: () => void;
 }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
 
-  function submit() {
-    if (!onLogin(username, password)) {
-      setError('Galat username ya password.');
+  async function submit() {
+    if (loggingIn) return;
+    setLoggingIn(true);
+    setError('');
+    const result = await onLogin(username, password);
+    setLoggingIn(false);
+    if (!result.ok) {
+      setError(result.error ?? 'Galat username ya password.');
       return;
     }
     onClose();
@@ -36,10 +44,10 @@ export default function AdminLogin({
               </div>
               <div>
                 <p className="font-display text-[15px] font-bold">Admin Login</p>
-                <p className="text-xs text-muted">90-day control panel</p>
+                <p className="text-xs text-muted">90-day control panel — super admin accounts only</p>
               </div>
             </div>
-            <button type="button" onClick={onClose} aria-label="Close" className="icon-btn">
+            <button type="button" onClick={onClose} aria-label="Close" className="icon-btn" disabled={loggingIn}>
               <X size={16} />
             </button>
           </div>
@@ -47,7 +55,7 @@ export default function AdminLogin({
           <div className="space-y-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-muted" htmlFor="admin-user">
-                Username
+                Server username
               </label>
               <input
                 id="admin-user"
@@ -58,11 +66,12 @@ export default function AdminLogin({
                 autoCapitalize="none"
                 autoCorrect="off"
                 autoComplete="username"
+                disabled={loggingIn}
               />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-muted" htmlFor="admin-pass">
-                Password
+                Server password
               </label>
               <input
                 id="admin-pass"
@@ -72,6 +81,7 @@ export default function AdminLogin({
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="password"
                 autoComplete="current-password"
+                disabled={loggingIn}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') submit();
                 }}
@@ -84,8 +94,17 @@ export default function AdminLogin({
               </p>
             )}
 
-            <button type="button" className="btn btn-primary w-full" onClick={submit} disabled={!username.trim() || !password}>
-              <LogIn size={15} /> Login
+            <button type="button" className="btn btn-primary w-full" onClick={submit} disabled={!username.trim() || !password || loggingIn}>
+              {loggingIn ? (
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  Verifying…
+                </span>
+              ) : (
+                <>
+                  <LogIn size={15} /> Login
+                </>
+              )}
             </button>
           </div>
         </div>

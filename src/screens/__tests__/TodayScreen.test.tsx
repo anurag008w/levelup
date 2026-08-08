@@ -15,7 +15,7 @@
 // See also: src/screens/__tests__/TodayScreen.bugs.test.ts for a documented,
 // currently-passing-but-suspicious behavior around `level.authored`.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import React from 'react';
 import TodayScreen from '../TodayScreen';
 import { emptyAppState } from '../../core/domain/state';
@@ -57,7 +57,8 @@ function scheduledEntry(title: string, day = 1) {
 
 function renderToday(overrides: Partial<Parameters<typeof TodayScreen>[0]> = {}) {
   const update = overrides.update ?? vi.fn();
-  const onUnlockAdmin = overrides.onUnlockAdmin ?? vi.fn(() => true);
+  const onUnlockAdmin = overrides.onUnlockAdmin ?? vi.fn(async () => ({ ok: true }));
+  const onAutoUnlock = overrides.onAutoUnlock ?? vi.fn(() => false);
   const onLockAdmin = overrides.onLockAdmin ?? vi.fn();
   const onSetAdminDay = overrides.onSetAdminDay ?? vi.fn();
   const props = {
@@ -65,13 +66,15 @@ function renderToday(overrides: Partial<Parameters<typeof TodayScreen>[0]> = {})
     today,
     update,
     adminUnlocked: overrides.adminUnlocked ?? false,
+    canAutoUnlock: overrides.canAutoUnlock ?? false,
+    onAutoUnlock,
     onUnlockAdmin,
     onLockAdmin,
     onSetAdminDay,
     onNavigate: overrides.onNavigate,
   };
   const utils = render(React.createElement(TodayScreen, props));
-  return { ...utils, update, onUnlockAdmin, onLockAdmin, onSetAdminDay };
+  return { ...utils, update, onUnlockAdmin, onAutoUnlock, onLockAdmin, onSetAdminDay };
 }
 
 /** Applies an `update` callback sequence to a base state, like the real app would. */
@@ -155,28 +158,44 @@ describe('TodayScreen — admin gate', () => {
     expect(screen.getByRole('dialog', { name: 'Admin login' })).toBeTruthy();
   });
 
-  it('shows an error and stays open on wrong credentials', () => {
-    const onUnlockAdmin = vi.fn(() => false);
+  it('shows an error and stays open on wrong credentials (server rejects)', async () => {
+    const onUnlockAdmin = vi.fn(async () => ({ ok: false, error: 'Galat username ya password.' }));
     renderToday({ onUnlockAdmin });
     fireEvent.click(screen.getByLabelText('Admin login'));
     fireEvent.change(screen.getByPlaceholderText('username'), { target: { value: 'nope' } });
     fireEvent.change(screen.getByPlaceholderText('password'), { target: { value: 'wrong' } });
     fireEvent.click(screen.getByText('Login'));
-    expect(onUnlockAdmin).toHaveBeenCalledWith('nope', 'wrong');
+    await waitFor(() => expect(onUnlockAdmin).toHaveBeenCalledWith('nope', 'wrong'));
     expect(screen.getByRole('alert').textContent).toMatch(/Galat username ya password/);
     // Dialog remains open on failure.
     expect(screen.getByRole('dialog', { name: 'Admin login' })).toBeTruthy();
   });
 
-  it('closes the dialog on correct credentials', () => {
-    const onUnlockAdmin = vi.fn(() => true);
+  it('closes the dialog on correct credentials (server says super admin)', async () => {
+    const onUnlockAdmin = vi.fn(async () => ({ ok: true }));
     renderToday({ onUnlockAdmin });
     fireEvent.click(screen.getByLabelText('Admin login'));
     fireEvent.change(screen.getByPlaceholderText('username'), { target: { value: 'admin' } });
     fireEvent.change(screen.getByPlaceholderText('password'), { target: { value: 'secret' } });
     fireEvent.click(screen.getByText('Login'));
-    expect(onUnlockAdmin).toHaveBeenCalledWith('admin', 'secret');
+    await waitFor(() => expect(onUnlockAdmin).toHaveBeenCalledWith('admin', 'secret'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Admin login' })).toBeNull());
+  });
+
+  it('a server super admin unlocks straight from the shield — no password dialog', () => {
+    const onAutoUnlock = vi.fn(() => true);
+    renderToday({ canAutoUnlock: true, onAutoUnlock });
+    fireEvent.click(screen.getByLabelText('Admin login'));
+    expect(onAutoUnlock).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('dialog', { name: 'Admin login' })).toBeNull();
+  });
+
+  it('when auto-unlock reports false, the shield falls back to the password dialog', () => {
+    const onAutoUnlock = vi.fn(() => false);
+    renderToday({ canAutoUnlock: true, onAutoUnlock });
+    fireEvent.click(screen.getByLabelText('Admin login'));
+    expect(onAutoUnlock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog', { name: 'Admin login' })).toBeTruthy();
   });
 
   it('when unlocked: shows the peak-colored lock button and the DaySwitcher, and lock works', () => {
@@ -275,7 +294,9 @@ describe('TodayScreen — task list & toggling', () => {
         today,
         update,
         adminUnlocked: false,
-        onUnlockAdmin: vi.fn(() => true),
+        canAutoUnlock: false,
+        onAutoUnlock: () => false,
+        onUnlockAdmin: vi.fn(async () => ({ ok: true })),
         onLockAdmin: vi.fn(),
         onSetAdminDay: vi.fn(),
       }),
@@ -487,5 +508,71 @@ describe('TodayScreen — completion celebration', () => {
     const next = applyUpdates(base, update);
     const log = next.taskLogs[today] ?? {};
     expect(Object.values(log).filter(Boolean).length).toBe(checkboxes.length);
+  });
+});
+
+describe('TodayScreen — touch long-press menu stability (regression)', () => {
+  function openMenuFor(title: string) {
+    const row = screen.getByText(title).closest('div.card') as HTMLElement;
+    fireEvent.contextMenu(row, { clientX: 10, clientY: 20 });
+    return row;
+  }
+
+  it('a touch-hold on the row does not re-position the menu while it is open', () => {
+    renderToday();
+    const row = openMenuFor('Top 3 study goals likho (1 line each)');
+    const menu = screen.getByRole('menu') as HTMLElement;
+    expect(menu.style.left).toBe('10px');
+
+    vi.useFakeTimers();
+    try {
+      // A long-press that would have re-triggered openMenu(clientX, clientY)
+      // in the old code — now the row ignores touch while its menu is open.
+      fireEvent.pointerDown(row, { pointerType: 'touch', clientX: 400, clientY: 500 });
+      vi.advanceTimersByTime(600);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect((screen.getByRole('menu') as HTMLElement).style.left).toBe('10px');
+  });
+
+  it('a tap on the backdrop still dismisses the menu while it is open', () => {
+    renderToday();
+    openMenuFor('Top 3 study goals likho (1 line each)');
+    const menu = screen.getByRole('menu') as HTMLElement;
+    fireEvent.click(menu.previousElementSibling as HTMLElement);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('renders the ctx menu in a portal outside the row so row :active transform cannot shift/cancel button taps', () => {
+    renderToday();
+    openMenuFor('Top 3 study goals likho (1 line each)');
+    const menu = screen.getByRole('menu') as HTMLElement;
+    const row = screen.getByText('Top 3 study goals likho (1 line each)').closest('div.card') as HTMLElement;
+    expect(row.contains(menu)).toBe(false);
+    expect(document.body.contains(menu)).toBe(true);
+  });
+
+  it('tapping Edit with a full touch pointer sequence opens the inline form', () => {
+    renderToday();
+    openMenuFor('Top 3 study goals likho (1 line each)');
+    const edit = screen.getByRole('menuitem', { name: /Edit/ });
+    fireEvent.pointerDown(edit, { pointerType: 'touch', clientX: 30, clientY: 40 });
+    fireEvent.pointerUp(edit, { pointerType: 'touch' });
+    fireEvent.click(edit);
+    expect(screen.getByLabelText('Task title')).toBeTruthy();
+  });
+
+  it('right-click works again after the menu was closed with a backdrop tap', () => {
+    renderToday();
+    openMenuFor('Top 3 study goals likho (1 line each)');
+    const menu = screen.getByRole('menu') as HTMLElement;
+    fireEvent.click(menu.previousElementSibling as HTMLElement);
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    const row = screen.getByText('Top 3 study goals likho (1 line each)').closest('div.card') as HTMLElement;
+    fireEvent.contextMenu(row, { clientX: 30, clientY: 40 });
+    expect(screen.getByRole('menu')).toBeTruthy();
   });
 });

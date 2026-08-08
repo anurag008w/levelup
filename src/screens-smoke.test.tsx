@@ -15,7 +15,7 @@ import LoginScreen from './screens/LoginScreen';
 import PlannersScreen from './screens/PlannersScreen';
 
 const noop = () => {};
-const unlockAdmin = (_username: string, _password: string) => true;
+const unlockAdmin = async () => ({ ok: true } as const);
 const today = isoDateInTimeZone(new Date(), deviceTimeZone());
 
 function populated(): ReturnType<typeof emptyAppState> {
@@ -40,12 +40,12 @@ describe('screen smoke tests', () => {
   });
 
   it('TodayScreen shows mission-start before the journey begins', () => {
-    render(React.createElement(TodayScreen, { state: emptyAppState(), today, update: noop, adminUnlocked: false, onUnlockAdmin: unlockAdmin, onLockAdmin: noop, onSetAdminDay: noop }));
+    render(React.createElement(TodayScreen, { state: emptyAppState(), today, update: noop, adminUnlocked: false, canAutoUnlock: false, onAutoUnlock: () => false, onUnlockAdmin: unlockAdmin, onLockAdmin: noop, onSetAdminDay: noop }));
     expect(screen.getByText(/Mission Start — Day 1/)).toBeTruthy();
   });
 
   it('TodayScreen renders the active day once the journey starts', () => {
-    render(React.createElement(TodayScreen, { state: populated(), today, update: noop, adminUnlocked: false, onUnlockAdmin: unlockAdmin, onLockAdmin: noop, onSetAdminDay: noop }));
+    render(React.createElement(TodayScreen, { state: populated(), today, update: noop, adminUnlocked: false, canAutoUnlock: false, onAutoUnlock: () => false, onUnlockAdmin: unlockAdmin, onLockAdmin: noop, onSetAdminDay: noop }));
     expect(screen.getByText(/CASE — DAY 001/)).toBeTruthy();
   });
 

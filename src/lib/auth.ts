@@ -12,6 +12,8 @@ export interface AuthSession {
   serverUrl: string;
   username: string;
   role: string;
+  /** Server-side super-admin flag (ADMIN_USERS). Grants the admin panel without a local password. */
+  isSuperAdmin: boolean;
   /** The user's sk-... key — used as the OpenAI-compatible API key. */
   apiKey: string;
   /** Dashboard JWT (kept for future /auth/me quota calls). */
@@ -73,6 +75,7 @@ interface AuthResponse {
   token?: string;
   api_key?: string;
   user?: { username?: string; role?: string };
+  is_super_admin?: boolean;
 }
 
 /**
@@ -97,6 +100,7 @@ function toSession(root: string, username: string, data: AuthResponse): AuthSess
     serverUrl: root,
     username: data.user?.username ?? username,
     role: data.user?.role ?? 'user',
+    isSuperAdmin: data.is_super_admin === true,
     apiKey: data.api_key ?? '',
     token: data.token ?? '',
     loggedInAt: new Date().toISOString(),
