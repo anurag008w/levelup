@@ -228,12 +228,9 @@ describe('engine habit stats facade', () => {
 });
 
 describe('engine level status', () => {
-  it('reports pending-content for unauthored levels', () => {
-    const unauthored = LEVELS.find((l) => !l.authored);
-    if (unauthored) {
-      expect(getLevelStatus(unauthored, stateAt('2026-06-01'), 90)).toBe('pending-content');
-    } else {
-      expect(true).toBe(true);
+  it('every level has real (non pending-content) status handling', () => {
+    for (const level of LEVELS) {
+      expect(getLevelStatus(level, stateAt('2026-06-01'), 90)).not.toBe('pending-content');
     }
   });
 
