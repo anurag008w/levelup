@@ -477,7 +477,7 @@ export default function AISettingsScreen({
             </span>
             <div className="min-w-0">
               <p className="font-display text-[15px] font-bold">Live web search</p>
-              <p className="text-xs leading-snug text-muted">Reply se pehle live search — current info (news, syllabus, results).</p>
+              <p className="text-xs leading-snug text-muted">ON → AI khud live search karega jab current info chahiye (news, results, syllabus). @websearch mention se guaranteed search. OFF → koi search nahi.</p>
             </div>
           </div>
           <label className="toggle mt-1 shrink-0" title="Toggle live web search">
