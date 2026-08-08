@@ -4,6 +4,11 @@ const config: CapacitorConfig = {
   appId: 'com.anurag.levelup',
   appName: 'LevelUp',
   webDir: 'dist',
+  // WebView ka background app ke dark theme se match karo (#060506).
+  // Default white hai — isliye splash ke baad ek white page flash hota tha,
+  // aur Android 15+ edge-to-edge mein status bar transparent hai toh uske
+  // peeche bhi yahi white background dikhta tha (white bar).
+  backgroundColor: '#060506',
   plugins: {
     CapacitorHttp: {
       // Native HTTP transport (OkHttp) — WebView fetch GitHub release-asset
