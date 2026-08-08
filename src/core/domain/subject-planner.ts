@@ -77,7 +77,7 @@ export interface SubjectPlanner {
 // ===== Import format (what external AIs are asked to produce) =====
 
 export const plannerItemImportSchema = z.object({
-  title: z.string().min(1).max(200),
+  title: z.string().min(1).max(500),
   type: z.enum(['chapter', 'topic', 'task', 'milestone', 'note', 'lecture']).optional(),
   week: z.number().int().min(0).max(104).optional(),
   date: z.string().max(120).optional(),
@@ -99,7 +99,7 @@ export const plannerRoutineRowImportSchema = z.object({
     .array(
       z.object({
         time: z.string().min(1).max(60),
-        activity: z.string().min(1).max(200),
+        activity: z.string().min(1).max(1000),
       }),
     )
     .max(12)
