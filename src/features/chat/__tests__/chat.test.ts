@@ -13,7 +13,7 @@ import { ProviderSettingsService } from '../../ai/provider-settings.service';
 import { ChatService } from '../chat.service';
 import { MemoryToolsService } from '../memory-tools.service';
 import type { ChatToolsService } from '../chat-tools.service';
-import type { WebSearchService, WebSearchResult } from '../../../infra/ai/websearch.service';
+import type { WebSearchService, WebSearchResult, WebSearchContext } from '../../../infra/ai/websearch.service';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -1876,15 +1876,17 @@ describe('ChatService', () => {
       return { provider, lastRequest: () => last };
     }
 
-    function makeWs(result: WebSearchResult): { service: WebSearchService; calls: () => number } {
+    function makeWs(result: WebSearchResult): { service: WebSearchService; calls: () => number; lastCtx: () => WebSearchContext | null } {
       let n = 0;
+      let ctx: WebSearchContext | null = null;
       const service = {
-        search: async (): Promise<WebSearchResult> => {
+        search: async (c: WebSearchContext): Promise<WebSearchResult> => {
+          ctx = c;
           n += 1;
           return result;
         },
       } as unknown as WebSearchService;
-      return { service, calls: () => n };
+      return { service, calls: () => n, lastCtx: () => ctx };
     }
 
     function buildChat(store: StateStore, ws: { service: WebSearchService; calls: () => number }) {
@@ -1909,6 +1911,24 @@ describe('ChatService', () => {
       );
       return { chat, lastRequest };
     }
+
+    it('fresh session key wins over a stale key saved in websearch settings', async () => {
+      // Regression: typing in the SmartRotator key field used to persist an old
+      // apiKey into settings, which shadowed the current login key → 401 while
+      // chat itself kept working (chat uses configureServerAuth).
+      const store = makeStore({
+        providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+        aiEnabled: true,
+        websearch: { enabled: true, providerId: 'smartrotator', model: '', apiKey: 'sk-stale', baseUrl: '' },
+      });
+      const ws = makeWs({ ok: true, text: 'NEET 2026 results 15 June ko aaye.' });
+      const { chat } = buildChat(store, ws);
+      const s = chat.createSession('q');
+      await chat.send(s.id, 'results kab aaye?', undefined, undefined, undefined, undefined, undefined, ['websearch']);
+      expect(ws.calls()).toBe(1);
+      // The backend must be called with the live session key, never the stale one.
+      expect(ws.lastCtx()?.apiKey).toBe('sk-test');
+    });
 
     it('injects live search results into the chat request when @websearch is pinned', async () => {
       const store = makeStore({
