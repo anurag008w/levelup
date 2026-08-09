@@ -140,14 +140,59 @@ describe('curriculum import/export', () => {
     expect(() => parseCurriculum('{not json')).toThrow(/valid JSON nahi/);
   });
 
+  it('repairs a malformed task/habit row instead of dropping it (only fully unusable rows count as invalid)', () => {
+    const json = JSON.stringify({
+      kind: CURRICULUM_KIND,
+      version: 1,
+      exportedAt: 'x',
+      data: {
+        // { id: 'bad' } / { id: 'worse' } are missing almost every required
+        // field — strict parsing rejects them, but they're still usable
+        // objects, so the coercion fallback repairs them with safe
+        // defaults instead of throwing the whole row away.
+        tasks: [task(), { id: 'bad' }, 'not an object', null],
+        habits: [habit(), { id: 'worse' }, 42],
+        blocks: [{ id: 'b', name: 42 }],
+      },
+    });
+    const report = parseCurriculum(json);
+    expect(report.tasks).toHaveLength(2);
+    expect(report.tasks[1].title).toBe('Imported task');
+    expect(report.tasks[1].unlockConditions).toEqual([{ type: 'day', fromDay: 1 }]);
+    expect(report.habits).toHaveLength(2);
+    expect(report.habits[1].name).toBe('Imported habit');
+    expect(report.blocks).toHaveLength(0);
+    // Only the two genuinely non-object entries ('not an object', null, 42) are uncountable.
+    expect(report.invalidTasks).toBe(2);
+    expect(report.invalidHabits).toBe(1);
+    expect(report.invalidBlocks).toBe(1);
+  });
+
+  it('drops thinking-skills that are not on the fixed enum instead of rejecting the whole row', () => {
+    const json = JSON.stringify({
+      kind: CURRICULUM_KIND,
+      version: 1,
+      exportedAt: 'x',
+      data: {
+        tasks: [{ ...task(), thinkingSkills: ['focus', 'made-up-skill', 'FOCUS'] }],
+        habits: [],
+        blocks: [],
+      },
+    });
+    const report = parseCurriculum(json);
+    expect(report.tasks).toHaveLength(1);
+    expect(report.tasks[0].thinkingSkills).toEqual(['focus']);
+    expect(report.invalidTasks).toBe(0);
+  });
+
   it('skips invalid rows but keeps counting them', () => {
     const json = JSON.stringify({
       kind: CURRICULUM_KIND,
       version: 1,
       exportedAt: 'x',
       data: {
-        tasks: [task(), { id: 'bad' }],
-        habits: [habit(), { id: 'worse' }],
+        tasks: [task(), null],
+        habits: [habit(), 'nope'],
         blocks: [{ id: 'b', name: 42 }],
       },
     });
