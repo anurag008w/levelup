@@ -340,13 +340,15 @@ describe('GeminiProvider', () => {
     });
     const provider = new GeminiProvider({ id: 'gemini', label: 'Gemini', apiKey: 'gk', model: 'gemini-2.5-flash', enabled: true }, http);
     await provider.complete({ messages: [], thinking: 'high', maxTokens: 1024 });
-    const config = (captured!.body as { generationConfig: { thinkingConfig: { thinkingBudget: number }; maxOutputTokens: number } }).generationConfig;
+    const config = (captured!.body as { generationConfig: { thinkingConfig: { thinkingBudget: number; includeThoughts: boolean }; maxOutputTokens: number } }).generationConfig;
     expect(config.maxOutputTokens).toBe(1024);
-    // Reserves a 512-token output window so thinking never leaves a blank reply.
-    expect(config.thinkingConfig.thinkingBudget).toBe(512);
+    // Reserve scales with the window (min(512, maxTokens/4) = 256 here), so
+    // thinking gets a 768-token budget instead of a flat 512 — includeThoughts
+    // is always on so Gemini actually returns the thought text.
+    expect(config.thinkingConfig).toEqual({ thinkingBudget: 768, includeThoughts: true });
   });
 
-  it('drops thinkingConfig when the window leaves no room for output', async () => {
+  it('scales the reserve on a small maxTokens window instead of dropping thinking', async () => {
     let captured: HttpRequestInit | null = null;
     const http = fakeHttp((init) => {
       captured = init;
@@ -354,8 +356,10 @@ describe('GeminiProvider', () => {
     });
     const provider = new GeminiProvider({ id: 'gemini', label: 'Gemini', apiKey: 'gk', model: 'gemini-2.5-flash', enabled: true }, http);
     await provider.complete({ messages: [], thinking: 'low', maxTokens: 128 });
-    const config = (captured!.body as { generationConfig: { thinkingConfig?: unknown } }).generationConfig;
-    expect(config.thinkingConfig).toBeUndefined();
+    const config = (captured!.body as { generationConfig: { thinkingConfig: { thinkingBudget: number; includeThoughts: boolean } } }).generationConfig;
+    // maxTokens 128 → reserve min(512, 32) = 32 → room 96. A tiny window no
+    // longer loses thinkingConfig entirely (old code dropped it below 256 room).
+    expect(config.thinkingConfig).toEqual({ thinkingBudget: 96, includeThoughts: true });
   });
 
   it('streams thought parts via onReasoningDelta', async () => {
