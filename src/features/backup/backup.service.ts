@@ -40,7 +40,7 @@ export const BACKUP_SCOPES: readonly BackupScope[] = ['full', 'tasks', 'levels']
 /** Generous but safely under the ~5MB localStorage quota shared with live state. */
 export const IMPORT_BUDGET_BYTES = 4_000_000;
 
-const THINKING_LEVELS = ['off', 'low', 'medium', 'high'] as const;
+const THINKING_LEVELS = ['off', 'low', 'medium', 'high', 'max'] as const;
 
 export interface BackupPayload {
   app: string;

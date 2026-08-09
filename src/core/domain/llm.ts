@@ -9,7 +9,7 @@ export type ProviderId =
   | 'openai-compatible'
   | 'custom';
 
-export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high';
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'max';
 
 export interface ProviderConfig {
   id: ProviderId;

@@ -16,6 +16,7 @@ const THINKING_LEVELS: Array<{ value: ThinkingLevel | ''; label: string }> = [
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
+  { value: 'max', label: 'Max' },
 ];
 
 export default function AddProviderForm({ onAdd }: { onAdd: (c: ProviderConfig) => void }) {

@@ -263,13 +263,16 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private reasoningFields(request: LLMRequest): Record<string, unknown> {
     const level = request.thinking;
     if (!level || level === 'off') return {};
+    // OpenAI/OpenRouter reasoning_effort only accepts low/medium/high —
+    // 'max' is a Gemini-style budget level, map it to high or the server 400s.
+    const effort = level === 'max' ? 'high' : level;
     if (this.id === 'openrouter') {
       return {
-        reasoning: { effort: level },
+        reasoning: { effort },
         include_reasoning: true,
       };
     }
-    return { reasoning_effort: level };
+    return { reasoning_effort: effort };
   }
 
   async fetchModels(): Promise<ModelInfo[]> {
