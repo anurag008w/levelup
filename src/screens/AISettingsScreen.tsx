@@ -564,10 +564,20 @@ export default function AISettingsScreen({
                   <input
                     type="password"
                     className="field"
-                    value={ws.apiKey || session?.apiKey || ''}
-                    placeholder={session ? 'Login key (prefilled)' : 'Login karke key milegi'}
+                    value={session?.apiKey || ws.apiKey || ''}
+                    placeholder={session ? 'Login key (auto)' : 'Login karke key milegi'}
+                    disabled={!!session}
                     onChange={(e) => updateWebsearch({ apiKey: e.target.value })}
                   />
+                  {session ? (
+                    <p className="mt-1 text-[11px] leading-snug text-muted">
+                      Login key auto-use ho rahi hai — fresh login ke saath update hoti hai. Manual key daalne ki zaroorat nahi.
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-[11px] leading-snug text-muted">
+                      Manual key daal sakte ho, ya login karke auto key use karo.
+                    </p>
+                  )}
                 </Field>
                 <Field label="Model (optional)">
                   <input

@@ -1343,7 +1343,10 @@ export class ChatService {
     const root = session?.serverUrl ?? (gateway?.baseUrl ? gateway.baseUrl.replace(/\/+$/, '') : '');
     if (!root) return null;
     const baseUrl = /\/v1$/.test(root) ? root : `${root}/v1`;
-    const key = ws.apiKey.trim() || session?.apiKey || gateway?.apiKey || '';
+    // Fresh login key always wins — a stale key typed into the SmartRotator
+    // settings field previously shadowed the current session key and produced
+    // 401s while chat itself worked fine (chat uses configureServerAuth key).
+    const key = session?.apiKey || ws.apiKey.trim() || gateway?.apiKey || '';
     if (!key) return null;
     return { providerId: 'smartrotator', apiKey: key, baseUrl, model: ws.model.trim() || undefined };
   }
