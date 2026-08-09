@@ -24,6 +24,7 @@ import {
 import { formatBytes, normalizeChatSessions, parseBackup, summarizeBackup, type BackupScope, type BackupSummary } from '../features/backup/backup.service';
 import { normalizeState } from '../infra/storage/state-repository';
 import { deleteAllData } from '../features/sync/delete-all';
+import { exportTextFile } from '../lib/exportFile';
 
 const ChatSettingsScreen = lazy(() => import('./ChatSettingsScreen'));
 
@@ -233,12 +234,16 @@ export default function AISettingsScreen({
     update((s) => ({ ...s, aiSettings: { ...s.aiSettings, activeProviderId: id } }));
   }
 
-  function handleExport() {
+  async function handleExport() {
     haptic();
     try {
       const json = container.backup.export(backupScope);
       const fileName = `levelup-backup-${backupScope === 'full' ? '' : `${backupScope}-`}${new Date().toISOString().slice(0, 10)}.json`;
-      downloadTextFile(json, fileName);
+      const result = await exportTextFile(json, fileName);
+      if (!result.ok) {
+        setBackupStatus({ type: 'error', text: result.message });
+        return;
+      }
       const payload = parseBackup(json);
       const preview = summarizeBackup(
         normalizeState(payload.data.state),
@@ -246,7 +251,7 @@ export default function AISettingsScreen({
         json.length,
         payload.scope,
       );
-      setBackupStatus({ type: 'ok', text: `Backup download ho gaya — ${formatBytes(preview.bytes)} · ${describeSummary(preview)}` });
+      setBackupStatus({ type: 'ok', text: `${result.message} · ${formatBytes(preview.bytes)} · ${describeSummary(preview)}` });
     } catch (err) {
       setBackupStatus({ type: 'error', text: shortError(err) });
     }
@@ -1270,18 +1275,6 @@ function describeSyncState(s: string): string {
     default:
       return 'idle';
   }
-}
-
-function downloadTextFile(text: string, filename: string) {
-  const blob = new Blob([text], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function describeSummary(s: BackupSummary): string {

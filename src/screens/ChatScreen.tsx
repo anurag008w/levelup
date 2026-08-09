@@ -47,6 +47,7 @@ import ReadOnlyChatViewer from '../components/ReadOnlyChatViewer';
 import { detectFileDoc, looksLikeMarkdown } from '../components/markdown-utils';
 import { haptic, hapticError, hapticSuccess } from '../lib/haptics';
 import { extractFileText } from '../lib/fileText';
+import { exportTextFile } from '../lib/exportFile';
 import { notifyAiReply } from '../lib/notifications';
 import { timeAgo } from '../lib/relative-time';
 import {
@@ -681,7 +682,9 @@ export default function ChatScreen({
   }
 
   function downloadMessage(message: ChatMessage) {
-    downloadText(message.content, `levelup-ai-${new Date(message.createdAt).toISOString().slice(0, 10)}.md`);
+    void exportTextFile(message.content, `levelup-ai-${new Date(message.createdAt).toISOString().slice(0, 10)}.md`, 'text/markdown;charset=utf-8').then((result) => {
+      if (!result.ok) setNotice(result.message);
+    });
   }
 
   function exportChat() {
@@ -692,8 +695,9 @@ export default function ChatScreen({
       ...active.messages.map((m) => `**${m.role === 'user' ? 'User' : 'AI'}:**\n\n${m.content}`),
       '',
     ].join('\n\n');
-    downloadText(md, `levelup-chat-${(active.title || 'session').slice(0, 30).replace(/[^\w-]+/g, '_')}.md`);
-    setNotice('Chat export ho gaya');
+    void exportTextFile(md, `levelup-chat-${(active.title || 'session').slice(0, 30).replace(/[^\w-]+/g, '_')}.md`, 'text/markdown;charset=utf-8').then((result) => {
+      setNotice(result.message);
+    });
   }
 
   async function attachFiles(files: FileList | null) {
@@ -2276,18 +2280,6 @@ function UserMessageContent({ content, attachments }: { content: string; attachm
       )}
     </div>
   );
-}
-
-function downloadText(content: string, filename: string) {
-  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
 }
 
 function formatBytes(bytes: number): string {

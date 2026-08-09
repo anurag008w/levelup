@@ -14,7 +14,8 @@ import SectionHeader from '../components/ui/SectionHeader';
 import { haptic } from '../lib/haptics';
 import { container } from '../di/container';
 import { applyCurriculum, parseCurriculum, serializeCurriculum } from '../features/curriculum/curriculum';
-import { parseHabitEntry } from '../features/task-bank/validation';
+import { parseHabitEntry, THINKING_SKILLS } from '../features/task-bank/validation';
+import { exportTextFile } from '../lib/exportFile';
 
 const BLOCK_TYPES: Record<string, { icon: string; color: string }> = {
   physics: { icon: '⚛️', color: 'var(--color-tag-physics)' },
@@ -197,7 +198,7 @@ export default function LevelsScreen({ state, today, update }: { state: AppState
       dayStart: level.dayStart,
       prerequisites: splitList(draft.prerequisites),
       isCore: draft.isCore,
-      thinkingSkills: splitList(draft.thinkingSkills) as Habit['thinkingSkills'],
+      thinkingSkills: sanitizeThinkingSkills(draft.thinkingSkills),
       active: true,
     };
     try {
@@ -400,18 +401,10 @@ export default function LevelsScreen({ state, today, update }: { state: AppState
 
   // ---- Import / export ----
 
-  function exportCurriculum() {
+  async function exportCurriculum() {
     const json = serializeCurriculum(allTasks, allHabits, customBlocks);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `levelup-curriculum-${today}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    flash('Curriculum file download ho gayi — isse edit karke dobara import kar sakte ho.');
+    const result = await exportTextFile(json, `levelup-curriculum-${today}.json`);
+    flash(result.ok ? `${result.message} Isse edit karke dobara import kar sakte ho.` : result.message);
   }
 
   function onImportFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -958,7 +951,13 @@ function HabitForm({
         </div>
         <input className="field" placeholder="Criteria — kab complete maanenge?" value={draft.criteria} onChange={(e) => set({ criteria: e.target.value })} />
         <div className="grid grid-cols-2 gap-2">
-          <input className="field" placeholder="Thinking skills (comma)" value={draft.thinkingSkills} onChange={(e) => set({ thinkingSkills: e.target.value })} />
+          <input
+            className="field"
+            placeholder={`Thinking skills (comma): ${THINKING_SKILLS.join(', ')}`}
+            value={draft.thinkingSkills}
+            onChange={(e) => set({ thinkingSkills: e.target.value })}
+          />
+          <p className="text-[11px] opacity-60 -mt-1">Sirf ye valid hain, baaki type kiya toh automatically skip ho jayega: {THINKING_SKILLS.join(', ')}</p>
           <label className="flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" checked={draft.isCore} onChange={(e) => set({ isCore: e.target.checked })} className="h-4 w-4 accent-[var(--color-l)]" />
             Core habit
@@ -1484,6 +1483,23 @@ function generateLevels(levelCount: number, daysPerLevel: number, dayStart: numb
 
 function splitList(value: string): string[] {
   return value.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * Thinking-skills is a fixed enum on the backend schema, but the UI takes
+ * free comma-separated text (no picker yet). Previously any unrecognized
+ * word (typo, plural, different casing) failed schema validation and
+ * silently rejected the ENTIRE habit save with a vague "invalid" message.
+ * Now we just drop words that don't match a known skill instead of
+ * failing the whole save — matching is case-insensitive so "Focus" or
+ * "FOCUS " still works.
+ */
+function sanitizeThinkingSkills(value: string): Habit['thinkingSkills'] {
+  const known = new Set<string>(THINKING_SKILLS);
+  const picked = splitList(value)
+    .map((s) => s.toLowerCase())
+    .filter((s) => known.has(s));
+  return Array.from(new Set(picked)) as Habit['thinkingSkills'];
 }
 
 function uid(prefix: string): string {
