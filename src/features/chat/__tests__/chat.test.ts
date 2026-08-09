@@ -2202,6 +2202,9 @@ describe('ChatService', () => {
           return [];
         },
         resolveToolScope: () => [],
+        // Matches the real ChatToolsService's default: nothing to diagnose
+        // unless a test overrides it to check the retry-framing path.
+        describeParseFailure: () => null,
         runMany: async (actions: { action: string }[]) => ({ ok: true, summary: 'done', results: actions.map((a) => ({ action: a.action, ok: true, summary: 'ok' })) }),
         ...overrides,
       } as unknown as ChatToolsService;

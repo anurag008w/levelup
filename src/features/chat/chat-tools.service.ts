@@ -298,6 +298,56 @@ export class ChatToolsService {
   }
 
   /**
+   * Diagnoses WHY `parseTools` returned no actions, when the reply looks like
+   * a genuine (if broken) tool-call attempt — a recognized action name with a
+   * missing/invalid field (e.g. setDayMode without "mode"), an unknown action
+   * name, or an actions-batch with one bad entry. Returns the exact zod
+   * validation message so the retry prompt can tell the model precisely what
+   * to fix, instead of a generic "answer with JSON" nudge that doesn't help
+   * when the model already tried and just got a field wrong.
+   *
+   * Returns null when the reply doesn't look like a tool attempt at all (pure
+   * prose) — that case keeps the existing generic CHAT_TOOL_RETRY message.
+   */
+  describeParseFailure(text: string): string | null {
+    const objStart = text.indexOf('{');
+    const objEnd = text.lastIndexOf('}');
+    if (objStart === -1 || objEnd <= objStart) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text.slice(objStart, objEnd + 1));
+    } catch {
+      return null;
+    }
+    if (typeof parsed !== 'object' || parsed === null) return null;
+
+    // Batch wrapper: report the first bad entry that names a REAL action.
+    // An entry naming an unknown/hallucinated action (e.g. the disallowed
+    // "websearch") is left for the default fallback to handle, same as
+    // before — only recognized-but-malformed actions get specific feedback.
+    if ('actions' in parsed && Array.isArray((parsed as { actions: unknown }).actions)) {
+      const list = (parsed as { actions: unknown[] }).actions;
+      for (let i = 0; i < list.length; i++) {
+        if (!isKnownActionName(describeActionField(list[i]))) continue;
+        const result = chatToolActionSchema.safeParse(list[i]);
+        if (!result.success) {
+          return `actions[${i}] (action: ${describeActionField(list[i])}) is invalid: ${formatZodIssues(result.error.issues)}`;
+        }
+      }
+      return null; // no bad entry naming a known action — nothing specific to report
+    }
+
+    // Single action object.
+    if ('action' in parsed && isKnownActionName(describeActionField(parsed))) {
+      const result = chatToolActionSchema.safeParse(parsed);
+      if (!result.success) {
+        return `Your JSON had "action":"${describeActionField(parsed)}" but: ${formatZodIssues(result.error.issues)}`;
+      }
+    }
+    return null;
+  }
+
+  /**
    * Executes a batch of actions in order. If any destructive/bulk action lacks
    * explicit confirmation, the WHOLE batch is previewed and nothing is applied
    * — partial execution of a multi-part request is never allowed.
@@ -1504,6 +1554,29 @@ function parsePythonArgs(s: string): Record<string, unknown> {
     out[key] = parsePythonValue(part.slice(eq + 1));
   }
   return out;
+}
+
+/** All recognized action names, derived straight from the schema so this can never drift out of sync. */
+const KNOWN_ACTIONS = new Set<string>(chatToolActionSchema.options.map((o) => o.shape.action.value));
+
+function isKnownActionName(name: string): boolean {
+  return KNOWN_ACTIONS.has(name);
+}
+
+function describeActionField(raw: unknown): string {
+  if (typeof raw === 'object' && raw !== null && 'action' in raw) {
+    const a = (raw as { action: unknown }).action;
+    if (typeof a === 'string') return a;
+  }
+  return 'unknown';
+}
+
+/** Formats zod issues as short, model-readable "field: message" lines. */
+function formatZodIssues(issues: { path: (string | number)[]; message: string }[]): string {
+  return issues
+    .slice(0, 5)
+    .map((i) => `${i.path.length > 0 ? i.path.join('.') : '(root)'}: ${i.message}`)
+    .join('; ');
 }
 
 /** Extracts every Python-style tool call in the text into validated actions. */
