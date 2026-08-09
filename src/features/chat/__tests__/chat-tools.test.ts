@@ -406,6 +406,43 @@ describe('ChatToolsService', () => {
     expect(studyPlan.summary).toContain('id:d1_t');
   });
 
+  describe('describeParseFailure', () => {
+    it('names the exact missing field for a known action instead of a generic nudge', () => {
+      const { tools } = makeTools(makeStore());
+      const msg = tools.describeParseFailure('{"action":"setDayMode","day":2}');
+      expect(msg).toContain('setDayMode');
+      expect(msg).toMatch(/mode/i);
+    });
+
+    it('flags an unrecognized enum value, not just a missing field', () => {
+      const { tools } = makeTools(makeStore());
+      const msg = tools.describeParseFailure('{"action":"setDayMode","day":2,"mode":"holiday"}');
+      expect(msg).toContain('setDayMode');
+    });
+
+    it('reports the first bad entry inside an actions batch', () => {
+      const { tools } = makeTools(makeStore());
+      const msg = tools.describeParseFailure('{"actions":[{"action":"markDone","day":1,"taskId":"d1_t1"},{"action":"setDayMode","day":2}]}');
+      expect(msg).toContain('actions[1]');
+      expect(msg).toContain('setDayMode');
+    });
+
+    it('returns null for pure prose (no JSON object at all)', () => {
+      const { tools } = makeTools(makeStore());
+      expect(tools.describeParseFailure('Haan bilkul, main tumhari help karta hoon!')).toBeNull();
+    });
+
+    it('returns null for an unrecognized/hallucinated action name — falls through to the default handling unchanged', () => {
+      const { tools } = makeTools(makeStore());
+      expect(tools.describeParseFailure('{"action":"websearch","query":"jee syllabus"}')).toBeNull();
+    });
+
+    it('returns null when the JSON actually parses fine (no failure to explain)', () => {
+      const { tools } = makeTools(makeStore());
+      expect(tools.describeParseFailure('{"action":"getPlan","day":1}')).toBeNull();
+    });
+  });
+
   it('can add tasks on a mock Sunday and they appear in that plan', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
@@ -1150,6 +1187,45 @@ describe('ChatService tool retry + reasoning', () => {
     expect(reply.toolCalls).toHaveLength(1);
     expect(reply.toolCalls?.[0]).toMatchObject({ action: 'removeTask', ok: true });
     expect(typeof reply.toolCalls?.[0]?.message).toBe('string');
+  });
+
+  it('retry prompt names the exact missing field when the model half-attempts a tool call, so it can self-correct', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    let calls = 0;
+    const seenSystemPrompts: string[] = [];
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (req: LLMRequest): Promise<LLMResponse> => {
+        calls += 1;
+        const sys = req.messages.find((m) => m.role === 'system');
+        if (sys && typeof sys.content === 'string') seenSystemPrompts.push(sys.content);
+        // Turn 1: forgets the required "mode" field on setDayMode.
+        if (calls === 1) return { text: '{"action":"setDayMode","day":2}', model: 'a' };
+        // Turn 2 (retry): corrects itself using the specific feedback.
+        return { text: '{"action":"setDayMode","day":2,"mode":"rest","confirmed":true}', model: 'a' };
+      },
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        req.onDelta?.('Rest day set kar diya.');
+        return { text: 'Rest day set kar diya.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    const reply = await chat.send(session.id, 'day 2 ko rest day bana do, confirm hai');
+    expect(calls).toBe(2);
+    // The retry prompt must call out the actual problem (missing "mode"),
+    // not the generic "you answered with normal text" nudge — that framing
+    // is wrong here since the model DID attempt JSON.
+    expect(seenSystemPrompts[1]).toMatch(/mode/i);
+    expect(seenSystemPrompts[1]).not.toMatch(/you (just )?answered with normal text/i);
+    // And the correction actually took effect — the day is really marked rest.
+    expect(store.get().restDays).toEqual([2]);
+    expect(reply.tool).toBe('setDayMode');
   });
 
   it('auto-fetches the day plan and replans when the model guesses a wrong task id', async () => {

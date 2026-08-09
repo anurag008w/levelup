@@ -579,13 +579,21 @@ export class ChatService {
           answer = decision.text;
           decisionModel = decision.model;
           if (actions.length === 0 && answer) {
-            // The model talked instead of emitting an action — retry once with a
-            // strict correction so plan/planner tools work even on weaker models.
+            // The model either talked instead of emitting an action, OR it DID
+            // attempt a tool call but got the shape wrong (missing/invalid
+            // field, unknown action name, one bad entry in a batch) — these
+            // need different feedback. The generic "answer with JSON" nudge
+            // doesn't help a model that already tried and just has a typo'd
+            // field: it tends to repeat the same mistake, and the whole tool
+            // call then silently no-ops with nothing shown to the user. When
+            // the reply looks like a real (broken) attempt, tell the model
+            // EXACTLY which field/action was wrong instead.
+            const parseError = this.tools.describeParseFailure(decision.text);
             onStatus?.('Tool decision retry kar raha hai…');
             const retry = await this.llm.complete(
               await (plannerScoped
                 ? this.buildPlannerRetryRequest(session, decision.text, signal)
-                : this.buildRetryRequest(session, decision.text, signal, toolScope)),
+                : this.buildRetryRequest(session, decision.text, signal, toolScope, parseError)),
             );
             actions = this.scopeActions(this.tools.parseTools(retry.text), toolScope);
             if (retry.text) answer = retry.text;
@@ -930,12 +938,27 @@ export class ChatService {
     );
   }
 
-  private async buildRetryRequest(session: ChatSession, previousReply: string, signal?: AbortSignal, onlyTools?: string[]): Promise<LLMRequest> {
+  private async buildRetryRequest(
+    session: ChatSession,
+    previousReply: string,
+    signal?: AbortSignal,
+    onlyTools?: string[],
+    parseError?: string | null,
+  ): Promise<LLMRequest> {
     const scopeRule = onlyTools?.length
       ? `\nThe user pinned ONLY these tools: ${onlyTools.join(', ')}. Emit actions only from this set.\n`
       : '';
+    // parseError is set when the previous reply WAS a tool-call attempt (had
+    // an "action" field) but failed schema validation — give the model the
+    // exact reason instead of the generic "you answered with prose" framing,
+    // which is actively misleading when JSON was already attempted.
+    const retryFraming = parseError
+      ? `Your previous reply was an attempted tool call, but it was invalid: ${parseError}\n` +
+        `Fix ONLY that problem and reply again. Your ENTIRE reply must be exactly one JSON object chosen from the allowed actions above — ` +
+        `either ONE action, or {"actions":[...]} for several changes. Task ids come from the plan (e.g. d1_t1, mock_1, ai-xxxxx).`
+      : CHAT_TOOL_RETRY;
     const system =
-      this.toolSystem(`${CHAT_TOOL_INSTRUCTIONS}\n\n${CHAT_TOOL_RETRY}`) +
+      this.toolSystem(`${CHAT_TOOL_INSTRUCTIONS}\n\n${retryFraming}`) +
       scopeRule +
       `\n\nYour previous reply was:\n${previousReply}\n\nReplace it with exactly one JSON object now.`;
     const request: LLMRequest = {
