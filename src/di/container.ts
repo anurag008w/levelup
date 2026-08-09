@@ -1,4 +1,5 @@
 import { LEVELS, TOTAL_DAYS } from '../data/curriculum';
+import { emptyAppState } from '../core/domain/state';
 import { DEFAULT_PROGRESSION_CONFIG } from '../core/domain/progress';
 import type { StateRepository, StateStore, HabitRepository, ChatRepository } from '../core/ports/repositories';
 import { deviceTimeZone, SystemClock, type Clock, todayISO } from '../core/ports/clock';
@@ -119,7 +120,21 @@ export function createContainer(
   const providerSettings = new ProviderSettingsService(store, factory);
   const modelCache = new ModelCacheService(factory, store, () => store.save(store.get()));
   const llm = new LLMService(factory, providerSettings);
-  const taskBankRepo = new TaskBankRepositoryImpl(stateRepository);
+  // TaskBankRepositoryImpl expects a StateRepository (load/save/clear), but it
+  // must read/write through the SAME in-memory cache the UI uses (`store`),
+  // not the raw debounced-write repository. Otherwise an import/edit that
+  // just landed in `store`'s cache is invisible here for up to 400ms (the
+  // repo write debounce) — and since nothing re-renders purely from time
+  // passing, imported tasks/habits could silently never appear in the
+  // Levels screen or the daily planner. This adapter keeps task-bank reads
+  // and writes on the cached store so changes are visible immediately,
+  // while `store.save()` still schedules the debounced persist underneath.
+  const cachedStateRepository: StateRepository = {
+    load: () => store.get(),
+    save: (s) => store.save(s),
+    clear: () => store.save(emptyAppState()),
+  };
+  const taskBankRepo = new TaskBankRepositoryImpl(cachedStateRepository);
   const taskBank = new TaskBankServiceImpl(taskBankRepo);
   const planner = new HabitProgressionService({
     taskBank,
