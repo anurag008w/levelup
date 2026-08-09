@@ -54,6 +54,22 @@ describe('OpenAICompatibleProvider', () => {
     expect(captured!.headers?.['HTTP-Referer']).toBeDefined();
   });
 
+  it('maps max thinking to high reasoning effort for OpenAI-compatible endpoints', async () => {
+    let captured: HttpRequestInit | null = null;
+    const http = fakeHttp((init) => {
+      captured = init;
+      return { choices: [{ message: { content: 'hello' } }], model: 'm1' };
+    });
+    const provider = new OpenAICompatibleProvider(openrouterConfig, http, { defaultBaseUrl: 'https://x' });
+    await provider.complete({ messages: [], thinking: 'max' });
+    // OpenAI/OpenRouter reasoning_effort has no 'max' — it must be mapped to
+    // 'high' or the endpoint would 400.
+    expect((captured!.body as { reasoning?: { effort: string } }).reasoning?.effort).toBe('high');
+    const provider2 = new OpenAICompatibleProvider({ ...openrouterConfig, id: 'openai-compatible' }, http, { defaultBaseUrl: 'https://x' });
+    await provider2.complete({ messages: [], thinking: 'max' });
+    expect((captured!.body as { reasoning_effort?: string }).reasoning_effort).toBe('high');
+  });
+
   it('sends streaming flag and forwards deltas', async () => {
     const http = fakeHttp(() => 'data: {"choices":[{"delta":{"content":"a"}}]}\n\ndata: {"choices":[{"delta":{"content":"b"}}]}');
     const provider = new OpenAICompatibleProvider(openrouterConfig, http, { defaultBaseUrl: 'https://x' });
@@ -314,6 +330,18 @@ describe('GeminiProvider', () => {
     const res = await provider.complete({ messages: [], thinking: 'high' });
     expect(res.text).toBe('jawab');
     expect(res.reasoning).toBe('soch...');
+    const config = (captured!.body as { generationConfig: { thinkingConfig: { thinkingBudget: number } } }).generationConfig;
+    expect(config.thinkingConfig.thinkingBudget).toBe(8192);
+  });
+
+  it('sends max thinking budget (16384) when thinking is max', async () => {
+    let captured: HttpRequestInit | null = null;
+    const http = fakeHttp((init) => {
+      captured = init;
+      return { candidates: [{ content: { parts: [{ text: 'jawab' }] } }] };
+    });
+    const provider = new GeminiProvider({ id: 'gemini', label: 'Gemini', apiKey: 'gk', model: 'gemini-2.5-flash', enabled: true }, http);
+    await provider.complete({ messages: [], thinking: 'max' });
     const config = (captured!.body as { generationConfig: { thinkingConfig: { thinkingBudget: number } } }).generationConfig;
     expect(config.thinkingConfig.thinkingBudget).toBe(16384);
   });

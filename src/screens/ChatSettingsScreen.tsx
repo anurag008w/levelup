@@ -170,6 +170,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
                 <option value="high">High</option>
+                <option value="max">Max</option>
               </select>
               <p className="mt-1 text-[10px] text-muted">Reasoning models ke liye thinking budget.</p>
             </div>
@@ -202,6 +203,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
                 <option value="high">High</option>
+                <option value="max">Max</option>
               </select>
               <p className="mt-1 text-[10px] text-muted">
                 Tool pick karne wale JSON decision pe thinking budget. Default Off = fast, sasta, deterministic JSON.
@@ -305,6 +307,7 @@ export default function ChatSettingsScreen({ state, update, onBack }: ChatSettin
                     <option value="low">Low</option>
                     <option value="medium">Medium</option>
                     <option value="high">High</option>
+                    <option value="max">Max</option>
                   </select>
                   <p className="mt-1 text-[10px] text-muted">
                     Background memory summary pe thinking budget. Default Medium — better memory blocks.

@@ -16,7 +16,8 @@ const MAX_GEMINI_MODEL_PAGES = 5;
 const THINKING_BUDGETS: Record<Exclude<ThinkingLevel, 'off'>, number> = {
   low: 2048,
   medium: 4096,
-  high: 16384,
+  high: 8192,
+  max: 16384,
 };
 
 interface GeminiRolePart {
