@@ -47,6 +47,7 @@ import ReadOnlyChatViewer from '../components/ReadOnlyChatViewer';
 import { detectFileDoc, looksLikeMarkdown } from '../components/markdown-utils';
 import { haptic, hapticError, hapticSuccess } from '../lib/haptics';
 import { extractFileText } from '../lib/fileText';
+import { exportTextFile } from '../lib/exportFile';
 import { notifyAiReply } from '../lib/notifications';
 import { timeAgo } from '../lib/relative-time';
 import {
@@ -628,6 +629,47 @@ export default function ChatScreen({
     void doSend(active.id, userMsg.content, '', [], []);
   }
 
+  /**
+   * Wired to the tappable Yes/No buttons on a blocked destructive/bulk tool
+   * action (setDayMode, removeTask, memory deletion, etc.) — see
+   * ChatMessage.pendingConfirmation. Mirrors doSend's streaming/reveal
+   * pattern so the confirmation reply behaves like any other AI message,
+   * but calls confirmPendingAction instead of send(): the actual action is
+   * replayed deterministically with confirmed:true, no model round-trip
+   * involved in whether it actually applies.
+   */
+  function confirmAction(message: ChatMessage, confirmed: boolean) {
+    if (!active || streaming) return;
+    haptic();
+    setStreaming(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const pending = container.chat.confirmPendingAction(active.id, message.id, confirmed, undefined, controller.signal);
+    refresh();
+    let sent = false;
+    let lastAssistantId: string | null = null;
+    void pending
+      .then((assistant) => {
+        sent = true;
+        lastAssistantId = assistant.id;
+        const bubbles = splitReplyIntoBubbles(assistant.content);
+        const schedule = computeRevealSchedule(bubbles.length);
+        if (bubbles.length > 0) revealScheduleRef.current = schedule;
+        for (const step of buildNotificationSteps(bubbles, schedule, undefined, { text: confirmed ? 'Confirm' : 'Cancel', at: Date.now() })) {
+          setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', active.id, 0, undefined, step.text, step.messages), step.delayMs);
+        }
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        abortRef.current = null;
+        setStreaming(false);
+        refresh();
+        if (sent && lastAssistantId) setRevealId(lastAssistantId);
+      });
+  }
+
   function deleteMessage(message: ChatMessage) {
     if (!active) return;
     container.chat.deleteMessage(active.id, message.id);
@@ -681,7 +723,9 @@ export default function ChatScreen({
   }
 
   function downloadMessage(message: ChatMessage) {
-    downloadText(message.content, `levelup-ai-${new Date(message.createdAt).toISOString().slice(0, 10)}.md`);
+    void exportTextFile(message.content, `levelup-ai-${new Date(message.createdAt).toISOString().slice(0, 10)}.md`, 'text/markdown;charset=utf-8').then((result) => {
+      if (!result.ok) setNotice(result.message);
+    });
   }
 
   function exportChat() {
@@ -692,8 +736,9 @@ export default function ChatScreen({
       ...active.messages.map((m) => `**${m.role === 'user' ? 'User' : 'AI'}:**\n\n${m.content}`),
       '',
     ].join('\n\n');
-    downloadText(md, `levelup-chat-${(active.title || 'session').slice(0, 30).replace(/[^\w-]+/g, '_')}.md`);
-    setNotice('Chat export ho gaya');
+    void exportTextFile(md, `levelup-chat-${(active.title || 'session').slice(0, 30).replace(/[^\w-]+/g, '_')}.md`, 'text/markdown;charset=utf-8').then((result) => {
+      setNotice(result.message);
+    });
   }
 
   async function attachFiles(files: FileList | null) {
@@ -820,6 +865,7 @@ export default function ChatScreen({
     onDelete: deleteMessage,
     onDownload: downloadMessage,
     onShare: (m) => shareMessage(m),
+    onConfirmAction: confirmAction,
   };
 
   return (
@@ -1191,6 +1237,7 @@ interface MessageActions {
   onDelete: (m: ChatMessage) => void;
   onDownload: (m: ChatMessage) => void;
   onShare: (m: ChatMessage) => void;
+  onConfirmAction: (m: ChatMessage, confirmed: boolean) => void;
 }
 
 const MessageBubble = memo(function MessageBubble({
@@ -1390,6 +1437,24 @@ const MessageBubble = memo(function MessageBubble({
                 </div>
               </div>
             ))}
+          {message.pendingConfirmation && (
+            <div className="flex gap-2 pl-1">
+              <button
+                type="button"
+                className="rounded-full bg-red-600 px-4 py-1.5 text-[12.5px] font-medium text-white active:opacity-70"
+                onClick={() => actions.onConfirmAction(message, true)}
+              >
+                Haan, karo
+              </button>
+              <button
+                type="button"
+                className="rounded-full border border-white/15 px-4 py-1.5 text-[12.5px] font-medium text-muted active:opacity-70"
+                onClick={() => actions.onConfirmAction(message, false)}
+              >
+                Nahi, rehne do
+              </button>
+            </div>
+          )}
           {reveal && thinking && (
             <div className="bubble-ai flex items-center gap-2.5 rounded-2xl rounded-bl-md px-4 py-3">
               <span className="typing-dots" aria-hidden="true">
@@ -2276,18 +2341,6 @@ function UserMessageContent({ content, attachments }: { content: string; attachm
       )}
     </div>
   );
-}
-
-function downloadText(content: string, filename: string) {
-  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
 }
 
 function formatBytes(bytes: number): string {

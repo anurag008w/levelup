@@ -473,16 +473,15 @@ export class ChatService {
         // user explicitly agrees in their next message — a model round-trip
         // must not decide consent on the user's behalf (data-loss risk).
         if (memoryResult.requiresConfirmation) {
-          this.pendingMemoryConfirms.set(
-            session.id,
-            actions.filter((a) => a.action === 'deleteMemory'),
-          );
+          const deleteActions = actions.filter((a) => a.action === 'deleteMemory');
+          this.pendingMemoryConfirms.set(session.id, deleteActions);
           const memoryAssistant: ChatMessage = {
             id: uid(),
             role: 'assistant',
             content: sanitizeAssistantLeaks(memoryResult.summary),
             createdAt: this.clock.now().toISOString(),
             model: decision.model,
+            pendingConfirmation: { kind: 'memory', actions: deleteActions },
           };
           this.appendAssistant(session, memoryAssistant);
           return memoryAssistant;
@@ -579,13 +578,21 @@ export class ChatService {
           answer = decision.text;
           decisionModel = decision.model;
           if (actions.length === 0 && answer) {
-            // The model talked instead of emitting an action — retry once with a
-            // strict correction so plan/planner tools work even on weaker models.
+            // The model either talked instead of emitting an action, OR it DID
+            // attempt a tool call but got the shape wrong (missing/invalid
+            // field, unknown action name, one bad entry in a batch) — these
+            // need different feedback. The generic "answer with JSON" nudge
+            // doesn't help a model that already tried and just has a typo'd
+            // field: it tends to repeat the same mistake, and the whole tool
+            // call then silently no-ops with nothing shown to the user. When
+            // the reply looks like a real (broken) attempt, tell the model
+            // EXACTLY which field/action was wrong instead.
+            const parseError = this.tools.describeParseFailure(decision.text);
             onStatus?.('Tool decision retry kar raha hai…');
             const retry = await this.llm.complete(
               await (plannerScoped
                 ? this.buildPlannerRetryRequest(session, decision.text, signal)
-                : this.buildRetryRequest(session, decision.text, signal, toolScope)),
+                : this.buildRetryRequest(session, decision.text, signal, toolScope, parseError)),
             );
             actions = this.scopeActions(this.tools.parseTools(retry.text), toolScope);
             if (retry.text) answer = retry.text;
@@ -704,6 +711,12 @@ export class ChatService {
         if (!finalSummary.text && !finalSummary.reasoning) {
           throw new Error('AI ka reply khaali aaya — max tokens barhao ya thinking off karo.');
         }
+        // runMany's initial all-or-nothing preview branch (nothing confirmed
+        // yet) returns requiresConfirmation on the TOP-LEVEL result without a
+        // per-action results array at all — so that has to be checked too,
+        // not just each result's own flag (which only gets set later, per
+        // action, in the executed-batch branch).
+        const anyPending = toolResult.requiresConfirmation === true || (toolResult.results ?? []).some((r) => r.requiresConfirmation);
         const assistant: ChatMessage = {
           id: uid(),
           role: 'assistant',
@@ -716,7 +729,12 @@ export class ChatService {
             action: r.action,
             ok: r.ok,
             message: r.summary,
+            requiresConfirmation: r.requiresConfirmation,
           })),
+          // A blocked destructive/bulk batch is all-or-nothing (runMany never
+          // partially applies one), so the ORIGINAL full action set is exactly
+          // what "Yes" needs to replay with confirmed:true — no re-deciding.
+          ...(anyPending ? { pendingConfirmation: { kind: 'tools' as const, actions } } : {}),
         };
         this.appendAssistant(session, assistant);
         return assistant;
@@ -828,6 +846,133 @@ export class ChatService {
     }
   }
 
+  /**
+   * Resolves a blocked destructive/bulk action (setDayMode, removeTask,
+   * bulkMarkDone, memory deletion, etc.) via the chat UI's tappable Yes/No
+   * buttons, instead of relying on free-text "haan confirm karo" being
+   * correctly detected on the next turn (fragile for tool actions — the
+   * model can misread it, forget the original day/taskId, or the JSON
+   * round-trip can fail again).
+   *
+   * On "Yes": replays the EXACT original actions captured in
+   * `message.pendingConfirmation` with confirmed:true forced on, directly
+   * through `tools.runMany`/`memoryTools.runMany` — no model decision-hop
+   * involved in the execution itself, so it cannot misfire the same way a
+   * re-parsed reply can. On "No": nothing is applied, a short
+   * acknowledgement is appended.
+   *
+   * Either way, `pendingConfirmation` (and, for memory, the legacy
+   * free-text `pendingMemoryConfirms` tracker) is cleared on the original
+   * message FIRST, so the buttons can't be tapped twice, and a stray later
+   * "haan" can't ALSO re-trigger the same delete through the old path.
+   */
+  async confirmPendingAction(
+    sessionId: string,
+    messageId: string,
+    confirmed: boolean,
+    onDelta?: (delta: string) => void,
+    signal?: AbortSignal,
+    onStatus?: (status: string) => void,
+    onReasoningDelta?: (delta: string) => void,
+  ): Promise<ChatMessage> {
+    const session = this.getSession(sessionId);
+    if (!session) throw new Error('Chat session not found');
+    const target = session.messages.find((m) => m.id === messageId);
+    const pending = target?.pendingConfirmation;
+    if (!target || !pending) throw new Error('Ye confirmation ab valid nahi hai — naya message bhejo.');
+    target.pendingConfirmation = undefined;
+    this.pendingMemoryConfirms.delete(session.id);
+    this.persist();
+
+    if (!confirmed) {
+      const cancelled: ChatMessage = {
+        id: uid(),
+        role: 'assistant',
+        content: 'Theek hai, cancel kar diya — kuch change nahi hua.',
+        createdAt: this.clock.now().toISOString(),
+      };
+      this.appendAssistant(session, cancelled);
+      return cancelled;
+    }
+
+    if (pending.kind === 'memory') {
+      onStatus?.('Delete kar raha hoon…');
+      if (!this.memoryTools) throw new Error('Memory tools available nahi hain.');
+      const result = await this.memoryTools.runMany(pending.actions.map((a) => ({ ...a, confirmed: true })));
+      const assistant: ChatMessage = {
+        id: uid(),
+        role: 'assistant',
+        content: sanitizeAssistantLeaks(result.summary),
+        createdAt: this.clock.now().toISOString(),
+        tool: 'memory-confirm',
+      };
+      this.appendAssistant(session, assistant);
+      return assistant;
+    }
+
+    onStatus?.('Confirm ho gaya, apply kar raha hoon…');
+    if (!this.tools) throw new Error('Tools available nahi hain.');
+    const confirmedActions: ChatToolAction[] = pending.actions.map((a) => ({ ...a, confirmed: true }));
+    const toolResult = await this.tools.runMany(confirmedActions);
+
+    let reasoning = '';
+    let partial = '';
+    try {
+      const streamSani = createStreamSanitizer();
+      const summaryRequest = await this.buildSummaryRequest(
+        session,
+        this.formatToolResultSummary(toolResult),
+        (delta) => {
+          const clean = streamSani.push(delta);
+          if (clean) {
+            partial += clean;
+            onDelta?.(clean);
+          }
+        },
+        signal,
+        (delta) => {
+          reasoning += delta;
+          onReasoningDelta?.(delta);
+        },
+      );
+      let finalSummary = await this.llm.stream(summaryRequest);
+      const streamTail = streamSani.flush();
+      if (streamTail) {
+        partial += streamTail;
+        onDelta?.(streamTail);
+      }
+      if (!finalSummary.text && !finalSummary.reasoning) {
+        finalSummary = await this.llm.stream({ ...summaryRequest, thinking: 'off' as const, maxTokens: 16384 });
+      }
+      const assistant: ChatMessage = {
+        id: uid(),
+        role: 'assistant',
+        content: sanitizeAssistantLeaks(finalSummary.text) || (toolResult.ok ? 'Ho gaya.' : toolResult.summary),
+        createdAt: this.clock.now().toISOString(),
+        model: finalSummary.model,
+        reasoning: (finalSummary.reasoning ?? reasoning) || undefined,
+        tool: confirmedActions.map((a) => a.action).join(','),
+        toolCalls: (toolResult.results ?? []).map((r) => ({ action: r.action, ok: r.ok, message: r.summary, requiresConfirmation: r.requiresConfirmation })),
+      };
+      this.appendAssistant(session, assistant);
+      return assistant;
+    } catch {
+      // The action already applied above (or failed) regardless of whether the
+      // narration step works — never leave the user without ANY confirmation
+      // that their tap did something, even if the LLM summary call broke.
+      const assistant: ChatMessage = {
+        id: uid(),
+        role: 'assistant',
+        content: partial || (toolResult.ok ? '✅ Ho gaya.' : `❌ ${toolResult.summary}`),
+        createdAt: this.clock.now().toISOString(),
+        tool: confirmedActions.map((a) => a.action).join(','),
+        toolCalls: (toolResult.results ?? []).map((r) => ({ action: r.action, ok: r.ok, message: r.summary, requiresConfirmation: r.requiresConfirmation })),
+      };
+      this.appendAssistant(session, assistant);
+      return assistant;
+    }
+  }
+
   /** Base tool instructions, plus the uploaded-planner section + today's date
    *  context whenever the student has imported coaching planners — so the model
    *  answers tests/routine/subject questions with planner tools in the SAME
@@ -930,12 +1075,27 @@ export class ChatService {
     );
   }
 
-  private async buildRetryRequest(session: ChatSession, previousReply: string, signal?: AbortSignal, onlyTools?: string[]): Promise<LLMRequest> {
+  private async buildRetryRequest(
+    session: ChatSession,
+    previousReply: string,
+    signal?: AbortSignal,
+    onlyTools?: string[],
+    parseError?: string | null,
+  ): Promise<LLMRequest> {
     const scopeRule = onlyTools?.length
       ? `\nThe user pinned ONLY these tools: ${onlyTools.join(', ')}. Emit actions only from this set.\n`
       : '';
+    // parseError is set when the previous reply WAS a tool-call attempt (had
+    // an "action" field) but failed schema validation — give the model the
+    // exact reason instead of the generic "you answered with prose" framing,
+    // which is actively misleading when JSON was already attempted.
+    const retryFraming = parseError
+      ? `Your previous reply was an attempted tool call, but it was invalid: ${parseError}\n` +
+        `Fix ONLY that problem and reply again. Your ENTIRE reply must be exactly one JSON object chosen from the allowed actions above — ` +
+        `either ONE action, or {"actions":[...]} for several changes. Task ids come from the plan (e.g. d1_t1, mock_1, ai-xxxxx).`
+      : CHAT_TOOL_RETRY;
     const system =
-      this.toolSystem(`${CHAT_TOOL_INSTRUCTIONS}\n\n${CHAT_TOOL_RETRY}`) +
+      this.toolSystem(`${CHAT_TOOL_INSTRUCTIONS}\n\n${retryFraming}`) +
       scopeRule +
       `\n\nYour previous reply was:\n${previousReply}\n\nReplace it with exactly one JSON object now.`;
     const request: LLMRequest = {
@@ -1069,6 +1229,8 @@ export class ChatService {
       `Reply to the user's request in concise Hinglish (always ROMAN script — no Devanagari unless the user explicitly asked). Tell them what was done (or why it failed).\n` +
       `Rules: never echo tool calls, JSON, "/add_tasks(...)" or any protocol text; never add "Tool Execution", "[Tool ...]" or similar headers; never introduce yourself or say your name; if the tool blocked a duplicate task, say plainly that it already exists and was not re-added.\n` +
       `If ANY action is marked ❌ in the tool result, explicitly tell the user which change failed and why — NEVER claim everything succeeded when some actions failed.\n` +
+      `If ANY action is marked ⚠️, it is a DESTRUCTIVE/BULK action that is BLOCKED pending confirmation — it has NOT happened yet, nothing changed. ` +
+      `Never say "ho gaya"/"done"/"mark ho gaya" for a ⚠️ action. Instead describe exactly what WOULD change and ask the user to explicitly confirm (e.g. "haan" / "confirm karo") before it actually applies.\n` +
       ROMAN_SCRIPT_RULE;
     const thinking = this.resolveThinking(session);
     const request: LLMRequest = {

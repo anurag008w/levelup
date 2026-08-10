@@ -1044,6 +1044,79 @@ describe('ChatService', () => {
     expect(store.get().memory.entries.some((e) => e.id === id)).toBe(true);
   });
 
+  it('memory deletion: pendingConfirmation on the message carries the exact action for a UI Yes/No button (not free-text)', async () => {
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+    });
+    const memory = new MemoryService(new FakeClock());
+    const init = memory.add(store.get(), { type: 'goal', content: 'Aim: IIT Delhi', source: 'user', importance: 0.9 });
+    store.save(init);
+    const id = init.memory.entries[0].id;
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({ text: `{"action":"deleteMemory","id":"${id}"}`, model: 'a' }),
+      stream: async (): Promise<LLMResponse> => ({ text: '', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const memoryTools = new MemoryToolsService(store, memory);
+    const chat = new ChatService(new MemoryChatRepository(), llm, settings, () => 'ctx', new FakeClock(), null, memory, store, undefined, memoryTools);
+    const s1 = chat.createSession();
+
+    const preview = await chat.send(s1.id, 'Wo memory check karo');
+    expect(preview.pendingConfirmation?.kind).toBe('memory');
+    expect(store.get().memory.entries.some((e) => e.id === id)).toBe(true);
+
+    // "Yes" button tap — deterministic, no LLM round-trip for the deletion.
+    const confirmed = await chat.confirmPendingAction(s1.id, preview.id, true);
+    expect(confirmed.content).toContain('Deleted');
+    expect(store.get().memory.entries.some((e) => e.id === id)).toBe(false);
+    // The original message's buttons are now resolved.
+    expect(chat.getSession(s1.id)?.messages.find((m) => m.id === preview.id)?.pendingConfirmation).toBeUndefined();
+  });
+
+  it('memory deletion: "No" button cancels without applying, and a later free-text "haan" cannot resurrect it', async () => {
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+    });
+    const memory = new MemoryService(new FakeClock());
+    const init = memory.add(store.get(), { type: 'goal', content: 'Aim: IIT Delhi', source: 'user', importance: 0.9 });
+    store.save(init);
+    const id = init.memory.entries[0].id;
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({ text: `{"action":"deleteMemory","id":"${id}"}`, model: 'a' }),
+      stream: async (): Promise<LLMResponse> => ({ text: 'normal reply', model: 'a' }),
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const memoryTools = new MemoryToolsService(store, memory);
+    const chat = new ChatService(new MemoryChatRepository(), llm, settings, () => 'ctx', new FakeClock(), null, memory, store, undefined, memoryTools);
+    const s1 = chat.createSession();
+
+    const preview = await chat.send(s1.id, 'Wo memory check karo');
+    const cancelled = await chat.confirmPendingAction(s1.id, preview.id, false);
+    expect(cancelled.content).toContain('cancel');
+    expect(store.get().memory.entries.some((e) => e.id === id)).toBe(true);
+
+    // The old free-text tracker was cleared by the button tap too — a stray
+    // "haan" afterwards must not resurrect the cancelled deletion.
+    await chat.send(s1.id, 'Haan karo');
+    expect(store.get().memory.entries.some((e) => e.id === id)).toBe(true);
+  });
+
   it('a question starting with an affirmative word does NOT confirm a deletion', async () => {
     const store = makeStore({
       providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
@@ -2202,6 +2275,9 @@ describe('ChatService', () => {
           return [];
         },
         resolveToolScope: () => [],
+        // Matches the real ChatToolsService's default: nothing to diagnose
+        // unless a test overrides it to check the retry-framing path.
+        describeParseFailure: () => null,
         runMany: async (actions: { action: string }[]) => ({ ok: true, summary: 'done', results: actions.map((a) => ({ action: a.action, ok: true, summary: 'ok' })) }),
         ...overrides,
       } as unknown as ChatToolsService;

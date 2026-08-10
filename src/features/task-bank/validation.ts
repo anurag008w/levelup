@@ -5,9 +5,13 @@ import { TASK_TYPES, SLOT_ORDER } from '../../core/domain/task-bank';
 import { TaskBankValidationError } from '../../core/domain/errors';
 
 const phaseEnum = z.enum(['jee-core', 'l-mindset', 'light-execution', 'peak-performance']);
+/** Single source of truth for phase values — reused by import coercion (curriculum.ts) so it never drifts from the schema. */
+export const PHASES = phaseEnum.options;
 const slotEnum = z.enum(SLOT_ORDER as [string, ...string[]]);
 const taskTypeEnum = z.enum(TASK_TYPES as [string, ...string[]]);
 const energyEnum = z.enum(['low', 'medium', 'high']);
+/** Single source of truth for energy levels — reused by import coercion (curriculum.ts). */
+export const ENERGY_LEVELS = energyEnum.options;
 const thinkingEnum = z.enum([
   'planning',
   'focus',
@@ -20,11 +24,13 @@ const thinkingEnum = z.enum([
   'systems',
   'creativity',
 ]);
+/** Single source of truth for the free-text thinking-skills inputs in the UI (LevelsScreen habit/task forms). */
+export const THINKING_SKILLS = thinkingEnum.options;
 export const MAX_PLANNING_DAY = 365;
 
 const difficultyEnum = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]);
 
-const unlockConditionSchema = z.discriminatedUnion('type', [
+export const unlockConditionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('day'), fromDay: z.number().int().min(1) }),
   z.object({ type: z.literal('day-exact'), day: z.number().int().min(1).max(MAX_PLANNING_DAY) }),
   z.object({ type: z.literal('not-day'), day: z.number().int().min(1).max(MAX_PLANNING_DAY) }),

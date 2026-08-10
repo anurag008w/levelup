@@ -3,8 +3,9 @@ import { cleanImportText } from '../../core/domain/import-utils';
 import type { AppState, CustomPhase } from '../../core/domain/state';
 import type { Habit } from '../../core/domain/habit';
 import type { TaskBankEntry } from '../../core/domain/task-bank';
+import { TASK_TYPES } from '../../core/domain/task-bank';
 import { TOTAL_DAYS } from '../../data/curriculum';
-import { parseTaskBankEntry, parseHabitEntry } from '../task-bank/validation';
+import { parseTaskBankEntry, parseHabitEntry, THINKING_SKILLS, PHASES, ENERGY_LEVELS, unlockConditionSchema } from '../task-bank/validation';
 
 // Curriculum import/export: tasks + habits + custom blocks as one JSON file.
 // The user can edit this file (or share it) and re-import — the same workflow
@@ -78,6 +79,13 @@ export function serializeCurriculum(tasks: TaskBankEntry[], habits: Habit[], blo
 /**
  * Parses + validates a curriculum JSON file. Invalid rows are skipped, never
  * fatal — the report carries per-section invalid counts for the UI.
+ *
+ * Every row gets a strict-parse attempt first; if that fails (older app
+ * version, hand-edited file, an unrecognized enum value, etc.) we try again
+ * with `coerceImportedTask`/`coerceImportedHabit`, which repairs the row
+ * instead of throwing it away. A row only ends up in the invalid count if
+ * it isn't even a usable object — a single stray field should never cost
+ * the user the whole task/habit on re-import.
  */
 export function parseCurriculum(json: string): CurriculumParseReport {
   let raw: unknown;
@@ -100,15 +108,35 @@ export function parseCurriculum(json: string): CurriculumParseReport {
   let invalidBlocks = 0;
 
   for (const item of Array.isArray(data.tasks) ? (data.tasks as unknown[]) : []) {
+    if (typeof item !== 'object' || item === null) {
+      invalidTasks++;
+      continue;
+    }
     try {
       tasks.push(parseTaskBankEntry(item));
+      continue;
+    } catch {
+      // fall through to repair attempt
+    }
+    try {
+      tasks.push(parseTaskBankEntry(coerceImportedTask(item as Record<string, unknown>)));
     } catch {
       invalidTasks++;
     }
   }
   for (const item of Array.isArray(data.habits) ? (data.habits as unknown[]) : []) {
+    if (typeof item !== 'object' || item === null) {
+      invalidHabits++;
+      continue;
+    }
     try {
       habits.push(parseHabitEntry(item));
+      continue;
+    } catch {
+      // fall through to repair attempt
+    }
+    try {
+      habits.push(parseHabitEntry(coerceImportedHabit(item as Record<string, unknown>)));
     } catch {
       invalidHabits++;
     }
@@ -122,6 +150,86 @@ export function parseCurriculum(json: string): CurriculumParseReport {
     }
   }
   return { tasks, habits, blocks, invalidTasks, invalidHabits, invalidBlocks };
+}
+
+const THINKING_SKILL_SET = new Set<string>(THINKING_SKILLS);
+const PHASE_SET = new Set<string>(PHASES);
+const ENERGY_SET = new Set<string>(ENERGY_LEVELS);
+const TASK_TYPE_SET = new Set<string>(TASK_TYPES);
+
+function toNumber(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function clamp01(v: unknown): number {
+  const n = toNumber(v);
+  return n === null ? 0.5 : Math.min(1, Math.max(0, n));
+}
+
+function randomId(prefix: string): string {
+  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Best-effort repair for an imported task row that failed strict schema
+ * validation. Unrecognized enum values are dropped/defaulted and malformed
+ * unlockConditions are filtered (instead of rejecting the whole row) so a
+ * single bad field doesn't cost the user the entire task.
+ */
+function coerceImportedTask(raw: Record<string, unknown>): Record<string, unknown> {
+  const jeeRel = (typeof raw.jeeRelevance === 'object' && raw.jeeRelevance !== null ? raw.jeeRelevance : {}) as Record<string, unknown>;
+  const rawUnlocks = Array.isArray(raw.unlockConditions) ? raw.unlockConditions : [];
+  const validUnlocks = rawUnlocks.filter((u) => unlockConditionSchema.safeParse(u).success);
+  return {
+    id: typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : randomId('imported-task'),
+    habitId: typeof raw.habitId === 'string' && raw.habitId.length > 0 ? raw.habitId : 'h1',
+    title: typeof raw.title === 'string' && raw.title.length > 0 ? raw.title : 'Imported task',
+    description: typeof raw.description === 'string' ? raw.description : '',
+    phase: typeof raw.phase === 'string' && PHASE_SET.has(raw.phase) ? raw.phase : 'jee-core',
+    difficulty: Math.round(Math.min(5, Math.max(1, toNumber(raw.difficulty) ?? 3))),
+    estimatedDurationMin: Math.round(Math.min(600, Math.max(1, toNumber(raw.estimatedDurationMin) ?? 30))),
+    energyLevel: typeof raw.energyLevel === 'string' && ENERGY_SET.has(raw.energyLevel) ? raw.energyLevel : 'medium',
+    tags: Array.isArray(raw.tags) ? raw.tags.filter((t) => typeof t === 'string') : [],
+    prerequisites: Array.isArray(raw.prerequisites) ? raw.prerequisites.filter((p) => typeof p === 'string') : [],
+    taskType: typeof raw.taskType === 'string' && TASK_TYPE_SET.has(raw.taskType) ? raw.taskType : 'Beginner',
+    revisionSuitability: clamp01(raw.revisionSuitability),
+    backlogSuitability: clamp01(raw.backlogSuitability),
+    thinkingSkills: Array.isArray(raw.thinkingSkills)
+      ? [...new Set(raw.thinkingSkills.filter((s) => typeof s === 'string' && THINKING_SKILL_SET.has(s)))]
+      : [],
+    jeeRelevance: {
+      subject: typeof jeeRel.subject === 'string' ? jeeRel.subject : undefined,
+      examWindow: typeof jeeRel.examWindow === 'boolean' ? jeeRel.examWindow : undefined,
+      score: clamp01(jeeRel.score),
+    },
+    unlockConditions: validUnlocks.length > 0 ? validUnlocks : [{ type: 'day', fromDay: 1 }],
+    active: typeof raw.active === 'boolean' ? raw.active : true,
+  };
+}
+
+/** Same idea as `coerceImportedTask`, for habit rows. */
+function coerceImportedHabit(raw: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : randomId('imported-habit'),
+    name: typeof raw.name === 'string' && raw.name.length > 0 ? raw.name : 'Imported habit',
+    description: typeof raw.description === 'string' ? raw.description : '',
+    timeRequired: typeof raw.timeRequired === 'string' ? raw.timeRequired : '',
+    criteria: typeof raw.criteria === 'string' && raw.criteria.length > 0 ? raw.criteria : 'Complete kiya',
+    phase: typeof raw.phase === 'string' && PHASE_SET.has(raw.phase) ? raw.phase : 'jee-core',
+    levelId: Math.round(Math.min(30, Math.max(1, toNumber(raw.levelId) ?? 1))),
+    dayStart: Math.round(Math.max(1, toNumber(raw.dayStart) ?? 1)),
+    prerequisites: Array.isArray(raw.prerequisites) ? raw.prerequisites.filter((p) => typeof p === 'string') : [],
+    isCore: typeof raw.isCore === 'boolean' ? raw.isCore : true,
+    thinkingSkills: Array.isArray(raw.thinkingSkills)
+      ? [...new Set(raw.thinkingSkills.filter((s) => typeof s === 'string' && THINKING_SKILL_SET.has(s)))]
+      : [],
+    active: typeof raw.active === 'boolean' ? raw.active : true,
+  };
 }
 
 /**

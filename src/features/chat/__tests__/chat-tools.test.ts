@@ -406,6 +406,43 @@ describe('ChatToolsService', () => {
     expect(studyPlan.summary).toContain('id:d1_t');
   });
 
+  describe('describeParseFailure', () => {
+    it('names the exact missing field for a known action instead of a generic nudge', () => {
+      const { tools } = makeTools(makeStore());
+      const msg = tools.describeParseFailure('{"action":"setDayMode","day":2}');
+      expect(msg).toContain('setDayMode');
+      expect(msg).toMatch(/mode/i);
+    });
+
+    it('flags an unrecognized enum value, not just a missing field', () => {
+      const { tools } = makeTools(makeStore());
+      const msg = tools.describeParseFailure('{"action":"setDayMode","day":2,"mode":"holiday"}');
+      expect(msg).toContain('setDayMode');
+    });
+
+    it('reports the first bad entry inside an actions batch', () => {
+      const { tools } = makeTools(makeStore());
+      const msg = tools.describeParseFailure('{"actions":[{"action":"markDone","day":1,"taskId":"d1_t1"},{"action":"setDayMode","day":2}]}');
+      expect(msg).toContain('actions[1]');
+      expect(msg).toContain('setDayMode');
+    });
+
+    it('returns null for pure prose (no JSON object at all)', () => {
+      const { tools } = makeTools(makeStore());
+      expect(tools.describeParseFailure('Haan bilkul, main tumhari help karta hoon!')).toBeNull();
+    });
+
+    it('returns null for an unrecognized/hallucinated action name — falls through to the default handling unchanged', () => {
+      const { tools } = makeTools(makeStore());
+      expect(tools.describeParseFailure('{"action":"websearch","query":"jee syllabus"}')).toBeNull();
+    });
+
+    it('returns null when the JSON actually parses fine (no failure to explain)', () => {
+      const { tools } = makeTools(makeStore());
+      expect(tools.describeParseFailure('{"action":"getPlan","day":1}')).toBeNull();
+    });
+  });
+
   it('can add tasks on a mock Sunday and they appear in that plan', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
@@ -923,6 +960,205 @@ describe('ChatService with tools', () => {
     expect(store.get().taskLogs['2026-07-01']?.['d1_t1']).toBe(true);
   });
 
+  it('tells the summary model a blocked (unconfirmed) destructive action must NOT be narrated as done', async () => {
+    // Regression for: setDayMode (or any confirmationRequired action) without
+    // "confirmed":true executes as a blocked ⚠️ preview — nothing actually
+    // changes — but the summary-writing model previously had no instruction
+    // for the ⚠️ marker (only ❌) and could narrate false success ("rest day
+    // mark ho gaya") for an action that never actually applied.
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    let seenSummarySystem = '';
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      // No "confirmed":true — this must come back blocked/⚠️, not applied.
+      complete: async (): Promise<LLMResponse> => ({ text: '{"action":"setDayMode","day":1,"mode":"rest"}', model: 'a' }),
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        const sys = req.messages.find((m) => m.role === 'system');
+        if (sys && typeof sys.content === 'string') seenSummarySystem = sys.content;
+        req.onDelta?.('Rest day banane ke liye confirm karo.');
+        return { text: 'Rest day banane ke liye confirm karo.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    await chat.send(session.id, 'day 1 ko rest day bana do');
+    // The summary model must be explicitly told what ⚠️ means and told not
+    // to claim success for it.
+    expect(seenSummarySystem).toContain('⚠️');
+    expect(seenSummarySystem).toMatch(/BLOCKED pending confirmation/i);
+    expect(seenSummarySystem).toMatch(/has NOT happened yet/i);
+    // And the state must genuinely be untouched — nothing was applied.
+    expect(store.get().restDays).toEqual([]);
+  });
+
+  it('confirmPendingAction("Yes"): replays the exact blocked setDayMode with confirmed:true, no model round-trip for execution', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    let calls = 0;
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => {
+        calls += 1;
+        return { text: '{"action":"setDayMode","day":1,"mode":"rest"}', model: 'a' };
+      },
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        req.onDelta?.('Rest day confirm ho gaya.');
+        return { text: 'Rest day confirm ho gaya.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    const preview = await chat.send(session.id, 'day 1 ko rest day bana do');
+    expect(preview.pendingConfirmation?.kind).toBe('tools');
+    expect(store.get().restDays).toEqual([]);
+    expect(calls).toBe(1); // only the initial (blocked) decision hop — no retry needed, it parsed fine
+
+    const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
+    expect(calls).toBe(1); // "Yes" did NOT call the model again for the execution itself
+    expect(store.get().restDays).toEqual([1]);
+    expect(confirmed.content).toBe('Rest day confirm ho gaya.');
+    expect(chat.getSession(session.id)?.messages.find((m) => m.id === preview.id)?.pendingConfirmation).toBeUndefined();
+  });
+
+  it('confirmPendingAction("No"): cancels without applying anything, and the buttons cannot be tapped twice', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const provider = providerWith('{"action":"setDayMode","day":1,"mode":"rest"}', 'ignored');
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    const preview = await chat.send(session.id, 'day 1 ko rest day bana do');
+
+    const cancelled = await chat.confirmPendingAction(session.id, preview.id, false);
+    expect(cancelled.content).toContain('cancel');
+    expect(store.get().restDays).toEqual([]);
+
+    // Tapping again (stale UI, double-tap, etc.) must not resurrect it.
+    await expect(chat.confirmPendingAction(session.id, preview.id, true)).rejects.toThrow();
+    expect(store.get().restDays).toEqual([]);
+  });
+
+  describe('every confirmationRequired tool works through the full Yes-button flow', () => {
+    // setDayMode is covered above. These cover the rest: removeTask,
+    // bulkRemoveTasks, bulkMarkDone, deleteAnyTask, deleteBlock. Each checks
+    // the SAME three things: (1) the model's first attempt gets blocked with
+    // nothing applied, (2) tapping "Yes" applies it for real with no further
+    // model call, (3) the buttons are resolved afterwards.
+
+    it('removeTask', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store);
+      let calls = 0;
+      const provider = providerWith('{"action":"removeTask","day":1,"taskId":"d1_t1"}', 'Task hata diya.');
+      const wrapped: LLMProvider = { ...provider, complete: async (req) => { calls += 1; return provider.complete(req); } };
+      const chat = makeChat(store, wrapped, tools);
+      const session = chat.createSession();
+      const preview = await chat.send(session.id, 'day 1 se pehla task hata do');
+      expect(preview.pendingConfirmation?.kind).toBe('tools');
+      expect(store.get().dynamicTaskBank.some((e) => e.id === 'd1_t1')).toBe(false); // not hidden yet
+
+      const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
+      expect(calls).toBe(1);
+      const override = store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1');
+      expect(override?.unlockConditions).toEqual([{ type: 'day', fromDay: 1 }, { type: 'not-day', day: 1 }]);
+      expect(confirmed.content).toBe('Task hata diya.');
+      expect(chat.getSession(session.id)?.messages.find((m) => m.id === preview.id)?.pendingConfirmation).toBeUndefined();
+    });
+
+    it('bulkRemoveTasks', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store);
+      const provider = providerWith('{"action":"bulkRemoveTasks","day":1,"taskIds":["d1_t1","d1_t2"]}', 'Dono tasks hata diye.');
+      const chat = makeChat(store, provider, tools);
+      const session = chat.createSession();
+      const preview = await chat.send(session.id, 'day 1 ke saare tasks hata do');
+      expect(preview.pendingConfirmation?.kind).toBe('tools');
+      const dayOnePlan = await tools.run({ action: 'getPlan', day: 1 });
+      expect(dayOnePlan.summary).toContain('d1_t1');
+
+      const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
+      const afterPlan = await tools.run({ action: 'getPlan', day: 1 });
+      expect(afterPlan.summary).not.toContain('id:d1_t1');
+      expect(afterPlan.summary).not.toContain('id:d1_t2');
+      expect(confirmed.content).toBe('Dono tasks hata diye.');
+    });
+
+    it('bulkMarkDone', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store);
+      const provider = providerWith('{"action":"bulkMarkDone","day":1}', 'Sab tasks done mark kar diye.');
+      const chat = makeChat(store, provider, tools);
+      const session = chat.createSession();
+      const preview = await chat.send(session.id, 'day 1 ke saare tasks done kar do');
+      expect(preview.pendingConfirmation?.kind).toBe('tools');
+      expect(store.get().taskLogs['2026-07-01']).toBeUndefined();
+
+      const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
+      expect(store.get().taskLogs['2026-07-01']?.['d1_t1']).toBe(true);
+      expect(confirmed.content).toBe('Sab tasks done mark kar diye.');
+    });
+
+    it('deleteAnyTask', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store);
+      const provider = providerWith('{"action":"deleteAnyTask","taskId":"d1_t1"}', 'Task bank se hata diya.');
+      const chat = makeChat(store, provider, tools);
+      const session = chat.createSession();
+      const preview = await chat.send(session.id, 'd1_t1 ko task bank se permanently delete karo');
+      expect(preview.pendingConfirmation?.kind).toBe('tools');
+      expect(store.get().dynamicTaskBank.some((e) => e.id === 'd1_t1')).toBe(false);
+
+      const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
+      const override = store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1');
+      expect(override?.active).toBe(false); // base seed task hidden, not mutated
+      expect(confirmed.content).toBe('Task bank se hata diya.');
+    });
+
+    it('deleteBlock', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store);
+      await tools.run({ action: 'createBlock', name: 'Physics Block', days: 7, focusAreas: ['physics'], difficulty: 'medium' });
+      const blockId = store.get().postJourney.customPhases[0].id;
+      const provider = providerWith(`{"action":"deleteBlock","blockId":"${blockId}"}`, 'Block delete kar diya.');
+      const chat = makeChat(store, provider, tools);
+      const session = chat.createSession();
+      const preview = await chat.send(session.id, 'ye block delete kar do');
+      expect(preview.pendingConfirmation?.kind).toBe('tools');
+      expect(store.get().postJourney.customPhases).toHaveLength(1);
+
+      const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
+      expect(store.get().postJourney.customPhases).toHaveLength(0);
+      expect(confirmed.content).toBe('Block delete kar diya.');
+    });
+  });
+
+  it('activateBlock switches the active custom block (no confirmation needed — reversible)', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    await tools.run({ action: 'createBlock', name: 'Physics Block', days: 7, focusAreas: ['physics'], difficulty: 'medium' });
+    await tools.run({ action: 'createBlock', name: 'Chemistry Block', days: 7, focusAreas: ['chemistry'], difficulty: 'medium' });
+    const [physicsId, chemId] = store.get().postJourney.customPhases.map((b) => b.id);
+    // createBlock auto-activates the most recently created one.
+    expect(store.get().postJourney.activeCustomPhaseId).toBe(chemId);
+
+    const result = await tools.run({ action: 'activateBlock', blockId: physicsId });
+    expect(result.ok).toBe(true);
+    expect(store.get().postJourney.activeCustomPhaseId).toBe(physicsId);
+    expect(store.get().postJourney.journeyComplete).toBe(true);
+
+    const missing = await tools.run({ action: 'activateBlock', blockId: 'no-such-id' });
+    expect(missing.ok).toBe(false);
+    expect(missing.retryable).toBe(true);
+  });
+
   it('runs getRoutine deterministically for "friday ka schedule batao" even when the model is broken', async () => {
     const store = makeStore();
     const stateRepo: StateRepository = { load: () => store.get(), save: (s) => store.save(s), clear: () => undefined };
@@ -1150,6 +1386,45 @@ describe('ChatService tool retry + reasoning', () => {
     expect(reply.toolCalls).toHaveLength(1);
     expect(reply.toolCalls?.[0]).toMatchObject({ action: 'removeTask', ok: true });
     expect(typeof reply.toolCalls?.[0]?.message).toBe('string');
+  });
+
+  it('retry prompt names the exact missing field when the model half-attempts a tool call, so it can self-correct', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    let calls = 0;
+    const seenSystemPrompts: string[] = [];
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (req: LLMRequest): Promise<LLMResponse> => {
+        calls += 1;
+        const sys = req.messages.find((m) => m.role === 'system');
+        if (sys && typeof sys.content === 'string') seenSystemPrompts.push(sys.content);
+        // Turn 1: forgets the required "mode" field on setDayMode.
+        if (calls === 1) return { text: '{"action":"setDayMode","day":2}', model: 'a' };
+        // Turn 2 (retry): corrects itself using the specific feedback.
+        return { text: '{"action":"setDayMode","day":2,"mode":"rest","confirmed":true}', model: 'a' };
+      },
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        req.onDelta?.('Rest day set kar diya.');
+        return { text: 'Rest day set kar diya.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    const reply = await chat.send(session.id, 'day 2 ko rest day bana do, confirm hai');
+    expect(calls).toBe(2);
+    // The retry prompt must call out the actual problem (missing "mode"),
+    // not the generic "you answered with normal text" nudge — that framing
+    // is wrong here since the model DID attempt JSON.
+    expect(seenSystemPrompts[1]).toMatch(/mode/i);
+    expect(seenSystemPrompts[1]).not.toMatch(/you (just )?answered with normal text/i);
+    // And the correction actually took effect — the day is really marked rest.
+    expect(store.get().restDays).toEqual([2]);
+    expect(reply.tool).toBe('setDayMode');
   });
 
   it('auto-fetches the day plan and replans when the model guesses a wrong task id', async () => {
