@@ -6,6 +6,7 @@ import { DEFAULT_PROGRESSION_CONFIG } from '../core/domain/progress';
 import { contentDayForDate, dateForContentDay, dateToISO, isoAddDays, rawDayNumberForDate } from '../features/habit-engine/dates';
 import { computeTaskMastery } from '../features/habit-engine/mastery';
 import { HabitProgressionService } from '../features/habit-engine/planner';
+import { HabitStatsService } from '../features/habit-engine/habits';
 import type { TaskBankService } from '../features/task-bank/task-bank.service';
 import { TaskBankServiceImpl } from '../features/task-bank/task-bank.service';
 import { buildSeed, TaskBankRepositoryImpl } from '../features/task-bank/task-bank.repository';
@@ -35,9 +36,13 @@ export type LevelStatus = 'locked' | 'active' | 'cleared' | 'needs-recovery' | '
 
 const MS_DAY = 24 * 60 * 60 * 1000;
 
+// Validated once at module load and shared by every repo below (cheap: the
+// JSON imports are already parsed, this only iterates the payloads once).
+const SEED_BUNDLE = buildSeed();
+
 const seedRepo = new TaskBankRepositoryImpl(
   { load: () => ({ dynamicTaskBank: [] } as unknown as AppState), save: () => undefined, clear: () => undefined },
-  buildSeed(),
+  SEED_BUNDLE,
 );
 const seedTaskBank: TaskBankService = new TaskBankServiceImpl(seedRepo);
 const progression = new HabitProgressionService({
@@ -46,6 +51,20 @@ const progression = new HabitProgressionService({
   levels: LEVELS,
   totalDays: TOTAL_DAYS,
 });
+
+/**
+ * Stats built against the LIVE state: seed + dynamic tasks and seed + custom
+ * habits (same merge the DI container's planner uses). Per-habit score/streak
+ * must go through this so user-created habits resolve their real definitions
+ * and tasks instead of being invisible to the seed-only `progression` facade.
+ */
+function statsFor(state: AppState): HabitStatsService {
+  const repo = new TaskBankRepositoryImpl(
+    { load: () => state, save: () => undefined, clear: () => undefined },
+    SEED_BUNDLE,
+  );
+  return new HabitStatsService(new TaskBankServiceImpl(repo), repo);
+}
 
 function toLegacyTask(t: TaskBankEntry): DailyTask {
   return {
@@ -162,11 +181,11 @@ export function habitFirstActiveDay(habitId: string): number | null {
 }
 
 export function computeHabitStreak(habitId: string, state: AppState, todayISO: string): number {
-  return progression.stats.computeHabitStreak(habitId, state, todayISO, TOTAL_DAYS);
+  return statsFor(state).computeHabitStreak(habitId, state, todayISO, TOTAL_DAYS);
 }
 
 export function computeHabitScore(habitId: string, state: AppState, todayISO: string): number | null {
-  return progression.stats.computeHabitScore(habitId, state, todayISO);
+  return statsFor(state).computeHabitScore(habitId, state, todayISO);
 }
 
 export function computeOverallStreak(state: AppState, todayISO: string): number {

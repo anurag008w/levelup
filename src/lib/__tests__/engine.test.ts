@@ -242,6 +242,37 @@ describe('engine habit stats facade', () => {
     expect(computeHabitScore('does_not_exist', state, '2026-01-01')).toBeNull();
   });
 
+  it('scores custom habits from the live state (definition + dynamic tasks)', () => {
+    const state = stateAt('2026-01-01');
+    state.customHabits = [
+      {
+        id: 'ch1',
+        name: 'Mera JEE Habit',
+        description: '',
+        timeRequired: '15 min',
+        criteria: 'Roz karo',
+        phase: 'jee-core',
+        levelId: 1,
+        dayStart: 1,
+        prerequisites: [],
+        isCore: false,
+        thinkingSkills: ['planning'],
+        active: true,
+      },
+    ];
+    state.dynamicTaskBank = [makeEntry('dt1', [{ type: 'day', fromDay: 1 }], { habitId: 'ch1', legacy: undefined })];
+    state.taskLogs['2026-01-01'] = { dt1: true };
+    // Day 1 fully completed → habit scores 100% and streaks 1.
+    expect(computeHabitScore('ch1', state, '2026-01-01')).toBe(100);
+    expect(computeHabitStreak('ch1', state, '2026-01-01')).toBe(1);
+  });
+
+  it('unknown habit ids still resolve to null score and zero streak', () => {
+    const state = stateAt('2026-01-01');
+    expect(computeHabitScore('ch-missing', state, '2026-01-01')).toBeNull();
+    expect(computeHabitStreak('ch-missing', state, '2026-01-01')).toBe(0);
+  });
+
   it('computeOverallStreak starts at 0 for an empty journey', () => {
     expect(computeOverallStreak(stateAt('2026-01-01'), '2026-01-01')).toBe(0);
   });
