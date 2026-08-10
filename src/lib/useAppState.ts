@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AppState } from '../types';
 import { emptyAppState } from '../core/domain/state';
 import { container } from '../di/container';
-import { isoAddDays } from '../features/habit-engine/dates';
+import { dateForDayNumber } from '../features/habit-engine/dates';
 import { canAutoUnlockSession, isAdminUnlocked, setAdminUnlocked, verifyAdminLogin, type AdminVerifyResult } from './admin';
 import { loadSession } from './auth';
 import { todayISO } from './storage';
@@ -11,10 +11,11 @@ import { todayISO } from './storage';
  * Single source of truth for the UI. Reads/writes through the DI container's
  * StateStore so every service sees the same object graph the screens render.
  *
- * Admin mode lets an unlocked user preview any day of the 90-day journey:
- * `today` becomes `startDateISO + (adminDay - 1)` instead of the real date.
- * Everything downstream (plan builder, progress, chat context) then renders
- * that day, so the whole app acts as a 90-day time machine.
+ * Admin mode lets an unlocked user preview any content day of the journey:
+ * `today` becomes the rest-shifted calendar date for that content day instead
+ * of the real date. Everything downstream (plan builder, progress, chat
+ * context) then renders that day, so the whole app acts as a time machine
+ * that also honors rest-day sliding.
  */
 export function useAppState() {
   const [state, setState] = useState<AppState>(() => container.store.get());
@@ -43,7 +44,7 @@ export function useAppState() {
 
   const today =
     adminUnlocked && adminDay != null && state.startDateISO
-      ? isoAddDays(state.startDateISO, adminDay - 1)
+      ? dateForDayNumber(adminDay, state.startDateISO, state.restDays ?? [])
       : realToday;
 
   function update(updater: (s: AppState) => AppState) {

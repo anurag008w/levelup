@@ -1,9 +1,11 @@
 import type { AppState } from '../../core/domain/state';
 import type { PlanningContext, ProgressionConfig } from '../../core/domain/progress';
 import type { Level } from '../../core/domain/habit';
+import type { TaskBankEntry } from '../../core/domain/task-bank';
 import type { HabitRepository } from '../../core/ports/repositories';
 import type { HabitStatsService } from './habits';
-import { rawDayNumberForDate, isoAddDays } from './dates';
+import { contentDayForDate, isRestDate, isoAddDays } from './dates';
+import { computeMasterySummary, effectiveBucket } from './mastery';
 
 export interface ContextDeps {
   stats: HabitStatsService;
@@ -28,7 +30,7 @@ export function buildPlanningContext(
     throw new Error('Cannot plan without a journey start date');
   }
 
-  const rawDayNumber = rawDayNumberForDate(dateISO, state.startDateISO);
+  const restDays = state.restDays ?? [];
   const dynamicMaxDay = Math.max(
     totalDays,
     ...state.dynamicTaskBank.flatMap((entry) =>
@@ -42,7 +44,7 @@ export function buildPlanningContext(
   );
   const postJourneyMaxDay = state.postJourney?.journeyComplete ? totalDays + state.postJourney.extensionDays : totalDays;
   const dayLimit = Math.max(totalDays, dynamicMaxDay, postJourneyMaxDay);
-  const dayNumber = Math.min(Math.max(rawDayNumber, 1), dayLimit);
+  const dayNumber = Math.min(Math.max(contentDayForDate(dateISO, state.startDateISO, restDays), 1), dayLimit);
 
   const unlockedHabitIds = habits
     .getAllHabits()
@@ -55,8 +57,12 @@ export function buildPlanningContext(
   let backlogDays = 0;
   let cursor = isoAddDays(dateISO, -1);
   for (let i = 0; i < 14; i++) {
-    const dNum = rawDayNumberForDate(cursor, state.startDateISO);
-    if (dNum < 1) break;
+    const dNum = contentDayForDate(cursor, state.startDateISO, restDays);
+    if (dNum < 1 || dNum > dayLimit) break;
+    if (restDays.includes(dNum)) {
+      cursor = isoAddDays(cursor, -1);
+      continue;
+    }
     const tasks = stats.baseTasksForDay(dNum);
     if (tasks.length === 0) {
       cursor = isoAddDays(cursor, -1);
@@ -81,8 +87,12 @@ export function buildPlanningContext(
   let gapDays = 0;
   cursor = isoAddDays(dateISO, -1);
   for (let i = 0; i < totalDays; i++) {
-    const dNum = rawDayNumberForDate(cursor, state.startDateISO);
-    if (dNum < 1) break;
+    const dNum = contentDayForDate(cursor, state.startDateISO, restDays);
+    if (dNum < 1 || dNum > dayLimit) break;
+    if (restDays.includes(dNum)) {
+      cursor = isoAddDays(cursor, -1);
+      continue;
+    }
     const tasks = stats.baseTasksForDay(dNum);
     if (tasks.length === 0) break;
     const pct = stats.completionPct(tasks, stats.dayLog(state, cursor));
@@ -127,8 +137,12 @@ export function buildPlanningContext(
     let lastDone = -1;
     cursor = isoAddDays(dateISO, -1);
     for (let i = 0; i < 7; i++) {
-      const dNum = rawDayNumberForDate(cursor, state.startDateISO);
-      if (dNum < 1) break;
+      const dNum = contentDayForDate(cursor, state.startDateISO, restDays);
+      if (dNum < 1 || dNum > dayLimit) break;
+      if (restDays.includes(dNum)) {
+        cursor = isoAddDays(cursor, -1);
+        continue;
+      }
       const log = stats.dayLog(state, cursor);
       if (reviewTasks.some((t) => log[t.id])) {
         lastDone = i;
@@ -152,10 +166,28 @@ export function buildPlanningContext(
 
   const recoveryMode = isRecoveryModeActive(state, dateISO, config, deps);
 
-  const restDay = (state.restDays ?? []).includes(dayNumber);
+  const restDay = isRestDate(dateISO, state.startDateISO, restDays);
   // A day is a MOCK test day ONLY when explicitly marked via setDayMode
   // (mode:"test"). Sundays are normal study days by default.
   const mockSunday = (state.testDays ?? []).includes(dayNumber);
+
+  // Mastery: ids in the completed bucket (computed OR manually placed) and ids
+  // manually scheduled for TODAY's plan.
+  const mastery = computeMasterySummary(state, dayNumber, (d) => stats.baseTasksForDay(d));
+  const masteredTaskIds = new Set<string>();
+  const scheduledTaskIds = new Set<string>();
+  const scheduledMasteredEntries: TaskBankEntry[] = [];
+  for (const [id, entry] of mastery.entriesById) {
+    const m = mastery.masteryById.get(id);
+    if (!m) continue;
+    const placement = state.masteryPlacement?.[id];
+    const bucket = effectiveBucket(placement, m.masteredAtDay !== null, dayNumber);
+    if (bucket === 'completed') masteredTaskIds.add(id);
+    if (bucket === 'scheduled-today') {
+      scheduledTaskIds.add(id);
+      scheduledMasteredEntries.push(entry);
+    }
+  }
 
   return {
     dateISO,
@@ -176,6 +208,9 @@ export function buildPlanningContext(
     mockSunday,
     weekday,
     restDay,
+    masteredTaskIds,
+    scheduledTaskIds,
+    scheduledMasteredEntries,
     gapDays,
     recentSummaries,
     dynamicEntries: state.dynamicTaskBank,
@@ -214,9 +249,14 @@ function isRecoveryModeActive(state: AppState, dateISO: string, config: Progress
   // activate recovery for today.
   let consecutiveMiss = 0;
   let cursor = isoAddDays(dateISO, -1);
+  const restDays = state.restDays ?? [];
   for (let i = 0; i < deps.totalDays; i++) {
-    const dNum = rawDayNumberForDate(cursor, state.startDateISO);
+    const dNum = contentDayForDate(cursor, state.startDateISO, restDays);
     if (dNum < 1) break;
+    if (restDays.includes(dNum)) {
+      cursor = isoAddDays(cursor, -1);
+      continue;
+    }
     const tasks = deps.stats.baseTasksForDay(dNum);
     if (tasks.length === 0) break;
     const pct = deps.stats.completionPct(tasks, deps.stats.dayLog(state, cursor));

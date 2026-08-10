@@ -1,12 +1,13 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Calendar, Check, Flame, Pencil, Plus, ShieldCheck, Siren, Sunrise, Sunset, Target, Timer, Trash2, X, Zap } from 'lucide-react';
+import { Calendar, Check, CheckCircle2, ChevronDown, Flame, Pencil, Plus, RotateCcw, ShieldCheck, Siren, Sunrise, Sunset, Target, Timer, Trash2, X, Zap } from 'lucide-react';
 import type { AppState } from '../types';
 import type { EnergyLevel, TaskBankEntry, TaskType } from '../core/domain/task-bank';
 import { PHASES } from '../data/curriculum';
 import { DEFAULT_PROGRESSION_CONFIG, type DailyPlan, type PlannedTask } from '../core/domain/progress';
 import { TASK_TYPES } from '../core/domain/task-bank';
 import { getCurrentDayNumber, getJourneyDayLimit, getLevelForDay, isExamMonthActive, daysUntilExam } from '../lib/engine';
+import { computeMasterySummary, effectiveBucket } from '../features/habit-engine/mastery';
 import { container } from '../di/container';
 import DayGauge from '../components/DayGauge';
 import Confetti from '../components/Confetti';
@@ -51,6 +52,7 @@ export default function TodayScreen({
 }) {
   const [showAdd, setShowAdd] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [showCompleted, setShowCompleted] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{ title: string; durationMin: number } | null>(null);
@@ -69,6 +71,29 @@ export default function TodayScreen({
   const journeyDayLimit = getJourneyDayLimit(state);
   const level = getLevelForDay(dayNumber);
   const phase = PHASES.find((p) => p.id === level?.phase);
+
+  // Mastered (completed bucket) tasks for the Completed section.
+  const masterySummary = state.startDateISO
+    ? computeMasterySummary(state, dayNumber, (d) => container.planner.stats.baseTasksForDay(d))
+    : null;
+  const completedTasks: TaskBankEntry[] = [];
+  if (masterySummary) {
+    for (const [id, entry] of masterySummary.entriesById) {
+      const m = masterySummary.masteryById.get(id);
+      if (!m) continue;
+      const placement = state.masteryPlacement?.[id];
+      if (effectiveBucket(placement, m.masteredAtDay !== null, dayNumber) === 'completed') {
+        completedTasks.push(entry);
+      }
+    }
+    completedTasks.sort(
+      (a, b) =>
+        (masterySummary.masteryById.get(b.id)?.masteredAtDay ?? 0) -
+          (masterySummary.masteryById.get(a.id)?.masteredAtDay ?? 0) ||
+        a.title.localeCompare(b.title),
+    );
+  }
+  const completedCount = completedTasks.length;
 
   const config = {
     ...DEFAULT_PROGRESSION_CONFIG,
@@ -190,6 +215,33 @@ export default function TodayScreen({
       return { ...s, dynamicTaskBank: s.dynamicTaskBank.filter((e) => e.id !== task.entry.id) };
     });
     flash('Task aaj ke plan se hata diya (bank safe).');
+  }
+
+  /** Books a mastered task into a specific content day's plan (one-shot). */
+  function moveToDay(taskId: string, day: number) {
+    const target = Math.round(day);
+    if (!Number.isFinite(target) || target < 1 || target > journeyDayLimit) {
+      flash(`Day 1 se ${journeyDayLimit} ke beech ek number do.`);
+      return;
+    }
+    update((s) => ({
+      ...s,
+      masteryPlacement: { ...(s.masteryPlacement ?? {}), [taskId]: { bucket: 'scheduled', day: target } },
+    }));
+    if (target === dayNumber) {
+      flash('Task aaj ke plan mein wapas aa gaya.');
+    } else {
+      flash(`Task Day ${target} ke liye schedule ho gaya.`);
+    }
+  }
+
+  /** Moves a scheduled mastered task back to the permanent completed bucket. */
+  function moveBackToCompleted(taskId: string) {
+    update((s) => ({
+      ...s,
+      masteryPlacement: { ...(s.masteryPlacement ?? {}), [taskId]: { bucket: 'completed' } },
+    }));
+    flash('Task wapas Completed section mein aa gaya.');
   }
 
   const groups = ['exam', 'morning', 'blocks', 'night', 'weekly', 'monthly', 'bonus', 'mock'] as const;
@@ -409,6 +461,42 @@ export default function TodayScreen({
           </div>
         );
       })}
+
+      {/* Completed (mastered) bucket */}
+      {completedCount > 0 && (
+        <div className="mb-4">
+          <button
+            type="button"
+            onClick={() => setShowCompleted((v) => !v)}
+            className="w-full rounded-2xl border border-border bg-panel/70 px-4 py-3 text-left transition-colors hover:border-l/40"
+            aria-expanded={showCompleted}
+            aria-controls="completed-section"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <CheckCircle2 size={15} color="var(--color-success)" className="shrink-0" />
+                <span className="font-display text-sm font-bold">Completed (Mastered)</span>
+                <span className="text-[11px] text-muted">{completedCount} task{completedCount === 1 ? '' : 's'}</span>
+              </div>
+              <ChevronDown size={16} className={`shrink-0 text-muted transition-transform ${showCompleted ? 'rotate-180' : ''}`} />
+            </div>
+          </button>
+          {showCompleted && (
+            <div id="completed-section" className="mt-2.5 space-y-2.5">
+              {completedTasks.map((entry) => (
+                <CompletedRow
+                  key={entry.id}
+                  entry={entry}
+                  journeyDayLimit={journeyDayLimit}
+                  onMoveToDay={(day) => moveToDay(entry.id, day)}
+                  onMoveBack={() => moveBackToCompleted(entry.id)}
+                  flash={flash}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Floating add button */}
       <button
@@ -724,6 +812,87 @@ const TaskRow = memo(function TaskRow({
           </>,
           document.body,
         )}
+    </div>
+  );
+});
+
+const CompletedRow = memo(function CompletedRow({
+  entry,
+  journeyDayLimit,
+  onMoveToDay,
+  onMoveBack,
+  flash,
+}: {
+  entry: TaskBankEntry;
+  journeyDayLimit: number;
+  onMoveToDay: (day: number) => void;
+  onMoveBack: () => void;
+  flash: (msg: string) => void;
+}) {
+  const [moving, setMoving] = useState(false);
+  const [day, setDay] = useState('');
+
+  function submit() {
+    const n = Number(day);
+    if (!Number.isFinite(n) || n < 1 || n > journeyDayLimit) {
+      flash(`Day 1 se ${journeyDayLimit} ke beech ek number do.`);
+      return;
+    }
+    onMoveToDay(n);
+    setMoving(false);
+    setDay('');
+  }
+
+  return (
+    <div className="card relative flex items-center gap-3 p-3">
+      <span className="h-10 w-1 shrink-0 rounded-[1px]" style={{ backgroundColor: 'var(--color-success)', opacity: 0.4 }} />
+      <CheckCircle2 size={17} color="var(--color-success)" className="shrink-0" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium leading-snug text-muted strike">{entry.title}</p>
+        <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted">
+          <Timer size={11} /> {entry.estimatedDurationMin} min
+          <span className="h-1 w-1 rounded-full bg-muted-dim" />
+          Mastered
+        </p>
+      </div>
+      {moving ? (
+        <div className="flex shrink-0 items-center gap-1.5">
+          <input
+            className="field w-16 py-1 text-center text-sm"
+            type="number"
+            min={1}
+            max={journeyDayLimit}
+            aria-label="Move task to day"
+            value={day}
+            onChange={(e) => setDay(e.target.value)}
+            autoFocus
+          />
+          <button type="button" className="btn btn-primary px-2.5 py-1.5 text-xs font-bold" onClick={submit}>
+            Move
+          </button>
+          <button type="button" className="icon-btn" aria-label="Cancel move" onClick={() => { setMoving(false); setDay(''); }}>
+            <X size={14} />
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="flex shrink-0 items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-medium text-muted transition-colors hover:border-l/40 hover:text-text"
+          onClick={() => setMoving(true)}
+        >
+          <RotateCcw size={12} />
+          Move to Day
+        </button>
+      )}
+      <button
+        type="button"
+        className="icon-btn shrink-0"
+        aria-label={`Move ${entry.title} back to completed`}
+        title="Move back to Completed"
+        onClick={onMoveBack}
+      >
+        <CheckCircle2 size={15} color="var(--color-success)" />
+      </button>
     </div>
   );
 });

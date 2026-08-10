@@ -230,18 +230,14 @@ describe('HabitProgressionService backward compatibility', () => {
   it('injects recommended tasks for weak habits without touching required set', () => {
     const { planner, bank } = makePlanner();
     const state = healthyState();
-    // Earliest days completed → no 3-miss recovery streak in the background.
-    for (const d of [1, 2, 3, 4]) {
-      state.taskLogs[isoFromDay(d)] = completeLogFor(planner, d);
-    }
-    // Low-but-not-crashing completion for the last 3 days (~50%) → no recovery
-    // mode (partial days, never 3 misses), but backlog signals may still inject
-    // gentle recommendations.
-    for (const d of [5, 6, 7]) {
+    // 7 days of ~50% completion: every day has progress (no 3-miss recovery
+    // streak), but the parity rotation keeps each individual task at ≤4 done
+    // days so nothing accidentally crosses the mastery threshold.
+    for (const d of [1, 2, 3, 4, 5, 6, 7]) {
       const base = planner.stats.baseTasksForDay(d);
       const log: Record<string, boolean> = {};
       base.forEach((t, i) => {
-        if (i % 2 === 0) log[t.id] = true;
+        if ((i + d) % 2 === 0) log[t.id] = true;
       });
       state.taskLogs[isoFromDay(d)] = log;
     }
@@ -567,5 +563,77 @@ describe('HabitProgressionService time-horizon matrix', () => {
     const state: AppState = { ...healthyState(), examDateISO: '2026-01-05' };
     const plan = planner.buildPlan(state, '2026-01-08', DEFAULT_PROGRESSION_CONFIG);
     expect(plan.contextSummary).not.toContain('exam-window');
+  });
+});
+
+describe('HabitProgressionService — mastery integration', () => {
+  /** Marks d1_t1 done on the first `days` journey days (content days 1..days)
+   *  and fully completes the most recent day so the plan is NOT in recovery
+   *  mode (a 25%-complete day would trigger the 3-miss recovery streak). */
+  function masterTask(state: AppState, days: number, planner: HabitProgressionService): AppState {
+    for (let d = 1; d <= days; d++) {
+      state.taskLogs[isoFromDay(d)] = { ...(state.taskLogs[isoFromDay(d)] ?? {}), d1_t1: true };
+    }
+    const last: Record<string, boolean> = {};
+    for (const t of planner.stats.baseTasksForDay(days)) last[t.id] = true;
+    state.taskLogs[isoFromDay(days)] = { ...last, d1_t1: true };
+    return state;
+  }
+
+  it('a mastered task (5 done days) is excluded from the daily rotation', () => {
+    const { planner, bank } = makePlanner();
+    const state = masterTask(healthyState(), 5, planner);
+    const plan = planner.buildPlan(state, isoFromDay(6), legacyConfig);
+    expect(plan.tasks.some((t) => t.entry.id === 'd1_t1')).toBe(false);
+    // Other day-1 tasks are untouched.
+    expect(plan.tasks.some((t) => t.entry.id === 'd1_t2')).toBe(true);
+    void bank;
+  });
+
+  it('4 done days are NOT enough — the task stays in the rotation', () => {
+    const { planner } = makePlanner();
+    const state = masterTask(healthyState(), 4, planner);
+    const plan = planner.buildPlan(state, isoFromDay(5), legacyConfig);
+    expect(plan.tasks.some((t) => t.entry.id === 'd1_t1')).toBe(true);
+  });
+
+  it('a mastered task manually scheduled for today is back in the plan exactly once', () => {
+    const { planner } = makePlanner();
+    const state = masterTask(healthyState(), 5, planner);
+    state.masteryPlacement = { d1_t1: { bucket: 'scheduled', day: 6 } };
+    const plan = planner.buildPlan(state, isoFromDay(6), legacyConfig);
+    const matches = plan.tasks.filter((t) => t.entry.id === 'd1_t1');
+    expect(matches).toHaveLength(1);
+    expect(matches[0].required).toBe(true);
+  });
+
+  it('a mastered task scheduled for a future day stays out of today\'s plan', () => {
+    const { planner } = makePlanner();
+    const state = masterTask(healthyState(), 5, planner);
+    state.masteryPlacement = { d1_t1: { bucket: 'scheduled', day: 9 } };
+    const plan = planner.buildPlan(state, isoFromDay(6), legacyConfig);
+    expect(plan.tasks.some((t) => t.entry.id === 'd1_t1')).toBe(false);
+  });
+
+  it('a mastered task scheduled for a rest day appears (the only task that day)', () => {
+    const { planner } = makePlanner();
+    const state = masterTask(healthyState(), 5, planner);
+    state.restDays = [6];
+    state.masteryPlacement = { d1_t1: { bucket: 'scheduled', day: 6 } };
+    const plan = planner.buildPlan(state, isoFromDay(6), DEFAULT_PROGRESSION_CONFIG);
+    expect(plan.contextSummary).toContain('rest-day');
+    expect(plan.tasks.map((t) => t.entry.id)).toEqual(['d1_t1']);
+    expect(plan.tasks[0].reason).toBe('scheduled');
+  });
+
+  it('rest days extend the calendar: content day 90 still plans with rests before it', () => {
+    const { planner, bank } = makePlanner();
+    // Two rests before content 90 → content 90 plays on raw day 92.
+    const state = { ...healthyState(), restDays: [5, 40] };
+    const plan = planner.buildPlan(state, isoFromDay(92), DEFAULT_PROGRESSION_CONFIG);
+    expect(plan.dayNumber).toBe(90);
+    expect(plan.tasks.length).toBeGreaterThan(0);
+    expect(plan.contextSummary).toContain('day 90');
+    void bank;
   });
 });

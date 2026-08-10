@@ -3,7 +3,8 @@ import type { AppState, DayLog, Level, Slot } from '../types';
 import type { TaskBankEntry } from '../core/domain/task-bank';
 import type { Habit as CoreHabit } from '../core/domain/habit';
 import { DEFAULT_PROGRESSION_CONFIG } from '../core/domain/progress';
-import { dateToISO, isoAddDays, rawDayNumberForDate } from '../features/habit-engine/dates';
+import { contentDayForDate, dateForContentDay, dateToISO, isoAddDays, rawDayNumberForDate } from '../features/habit-engine/dates';
+import { computeTaskMastery } from '../features/habit-engine/mastery';
 import { HabitProgressionService } from '../features/habit-engine/planner';
 import type { TaskBankService } from '../features/task-bank/task-bank.service';
 import { TaskBankServiceImpl } from '../features/task-bank/task-bank.service';
@@ -65,8 +66,8 @@ export { dateToISO, isoAddDays, rawDayNumberForDate };
 
 export function getCurrentDayNumber(state: AppState, todayISO: string): number {
   if (!state.startDateISO) return 0;
-  const raw = rawDayNumberForDate(todayISO, state.startDateISO);
-  return Math.min(Math.max(raw, 1), getJourneyDayLimit(state));
+  const content = contentDayForDate(todayISO, state.startDateISO, state.restDays ?? []);
+  return Math.min(Math.max(content, 1), getJourneyDayLimit(state));
 }
 
 export function getJourneyDayLimit(state: AppState): number {
@@ -181,9 +182,13 @@ export function getLevelStatus(level: Level, state: AppState, currentDayNumber: 
   if (!state.startDateISO) return 'locked';
   const levelTasks = seedTaskBank.findByLevel(level.id);
   if (levelTasks.length === 0) return 'needs-recovery';
+  // Auto-clear: every task of the level reached mastery (per-level check —
+  // avoids recomputing the whole journey's mastery for each level).
+  if (levelTasks.every((t) => computeTaskMastery(state, t, currentDayNumber).masteredAtDay !== null)) return 'cleared';
   let total = 0;
+  const restDays = state.restDays ?? [];
   for (let d = level.dayStart; d <= level.dayEnd; d++) {
-    const dateISO = isoAddDays(state.startDateISO, d - 1);
+    const dateISO = dateForContentDay(d, state.startDateISO, restDays);
     const log = getDayLog(state, dateISO);
     total += completionPct(levelTasks, log);
   }

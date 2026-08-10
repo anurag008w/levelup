@@ -3,7 +3,7 @@ import type { DayLog } from '../../core/domain/progress';
 import type { TaskBankEntry } from '../../core/domain/task-bank';
 import type { HabitRepository } from '../../core/ports/repositories';
 import type { TaskBankService } from '../task-bank/task-bank.service';
-import { isoAddDays, rawDayNumberForDate } from './dates';
+import { contentDayForDate, isoAddDays } from './dates';
 
 /**
  * Habit statistics over the Task Bank. Produces identical results to the old
@@ -56,11 +56,17 @@ export class HabitStatsService {
     if (!state.startDateISO) return 0;
     const firstActive = this.habitFirstActiveDay(habitId);
     if (firstActive === null) return 0;
+    const restDays = state.restDays ?? [];
     let streak = 0;
     let cursor = todayISO;
     for (let i = 0; i < totalDays; i++) {
-      const dayNum = rawDayNumberForDate(cursor, state.startDateISO);
+      const dayNum = contentDayForDate(cursor, state.startDateISO, restDays);
       if (dayNum < firstActive) break;
+      if (restDays.includes(dayNum)) {
+        // Rest days are skipped — they don't break the streak.
+        cursor = isoAddDays(cursor, -1);
+        continue;
+      }
       const tasks = this.habitTasksOnDay(habitId, dayNum);
       if (tasks.length === 0) break;
       const allDone = tasks.every((t) => this.dayLog(state, cursor)[t.id]);
@@ -71,23 +77,32 @@ export class HabitStatsService {
     return streak;
   }
 
-  /** % of active days (last 7) where the habit was fully completed. */
+  /** % of active days (last 7 CONTENT days) where the habit was fully
+   *  completed. Rest days are invisible: they neither count as active days nor
+   *  consume the window. */
   computeHabitScore(habitId: string, state: AppState, todayISO: string): number | null {
     if (!state.startDateISO) return null;
     const firstActive = this.habitFirstActiveDay(habitId);
     if (firstActive === null) return null;
+    const restDays = state.restDays ?? [];
     let activeDays = 0;
     let successDays = 0;
     let cursor = todayISO;
-    for (let i = 0; i < 7; i++) {
-      const dayNum = rawDayNumberForDate(cursor, state.startDateISO);
+    let seen = 0;
+    while (seen < 7) {
+      const dayNum = contentDayForDate(cursor, state.startDateISO, restDays);
       if (dayNum < firstActive) break;
+      if (restDays.includes(dayNum)) {
+        cursor = isoAddDays(cursor, -1);
+        continue;
+      }
       const tasks = this.habitTasksOnDay(habitId, dayNum);
       if (tasks.length > 0) {
         activeDays++;
         const log = this.dayLog(state, cursor);
         if (tasks.every((t) => log[t.id])) successDays++;
       }
+      seen++;
       cursor = isoAddDays(cursor, -1);
     }
     if (activeDays === 0) return null;
@@ -97,11 +112,16 @@ export class HabitStatsService {
   /** Overall streak: consecutive days with >= 80% completion. */
   computeOverallStreak(state: AppState, todayISO: string, totalDays: number, minPct = 80): number {
     if (!state.startDateISO) return 0;
+    const restDays = state.restDays ?? [];
     let streak = 0;
     let cursor = todayISO;
     for (let i = 0; i < totalDays; i++) {
-      const dayNum = rawDayNumberForDate(cursor, state.startDateISO);
+      const dayNum = contentDayForDate(cursor, state.startDateISO, restDays);
       if (dayNum < 1) break;
+      if (restDays.includes(dayNum)) {
+        cursor = isoAddDays(cursor, -1);
+        continue;
+      }
       const tasks = this.baseTasksForDay(dayNum);
       if (tasks.length === 0) break;
       const pct = this.completionPct(tasks, this.dayLog(state, cursor));

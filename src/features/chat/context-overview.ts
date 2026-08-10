@@ -2,7 +2,7 @@ import { LEVELS, TOTAL_DAYS } from '../../data/curriculum';
 import { DEFAULT_PROGRESSION_CONFIG } from '../../core/domain/progress';
 import type { AppState } from '../../core/domain/state';
 import type { HabitProgressionService } from '../habit-engine/planner';
-import { isoAddDays, rawDayNumberForDate } from '../habit-engine/dates';
+import { contentDayForDate, dateForContentDay, isoAddDays } from '../habit-engine/dates';
 import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from './plan-format';
 import { computeHabitScore, computeOverallStreak, getCumulativeHabits, getLevelStatus } from '../../lib/engine';
 
@@ -27,7 +27,7 @@ export function buildJourneyOverview(state: AppState, today: string): string {
   }
   const xp = totalDone * XP_PER_TASK;
   const consistency = days > 0 ? Math.round((activeDays / days) * 100) : 0;
-  const dayNumber = rawDayNumberForDate(today, state.startDateISO);
+  const dayNumber = contentDayForDate(today, state.startDateISO, state.restDays ?? []);
   const cleared = LEVELS.filter((l) => l.authored && getLevelStatus(l, state, dayNumber) === 'cleared').length;
   const recovery = LEVELS.filter((l) => l.authored && getLevelStatus(l, state, dayNumber) === 'needs-recovery').length;
   const habits = getCumulativeHabits(dayNumber)
@@ -62,11 +62,12 @@ export function buildJourneyOverview(state: AppState, today: string): string {
 /** Compact per-day progress rows for the last ~14 days. */
 export function buildRecentProgress(state: AppState, today: string, planner: HabitProgressionService): string[] {
   if (!state.startDateISO) return [];
-  const todayDay = rawDayNumberForDate(today, state.startDateISO);
+  const restDays = state.restDays ?? [];
+  const todayDay = contentDayForDate(today, state.startDateISO, restDays);
   const fromDay = Math.max(1, todayDay - 13);
   const rows: string[] = [];
   for (let day = fromDay; day <= todayDay; day++) {
-    const dateISO = isoAddDays(state.startDateISO, day - 1);
+    const dateISO = dateForContentDay(day, state.startDateISO, restDays);
     const plan = planner.buildPlan(state, dateISO, DEFAULT_PROGRESSION_CONFIG);
     rows.push(`${formatDayLabel(dateISO)} Day ${day}: ${formatPlanProgress(plan, state)}`);
   }

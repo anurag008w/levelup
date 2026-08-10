@@ -88,6 +88,14 @@ export interface PlanningContext {
   weekday: number;
   /** True when this journey day is marked as a rest/holiday day. */
   restDay: boolean;
+  /** ids of tasks that reached mastery (completed bucket) — excluded from the
+   *  daily plan unless scheduled for today. */
+  masteredTaskIds: Set<string>;
+  /** ids of mastered tasks manually scheduled for THIS content day. */
+  scheduledTaskIds: Set<string>;
+  /** entries of mastered tasks manually scheduled for THIS content day
+   *  (re-injected into the plan by the planner). */
+  scheduledMasteredEntries: TaskBankEntry[];
   /** Days since last fully-completed day (gap detection). */
   gapDays: number;
   recentSummaries: DailySummary[];

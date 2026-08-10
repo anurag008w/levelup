@@ -205,6 +205,7 @@ export function buildBackupPayload(state: AppState, chat: ChatStoreState | null,
       planCache: full.planCache,
       restDays: full.restDays,
       testDays: full.testDays,
+      masteryPlacement: full.masteryPlacement,
     };
   } else if (scope === 'levels') {
     const full = normalizeState(state);

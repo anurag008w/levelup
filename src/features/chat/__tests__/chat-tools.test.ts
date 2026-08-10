@@ -15,6 +15,7 @@ import { LLMService } from '../../ai/llm.service';
 import { ProviderSettingsService } from '../../ai/provider-settings.service';
 import { ChatService } from '../chat.service';
 import { ChatToolsService } from '../chat-tools.service';
+import { DEFAULT_PROGRESSION_CONFIG } from '../../../core/domain/progress';
 import { undoLastAiAction, redoLastAiAction } from '../../../core/domain/ai-actions';
 import { PlannerService, PlannerToolsService } from '../../planner/planner.service';
 import type { TaskGenerationService } from '../../ai/task-generation.service';
@@ -83,7 +84,7 @@ function makeTools(store: StateStore): { tools: ChatToolsService; taskGeneration
       source: 'ai',
     }),
   } as unknown as TaskGenerationService;
-  return { tools: new ChatToolsService(store, planner, taskBank, taskGeneration), taskGeneration };
+  return { tools: new ChatToolsService(store, planner, taskBank, taskGeneration, DEFAULT_PROGRESSION_CONFIG, null, new FakeClock()), taskGeneration };
 }
 
 function makeChat(store: StateStore, provider: LLMProvider, tools: ChatToolsService): ChatService {
@@ -210,13 +211,13 @@ describe('ChatToolsService', () => {
   it('markDone uses special plan log keys such as mock days', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    // Sundays are NOT auto mock anymore — Day 19 (2026-07-19) becomes a mock
+    // Sundays are NOT auto mock anymore — Day 33 (2026-08-02) becomes a mock
     // day only when explicitly marked as a TEST day via setDayMode.
-    await tools.run({ action: 'setDayMode', day: 19, mode: 'test', confirmed: true });
-    const result = await tools.run({ action: 'markDone', day: 19, taskId: 'mock_1' });
+    await tools.run({ action: 'setDayMode', day: 33, mode: 'test', confirmed: true });
+    const result = await tools.run({ action: 'markDone', day: 33, taskId: 'mock_1' });
     expect(result.ok).toBe(true);
-    expect(store.get().taskLogs['mock:2026-07-19']?.mock_1).toBe(true);
-    expect(store.get().taskLogs['2026-07-19']?.mock_1).toBeUndefined();
+    expect(store.get().taskLogs['mock:2026-08-02']?.mock_1).toBe(true);
+    expect(store.get().taskLogs['2026-08-02']?.mock_1).toBeUndefined();
   });
 
   it('addTask appends a dynamic entry through the store', async () => {
@@ -392,78 +393,78 @@ describe('ChatToolsService', () => {
   it('setDayMode rest empties the plan and study restores it', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    const preview = await tools.run({ action: 'setDayMode', day: 2, mode: 'rest' });
+    const preview = await tools.run({ action: 'setDayMode', day: 35, mode: 'rest' });
     expect(preview.ok).toBe(false);
     expect(preview.requiresConfirmation).toBe(true);
     expect(store.get().restDays).toEqual([]);
-    const rest = await tools.run({ action: 'setDayMode', day: 2, mode: 'rest', confirmed: true });
+    const rest = await tools.run({ action: 'setDayMode', day: 35, mode: 'rest', confirmed: true });
     expect(rest.ok).toBe(true);
-    expect(store.get().restDays).toEqual([2]);
-    const restPlan = await tools.run({ action: 'getPlan', day: 2 });
+    expect(store.get().restDays).toEqual([35]);
+    const restPlan = await tools.run({ action: 'getPlan', day: 35 });
     expect(restPlan.summary).toContain('REST DAY');
     expect(restPlan.summary).not.toContain('id:d');
-    const study = await tools.run({ action: 'setDayMode', day: 2, mode: 'study', confirmed: true });
+    const study = await tools.run({ action: 'setDayMode', day: 35, mode: 'study', confirmed: true });
     expect(study.ok).toBe(true);
     expect(store.get().restDays).toEqual([]);
-    const studyPlan = await tools.run({ action: 'getPlan', day: 2 });
+    const studyPlan = await tools.run({ action: 'getPlan', day: 35 });
     expect(studyPlan.summary).toContain('id:d1_t');
   });
 
   it('setDayMode marks a TEST day: mock protocol appears, restDays untouched; study removes it', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    // Sunday 2026-07-19 is a NORMAL study day by default — no mock tasks.
-    const before = await tools.run({ action: 'getPlan', day: 19 });
+    // Sunday 2026-08-02 is a NORMAL study day by default — no mock tasks.
+    const before = await tools.run({ action: 'getPlan', day: 33 });
     expect(before.summary).not.toContain('id:mock_1');
 
-    const preview = await tools.run({ action: 'setDayMode', day: 19, mode: 'test' });
+    const preview = await tools.run({ action: 'setDayMode', day: 33, mode: 'test' });
     expect(preview.ok).toBe(false);
     expect(preview.requiresConfirmation).toBe(true);
     expect(store.get().testDays).toEqual([]);
 
-    const test = await tools.run({ action: 'setDayMode', day: 19, mode: 'test', confirmed: true });
+    const test = await tools.run({ action: 'setDayMode', day: 33, mode: 'test', confirmed: true });
     expect(test.ok).toBe(true);
-    expect(store.get().testDays).toEqual([19]);
+    expect(store.get().testDays).toEqual([33]);
     expect(store.get().restDays).toEqual([]);
-    const testPlan = await tools.run({ action: 'getPlan', day: 19 });
+    const testPlan = await tools.run({ action: 'getPlan', day: 33 });
     expect(testPlan.summary).toContain('id:mock_1');
     // A test day is NOT a rest day — it is not empty.
     expect(testPlan.summary).not.toContain('REST DAY');
 
-    const study = await tools.run({ action: 'setDayMode', day: 19, mode: 'study', confirmed: true });
+    const study = await tools.run({ action: 'setDayMode', day: 33, mode: 'study', confirmed: true });
     expect(study.ok).toBe(true);
     expect(store.get().testDays).toEqual([]);
-    const after = await tools.run({ action: 'getPlan', day: 19 });
+    const after = await tools.run({ action: 'getPlan', day: 33 });
     expect(after.summary).not.toContain('id:mock_1');
   });
 
   it('setDayMode rest clears a test day and test clears a rest day atomically', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    await tools.run({ action: 'setDayMode', day: 5, mode: 'test', confirmed: true });
-    await tools.run({ action: 'setDayMode', day: 5, mode: 'rest', confirmed: true });
+    await tools.run({ action: 'setDayMode', day: 35, mode: 'test', confirmed: true });
+    await tools.run({ action: 'setDayMode', day: 35, mode: 'rest', confirmed: true });
     expect(store.get().testDays).toEqual([]);
-    expect(store.get().restDays).toEqual([5]);
-    await tools.run({ action: 'setDayMode', day: 5, mode: 'test', confirmed: true });
-    expect(store.get().testDays).toEqual([5]);
+    expect(store.get().restDays).toEqual([35]);
+    await tools.run({ action: 'setDayMode', day: 35, mode: 'test', confirmed: true });
+    expect(store.get().testDays).toEqual([35]);
     expect(store.get().restDays).toEqual([]);
   });
 
   it('setDayMode test/rest/study changes are undoable and redoable (combined dayModes entity)', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    await tools.run({ action: 'setDayMode', day: 19, mode: 'test', confirmed: true });
-    expect(store.get().testDays).toEqual([19]);
+    await tools.run({ action: 'setDayMode', day: 35, mode: 'test', confirmed: true });
+    expect(store.get().testDays).toEqual([35]);
     store.save(undoLastAiAction(store.get()));
     expect(store.get().testDays).toEqual([]);
     store.save(redoLastAiAction(store.get()));
-    expect(store.get().testDays).toEqual([19]);
+    expect(store.get().testDays).toEqual([35]);
     // Rest + test toggling stays atomic through undo.
-    await tools.run({ action: 'setDayMode', day: 19, mode: 'rest', confirmed: true });
+    await tools.run({ action: 'setDayMode', day: 35, mode: 'rest', confirmed: true });
     expect(store.get().testDays).toEqual([]);
-    expect(store.get().restDays).toEqual([19]);
+    expect(store.get().restDays).toEqual([35]);
     store.save(undoLastAiAction(store.get()));
-    expect(store.get().testDays).toEqual([19]);
+    expect(store.get().testDays).toEqual([35]);
     expect(store.get().restDays).toEqual([]);
   });
 
@@ -507,16 +508,16 @@ describe('ChatToolsService', () => {
   it('can add tasks on a mock Sunday and they appear in that plan', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    // Sundays are normal study days by default — Day 19 (2026-07-19) gets the
+    // Sundays are normal study days by default — Day 33 (2026-08-02) gets the
     // mock protocol ONLY when explicitly marked as a TEST day.
-    const normal = await tools.run({ action: 'getPlan', day: 19 });
+    const normal = await tools.run({ action: 'getPlan', day: 33 });
     expect(normal.summary).not.toContain('id:mock_1');
-    await tools.run({ action: 'setDayMode', day: 19, mode: 'test', confirmed: true });
-    const sunday = await tools.run({ action: 'getPlan', day: 19 });
+    await tools.run({ action: 'setDayMode', day: 33, mode: 'test', confirmed: true });
+    const sunday = await tools.run({ action: 'getPlan', day: 33 });
     expect(sunday.summary).toContain('id:mock_1');
-    const add = await tools.run({ action: 'addTask', day: 19, intent: 'sunday revision', durationMin: 20 });
+    const add = await tools.run({ action: 'addTask', day: 33, intent: 'sunday revision', durationMin: 20 });
     expect(add.ok).toBe(true);
-    const updated = await tools.run({ action: 'getPlan', day: 19 });
+    const updated = await tools.run({ action: 'getPlan', day: 33 });
     expect(updated.summary).toContain('Chat se add hua task');
   });
 
@@ -1039,7 +1040,7 @@ describe('ChatService with tools', () => {
       label: 'OpenRouter',
       isConfigured: () => true,
       // No "confirmed":true — this must come back blocked/⚠️, not applied.
-      complete: async (): Promise<LLMResponse> => ({ text: '{"action":"setDayMode","day":1,"mode":"rest"}', model: 'a' }),
+      complete: async (): Promise<LLMResponse> => ({ text: '{"action":"setDayMode","day":35,"mode":"rest"}', model: 'a' }),
       stream: async (req: LLMRequest): Promise<LLMResponse> => {
         const sys = req.messages.find((m) => m.role === 'system');
         if (sys && typeof sys.content === 'string') seenSummarySystem = sys.content;
@@ -1071,7 +1072,7 @@ describe('ChatService with tools', () => {
       isConfigured: () => true,
       complete: async (): Promise<LLMResponse> => {
         calls += 1;
-        return { text: '{"action":"setDayMode","day":1,"mode":"rest"}', model: 'a' };
+        return { text: '{"action":"setDayMode","day":35,"mode":"rest"}', model: 'a' };
       },
       stream: async (req: LLMRequest): Promise<LLMResponse> => {
         req.onDelta?.('Rest day confirm ho gaya.');
@@ -1089,7 +1090,7 @@ describe('ChatService with tools', () => {
 
     const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
     expect(calls).toBe(1); // "Yes" did NOT call the model again for the execution itself
-    expect(store.get().restDays).toEqual([1]);
+    expect(store.get().restDays).toEqual([35]);
     expect(confirmed.content).toBe('Rest day confirm ho gaya.');
     expect(chat.getSession(session.id)?.messages.find((m) => m.id === preview.id)?.pendingConfirmation).toBeUndefined();
   });
@@ -1097,7 +1098,7 @@ describe('ChatService with tools', () => {
   it('confirmPendingAction("No"): cancels without applying anything, and the buttons cannot be tapped twice', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    const provider = providerWith('{"action":"setDayMode","day":1,"mode":"rest"}', 'ignored');
+    const provider = providerWith('{"action":"setDayMode","day":35,"mode":"rest"}', 'ignored');
     const chat = makeChat(store, provider, tools);
     const session = chat.createSession();
     const preview = await chat.send(session.id, 'day 1 ko rest day bana do');
@@ -1441,7 +1442,7 @@ describe('model self-confirmation is structurally impossible (strip "confirmed" 
     // d1_t1 is not hidden yet, and the tap-carrying actions have no confirmed set.
     expect(preview.pendingConfirmation?.kind).toBe('tools');
     expect(preview.pendingConfirmation?.actions).toHaveLength(2);
-    expect(preview.pendingConfirmation?.actions.every((a) => a.confirmed !== true)).toBe(true);
+    expect(preview.pendingConfirmation?.actions.every((a) => !('confirmed' in a) || a.confirmed !== true)).toBe(true);
     const before = await tools.run({ action: 'getPlan', day: 1 });
     expect(before.summary).toContain('d1_t1'); // not hidden yet
 
@@ -1457,11 +1458,11 @@ describe('model self-confirmation is structurally impossible (strip "confirmed" 
     const { tools } = makeTools(makeStore());
     const single = tools.parseTools('{"action":"removeTask","day":1,"taskId":"d1_t1","confirmed":true}');
     expect(single).toHaveLength(1);
-    expect(single[0].confirmed).not.toBe(true);
+    expect(single[0]).not.toMatchObject({ confirmed: true });
     const batch = tools.parseTools('{"actions":[{"action":"removeTask","day":1,"taskId":"d1_t1","confirmed":true}]}');
-    expect(batch[0].confirmed).not.toBe(true);
+    expect(batch[0]).not.toMatchObject({ confirmed: true });
     const arr = tools.parseTools('[{"action":"removeTask","day":1,"taskId":"d1_t1","confirmed":true}]');
-    expect(arr[0].confirmed).not.toBe(true);
+    expect(arr[0]).not.toMatchObject({ confirmed: true });
   });
 });
 
@@ -1496,7 +1497,7 @@ describe('ChatService tool retry + reasoning', () => {
     expect(reply.pendingConfirmation?.kind).toBe('tools');
     expect(reply.pendingConfirmation?.actions).toHaveLength(1);
     expect(reply.pendingConfirmation?.actions[0]).toMatchObject({ action: 'removeTask' });
-    expect(reply.pendingConfirmation?.actions[0].confirmed).not.toBe(true);
+    expect(reply.pendingConfirmation?.actions[0]).not.toMatchObject({ confirmed: true });
     const planBefore = await tools.run({ action: 'getPlan', day: 1 });
     expect(planBefore.summary).toContain('d1_t1'); // not hidden yet
     // The user's Yes (not the model) is the only path that applies it.
@@ -1522,9 +1523,9 @@ describe('ChatService tool retry + reasoning', () => {
         const sys = req.messages.find((m) => m.role === 'system');
         if (sys && typeof sys.content === 'string') seenSystemPrompts.push(sys.content);
         // Turn 1: forgets the required "mode" field on setDayMode.
-        if (calls === 1) return { text: '{"action":"setDayMode","day":2}', model: 'a' };
+        if (calls === 1) return { text: '{"action":"setDayMode","day":35}', model: 'a' };
         // Turn 2 (retry): corrects itself using the specific feedback.
-        return { text: '{"action":"setDayMode","day":2,"mode":"rest","confirmed":true}', model: 'a' };
+        return { text: '{"action":"setDayMode","day":35,"mode":"rest","confirmed":true}', model: 'a' };
       },
       stream: async (req: LLMRequest): Promise<LLMResponse> => {
         req.onDelta?.('Rest day set kar diya.');
@@ -1546,12 +1547,12 @@ describe('ChatService tool retry + reasoning', () => {
     // own confirmed:true is stripped) and NOT applied until the user taps Yes.
     expect(reply.pendingConfirmation?.kind).toBe('tools');
     expect(reply.pendingConfirmation?.actions).toHaveLength(1);
-    expect(reply.pendingConfirmation?.actions[0]).toMatchObject({ action: 'setDayMode', day: 2, mode: 'rest' });
-    expect(reply.pendingConfirmation?.actions[0].confirmed).not.toBe(true);
+    expect(reply.pendingConfirmation?.actions[0]).toMatchObject({ action: 'setDayMode', day: 35, mode: 'rest' });
+    expect(reply.pendingConfirmation?.actions[0]).not.toMatchObject({ confirmed: true });
     expect(store.get().restDays).toEqual([]);
     // The user's tap is the only path that marks the day rest.
     await chat.confirmPendingAction(session.id, reply.id, true);
-    expect(store.get().restDays).toEqual([2]);
+    expect(store.get().restDays).toEqual([35]);
     expect(reply.tool).toBe('setDayMode');
   });
 
@@ -1903,11 +1904,11 @@ describe('ChatService tool retry + reasoning', () => {
     const store = makeStore();
     const { tools } = makeTools(store);
     const result = await tools.runMany([
-      { action: 'setDayMode', day: 2, mode: 'rest', confirmed: true },
+      { action: 'setDayMode', day: 35, mode: 'rest', confirmed: true },
       { action: 'bulkMarkDone', day: 1, taskIds: ['d1_t1', 'd1_t2'], confirmed: true },
     ]);
     expect(result.ok).toBe(true);
-    const restPlan = await tools.run({ action: 'getPlan', day: 2 });
+    const restPlan = await tools.run({ action: 'getPlan', day: 35 });
     expect(restPlan.summary).toContain('REST');
     const log = store.get().taskLogs['2026-07-01'];
     expect(log['d1_t1']).toBe(true);
