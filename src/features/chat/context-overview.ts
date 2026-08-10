@@ -97,6 +97,6 @@ export function buildContextOverview(
     `Journey so far: ${overview}`,
     `Recent progress: ${recent.join(' | ') || 'none yet'}.`,
     `Weak habits: ${context.weakHabitIds.join(', ') || 'none'}. Strong habits: ${context.strongHabitIds.join(', ') || 'none'}.`,
-    `Gaps: ${context.gapDays}. Backlog: ${context.backlogDays}. Recovery mode: ${context.recoveryMode}. Exam window: ${context.examWindowActive}. Mock Sunday: ${context.mockSunday}.`,
+    `Gaps: ${context.gapDays}. Backlog: ${context.backlogDays}. Recovery mode: ${context.recoveryMode}. Exam window: ${context.examWindowActive}. Test day (mock): ${context.mockSunday}.`,
   ].join('\n');
 }

@@ -8,7 +8,7 @@
 //   post-journey, …) + chat. The regenerable model catalog (`modelCache`) is
 //   deliberately stripped — it is an API cache, not user data, and refetches.
 // - `tasks` → only task data: dynamicTaskBank, taskLogs, planCache (har din ke
-//   phases/blocks) + restDays. Chat and everything else are NOT included.
+//   phases/blocks) + restDays/testDays. Chat and everything else are NOT included.
 // - `levels` → only progression data: clearedLevels, weeklyReviews,
 //   monthlyAssessments + postJourney (custom phases/blocks). Chat untouched.
 //
@@ -181,7 +181,7 @@ export function normalizeChatSessions(raw: unknown): ChatSession[] {
  * Builds the versioned backup payload.
  *
  * `full`  → normalized whole state (minus the regenerable model catalog) + chat.
- * `tasks` → dynamicTaskBank + customHabits + taskLogs + planCache + restDays only.
+ * `tasks` → dynamicTaskBank + customHabits + taskLogs + planCache + restDays/testDays only.
  * `levels` → clearedLevels + weeklyReviews + monthlyAssessments + postJourney only.
  *
  * Scoped payloads carry a partial `state` object; they are merged back on
@@ -204,6 +204,7 @@ export function buildBackupPayload(state: AppState, chat: ChatStoreState | null,
       taskLogs: full.taskLogs,
       planCache: full.planCache,
       restDays: full.restDays,
+      testDays: full.testDays,
     };
   } else if (scope === 'levels') {
     const full = normalizeState(state);
@@ -304,6 +305,7 @@ export function applyBackup(payload: BackupPayload, targets: ApplyBackupTargets,
     if (isRecord(rawState.taskLogs)) next.taskLogs = rawState.taskLogs as AppState['taskLogs'];
     if (isRecord(rawState.planCache)) next.planCache = rawState.planCache as AppState['planCache'];
     if (Array.isArray(rawState.restDays)) next.restDays = rawState.restDays as AppState['restDays'];
+    if (Array.isArray(rawState.testDays)) next.testDays = rawState.testDays as AppState['testDays'];
   } else if (scope === 'levels') {
     if (Array.isArray(rawState.clearedLevels)) next.clearedLevels = rawState.clearedLevels as AppState['clearedLevels'];
     if (Array.isArray(rawState.weeklyReviews)) next.weeklyReviews = rawState.weeklyReviews as AppState['weeklyReviews'];
