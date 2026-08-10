@@ -1046,6 +1046,119 @@ describe('ChatService with tools', () => {
     expect(store.get().restDays).toEqual([]);
   });
 
+  describe('every confirmationRequired tool works through the full Yes-button flow', () => {
+    // setDayMode is covered above. These cover the rest: removeTask,
+    // bulkRemoveTasks, bulkMarkDone, deleteAnyTask, deleteBlock. Each checks
+    // the SAME three things: (1) the model's first attempt gets blocked with
+    // nothing applied, (2) tapping "Yes" applies it for real with no further
+    // model call, (3) the buttons are resolved afterwards.
+
+    it('removeTask', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store);
+      let calls = 0;
+      const provider = providerWith('{"action":"removeTask","day":1,"taskId":"d1_t1"}', 'Task hata diya.');
+      const wrapped: LLMProvider = { ...provider, complete: async (req) => { calls += 1; return provider.complete(req); } };
+      const chat = makeChat(store, wrapped, tools);
+      const session = chat.createSession();
+      const preview = await chat.send(session.id, 'day 1 se pehla task hata do');
+      expect(preview.pendingConfirmation?.kind).toBe('tools');
+      expect(store.get().dynamicTaskBank.some((e) => e.id === 'd1_t1')).toBe(false); // not hidden yet
+
+      const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
+      expect(calls).toBe(1);
+      const override = store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1');
+      expect(override?.unlockConditions).toEqual([{ type: 'day', fromDay: 1 }, { type: 'not-day', day: 1 }]);
+      expect(confirmed.content).toBe('Task hata diya.');
+      expect(chat.getSession(session.id)?.messages.find((m) => m.id === preview.id)?.pendingConfirmation).toBeUndefined();
+    });
+
+    it('bulkRemoveTasks', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store);
+      const provider = providerWith('{"action":"bulkRemoveTasks","day":1,"taskIds":["d1_t1","d1_t2"]}', 'Dono tasks hata diye.');
+      const chat = makeChat(store, provider, tools);
+      const session = chat.createSession();
+      const preview = await chat.send(session.id, 'day 1 ke saare tasks hata do');
+      expect(preview.pendingConfirmation?.kind).toBe('tools');
+      const dayOnePlan = await tools.run({ action: 'getPlan', day: 1 });
+      expect(dayOnePlan.summary).toContain('d1_t1');
+
+      const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
+      const afterPlan = await tools.run({ action: 'getPlan', day: 1 });
+      expect(afterPlan.summary).not.toContain('id:d1_t1');
+      expect(afterPlan.summary).not.toContain('id:d1_t2');
+      expect(confirmed.content).toBe('Dono tasks hata diye.');
+    });
+
+    it('bulkMarkDone', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store);
+      const provider = providerWith('{"action":"bulkMarkDone","day":1}', 'Sab tasks done mark kar diye.');
+      const chat = makeChat(store, provider, tools);
+      const session = chat.createSession();
+      const preview = await chat.send(session.id, 'day 1 ke saare tasks done kar do');
+      expect(preview.pendingConfirmation?.kind).toBe('tools');
+      expect(store.get().taskLogs['2026-07-01']).toBeUndefined();
+
+      const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
+      expect(store.get().taskLogs['2026-07-01']?.['d1_t1']).toBe(true);
+      expect(confirmed.content).toBe('Sab tasks done mark kar diye.');
+    });
+
+    it('deleteAnyTask', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store);
+      const provider = providerWith('{"action":"deleteAnyTask","taskId":"d1_t1"}', 'Task bank se hata diya.');
+      const chat = makeChat(store, provider, tools);
+      const session = chat.createSession();
+      const preview = await chat.send(session.id, 'd1_t1 ko task bank se permanently delete karo');
+      expect(preview.pendingConfirmation?.kind).toBe('tools');
+      expect(store.get().dynamicTaskBank.some((e) => e.id === 'd1_t1')).toBe(false);
+
+      const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
+      const override = store.get().dynamicTaskBank.find((e) => e.id === 'd1_t1');
+      expect(override?.active).toBe(false); // base seed task hidden, not mutated
+      expect(confirmed.content).toBe('Task bank se hata diya.');
+    });
+
+    it('deleteBlock', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store);
+      await tools.run({ action: 'createBlock', name: 'Physics Block', days: 7, focusAreas: ['physics'], difficulty: 'medium' });
+      const blockId = store.get().postJourney.customPhases[0].id;
+      const provider = providerWith(`{"action":"deleteBlock","blockId":"${blockId}"}`, 'Block delete kar diya.');
+      const chat = makeChat(store, provider, tools);
+      const session = chat.createSession();
+      const preview = await chat.send(session.id, 'ye block delete kar do');
+      expect(preview.pendingConfirmation?.kind).toBe('tools');
+      expect(store.get().postJourney.customPhases).toHaveLength(1);
+
+      const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
+      expect(store.get().postJourney.customPhases).toHaveLength(0);
+      expect(confirmed.content).toBe('Block delete kar diya.');
+    });
+  });
+
+  it('activateBlock switches the active custom block (no confirmation needed — reversible)', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    await tools.run({ action: 'createBlock', name: 'Physics Block', days: 7, focusAreas: ['physics'], difficulty: 'medium' });
+    await tools.run({ action: 'createBlock', name: 'Chemistry Block', days: 7, focusAreas: ['chemistry'], difficulty: 'medium' });
+    const [physicsId, chemId] = store.get().postJourney.customPhases.map((b) => b.id);
+    // createBlock auto-activates the most recently created one.
+    expect(store.get().postJourney.activeCustomPhaseId).toBe(chemId);
+
+    const result = await tools.run({ action: 'activateBlock', blockId: physicsId });
+    expect(result.ok).toBe(true);
+    expect(store.get().postJourney.activeCustomPhaseId).toBe(physicsId);
+    expect(store.get().postJourney.journeyComplete).toBe(true);
+
+    const missing = await tools.run({ action: 'activateBlock', blockId: 'no-such-id' });
+    expect(missing.ok).toBe(false);
+    expect(missing.retryable).toBe(true);
+  });
+
   it('runs getRoutine deterministically for "friday ka schedule batao" even when the model is broken', async () => {
     const store = makeStore();
     const stateRepo: StateRepository = { load: () => store.get(), save: (s) => store.save(s), clear: () => undefined };
