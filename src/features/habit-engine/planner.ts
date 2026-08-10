@@ -54,6 +54,7 @@ export class HabitProgressionService {
     if (context.restDay) {
       const planned: PlannedTask[] = [];
       this.injectDynamic(context, planned);
+      this.injectScheduledMastered(context, planned);
       return this.finalize(context, planned, config);
     }
 
@@ -62,7 +63,8 @@ export class HabitProgressionService {
 
     // Base plan: everything that historically lived in a level, plus protocol
     // tasks whose cadence matches today (mock Sundays / exam window).
-    const base = candidates.filter((t) => t.legacy !== undefined);
+    // Mastered tasks are excluded from the daily rotation (completed bucket).
+    const base = candidates.filter((t) => t.legacy !== undefined && !context.masteredTaskIds.has(t.id));
     const planned: PlannedTask[] = base.map((entry) => ({
       entry,
       source: 'bank',
@@ -77,6 +79,9 @@ export class HabitProgressionService {
     // Explicit custom/AI tasks: always part of the plan once their day unlocks,
     // shown in their natural slot (never hidden behind weak/revision heuristics).
     this.injectDynamic(context, planned);
+
+    // Mastered tasks the user deliberately scheduled for today.
+    this.injectScheduledMastered(context, planned);
 
     // Recovery mode: only the current level's tasks are required.
     if (context.recoveryMode) {
@@ -142,13 +147,14 @@ export class HabitProgressionService {
     const weakTargets = new Set(
       this.deps.taskBank
         .search({ unlock: snapshot, activeOnly: true })
-        .filter((t) => context.weakHabitIds.includes(t.habitId) && (t.taskType === 'Review' || t.taskType === 'Recovery' || t.taskType === 'Reflection'))
+        .filter((t) => !context.masteredTaskIds.has(t.id) && context.weakHabitIds.includes(t.habitId) && (t.taskType === 'Review' || t.taskType === 'Recovery' || t.taskType === 'Reflection'))
         .filter((t) => !existing.has(t.id) && !injectedIds.has(t.id))
         .map((t) => t.id),
     );
     // Revision schedule → review tasks for habits with due revision.
     for (const t of this.deps.taskBank.search({ unlock: snapshot, activeOnly: true })) {
       if (existing.has(t.id) || injectedIds.has(t.id)) continue;
+      if (context.masteredTaskIds.has(t.id)) continue;
       const isRevision = context.revisionDueHabitIds.includes(t.habitId) && (t.taskType === 'Review' || t.revisionSuitability >= 0.7);
       const isBacklog = context.backlogDays >= config.backlogThresholdDays && (t.taskType === 'Recovery' || t.backlogSuitability >= 0.7);
       if (isRevision || isBacklog || weakTargets.has(t.id)) candidates.push(t);
@@ -182,6 +188,7 @@ export class HabitProgressionService {
     for (const entry of context.dynamicEntries) {
       if (!entry.active) continue;
       if (existing.has(entry.id)) continue;
+      if (context.masteredTaskIds.has(entry.id)) continue;
       if (!isUnlockMet(entry, snapshot)) continue;
       const slot = this.slotOf(entry);
       planned.push({
@@ -191,6 +198,26 @@ export class HabitProgressionService {
         slot,
         group: slot,
         required: false,
+        score: 1,
+        logKey: this.logKeyFor(entry, context.dateISO),
+      });
+    }
+  }
+
+  /** Mastered tasks the user scheduled for today re-enter the plan. */
+  private injectScheduledMastered(context: PlanningContext, planned: PlannedTask[]) {
+    if (context.scheduledMasteredEntries.length === 0) return;
+    const existing = new Set(planned.map((p) => p.entry.id));
+    for (const entry of context.scheduledMasteredEntries) {
+      if (existing.has(entry.id)) continue;
+      const slot = this.slotOf(entry);
+      planned.push({
+        entry,
+        source: 'ai',
+        reason: 'scheduled',
+        slot,
+        group: slot,
+        required: true,
         score: 1,
         logKey: this.logKeyFor(entry, context.dateISO),
       });

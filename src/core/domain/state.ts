@@ -242,6 +242,10 @@ export interface AppState {
   restDays: number[];
   /** Journey day numbers marked as TEST days — mock tests appear only on these days. */
   testDays: number[];
+  /** Manual mastery placement overrides. `completed` pins a task to the
+   *  completed bucket; `scheduled` books a mastered task into a specific
+   *  content day's plan (one-shot, falls back to completed afterwards). */
+  masteryPlacement: Record<string, { bucket: 'completed' } | { bucket: 'scheduled'; day: number }>;
   /** One generated plan per dateISO. */
   planCache: Record<string, DailyPlan>;
   /** Daily available study time in minutes. */
@@ -293,6 +297,7 @@ export function emptyAppState(): AppState {
     dynamicTaskBank: [],
     restDays: [],
     testDays: [],
+    masteryPlacement: {},
     planCache: {},
     studyTimeMinutes: 360,
     aiActionHistory: emptyAiActionHistory(),

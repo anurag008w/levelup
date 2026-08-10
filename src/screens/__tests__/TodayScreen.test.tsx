@@ -22,6 +22,7 @@ import { emptyAppState } from '../../core/domain/state';
 import type { AppState } from '../../types';
 import { isoDateInTimeZone, deviceTimeZone } from '../../core/ports/clock';
 import { parseTaskBankEntry } from '../../features/task-bank/validation';
+import { isoAddDays } from '../../features/habit-engine/dates';
 
 const today = isoDateInTimeZone(new Date(), deviceTimeZone());
 
@@ -508,6 +509,79 @@ describe('TodayScreen — completion celebration', () => {
     const next = applyUpdates(base, update);
     const log = next.taskLogs[today] ?? {};
     expect(Object.values(log).filter(Boolean).length).toBe(checkboxes.length);
+  });
+});
+
+describe('TodayScreen — completed (mastered) bucket', () => {
+  /** State at content day 6 with the seed task d1_t1 done on days 1..5 (mastered). */
+  function masteredState(): AppState {
+    const s = populated();
+    s.startDateISO = isoAddDays(today, -5); // today = content day 6
+    for (let d = 0; d < 5; d++) {
+      s.taskLogs[isoAddDays(s.startDateISO, d)] = { d1_t1: true };
+    }
+    return s;
+  }
+
+  it('shows the collapsed Completed (Mastered) header once a task is mastered', () => {
+    renderToday({ state: masteredState() });
+    expect(screen.getByText('Completed (Mastered)')).toBeTruthy();
+    expect(screen.getByText('1 task')).toBeTruthy();
+    // Collapsed by default: the struck row is not visible yet.
+    expect(screen.queryByText(/Move to Day/)).toBeNull();
+  });
+
+  it('expanding the section lists the mastered task with its controls', () => {
+    renderToday({ state: masteredState() });
+    fireEvent.click(screen.getByText('Completed (Mastered)'));
+    expect(screen.getByText('Top 3 study goals likho (1 line each)')).toBeTruthy();
+    expect(screen.getByText('Move to Day')).toBeTruthy();
+    expect(screen.getByLabelText('Move Top 3 study goals likho (1 line each) back to completed')).toBeTruthy();
+  });
+
+  it('does not render the Completed section before anything is mastered', () => {
+    renderToday();
+    expect(screen.queryByText('Completed (Mastered)')).toBeNull();
+  });
+
+  it('move-to-day books a masteryPlacement schedule for a future content day', () => {
+    const update = vi.fn();
+    const base = masteredState();
+    renderToday({ state: base, update });
+    fireEvent.click(screen.getByText('Completed (Mastered)'));
+    fireEvent.click(screen.getByText('Move to Day'));
+    fireEvent.change(screen.getByLabelText('Move task to day'), { target: { value: '10' } });
+    fireEvent.click(screen.getByText('Move'));
+
+    expect(update).toHaveBeenCalledTimes(1);
+    const next = applyUpdates(base, update);
+    expect(next.masteryPlacement?.['d1_t1']).toEqual({ bucket: 'scheduled', day: 10 });
+    expect(screen.getByRole('status').textContent).toMatch(/Day 10 ke liye schedule/);
+  });
+
+  it('move-to-day rejects an out-of-range day without calling update', () => {
+    const update = vi.fn();
+    renderToday({ state: masteredState(), update });
+    fireEvent.click(screen.getByText('Completed (Mastered)'));
+    fireEvent.click(screen.getByText('Move to Day'));
+    fireEvent.change(screen.getByLabelText('Move task to day'), { target: { value: '0' } });
+    fireEvent.click(screen.getByText('Move'));
+    expect(update).not.toHaveBeenCalled();
+    expect(screen.getByRole('status').textContent).toMatch(/Day 1 se 90 ke beech ek number do/);
+  });
+
+  it('the move-back button returns a scheduled task to the completed bucket', () => {
+    const update = vi.fn();
+    const base = masteredState();
+    base.masteryPlacement = { d1_t1: { bucket: 'scheduled', day: 10 } };
+    renderToday({ state: base, update });
+    fireEvent.click(screen.getByText('Completed (Mastered)'));
+    fireEvent.click(
+      screen.getByLabelText('Move Top 3 study goals likho (1 line each) back to completed'),
+    );
+    expect(update).toHaveBeenCalledTimes(1);
+    const next = applyUpdates(base, update);
+    expect(next.masteryPlacement?.['d1_t1']).toEqual({ bucket: 'completed' });
   });
 });
 

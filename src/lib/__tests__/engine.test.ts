@@ -116,6 +116,24 @@ describe('engine day numbers & journey limit', () => {
     };
     expect(getCurrentDayNumber(state, '2026-04-15')).toBe(105);
   });
+
+  it('getCurrentDayNumber is rest-aware: a rest day slides the content day', () => {
+    const state = { ...stateAt('2026-01-01'), restDays: [5] };
+    // No rests before day 5 → content 1..5 sit on raw 1..5.
+    expect(getCurrentDayNumber(state, '2026-01-05')).toBe(5);
+    // Raw 6 is the first calendar day after the rest → content 5 continues.
+    expect(getCurrentDayNumber(state, '2026-01-06')).toBe(5);
+    expect(getCurrentDayNumber(state, '2026-01-07')).toBe(6);
+    // The 90 content days now span 91 calendar days.
+    expect(getCurrentDayNumber(state, '2026-04-01')).toBe(TOTAL_DAYS);
+  });
+
+  it('getCurrentDayNumber with stacked rests still caps at the journey limit', () => {
+    const state = { ...stateAt('2026-01-01'), restDays: [5, 14, 30] };
+    // content 90 plays on raw 93 (2026-04-03).
+    expect(getCurrentDayNumber(state, '2026-04-03')).toBe(TOTAL_DAYS);
+    expect(getCurrentDayNumber(state, '2026-04-02')).toBe(89);
+  });
 });
 
 describe('engine level lookup', () => {
@@ -264,6 +282,20 @@ describe('engine level status', () => {
       state.taskLogs[dateISO] = {};
     }
     expect(getLevelStatus(level2, state, level2.dayEnd + 1)).toBe('needs-recovery');
+  });
+
+  it('clears a level by mastery (5 done days) even when the window average is under 70%', () => {
+    const level2 = getLevelById(2)!;
+    const state = stateAt('2026-01-01');
+    // Day 4 (level start) left empty → window average would be 66% (needs-recovery).
+    // Days 5..9: every level task done → 5 done content days → all mastered by day 10.
+    for (let d = level2.dayStart + 1; d <= level2.dayEnd + 3; d++) {
+      const dateISO = new Date(Date.UTC(2026, 0, d)).toISOString().slice(0, 10);
+      const log: Record<string, boolean> = {};
+      for (const t of getTasksByLevel(level2.id)) log[t.id] = true;
+      state.taskLogs[dateISO] = log;
+    }
+    expect(getLevelStatus(level2, state, level2.dayEnd + 4)).toBe('cleared');
   });
 });
 

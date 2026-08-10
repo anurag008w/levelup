@@ -79,6 +79,7 @@ export function normalizeState(raw: unknown): AppState {
     dynamicTaskBank: Array.isArray(r.dynamicTaskBank) ? r.dynamicTaskBank : [],
     restDays: Array.isArray(r.restDays) ? r.restDays : [],
     testDays: Array.isArray(r.testDays) ? r.testDays : [],
+    masteryPlacement: isRecord(r.masteryPlacement) ? (r.masteryPlacement as AppState['masteryPlacement']) : {},
     planCache: isRecord(r.planCache) ? (r.planCache as AppState['planCache']) : {},
     studyTimeMinutes: typeof r.studyTimeMinutes === 'number' && r.studyTimeMinutes > 0 ? r.studyTimeMinutes : 360,
     aiActionHistory:

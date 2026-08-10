@@ -5,7 +5,7 @@ import { buildSeed, TaskBankRepositoryImpl } from '../../task-bank/task-bank.rep
 import { TaskBankServiceImpl } from '../../task-bank/task-bank.service';
 import { HabitStatsService } from '../habits';
 import type { TaskBankEntry } from '../../../core/domain/task-bank';
-import { isoAddDays } from '../dates';
+import { isoAddDays, dateForContentDay } from '../dates';
 
 function makeStats() {
   const repo = new TaskBankRepositoryImpl(
@@ -110,6 +110,42 @@ describe('HabitStatsService', () => {
     const score = stats.computeHabitScore('daily_planning', state, isoAddDays(start, 7));
     expect(score).not.toBeNull();
     expect(score!).toBeGreaterThan(0);
+  });
+
+  it('computeHabitScore ignores rest days: the 7-day window spans 7 CONTENT days', () => {
+    const { stats } = makeStats();
+    const start = '2026-01-01';
+    const restDays = [4, 9];
+    const state = { ...stateOn(start), restDays };
+    // Complete content days 5,7,8,10,11,12 (6 days); content day 6 is left incomplete.
+    for (const d of [5, 7, 8, 10, 11, 12]) {
+      completeDay(state, dateForContentDay(d, start, restDays), stats.habitTasksOnDay('daily_planning', d));
+    }
+    // Window = last 7 CONTENT days (12,11,10,9,8,7,6,5 minus rest 9 → 12,11,10,8,7,6,5):
+    // 6 of 7 fully done → 86%. (Calendar-7 semantics with rest-skip would only
+    // see 6 active days → 83%, so this pins "rests are invisible to the window".)
+    const score = stats.computeHabitScore('daily_planning', state, dateForContentDay(12, start, restDays));
+    expect(score).toBe(86);
+  });
+
+  it('computeHabitStreak skips rest days without breaking the streak', () => {
+    const { stats } = makeStats();
+    const start = '2026-01-01';
+    const restDays = [9];
+    const state = { ...stateOn(start), restDays };
+    // Complete content days 6,7,8 then 10 — content 9 is a rest.
+    for (const d of [6, 7, 8, 10]) {
+      completeDay(state, dateForContentDay(d, start, restDays), stats.habitTasksOnDay('daily_planning', d));
+    }
+    // Walking back from content day 10: 10 ✓, 9 (rest, skipped), 8 ✓, 7 ✓, 6 ✓.
+    expect(stats.computeHabitStreak('daily_planning', state, dateForContentDay(10, start, restDays), 90)).toBe(4);
+    // Same completion pattern WITHOUT the rest feature: content day 9 is a
+    // normal day with nothing done, so the streak breaks right after day 10.
+    const noRest = stateOn(start);
+    for (const d of [6, 7, 8, 10]) {
+      completeDay(noRest, isoAddDays(start, d - 1), stats.habitTasksOnDay('daily_planning', d));
+    }
+    expect(stats.computeHabitStreak('daily_planning', noRest, isoAddDays(start, 9), 90)).toBe(1);
   });
 
   it('computeHabitScore returns null when there are no active days or unknown habit', () => {

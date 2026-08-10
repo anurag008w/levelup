@@ -14,11 +14,15 @@ import { plannerActionForQuery, type PlannerToolAction } from '../../core/domain
 import { isAbortError } from '../../core/domain/llm';
 import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from './plan-format';
 import { buildContextOverview } from './context-overview';
-import { isoAddDays } from '../habit-engine/dates';
+import { contentDayForDate, dateForDayNumber } from '../habit-engine/dates';
 import { deviceTimeZone, todayISO, type Clock } from '../../core/ports/clock';
 
 const MIN_DAY = 1;
-const MAX_DAY = 90;
+// Content day cap. Generous sanity bound for AI-requested day numbers: the
+// real limit is state-aware (see getJourneyDayLimit) and the planner clamps to
+// it anyway. 366 covers rest-day calendar extension + post-journey blocks
+// while still rejecting absurd typos (day 9999).
+const MAX_DAY = 366;
 const MAX_RANGE_DAYS = 10;
 /** Fallback duration (minutes) when the model omits durationMin on addTask/bulkAddTasks. */
 const DEFAULT_TASK_DURATION_MIN = 45;
@@ -1100,6 +1104,16 @@ export class ChatToolsService {
     const d = clamp(day);
     const restDays = state.restDays ?? [];
     const testDays = state.testDays ?? [];
+    // Rest/test mode changes the calendar mapping for a day, so only current
+    // or future days are allowed — a past rest would silently re-interpret
+    // already-logged days and shift mastery counts.
+    if (d < contentDayForDate(todayISO(this.now, state.timeZone ?? deviceTimeZone()), state.startDateISO, restDays)) {
+      return {
+        ok: false,
+        retryable: true,
+        summary: `Day ${d} past mein hai — day mode sirf aaj ya future ke din ke liye badla ja sakta hai (past din ko rest/test nahi bana sakte).`,
+      };
+    }
     const isRest = restDays.includes(d);
     const isTest = testDays.includes(d);
     const wantsRest = mode === 'rest';
@@ -1272,8 +1286,9 @@ export class ChatToolsService {
   }
 
   /**
-   * Day → ISO date, computed in pure UTC — MUST match the planner's
-   * `rawDayNumberForDate` (also UTC). Mixing local-time parsing with
+   * Content day → ISO date. Rest days slide the journey: content day c plays
+   * on `start + (c-1) + #(rests ≤ c)` — MUST match the planner's
+   * `contentDayForDate` (also UTC). Mixing local-time parsing with
    * `toISOString()` shifts every date by a day on non-UTC machines, which
    * would write completion logs under the wrong calendar day.
    */
@@ -1281,7 +1296,7 @@ export class ChatToolsService {
     if (!state.startDateISO) {
       throw new Error('Cannot map plan day to a date without a journey start date.');
     }
-    return isoAddDays(state.startDateISO, day - 1);
+    return dateForDayNumber(day, state.startDateISO, state.restDays ?? []);
   }
 }
 
@@ -1620,5 +1635,5 @@ function parsePythonToolCalls(text: string): ChatToolAction[] {
  * action the model emits ALWAYS lands in the blocked preview + button flow.
  */
 function stripModelConfirmed(actions: ChatToolAction[]): ChatToolAction[] {
-  return actions.map((a) => (a.confirmed === undefined ? a : { ...a, confirmed: undefined }));
+  return actions.map((a) => ('confirmed' in a ? { ...a, confirmed: undefined } : a));
 }
