@@ -5,8 +5,9 @@ import {
   currentMonthNumber,
   currentWeekNumber,
   getCurrentDayNumber,
-  isMonthlyAssessmentDue,
-  isWeeklyReviewDue,
+  isExamMonthActive,
+  pendingMonthlyMonth,
+  pendingWeeklyWeek,
 } from '../lib/engine';
 import { todayISO } from '../lib/storage';
 import ScreenHeader from '../components/ui/ScreenHeader';
@@ -57,12 +58,16 @@ export default function ReviewScreen({
   }
 
   const dayNumber = getCurrentDayNumber(state, today);
-  const weekDue = isWeeklyReviewDue(state, dayNumber);
-  const monthDue = isMonthlyAssessmentDue(state, dayNumber);
-  const nextWeek = currentWeekNumber(dayNumber);
+  // Catch-up aware: the pending week/month is the EARLIEST unreviewed one whose
+  // deadline has passed, so a missed review stays due instead of vanishing.
+  const dueWeek = pendingWeeklyWeek(state, dayNumber);
+  const weekDue = dueWeek !== null;
+  const dueMonth = pendingMonthlyMonth(state, dayNumber);
+  const monthDue = dueMonth !== null;
+  const nextWeek = dueWeek ?? currentWeekNumber(dayNumber);
   const nextWeekDay = nextWeek * 7;
   const daysToWeek = Math.max(0, nextWeekDay - dayNumber);
-  const nextMonth = currentMonthNumber(dayNumber);
+  const nextMonth = dueMonth ?? currentMonthNumber(dayNumber);
   const nextMonthDay = nextMonth * 30;
   const daysToMonth = Math.max(0, nextMonthDay - dayNumber);
 
@@ -71,11 +76,14 @@ export default function ReviewScreen({
 
   function submitWeekly() {
     hapticSuccess();
+    // Record the review against the week the user is actually catching up on
+    // (earliest pending), NOT the calendar week of today.
+    const weekNumber = dueWeek ?? currentWeekNumber(dayNumber);
     update((s) => ({
       ...s,
       weeklyReviews: [
         ...s.weeklyReviews,
-        { weekNumber: currentWeekNumber(dayNumber), dateISO: todayISO(state.timeZone), strongest, weakest, planForNextWeek: plan },
+        { weekNumber, dateISO: todayISO(state.timeZone), strongest, weakest, planForNextWeek: plan },
       ],
     }));
     setStrongest('');
@@ -85,9 +93,10 @@ export default function ReviewScreen({
 
   function submitMonthly() {
     hapticSuccess();
+    const monthNumber = dueMonth ?? currentMonthNumber(dayNumber);
     update((s) => ({
       ...s,
-      monthlyAssessments: [...s.monthlyAssessments, { monthNumber: currentMonthNumber(dayNumber), dateISO: todayISO(state.timeZone), reflection }],
+      monthlyAssessments: [...s.monthlyAssessments, { monthNumber, dateISO: todayISO(state.timeZone), reflection }],
     }));
     setReflection('');
   }
@@ -103,8 +112,28 @@ export default function ReviewScreen({
     <div className="screen fade-up">
       <ScreenHeader eyebrow="REVIEW & PROTOCOLS" title="Review" subtitle="Hafta aur mahina — padh ke reflect karo." />
 
-      {/* Exam countdown hero */}
-      {examLeft !== null ? (
+      {/* Exam countdown hero — honest about every state:
+          no date / date set but >30 days out (neutral countdown) / active
+          30-day window (ring + revision-mode claim) / exam already passed. */}
+      {examLeft === null ? (
+        <div className="card mb-4 flex items-center gap-3 p-4">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-panel-raised">
+            <Siren size={17} color="var(--color-danger)" />
+          </span>
+          <p className="text-sm leading-relaxed text-muted">
+            Set JEE Main date — Exam Month mode auto-activates 30 days before.
+          </p>
+        </div>
+      ) : examLeft < 0 ? (
+        <div className="card mb-4 flex items-center gap-3 p-4">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-panel-raised">
+            <Medal size={17} color="var(--color-light)" />
+          </span>
+          <p className="text-sm leading-relaxed text-muted">
+            JEE Main ka attempt guzar chuka hai. Neeche se naya exam date set karo, ya bina date ke journey continue rakho.
+          </p>
+        </div>
+      ) : isExamMonthActive(state, today) ? (
         <div className="gradient-border mb-4 rounded-2xl p-px" data-tone="slate">
           <div className="flex items-center gap-4 rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4">
             <div className="relative flex h-16 w-16 shrink-0 items-center justify-center">
@@ -136,10 +165,10 @@ export default function ReviewScreen({
       ) : (
         <div className="card mb-4 flex items-center gap-3 p-4">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-panel-raised">
-            <Siren size={17} color="var(--color-danger)" />
+            <CalendarRange size={17} color="var(--color-light)" />
           </span>
           <p className="text-sm leading-relaxed text-muted">
-            Set JEE Main date — Exam Month mode auto-activates 30 days before.
+            JEE Main tak {examLeft} din. Exam Month mode 30 din pehle auto-activate hoga.
           </p>
         </div>
       )}
@@ -164,7 +193,7 @@ export default function ReviewScreen({
       </div>
 
       {weekDue && (
-        <Card accent="var(--color-l)" icon={<CalendarRange size={15} color="var(--color-l)" />} title={`Weekly Review — Week ${currentWeekNumber(dayNumber)}`}>
+        <Card accent="var(--color-l)" icon={<CalendarRange size={15} color="var(--color-l)" />} title={`Weekly Review — Week ${dueWeek ?? currentWeekNumber(dayNumber)}`}>
           <Field label="Is week sabse strong habit kaunsi rahi?" value={strongest} onChange={setStrongest} />
           <Field label="Sabse weak / bar-bar skip hone wali habit?" value={weakest} onChange={setWeakest} />
           <Field label="Agle week ke liye ek adjustment" value={plan} onChange={setPlan} />
@@ -175,7 +204,7 @@ export default function ReviewScreen({
       )}
 
       {monthDue && (
-        <Card accent="var(--color-light)" icon={<CalendarClock size={15} color="var(--color-light)" />} title={`Monthly Assessment — Month ${currentMonthNumber(dayNumber)}`}>
+        <Card accent="var(--color-light)" icon={<CalendarClock size={15} color="var(--color-light)" />} title={`Monthly Assessment — Month ${dueMonth ?? currentMonthNumber(dayNumber)}`}>
           <Field label="Is mahine ka sabse bada mindset/skill shift?" value={reflection} onChange={setReflection} textarea />
           <button onClick={submitMonthly} className="btn btn-primary mt-1 w-full font-display text-sm font-bold">
             Monthly Assessment Save Karo
@@ -189,7 +218,7 @@ export default function ReviewScreen({
             <Check size={16} color="var(--color-success)" />
           </span>
           <p className="text-sm leading-relaxed text-muted">
-            No review due. Weekly unlocks Day 7, 14, 21…; monthly Day 30, 60, 90.
+            No review pending. Weekly Day 7, 14, 21…; monthly Day 30, 60, 90. Missed reviews ab bhi complete kiye ja sakte hain.
           </p>
         </div>
       )}

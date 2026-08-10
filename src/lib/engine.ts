@@ -205,14 +205,42 @@ export function currentMonthNumber(dayNumber: number): number {
   return Math.ceil(dayNumber / 30);
 }
 export function isWeeklyReviewDue(state: AppState, dayNumber: number): boolean {
-  if (dayNumber < 7) return false;
-  const wk = currentWeekNumber(dayNumber);
-  return !state.weeklyReviews.some((r) => r.weekNumber === wk) && dayNumber % 7 === 0;
+  return pendingWeeklyWeek(state, dayNumber) !== null;
 }
+
+/**
+ * Earliest week whose review deadline (day = weekNumber * 7) has already passed
+ * and is still unreviewed — or null when nothing is pending. A missed deadline
+ * stays due for catch-up instead of being lost forever (old behavior dropped
+ * the review permanently when day % 7 !== 0).
+ */
+export function pendingWeeklyWeek(state: AppState, dayNumber: number): number | null {
+  if (dayNumber < 7) return null;
+  const reviewed = new Set(state.weeklyReviews.map((r) => r.weekNumber));
+  const current = currentWeekNumber(dayNumber);
+  for (let w = 1; w <= current; w++) {
+    if (w * 7 <= dayNumber && !reviewed.has(w)) return w;
+  }
+  return null;
+}
+
 export function isMonthlyAssessmentDue(state: AppState, dayNumber: number): boolean {
-  if (dayNumber < 30) return false;
-  const mo = currentMonthNumber(dayNumber);
-  return !state.monthlyAssessments.some((r) => r.monthNumber === mo) && dayNumber % 30 === 0;
+  return pendingMonthlyMonth(state, dayNumber) !== null;
+}
+
+/**
+ * Earliest month whose assessment deadline (day = monthNumber * 30) has already
+ * passed and is still unassessed — or null when nothing is pending. Mirrors the
+ * weekly catch-up rule so a missed monthly assessment can be done late.
+ */
+export function pendingMonthlyMonth(state: AppState, dayNumber: number): number | null {
+  if (dayNumber < 30) return null;
+  const reviewed = new Set(state.monthlyAssessments.map((r) => r.monthNumber));
+  const current = currentMonthNumber(dayNumber);
+  for (let m = 1; m <= current; m++) {
+    if (m * 30 <= dayNumber && !reviewed.has(m)) return m;
+  }
+  return null;
 }
 
 // ---- Exam Month Protocol ----

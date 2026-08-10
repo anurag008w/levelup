@@ -29,6 +29,8 @@ import {
   currentMonthNumber,
   isWeeklyReviewDue,
   isMonthlyAssessmentDue,
+  pendingWeeklyWeek,
+  pendingMonthlyMonth,
   isExamMonthActive,
   daysUntilExam,
 } from '../../lib/engine';
@@ -331,6 +333,48 @@ describe('engine review cadence', () => {
     };
     expect(isMonthlyAssessmentDue(after, 30)).toBe(false);
     expect(isMonthlyAssessmentDue(after, 60)).toBe(true);
+  });
+
+  it('missed weekly review stays due for catch-up (earliest pending first)', () => {
+    const state = stateAt('2026-01-01');
+    // Day 8: week 1's deadline (day 7) passed unreviewed → still due.
+    expect(pendingWeeklyWeek(state, 8)).toBe(1);
+    expect(isWeeklyReviewDue(state, 8)).toBe(true);
+    // Day 21 with nothing reviewed → week 1 is the EARLIEST pending, not week 3.
+    expect(pendingWeeklyWeek(state, 21)).toBe(1);
+    expect(isWeeklyReviewDue(state, 21)).toBe(true);
+  });
+
+  it('weekly catch-up clears one week at a time in order', () => {
+    const state = {
+      ...stateAt('2026-01-01'),
+      weeklyReviews: [{ weekNumber: 1, dateISO: '2026-01-08', strongest: '', weakest: '', planForNextWeek: '' }],
+    };
+    // Week 1 done late (day 8); week 2 is not due until day 14.
+    expect(pendingWeeklyWeek(state, 8)).toBeNull();
+    expect(isWeeklyReviewDue(state, 8)).toBe(false);
+    expect(pendingWeeklyWeek(state, 15)).toBe(2);
+    expect(isWeeklyReviewDue(state, 15)).toBe(true);
+  });
+
+  it('missed monthly assessment stays due for catch-up (earliest pending first)', () => {
+    const state = stateAt('2026-01-01');
+    expect(pendingMonthlyMonth(state, 31)).toBe(1);
+    expect(isMonthlyAssessmentDue(state, 31)).toBe(true);
+    // Day 61 with nothing assessed → month 1 is the earliest pending.
+    expect(pendingMonthlyMonth(state, 61)).toBe(1);
+    expect(isMonthlyAssessmentDue(state, 61)).toBe(true);
+  });
+
+  it('monthly catch-up clears one month at a time in order', () => {
+    const state = {
+      ...stateAt('2026-01-01'),
+      monthlyAssessments: [{ monthNumber: 1, dateISO: '2026-01-31', reflection: '' }],
+    };
+    expect(pendingMonthlyMonth(state, 31)).toBeNull();
+    expect(isMonthlyAssessmentDue(state, 31)).toBe(false);
+    expect(pendingMonthlyMonth(state, 60)).toBe(2);
+    expect(isMonthlyAssessmentDue(state, 60)).toBe(true);
   });
 });
 
