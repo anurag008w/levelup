@@ -150,6 +150,12 @@ export class SyncCoordinator {
     this.dirty.add('state');
     this.dirty.add('chat');
     await this.flush();
+    // Server ko bhi turant GitHub push karne ko bolo (admin users) —
+    // normal flow me server apne 180s loop pe push karta hai.
+    const session = this.session;
+    if (session?.isSuperAdmin) {
+      await this.sync.forceServerPush(session);
+    }
   }
 
   private schedulePush(): void {

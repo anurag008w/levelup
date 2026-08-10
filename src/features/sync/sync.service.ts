@@ -163,6 +163,25 @@ export class SyncService {
     }
   }
 
+  /** Ask the server to force-push its data folder to GitHub right now.
+   *  Used by the "Sync now" button — otherwise the server waits for its own
+   *  180s sync loop. Admin-only server-side; non-admins get 403 and we fall
+   *  back to the loop, so a failure here is never fatal. */
+  async forceServerPush(session: AuthSession): Promise<boolean> {
+    try {
+      const res = await this.http.requestJson<{ pushed?: boolean }>({
+        url: `${session.serverUrl}/admin/sync/now`,
+        method: 'POST',
+        headers: this.headers(session),
+        timeoutMs: 15_000,
+        retries: 0,
+      });
+      return res.pushed === true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Delete the user's whole sync folder on the server (logout wipe). */
   async wipe(session: AuthSession): Promise<boolean> {
     try {
