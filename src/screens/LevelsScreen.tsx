@@ -267,8 +267,8 @@ export default function LevelsScreen({ state, today, update }: { state: AppState
         description: block.description,
         dayStart: block.dayStart,
         difficulty: block.difficulty,
-        goals: block.goals.join(', '),
-        habits: block.habits.join(', '),
+        goals: Array.isArray(block.goals) ? block.goals.join(', ') : '',
+        habits: Array.isArray(block.habits) ? block.habits.join(', ') : '',
         levelCount: Math.max(1, levels.length),
         daysPerLevel: 5,
         levels,
@@ -415,7 +415,12 @@ export default function LevelsScreen({ state, today, update }: { state: AppState
     reader.onload = () => {
       try {
         const report = parseCurriculum(String(reader.result ?? ''));
-        const result = applyCurriculum(state, report);
+        // FileReader is async — the `state` captured above is the render-time
+        // snapshot, so any change that landed while the file was loading (chat
+        // tool, another edit, sync pull) would be silently wiped by an import
+        // computed from it. Apply onto the freshest store snapshot instead;
+        // read → compute → write happen synchronously in this same tick.
+        const result = applyCurriculum(container.store.get(), report);
         update(() => result.state);
         flash(result.summary);
       } catch (err) {
@@ -1007,8 +1012,12 @@ function BlockGroup({
   const isActive = block.id === activeBlockId;
   const isCurrentDay = dayNumber >= block.dayStart && dayNumber <= block.dayEnd;
   const levels = block.levels ?? [];
+  // Legacy/imported blocks can arrive without these fields — guard every read
+  // so opening such a block can never crash the screen.
+  const goals = Array.isArray(block.goals) ? block.goals : [];
+  const habits = Array.isArray(block.habits) ? block.habits : [];
 
-  const blockTypeKey = Object.keys(BLOCK_TYPES).find((k) => block.habits.some((h) => h.toLowerCase().includes(k)) || block.name.toLowerCase().includes(k));
+  const blockTypeKey = Object.keys(BLOCK_TYPES).find((k) => habits.some((h) => h.toLowerCase().includes(k)) || block.name.toLowerCase().includes(k));
   const blockType = blockTypeKey ? BLOCK_TYPES[blockTypeKey] : { icon: '📋', color: 'var(--color-tag-default)' };
   const diffColors = DIFFICULTY_COLORS[block.difficulty] ?? DIFFICULTY_COLORS.medium;
 
@@ -1079,7 +1088,7 @@ function BlockGroup({
 
           <DetailBlock title="Goals" icon={<Sparkles size={15} color="var(--color-l)" />}>
             <ul className="space-y-1.5">
-              {block.goals.map((goal, i) => (
+              {goals.map((goal, i) => (
                 <li key={i} className="flex items-start gap-2 text-muted">
                   <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-l" />
                   {goal}
@@ -1090,7 +1099,7 @@ function BlockGroup({
 
           <DetailBlock title="Daily Habits" icon={<GraduationCap size={15} color="var(--color-l)" />}>
             <ul className="space-y-2">
-              {block.habits.map((habit, i) => (
+              {habits.map((habit, i) => (
                 <li key={i} className="text-muted">
                   <span className="font-semibold text-text">{habit}</span>
                 </li>
@@ -1281,8 +1290,12 @@ function CustomBlockCard({
 }) {
   const isActive = block.id === activeBlockId;
   const isCurrentDay = dayNumber >= block.dayStart && dayNumber <= block.dayEnd;
+  // Legacy/imported blocks can arrive without these fields — guard every read
+  // so such a block can never crash the screen.
+  const goals = Array.isArray(block.goals) ? block.goals : [];
+  const habits = Array.isArray(block.habits) ? block.habits : [];
 
-  const blockTypeKey = Object.keys(BLOCK_TYPES).find((k) => block.habits.some((h) => h.toLowerCase().includes(k)) || block.name.toLowerCase().includes(k));
+  const blockTypeKey = Object.keys(BLOCK_TYPES).find((k) => habits.some((h) => h.toLowerCase().includes(k)) || block.name.toLowerCase().includes(k));
   const blockType = blockTypeKey ? BLOCK_TYPES[blockTypeKey] : { icon: '📋', color: 'var(--color-tag-default)' };
   const diffColors = DIFFICULTY_COLORS[block.difficulty] ?? DIFFICULTY_COLORS.medium;
 
@@ -1334,12 +1347,12 @@ function CustomBlockCard({
           </span>
         </div>
 
-        {block.habits.length > 0 && (
+        {habits.length > 0 && (
           <div className="mt-2.5 flex flex-wrap gap-1.5">
-            {block.habits.slice(0, 3).map((habit, i) => (
+            {habits.slice(0, 3).map((habit, i) => (
               <span key={i} className="chip" style={{ borderColor: 'rgba(163,19,19,0.4)', color: 'var(--color-l)' }}>{habit}</span>
             ))}
-            {block.habits.length > 3 && <span className="chip">+{block.habits.length - 3}</span>}
+            {habits.length > 3 && <span className="chip">+{habits.length - 3}</span>}
           </div>
         )}
 
@@ -1364,7 +1377,7 @@ function CustomBlockCard({
 
           <DetailBlock title="Goals" icon={<Sparkles size={15} color="var(--color-l)" />}>
             <ul className="space-y-1.5">
-              {block.goals.map((goal, i) => (
+              {goals.map((goal, i) => (
                 <li key={i} className="flex items-start gap-2 text-muted">
                   <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-l" />
                   {goal}
@@ -1375,7 +1388,7 @@ function CustomBlockCard({
 
           <DetailBlock title="Daily Habits" icon={<GraduationCap size={15} color="var(--color-l)" />}>
             <ul className="space-y-2">
-              {block.habits.map((habit, i) => (
+              {habits.map((habit, i) => (
                 <li key={i} className="text-muted">
                   <span className="font-semibold text-text">{habit}</span>
                 </li>
