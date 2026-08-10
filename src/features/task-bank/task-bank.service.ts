@@ -8,7 +8,8 @@ export interface UnlockSnapshot {
   phase: PhaseId;
   unlockedHabitIds: string[];
   examWindowActive: boolean;
-  mockSunday: boolean;
+  /** True when the day was explicitly marked a test/mock day via setDayMode (not tied to calendar weekday). */
+  testDay: boolean;
   /** Actual calendar weekday (0=Sunday..6=Saturday) of the planned date. */
   weekday: number;
   recoveryMode: boolean;
@@ -59,7 +60,7 @@ export function isUnlockMet(entry: TaskBankEntry, snapshot: UnlockSnapshot): boo
         if (!snapshot.examWindowActive) return false;
         break;
       case 'mock-sunday':
-        if (!snapshot.mockSunday) return false;
+        if (!snapshot.testDay) return false;
         break;
       case 'weekday':
         if (!cond.days.includes(snapshot.weekday)) return false;

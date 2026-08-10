@@ -18,7 +18,7 @@ const snapshot: UnlockSnapshot = {
   phase: 'jee-core',
   unlockedHabitIds: [],
   examWindowActive: false,
-  mockSunday: false,
+  testDay: false,
   weekday: 4,
   recoveryMode: false,
   backlogDays: 0,
@@ -66,15 +66,15 @@ describe('task bank search', () => {
     for (const t of mockTasks) expect(isUnlockMet(t, snapshot)).toBe(false);
   });
 
-  it('unlocks mock-sunday tasks only on mock Sundays after Day 15', () => {
+  it('unlocks mock-sunday tasks only when explicitly marked a test day, after Day 15', () => {
     const bank = makeRepo();
     const mockTasks = bank.getAll().filter((t) => t.unlockConditions.some((c) => c.type === 'mock-sunday'));
-    const onSunday = { ...snapshot, dayNumber: 15, mockSunday: true, weekday: 0 };
-    const unlocked = mockTasks.filter((t) => isUnlockMet(t, onSunday));
+    const onTestDay = { ...snapshot, dayNumber: 15, testDay: true, weekday: 0 };
+    const unlocked = mockTasks.filter((t) => isUnlockMet(t, onTestDay));
     expect(unlocked.length).toBeGreaterThan(0);
     expect(unlocked.every((t) => t.taskType === 'Challenge')).toBe(true);
-    // mock-sunday alone is not enough — the day>=15 gate also applies
-    const tooEarly = { ...snapshot, dayNumber: 14, mockSunday: true, weekday: 0 };
+    // test day alone is not enough — the day>=15 gate also applies
+    const tooEarly = { ...snapshot, dayNumber: 14, testDay: true, weekday: 0 };
     expect(mockTasks.every((t) => !isUnlockMet(t, tooEarly))).toBe(true);
   });
 

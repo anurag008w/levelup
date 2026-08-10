@@ -83,10 +83,11 @@ export interface PlanningContext {
   availableMinutes: number;
   recoveryMode: boolean;
   examWindowActive: boolean;
-  mockSunday: boolean;
+  /** True when this journey day was explicitly marked a test/mock day via setDayMode (independent of calendar weekday). Unlocks 'mock-sunday' bank entries. */
+  testDay: boolean;
   /** Actual calendar weekday (0=Sunday..6=Saturday) of the planned date. */
   weekday: number;
-  /** True when this journey day is marked as a rest/holiday day. */
+  /** True when this journey day is marked as a rest/holiday day. Label only — tasks still plan normally. */
   restDay: boolean;
   /** Days since last fully-completed day (gap detection). */
   gapDays: number;

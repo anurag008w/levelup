@@ -90,13 +90,13 @@ export function buildContextOverview(
   const overview = buildJourneyOverview(state, dateISO);
   const recent = buildRecentProgress(state, dateISO, planner);
   return [
-    `Current date: ${formatDayLabel(dateISO)} (${dateISO}). Journey Day ${context.dayNumber} of ${TOTAL_DAYS}, phase ${context.phase}, streak ${context.streak}${context.restDay ? ' [REST DAY — chhuti]' : ''}.`,
+    `Current date: ${formatDayLabel(dateISO)} (${dateISO}). Journey Day ${context.dayNumber} of ${TOTAL_DAYS}, phase ${context.phase}, streak ${context.streak}${context.restDay ? ' [REST DAY — chhuti]' : ''}${context.testDay ? ' [TEST DAY — mock]' : ''}.`,
     `Today's progress: ${formatPlanProgress(plan, state)}. Study time available: ${context.availableMinutes}min.`,
     `Today's scheduled tasks:`,
     ...formatScheduledTasks(plan, state),
     `Journey so far: ${overview}`,
     `Recent progress: ${recent.join(' | ') || 'none yet'}.`,
     `Weak habits: ${context.weakHabitIds.join(', ') || 'none'}. Strong habits: ${context.strongHabitIds.join(', ') || 'none'}.`,
-    `Gaps: ${context.gapDays}. Backlog: ${context.backlogDays}. Recovery mode: ${context.recoveryMode}. Exam window: ${context.examWindowActive}. Mock Sunday: ${context.mockSunday}.`,
+    `Gaps: ${context.gapDays}. Backlog: ${context.backlogDays}. Recovery mode: ${context.recoveryMode}. Exam window: ${context.examWindowActive}. Test day: ${context.testDay}.`,
   ].join('\n');
 }

@@ -30,7 +30,7 @@ ACTIONS.register({ id: 'removeTask', label: 'Remove task from a day', descriptio
 ACTIONS.register({ id: 'bulkRemoveTasks', label: 'Bulk remove from day', description: 'Hide multiple tasks for one day only; the task bank is never modified.', entityType: 'dynamicTaskBank', permissions: ['bulk-edit'], confirmationRequired: true, supportsBulk: true });
 ACTIONS.register({ id: 'markDone', label: 'Mark task done', description: 'Update completion log for one task.', entityType: 'taskLogs', permissions: ['edit'] });
 ACTIONS.register({ id: 'bulkMarkDone', label: 'Bulk mark done', description: 'Update completion logs for multiple tasks.', entityType: 'taskLogs', permissions: ['bulk-edit'], confirmationRequired: true, supportsBulk: true });
-ACTIONS.register({ id: 'setDayMode', label: 'Mark rest/study day', description: 'Mark or unmark a journey day as a rest (holiday) day.', entityType: 'restDays', permissions: ['edit'], confirmationRequired: true });
+ACTIONS.register({ id: 'setDayMode', label: 'Mark rest/test/study day', description: 'Mark or unmark a journey day as a rest, test/mock, or study day (label only — tasks still plan normally).', entityType: 'dayMode', permissions: ['edit'], confirmationRequired: true });
 // Task Bank management
 ACTIONS.register({ id: 'editAnyTask', label: 'Edit any task', description: 'Edit any task in the task bank (title, duration, category).', entityType: 'taskBank', permissions: ['edit'] });
 ACTIONS.register({ id: 'deleteAnyTask', label: 'Delete task from bank', description: 'Permanently delete a task from the task bank.', entityType: 'taskBank', permissions: ['delete'], confirmationRequired: true });
@@ -867,16 +867,16 @@ export class ChatToolsService {
     const d = clamp(day);
     const dateISO = this.dateForDay(state, d);
     const isRest = (state.restDays ?? []).includes(d);
+    const isTest = (state.testDays ?? []).includes(d);
+    const tag = isRest ? ' [REST DAY]' : isTest ? ' [TEST DAY]' : '';
     const plan = this.planner.buildPlan(state, dateISO, this.config);
     if (plan.tasks.length === 0) {
       return {
         ok: true,
-        summary: isRest
-          ? `Day ${d} — ${formatDayLabel(dateISO)} (${dateISO}): REST DAY (chhuti). No auto tasks; sirf explicitly scheduled tasks hi dikhte hain.`
-          : `Day ${d} — ${formatDayLabel(dateISO)} (${dateISO}): no tasks planned.`,
+        summary: `Day ${d} — ${formatDayLabel(dateISO)} (${dateISO})${tag}: no tasks planned.`,
       };
     }
-    const lines = [`Day ${d} plan — ${formatDayLabel(dateISO)} (${dateISO})${isRest ? ' [REST DAY]' : ''} — ${formatPlanProgress(plan, state)}:`];
+    const lines = [`Day ${d} plan — ${formatDayLabel(dateISO)} (${dateISO})${tag} — ${formatPlanProgress(plan, state)}:`];
     lines.push(...formatScheduledTasks(plan, state));
     return { ok: true, summary: lines.join('\n') };
   }
@@ -905,8 +905,10 @@ export class ChatToolsService {
       const plan = this.planForDay(state, d);
       const dateISO = this.dateForDay(state, d);
       const rest = (state.restDays ?? []).includes(d);
+      const test = (state.testDays ?? []).includes(d);
+      const tag = rest ? ' [REST DAY]' : test ? ' [TEST DAY]' : '';
       const first = formatScheduledTasks(plan, state, 4).join('; ');
-      lines.push(`Day ${d} — ${formatDayLabel(dateISO)} (${dateISO})${rest ? ' [REST DAY]' : ''}: ${formatPlanProgress(plan, state)}. ${first}`);
+      lines.push(`Day ${d} — ${formatDayLabel(dateISO)} (${dateISO})${tag}: ${formatPlanProgress(plan, state)}. ${first}`);
     }
     return lines.join('\n');
   }
@@ -1095,30 +1097,34 @@ export class ChatToolsService {
     };
   }
 
-  private setDayMode(state: AppState, day: number, mode: 'study' | 'rest', confirmed = false): ChatToolResult {
+  private setDayMode(state: AppState, day: number, mode: 'study' | 'rest' | 'test', confirmed = false): ChatToolResult {
     if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
     const d = clamp(day);
-    const wantsRest = mode === 'rest';
-    const current = (state.restDays ?? []).includes(d);
-    if (current === wantsRest) {
-      return { ok: true, summary: `Day ${d} already ${wantsRest ? 'rest (chhuti) hai' : 'study day hai'}. ${this.planPreview(state, d)}` };
+    const restDays = state.restDays ?? [];
+    const testDays = state.testDays ?? [];
+    const current: 'study' | 'rest' | 'test' = restDays.includes(d) ? 'rest' : testDays.includes(d) ? 'test' : 'study';
+    if (current === mode) {
+      const already = mode === 'rest' ? 'rest (chhuti) hai' : mode === 'test' ? 'test/mock day hai' : 'study day hai';
+      return { ok: true, summary: `Day ${d} already ${already}. ${this.planPreview(state, d)}` };
     }
-    const next = wantsRest ? [...(state.restDays ?? []), d] : (state.restDays ?? []).filter((x) => x !== d);
+    const nextRestDays = mode === 'rest' ? [...restDays, d] : restDays.filter((x) => x !== d);
+    const nextTestDays = mode === 'test' ? [...testDays, d] : testDays.filter((x) => x !== d);
     const resultAction = executeAiAction({
       state,
       action: ACTIONS.require('setDayMode'),
       entityId: this.dateForDay(state, d),
-      summary: `${wantsRest ? 'mark rest (holiday)' : 'mark study'} Day ${d} (${this.dateForDay(state, d)})`,
-      beforeState: state.restDays,
-      afterState: next,
+      summary: `mark Day ${d} (${this.dateForDay(state, d)}) as ${mode}`,
+      beforeState: { restDays, testDays },
+      afterState: { restDays: nextRestDays, testDays: nextTestDays },
       confirmed,
     });
     if (!resultAction.ok) return { ok: false, requiresConfirmation: resultAction.requiresConfirmation, summary: resultAction.summary };
     this.store.save(resultAction.state);
+    const label = mode === 'rest' ? 'REST DAY (chhuti) hai' : mode === 'test' ? 'TEST/MOCK DAY hai' : 'normal study day hai';
     return {
       ok: true,
       versionId: resultAction.versionId,
-      summary: `Day ${d} ab ${wantsRest ? 'REST DAY (chhuti) hai — sirf explicitly scheduled tasks dikhenge' : 'normal study day hai'}. ${this.planPreview(resultAction.state, d)}`,
+      summary: `Day ${d} ab ${label}. Tasks normal hi rahenge, kuch hide nahi hota — sirf label change hota hai. ${this.planPreview(resultAction.state, d)}`,
     };
   }
 
@@ -1237,12 +1243,12 @@ export class ChatToolsService {
     const dateISO = this.dateForDay(state, d);
     const plan = this.planForDay(state, d);
     const rest = (state.restDays ?? []).includes(d);
+    const test = (state.testDays ?? []).includes(d);
+    const tag = rest ? ' [REST DAY]' : test ? ' [TEST DAY]' : '';
     if (plan.tasks.length === 0) {
-      return rest
-        ? `Day ${d} (${formatDayLabel(dateISO)}) ab REST DAY hai — plan khali.`
-        : `Day ${d} — ${formatDayLabel(dateISO)} (${dateISO}): no tasks planned.`;
+      return `Day ${d} — ${formatDayLabel(dateISO)} (${dateISO})${tag}: no tasks planned.`;
     }
-    const lines = [`Updated plan Day ${d} — ${formatDayLabel(dateISO)} (${dateISO})${rest ? ' [REST DAY]' : ''} — ${formatPlanProgress(plan, state)}:`];
+    const lines = [`Updated plan Day ${d} — ${formatDayLabel(dateISO)} (${dateISO})${tag} — ${formatPlanProgress(plan, state)}:`];
     lines.push(...formatScheduledTasks(plan, state));
     return lines.join('\n');
   }

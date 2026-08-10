@@ -101,6 +101,7 @@ function buildFullState(): AppState {
   state.lastSummaryDate = '2026-07-20';
   state.clearedLevels = [1, 2];
   state.restDays = [7, 21];
+  state.testDays = [14, 28];
 
   state.taskLogs['2026-06-01'] = { seed_a1: true, seed_b2: false, dyn_x: true };
   state.taskLogs['2026-06-02'] = { seed_a1: true, seed_b2: true };
@@ -338,6 +339,7 @@ describe('full app data backup (production-grade)', () => {
     expect(restored.taskLogs).toEqual(source.taskLogs);
     expect(restored.timeZone).toBe('Asia/Kolkata');
     expect(restored.restDays).toEqual([7, 21]);
+    expect(restored.testDays).toEqual([14, 28]);
   });
 
   it('keeps chat prefs, personas, thinking level, attachments and summarized timestamps', () => {
@@ -387,6 +389,7 @@ describe('full app data + schema hygiene', () => {
     expect(Object.keys(store.current.planCache).sort()).toEqual(['2026-06-01', '2026-06-02', '2026-06-21']);
     expect(store.current.taskLogs['2026-06-01']).toEqual({ seed_a1: true, seed_b2: false, dyn_x: true });
     expect(store.current.restDays).toEqual([7, 21]);
+    expect(store.current.testDays).toEqual([14, 28]);
     // Anything outside the tasks scope starts from the base defaults (fresh store).
     expect(store.current.clearedLevels).toEqual([]);
     expect(store.current.startDateISO).toBeNull();

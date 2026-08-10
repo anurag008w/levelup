@@ -22,7 +22,7 @@ export class HabitStatsService {
   baseTasksForDay(dayNumber: number): TaskBankEntry[] {
     return this.taskBank
       .search({
-        unlock: { dayNumber, phase: 'jee-core', unlockedHabitIds: [], examWindowActive: false, mockSunday: false, weekday: 0, recoveryMode: false, backlogDays: 0, revisionDueHabitIds: [] },
+        unlock: { dayNumber, phase: 'jee-core', unlockedHabitIds: [], examWindowActive: false, testDay: false, weekday: 0, recoveryMode: false, backlogDays: 0, revisionDueHabitIds: [] },
       })
       .filter((t) => t.unlockConditions.every((c) => c.type !== 'day' || c.fromDay <= dayNumber))
       .sort((a, b) => {

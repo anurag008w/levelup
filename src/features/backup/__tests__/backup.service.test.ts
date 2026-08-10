@@ -200,6 +200,7 @@ describe('backup scopes (tasks / levels)', () => {
     state.taskLogs['2026-06-01'] = { 'dyn-1': true } as AppState['taskLogs'][string];
     state.planCache['2026-06-01'] = {} as AppState['planCache'][string];
     state.restDays = [7];
+    state.testDays = [14];
     state.clearedLevels = [1, 2];
     state.weeklyReviews = [{ weekNumber: 1, dateISO: '2026-06-07', strongest: 'a', weakest: 'b', planForNextWeek: 'c' }];
     state.monthlyAssessments = [{ monthNumber: 1, dateISO: '2026-06-30', reflection: 'ok' }];
@@ -217,6 +218,7 @@ describe('backup scopes (tasks / levels)', () => {
     expect(state).toHaveProperty('taskLogs');
     expect(state).toHaveProperty('planCache');
     expect(state).toHaveProperty('restDays');
+    expect(state).toHaveProperty('testDays');
     // Non-task sections must NOT leak into a tasks export.
     expect(state).not.toHaveProperty('clearedLevels');
     expect(state).not.toHaveProperty('memory');

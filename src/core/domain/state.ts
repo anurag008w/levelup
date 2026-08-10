@@ -238,8 +238,10 @@ export interface AppState {
   aiSettings: AiSettings;
   /** AI-generated / user-created tasks persisted into the dynamic bank. */
   dynamicTaskBank: TaskBankEntry[];
-  /** Journey day numbers marked as rest/holiday (no auto-plan; only explicit tasks). */
+  /** Journey day numbers marked as rest/holiday. Tasks still plan normally — this is a label for AI/UI awareness only. */
   restDays: number[];
+  /** Journey day numbers marked as test/mock day (independent of calendar weekday). Tasks still plan normally, plus mock-protocol tasks unlock. */
+  testDays: number[];
   /** One generated plan per dateISO. */
   planCache: Record<string, DailyPlan>;
   /** Daily available study time in minutes. */
@@ -290,6 +292,7 @@ export function emptyAppState(): AppState {
     aiSettings: defaultAiSettings(),
     dynamicTaskBank: [],
     restDays: [],
+    testDays: [],
     planCache: {},
     studyTimeMinutes: 360,
     aiActionHistory: emptyAiActionHistory(),

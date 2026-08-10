@@ -43,7 +43,7 @@ export class TaskGenerationService {
     const tokens = tokenize(intent);
     if (tokens.length === 0) return null;
     const matches: Array<{ entry: TaskBankEntry; score: number }> = [];
-    for (const entry of this.taskBank.search({ unlock: { dayNumber, phase: 'jee-core', unlockedHabitIds: [], examWindowActive: false, mockSunday: false, weekday: 0, recoveryMode: false, backlogDays: 0, revisionDueHabitIds: [] }, activeOnly: true })) {
+    for (const entry of this.taskBank.search({ unlock: { dayNumber, phase: 'jee-core', unlockedHabitIds: [], examWindowActive: false, testDay: false, weekday: 0, recoveryMode: false, backlogDays: 0, revisionDueHabitIds: [] }, activeOnly: true })) {
       const hay = tokenize(`${entry.title} ${entry.description} ${entry.tags.join(' ')}`);
       let score = 0;
       for (const t of tokens) if (hay.includes(t)) score++;

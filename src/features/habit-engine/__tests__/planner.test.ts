@@ -22,14 +22,14 @@ function makePlanner() {
 const legacyConfig = { ...DEFAULT_PROGRESSION_CONFIG, aiEnabled: false };
 
 /** Reference curriculum list: legacy tasks whose cadence passes on that date. */
-function referenceCumulative(entries: TaskBankEntry[], dayNumber: number, dateISO: string): string[] {
+function referenceCumulative(entries: TaskBankEntry[], dayNumber: number, dateISO: string, isTestDay = false): string[] {
   const weekday = new Date(dateISO + 'T00:00:00').getDay();
   const snapshot: UnlockSnapshot = {
     dayNumber,
     phase: 'jee-core',
     unlockedHabitIds: [],
     examWindowActive: false,
-    mockSunday: weekday === 0,
+    testDay: isTestDay,
     weekday,
     recoveryMode: false,
     backlogDays: 0,
@@ -74,7 +74,7 @@ function isoFromDay(day: number): string {
 describe('HabitProgressionService backward compatibility', () => {
   it('base plan on a healthy day matches the legacy cumulative task list', () => {
     const { planner, bank } = makePlanner();
-    // Non-Sunday days (mock tasks only join the plan on mock Sundays).
+    // Test day is off by default (state.testDays empty) — mock tasks never join here.
     for (const day of [1, 5, 8, 30, 45, 90]) {
       const dateISO = isoFromDay(day);
       const state = healthyStateWithRecentCompletion(planner, day);
@@ -365,8 +365,8 @@ describe('HabitProgressionService dynamic (custom/AI) tasks', () => {
 });
 
 describe('HabitProgressionService day-scoped scheduling', () => {
-  it('a rest day drops all curriculum and AI tasks, keeping only explicit ones', () => {
-    const { planner } = makePlanner();
+  it('a rest day keeps normal curriculum tasks AND explicit ones (label only, no filtering)', () => {
+    const { planner, bank } = makePlanner();
     const explicit: TaskBankEntry = {
       id: 'ai-explicit',
       habitId: 'h1',
@@ -389,44 +389,47 @@ describe('HabitProgressionService day-scoped scheduling', () => {
     const state = { ...healthyState(), restDays: [5], dynamicTaskBank: [explicit] };
     const plan = planner.buildPlan(state, isoFromDay(5), DEFAULT_PROGRESSION_CONFIG);
     expect(plan.contextSummary).toContain('rest-day');
-    expect(plan.tasks.map((t) => t.entry.id)).toEqual(['ai-explicit']);
-    expect(plan.tasks[0].source).toBe('ai');
+    // Rest day is a label only — normal curriculum still plans, plus the explicit task.
+    const expected = referenceCumulative(bank.getAll(), 5, isoFromDay(5));
+    expect(plan.tasks.map((t) => t.entry.id)).toEqual(expect.arrayContaining([...expected, 'ai-explicit']));
+    expect(plan.tasks.find((t) => t.entry.id === 'ai-explicit')?.source).toBe('ai');
   });
 
-  it('a rest day has an empty plan when nothing was explicitly scheduled', () => {
-    const { planner } = makePlanner();
+  it('a rest day still plans the normal curriculum (rest is a label, not a task filter)', () => {
+    const { planner, bank } = makePlanner();
     const state = { ...healthyState(), restDays: [3] };
     const plan = planner.buildPlan(state, isoFromDay(3), DEFAULT_PROGRESSION_CONFIG);
-    expect(plan.tasks).toEqual([]);
+    const expected = referenceCumulative(bank.getAll(), 3, isoFromDay(3));
+    expect(plan.tasks.map((t) => t.entry.id)).toEqual(expect.arrayContaining(expected));
+    expect(plan.tasks.length).toBeGreaterThan(0);
   });
 
-  it('rest day suppresses the mock Sunday protocol too', () => {
+  it('rest day does NOT by itself unlock the mock protocol', () => {
     const { planner } = makePlanner();
-    // 2026-01-18 is an actual Sunday (day 18 ≥ 15 → mocks would be due); a rest day there must yield no tasks.
+    // Day 18 ≥ 15 → mocks would be due if it were also a test day, but a plain
+    // rest day (not in testDays) must not unlock them.
     const state = { ...healthyState(), restDays: [18] };
     const plan = planner.buildPlan(state, isoFromDay(18), DEFAULT_PROGRESSION_CONFIG);
-    expect(plan.tasks).toEqual([]);
+    expect(plan.tasks.some((t) => t.entry.id.startsWith('mock_'))).toBe(false);
   });
 
-  it('mock tasks only appear on actual calendar Sundays at Day 15+, not every 7th journey day', () => {
+  it('mock tasks only appear on days explicitly marked as test days at Day 15+, never automatically by calendar weekday', () => {
     const { planner, bank } = makePlanner();
-    // 2026-01-18 is Sunday (day 18) and 2026-01-25 is Sunday (day 25) — both past the Day-15 gate.
+    // 2026-01-18 and 2026-01-25 are actual Sundays past the Day-15 gate, but
+    // with no explicit testDays, no calendar weekday should auto-unlock mocks.
     for (const sundayDay of [18, 25]) {
       const plan = planner.buildPlan(healthyState(), isoFromDay(sundayDay), legacyConfig);
-      const mocks = plan.tasks.filter((t) => t.entry.id.startsWith('mock_'));
-      expect(mocks.length, `Day ${sundayDay} (Sunday) should have mock tasks`).toBeGreaterThan(0);
+      expect(plan.tasks.some((t) => t.entry.id.startsWith('mock_')), `Day ${sundayDay} (Sunday) should NOT auto-unlock mocks anymore`).toBe(false);
     }
-    // Sundays before the Day-15 gate (day 4, day 11) must NOT unlock mocks yet.
-    for (const earlySunday of [4, 11]) {
-      const plan = planner.buildPlan(healthyState(), isoFromDay(earlySunday), legacyConfig);
-      expect(plan.tasks.some((t) => t.entry.id.startsWith('mock_')), `Day ${earlySunday} is too early for mocks`).toBe(false);
-    }
-    // 2026-01-07 is Wednesday (day 7, old "every 7th day" logic) — no mocks now.
-    const wednesday = planner.buildPlan(healthyState(), isoFromDay(7), legacyConfig);
-    expect(wednesday.tasks.some((t) => t.entry.id.startsWith('mock_'))).toBe(false);
-    // 2026-01-14 is Wednesday again (day 14) — still no mocks.
-    const day14 = planner.buildPlan(healthyState(), isoFromDay(14), legacyConfig);
-    expect(day14.tasks.some((t) => t.entry.id.startsWith('mock_'))).toBe(false);
+    // Explicitly marking a non-Sunday day (Day 20, Tuesday) as a test day must unlock mocks.
+    const testState = { ...healthyState(), testDays: [20] };
+    const explicitPlan = planner.buildPlan(testState, isoFromDay(20), legacyConfig);
+    const mocks = explicitPlan.tasks.filter((t) => t.entry.id.startsWith('mock_'));
+    expect(mocks.length, 'Day 20 explicitly marked test day should have mock tasks').toBeGreaterThan(0);
+    // Marking an early day (Day 11, before the Day-15 gate) as a test day must still not unlock mocks.
+    const tooEarly = { ...healthyState(), testDays: [11] };
+    const earlyPlan = planner.buildPlan(tooEarly, isoFromDay(11), legacyConfig);
+    expect(earlyPlan.tasks.some((t) => t.entry.id.startsWith('mock_')), 'Day 11 is too early for mocks even if marked test day').toBe(false);
     void bank;
   });
 

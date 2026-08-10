@@ -37,7 +37,7 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
   }),
   z.object({ action: z.literal('removeTask'), day: z.number().int(), taskId: z.string().min(1), confirmed: z.boolean().optional() }),
   z.object({ action: z.literal('bulkRemoveTasks'), day: z.number().int(), taskIds: z.array(z.string().min(1)).min(1), confirmed: z.boolean().optional() }),
-  z.object({ action: z.literal('setDayMode'), day: z.number().int(), mode: z.enum(['study', 'rest']), confirmed: z.boolean().optional() }),
+  z.object({ action: z.literal('setDayMode'), day: z.number().int(), mode: z.enum(['study', 'rest', 'test']), confirmed: z.boolean().optional() }),
   z.object({
     action: z.literal('editTask'),
     day: z.number().int(),
@@ -145,7 +145,7 @@ ALL TOOLS (pick the MOST specific one):
 - getAllTasks{day} — ALL tasks (AI + user) for a day. getTaskBank — whole bank (optionally by category).
 - addTask / bulkAddTasks{day,intents} — add one/many tasks to a day. editTask / editAnyTask — edit a task.
 - removeTask / bulkRemoveTasks — hide tasks for ONE day (bank safe). deleteAnyTask — delete from bank (destructive).
-- markDone / bulkMarkDone — complete tasks. setDayMode{day,mode:rest|study} — holiday toggle.
+- markDone / bulkMarkDone — complete tasks. setDayMode{day,mode:rest|test|study} — rest/test/study day toggle.
 - listBlocks / createBlock / editBlock / extendBlock / activateBlock / deleteBlock — custom study blocks.
 - listPlanners / getSubject / getPlanner / getTest / getTests / getRoutine / getDay — uploaded coaching planners (read-only).
 
@@ -163,7 +163,7 @@ TASK MANAGEMENT:
 - Edit a task: {"action":"editTask","day":N,"taskId":"<id from plan>","title":"New title","durationMin":20,"dayTo":5,"difficulty":3,"tags":["physics"]}. "dayTo" moves it so it only appears on that exact day. If you lack info, first use getPlan/getAllTasks/getTaskBank, then retry with the real id + fields to change.
 - Remove a task from ONE day: {"action":"removeTask","day":N,"taskId":"<id from plan>"}. Hides it ONLY for Day N — the Task Bank is NEVER modified; the same task still appears on other days. Destructive: call first without confirmed to get a preview; only send "confirmed":true after the user explicitly confirms.
 - Remove several tasks from one day: {"action":"bulkRemoveTasks","day":N,"taskIds":["id1","id2"]}. Same confirmation rule + bank-safe behavior.
-- Rest/holiday day: {"action":"setDayMode","day":N,"mode":"rest"}. On a rest day no auto curriculum or AI tasks appear, only tasks the user explicitly scheduled. "mode":"study" restores it. "Sunday/holiday/chhuti" → this tool. Undoable, but still needs confirmation: call first without "confirmed" to get a preview; only send "confirmed":true after the user explicitly confirms.
+- Rest/test/study day: {"action":"setDayMode","day":N,"mode":"rest"} or {"mode":"test"} or {"mode":"study"}. This is a LABEL only — tasks for that day still plan normally, exactly like any other day (nothing is hidden or removed). "rest" marks it a rest/holiday day (chhuti/holiday), "test" marks it a test/mock day (mock/exam/test → mock protocol tasks additionally unlock for that day), "study" clears the label back to a normal day. A day can only be one of rest/test/study at a time — setting one clears the other. Undoable, but still needs confirmation: call first without "confirmed" to get a preview; only send "confirmed":true after the user explicitly confirms.
 - Mark a task done: {"action":"markDone","day":N,"taskId":"<id from plan>"}
 - Mark many/all tasks done for one day: {"action":"bulkMarkDone","day":N,"taskIds":["id1","id2"],"confirmed":true}. Omit taskIds to target ALL visible plan tasks ("all/saare tasks"). Bulk edit: first call without confirmed previews; only send "confirmed":true after explicit confirmation.
 
@@ -206,7 +206,7 @@ Multi-action rules:
 - Destructive/bulk actions (removeTask, bulkRemoveTasks, setDayMode, bulkMarkDone, deleteBlock, deleteAnyTask) still need "confirmed":true once the user has explicitly agreed; without it the WHOLE batch is only previewed and NOTHING is applied.
 - Ranges longer than 10 days auto-split into multiple calls.
 
-The tool result returns updated plans/task-bank rows with task ids and full task metadata when relevant. Sundays (Day 7, 14, 21...) are MOCK test days, NOT automatic holidays: on a mock Sunday the mock protocol tasks appear AND you can still add tasks. Only use setDayMode "rest" when the user actually wants a holiday/rest day.
+The tool result returns updated plans/task-bank rows with task ids and full task metadata when relevant. Test/mock days are NOT automatic by calendar weekday anymore — a day only gets mock protocol tasks if it was explicitly marked via setDayMode{mode:"test"}. Only use setDayMode "rest" when the user actually wants a holiday/rest day, and "test" when they want a test/mock day.
 There is NO web search tool here. Never emit an action like {"action":"websearch",...} — it does not exist and will be ignored.
 For ANYTHING else (concepts, motivation, general questions, block suggestions, study strategies, or requests for fresh/latest/current information) reply normally in Hinglish (always ROMAN script).`;
 
@@ -270,7 +270,7 @@ export const CHAT_TOOL_CATALOG: ChatToolMeta[] = [
   { id: 'deleteAnyTask', label: 'Delete bank task', description: 'Task bank se task permanently delete karo.', example: '{"action":"deleteAnyTask","taskId":"ai-123"}', confirmationRequired: true },
   { id: 'markDone', label: 'Mark done', description: 'Ek task ko complete mark karo.', example: '{"action":"markDone","day":3,"taskId":"d1_t1"}' },
   { id: 'bulkMarkDone', label: 'Bulk mark done', description: 'Kai tasks ko complete mark karo.', example: '{"action":"bulkMarkDone","day":3,"taskIds":["d1_t1","d1_t2"]}', confirmationRequired: true },
-  { id: 'setDayMode', label: 'Rest/study day', description: 'Day ko rest (chhuti) ya study day banao.', example: '{"action":"setDayMode","day":3,"mode":"rest"}', confirmationRequired: true },
+  { id: 'setDayMode', label: 'Rest/test/study day', description: 'Day ko rest (chhuti), test (mock) ya study day label karo — tasks normal hi rehte hain.', example: '{"action":"setDayMode","day":3,"mode":"test"}', confirmationRequired: true },
   { id: 'listBlocks', label: 'List blocks', description: 'Saare custom study blocks dikhao.', example: '{"action":"listBlocks"}', readOnly: true },
   { id: 'createBlock', label: 'Create block', description: 'Custom study block banao (post-journey).', example: '{"action":"createBlock","name":"Physics Mastery","days":15,"focusAreas":["physics"],"difficulty":"medium"}' },
   { id: 'editBlock', label: 'Edit block', description: 'Block ka naam/days/difficulty/habits badlo.', example: '{"action":"editBlock","blockId":"bk-1","days":20,"difficulty":"hard"}' },

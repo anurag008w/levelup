@@ -48,15 +48,11 @@ export class HabitProgressionService {
   }
 
   planFromContext(context: PlanningContext, config: ProgressionConfig): DailyPlan {
-    // Rest/holiday day: no auto curriculum and no AI injection. Only tasks the
-    // user explicitly scheduled for this exact day (day-exact) are planned, so
-    // "chhuti" days stay light unless study was deliberately requested.
-    if (context.restDay) {
-      const planned: PlannedTask[] = [];
-      this.injectDynamic(context, planned);
-      return this.finalize(context, planned, config);
-    }
-
+    // Rest day and test day are labels only (set via setDayMode) — tasks for
+    // that day are planned exactly like any other day. A test day additionally
+    // unlocks 'mock-sunday' bank entries (see groupOf/isUnlockMet); rest day
+    // has no effect on which tasks are generated, it's informational for the
+    // UI/AI only (see context.restDay usage in context-overview/TodayScreen).
     const snapshot = this.snapshotFromContext(context);
     const candidates = this.deps.taskBank.search({ unlock: snapshot, activeOnly: true });
 
@@ -289,7 +285,7 @@ export class HabitProgressionService {
       phase: context.phase,
       unlockedHabitIds: context.unlockedHabitIds,
       examWindowActive: context.examWindowActive,
-      mockSunday: context.mockSunday,
+      testDay: context.testDay,
       weekday: context.weekday,
       recoveryMode: context.recoveryMode,
       backlogDays: context.backlogDays,

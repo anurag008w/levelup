@@ -209,7 +209,8 @@ describe('ChatToolsService', () => {
   it('markDone uses special plan log keys such as mock days', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    // Day 19 (2026-07-19) is an actual Sunday past the Day-15 gate → mock protocol active.
+    // Day 19 (2026-07-19) is past the Day-15 gate → explicitly mark it a test day to activate the mock protocol.
+    store.save({ ...store.get(), testDays: [19] });
     const result = await tools.run({ action: 'markDone', day: 19, taskId: 'mock_1' });
     expect(result.ok).toBe(true);
     expect(store.get().taskLogs['mock:2026-07-19']?.mock_1).toBe(true);
@@ -386,7 +387,7 @@ describe('ChatToolsService', () => {
     expect(day2.summary).toContain('id:d1_t2');
   });
 
-  it('setDayMode rest empties the plan and study restores it', async () => {
+  it('setDayMode rest labels the day but keeps tasks; study/test switch cleanly', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
     const preview = await tools.run({ action: 'setDayMode', day: 2, mode: 'rest' });
@@ -396,12 +397,25 @@ describe('ChatToolsService', () => {
     const rest = await tools.run({ action: 'setDayMode', day: 2, mode: 'rest', confirmed: true });
     expect(rest.ok).toBe(true);
     expect(store.get().restDays).toEqual([2]);
+    expect(store.get().testDays).toEqual([]);
     const restPlan = await tools.run({ action: 'getPlan', day: 2 });
     expect(restPlan.summary).toContain('REST DAY');
-    expect(restPlan.summary).not.toContain('id:d');
+    // Rest is a label only — tasks still show, same as a normal day.
+    expect(restPlan.summary).toContain('id:d');
+
+    // Switching straight from rest to test flips both arrays atomically.
+    const test = await tools.run({ action: 'setDayMode', day: 2, mode: 'test', confirmed: true });
+    expect(test.ok).toBe(true);
+    expect(store.get().restDays).toEqual([]);
+    expect(store.get().testDays).toEqual([2]);
+    const testPlan = await tools.run({ action: 'getPlan', day: 2 });
+    expect(testPlan.summary).toContain('TEST DAY');
+    expect(testPlan.summary).toContain('id:d');
+
     const study = await tools.run({ action: 'setDayMode', day: 2, mode: 'study', confirmed: true });
     expect(study.ok).toBe(true);
     expect(store.get().restDays).toEqual([]);
+    expect(store.get().testDays).toEqual([]);
     const studyPlan = await tools.run({ action: 'getPlan', day: 2 });
     expect(studyPlan.summary).toContain('id:d1_t');
   });
@@ -443,12 +457,13 @@ describe('ChatToolsService', () => {
     });
   });
 
-  it('can add tasks on a mock Sunday and they appear in that plan', async () => {
+  it('can add tasks on a test day and they appear in that plan', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    // Day 19 (2026-07-19) is an actual Sunday past the Day-15 gate → mock protocol active.
-    const sunday = await tools.run({ action: 'getPlan', day: 19 });
-    expect(sunday.summary).toContain('id:mock_1');
+    // Day 19 (2026-07-19) is past the Day-15 gate → explicitly mark it a test day to activate the mock protocol.
+    store.save({ ...store.get(), testDays: [19] });
+    const testDayPlan = await tools.run({ action: 'getPlan', day: 19 });
+    expect(testDayPlan.summary).toContain('id:mock_1');
     const add = await tools.run({ action: 'addTask', day: 19, intent: 'sunday revision', durationMin: 20 });
     expect(add.ok).toBe(true);
     const updated = await tools.run({ action: 'getPlan', day: 19 });

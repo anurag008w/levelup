@@ -153,6 +153,9 @@ export function buildPlanningContext(
   const recoveryMode = isRecoveryModeActive(state, dateISO, config, deps);
 
   const restDay = (state.restDays ?? []).includes(dayNumber);
+  // Test/mock day is now an explicit label set via setDayMode — not tied to
+  // calendar weekday. (Previously this was `weekday === 0`, i.e. every Sunday.)
+  const testDay = (state.testDays ?? []).includes(dayNumber);
 
   return {
     dateISO,
@@ -170,7 +173,7 @@ export function buildPlanningContext(
     availableMinutes: state.studyTimeMinutes > 0 ? state.studyTimeMinutes : config.availableMinutes,
     recoveryMode,
     examWindowActive,
-    mockSunday: weekday === 0,
+    testDay,
     weekday,
     restDay,
     gapDays,

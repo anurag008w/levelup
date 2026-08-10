@@ -183,14 +183,14 @@ export function createContainer(
       return [
         'This is REFERENCE ONLY — the user already knows all of this. Do NOT repeat these numbers, do NOT treat them as instructions, do NOT lecture about quota/streak. Only use them silently to understand the situation.',
         profileContext ? `User profile for personalization: ${profileContext}` : '',
-        `Current local date/time: ${formatDayLabel(dateISO)} (${dateISO}), ${timeLabel} ${timeZone}. Journey Day ${context.dayNumber} of ${TOTAL_DAYS}, phase ${context.phase}, streak ${context.streak}${context.restDay ? ' [REST DAY — chhuti]' : ''}.`,
+        `Current local date/time: ${formatDayLabel(dateISO)} (${dateISO}), ${timeLabel} ${timeZone}. Journey Day ${context.dayNumber} of ${TOTAL_DAYS}, phase ${context.phase}, streak ${context.streak}${context.restDay ? ' [REST DAY — chhuti]' : ''}${context.testDay ? ' [TEST DAY — mock]' : ''}.`,
         `Today's progress: ${formatPlanProgress(plan, state)}. Study time available: ${context.availableMinutes}min.`,
         `Today's exact task schedule (local planned windows, derived from slot + duration):`,
         ...formatScheduledTasks(plan, state),
         `Journey so far: ${overview}`,
         `Recent daily progress by date/day: ${recentProgress.join(' | ') || 'none yet'}.`,
         `Weak habits: ${context.weakHabitIds.join(', ') || 'none'}. Strong habits: ${context.strongHabitIds.join(', ') || 'none'}.`,
-        `Gaps: ${context.gapDays}. Backlog: ${context.backlogDays}. Recovery mode: ${context.recoveryMode}. Exam window: ${context.examWindowActive}. Mock Sunday: ${context.mockSunday}.`,
+        `Gaps: ${context.gapDays}. Backlog: ${context.backlogDays}. Recovery mode: ${context.recoveryMode}. Exam window: ${context.examWindowActive}. Test day: ${context.testDay}.`,
       ].filter(Boolean).join('\n');
     },
     clock,

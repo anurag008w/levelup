@@ -306,7 +306,19 @@ export default function TodayScreen({
           <div>
             <p className="font-display text-sm font-bold text-light">Rest Day — Chhuti</p>
             <p className="mt-0.5 text-xs leading-relaxed text-muted">
-              Aaj koi auto-plan nahi hai. Sirf wahi tasks dikhenge jo aapne/tumhare coach ne is din ke liye explicitly schedule kiye hain. Fully relax karo ya optional light study karo.
+              Aaj rest day mark kiya gaya hai. Tasks neeche normal hi dikh rahe hain — jitna karna hai utna karo, baaki relax karo.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {activeContext.testDay && (
+        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-light-dim/50 bg-[rgba(239,233,223,0.08)] p-3.5 fade-in">
+          <Siren size={18} color="var(--color-danger)" className="mt-0.5 shrink-0" />
+          <div>
+            <p className="font-display text-sm font-bold text-light">Test Day — Mock</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted">
+              Aaj test/mock day mark kiya gaya hai. Normal tasks ke saath mock protocol tasks bhi unlock ho gaye hain neeche.
             </p>
           </div>
         </div>
@@ -497,7 +509,7 @@ function groupLabel(g: PlannedTask['group']): string {
     case 'bonus':
       return 'Bonus (optional)';
     case 'mock':
-      return 'Sunday Mock Protocol';
+      return 'Test Day Mock Protocol';
   }
 }
 

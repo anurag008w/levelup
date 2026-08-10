@@ -204,6 +204,7 @@ export function buildBackupPayload(state: AppState, chat: ChatStoreState | null,
       taskLogs: full.taskLogs,
       planCache: full.planCache,
       restDays: full.restDays,
+      testDays: full.testDays,
     };
   } else if (scope === 'levels') {
     const full = normalizeState(state);
@@ -304,6 +305,7 @@ export function applyBackup(payload: BackupPayload, targets: ApplyBackupTargets,
     if (isRecord(rawState.taskLogs)) next.taskLogs = rawState.taskLogs as AppState['taskLogs'];
     if (isRecord(rawState.planCache)) next.planCache = rawState.planCache as AppState['planCache'];
     if (Array.isArray(rawState.restDays)) next.restDays = rawState.restDays as AppState['restDays'];
+    if (Array.isArray(rawState.testDays)) next.testDays = rawState.testDays as AppState['testDays'];
   } else if (scope === 'levels') {
     if (Array.isArray(rawState.clearedLevels)) next.clearedLevels = rawState.clearedLevels as AppState['clearedLevels'];
     if (Array.isArray(rawState.weeklyReviews)) next.weeklyReviews = rawState.weeklyReviews as AppState['weeklyReviews'];
