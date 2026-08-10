@@ -5,6 +5,7 @@ import type { AppState, UserProfile } from '../types';
 import type { MemoryEntry } from '../core/domain/memory';
 import { container } from '../di/container';
 import { haptic } from '../lib/haptics';
+import { exportTextFile } from '../lib/exportFile';
 import MemorySummaryPanel from './MemorySummaryPanel';
 
 export type Tab = 'today' | 'levels' | 'progress' | 'review' | 'task-bank' | 'ai' | 'chat' | 'updates' | 'planners';
@@ -218,13 +219,9 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
   function exportMemoryBackup() {
     haptic();
     const json = container.memory.exportMemory(state);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `levelup-memory-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+    void exportTextFile(json, `levelup-memory-backup-${new Date().toISOString().slice(0, 10)}.json`).then((result) => {
+      if (!result.ok) alert(result.message);
+    });
   }
 
   function importMemoryBackup(file: File | null) {
