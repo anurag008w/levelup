@@ -2,6 +2,8 @@
 // large transcripts never slow down full-state persistence.
 
 import type { ThinkingLevel } from './llm';
+import type { ChatToolAction } from './chat-tools';
+import type { MemoryToolAction } from './memory-tools';
 
 export type ChatRole = 'user' | 'assistant';
 
@@ -33,6 +35,17 @@ export interface ChatMessage {
   stopped?: boolean;
   /** Attachments for this message (images, PDFs, etc.) */
   attachments?: ChatAttachment[];
+  /**
+   * Present when this reply is a blocked destructive/bulk action (setDayMode,
+   * removeTask, bulkMarkDone, memory deletion, etc.) waiting on the user's
+   * explicit yes/no — rendered as tappable Yes/No buttons in the chat UI
+   * instead of relying on free-text confirmation being correctly detected on
+   * the next turn. The exact original actions are kept so "Yes" can replay
+   * them deterministically with confirmed:true, without another model
+   * round-trip (or a keyword match on the next message) that could misfire.
+   * Cleared (set to undefined) once the user taps Yes or No.
+   */
+  pendingConfirmation?: { kind: 'tools'; actions: ChatToolAction[] } | { kind: 'memory'; actions: MemoryToolAction[] };
 }
 
 /** One executed tool call, recorded in readable form for the chat UI. */
@@ -41,6 +54,8 @@ export interface ChatToolCallRecord {
   ok: boolean;
   /** Human-readable result — what actually happened. */
   message: string;
+  /** True when this specific action was blocked pending the user's confirmation. */
+  requiresConfirmation?: boolean;
 }
 
 export interface ChatPreferences {

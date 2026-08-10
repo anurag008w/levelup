@@ -960,6 +960,92 @@ describe('ChatService with tools', () => {
     expect(store.get().taskLogs['2026-07-01']?.['d1_t1']).toBe(true);
   });
 
+  it('tells the summary model a blocked (unconfirmed) destructive action must NOT be narrated as done', async () => {
+    // Regression for: setDayMode (or any confirmationRequired action) without
+    // "confirmed":true executes as a blocked ⚠️ preview — nothing actually
+    // changes — but the summary-writing model previously had no instruction
+    // for the ⚠️ marker (only ❌) and could narrate false success ("rest day
+    // mark ho gaya") for an action that never actually applied.
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    let seenSummarySystem = '';
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      // No "confirmed":true — this must come back blocked/⚠️, not applied.
+      complete: async (): Promise<LLMResponse> => ({ text: '{"action":"setDayMode","day":1,"mode":"rest"}', model: 'a' }),
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        const sys = req.messages.find((m) => m.role === 'system');
+        if (sys && typeof sys.content === 'string') seenSummarySystem = sys.content;
+        req.onDelta?.('Rest day banane ke liye confirm karo.');
+        return { text: 'Rest day banane ke liye confirm karo.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    await chat.send(session.id, 'day 1 ko rest day bana do');
+    // The summary model must be explicitly told what ⚠️ means and told not
+    // to claim success for it.
+    expect(seenSummarySystem).toContain('⚠️');
+    expect(seenSummarySystem).toMatch(/BLOCKED pending confirmation/i);
+    expect(seenSummarySystem).toMatch(/has NOT happened yet/i);
+    // And the state must genuinely be untouched — nothing was applied.
+    expect(store.get().restDays).toEqual([]);
+  });
+
+  it('confirmPendingAction("Yes"): replays the exact blocked setDayMode with confirmed:true, no model round-trip for execution', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    let calls = 0;
+    const provider: LLMProvider = {
+      id: 'openrouter' as ProviderId,
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => {
+        calls += 1;
+        return { text: '{"action":"setDayMode","day":1,"mode":"rest"}', model: 'a' };
+      },
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        req.onDelta?.('Rest day confirm ho gaya.');
+        return { text: 'Rest day confirm ho gaya.', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    const preview = await chat.send(session.id, 'day 1 ko rest day bana do');
+    expect(preview.pendingConfirmation?.kind).toBe('tools');
+    expect(store.get().restDays).toEqual([]);
+    expect(calls).toBe(1); // only the initial (blocked) decision hop — no retry needed, it parsed fine
+
+    const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
+    expect(calls).toBe(1); // "Yes" did NOT call the model again for the execution itself
+    expect(store.get().restDays).toEqual([1]);
+    expect(confirmed.content).toBe('Rest day confirm ho gaya.');
+    expect(chat.getSession(session.id)?.messages.find((m) => m.id === preview.id)?.pendingConfirmation).toBeUndefined();
+  });
+
+  it('confirmPendingAction("No"): cancels without applying anything, and the buttons cannot be tapped twice', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    const provider = providerWith('{"action":"setDayMode","day":1,"mode":"rest"}', 'ignored');
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    const preview = await chat.send(session.id, 'day 1 ko rest day bana do');
+
+    const cancelled = await chat.confirmPendingAction(session.id, preview.id, false);
+    expect(cancelled.content).toContain('cancel');
+    expect(store.get().restDays).toEqual([]);
+
+    // Tapping again (stale UI, double-tap, etc.) must not resurrect it.
+    await expect(chat.confirmPendingAction(session.id, preview.id, true)).rejects.toThrow();
+    expect(store.get().restDays).toEqual([]);
+  });
+
   it('runs getRoutine deterministically for "friday ka schedule batao" even when the model is broken', async () => {
     const store = makeStore();
     const stateRepo: StateRepository = { load: () => store.get(), save: (s) => store.save(s), clear: () => undefined };
