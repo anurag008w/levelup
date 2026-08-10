@@ -20,6 +20,7 @@ class FakeSync extends SyncService {
   serverState: Partial<Record<SyncScope, unknown>> = {};
   pushes: Array<{ scope: SyncScope; state: unknown }> = [];
   deletes: SyncScope[] = [];
+  forcePushes = 0;
   failNext = false;
 
   constructor() {
@@ -39,6 +40,11 @@ class FakeSync extends SyncService {
     this.pushes.push({ scope, state });
     if (this.failNext) return { ok: false, updatedAt: '', status: 500, message: 'boom' };
     return { ok: true, updatedAt: '2026-01-02T00:00:00.000Z' };
+  }
+
+  override async forceServerPush(_s: AuthSession): Promise<boolean> {
+    this.forcePushes++;
+    return true;
   }
 
   override async wipe(_s: AuthSession, _scope?: SyncScope): Promise<boolean> {
@@ -139,5 +145,23 @@ describe('SyncCoordinator', () => {
     expect(fake.pushes).toHaveLength(0);
     // Coordinator is still attached for future edits.
     expect(coord.isAttached).toBe(true);
+  });
+
+  it('syncNow pushes both scopes and force-pushes the server for admins', async () => {
+    const fake = new FakeSync();
+    const coord = makeCoordinator(fake);
+    await coord.attach({ ...SESSION, isSuperAdmin: true }, { skipInitialSync: true });
+    await coord.syncNow();
+    expect(fake.pushes.map((p) => p.scope)).toEqual(['state', 'chat']);
+    expect(fake.forcePushes).toBe(1);
+  });
+
+  it('syncNow skips the server force-push for non-admin users', async () => {
+    const fake = new FakeSync();
+    const coord = makeCoordinator(fake);
+    await coord.attach(SESSION, { skipInitialSync: true });
+    await coord.syncNow();
+    expect(fake.pushes.map((p) => p.scope)).toEqual(['state', 'chat']);
+    expect(fake.forcePushes).toBe(0);
   });
 });
