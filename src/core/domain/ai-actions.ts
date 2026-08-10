@@ -263,6 +263,17 @@ function applySnapshot(state: AppState, entityType: string, snapshot: unknown): 
   if (entityType === 'restDays' && Array.isArray(snapshot)) {
     return { ...state, restDays: snapshot as AppState['restDays'] };
   }
+  if (entityType === 'testDays' && Array.isArray(snapshot)) {
+    return { ...state, testDays: snapshot as AppState['testDays'] };
+  }
+  if (entityType === 'dayModes' && isRecord(snapshot)) {
+    const dayModes = snapshot as { restDays?: unknown; testDays?: unknown };
+    return {
+      ...state,
+      restDays: Array.isArray(dayModes.restDays) ? (dayModes.restDays as AppState['restDays']) : state.restDays,
+      testDays: Array.isArray(dayModes.testDays) ? (dayModes.testDays as AppState['testDays']) : state.testDays,
+    };
+  }
   if (entityType === 'aiSettings' && isRecord(snapshot)) {
     return { ...state, aiSettings: snapshot as unknown as AppState['aiSettings'] };
   }

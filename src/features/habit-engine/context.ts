@@ -153,6 +153,9 @@ export function buildPlanningContext(
   const recoveryMode = isRecoveryModeActive(state, dateISO, config, deps);
 
   const restDay = (state.restDays ?? []).includes(dayNumber);
+  // A day is a MOCK test day ONLY when explicitly marked via setDayMode
+  // (mode:"test"). Sundays are normal study days by default.
+  const mockSunday = (state.testDays ?? []).includes(dayNumber);
 
   return {
     dateISO,
@@ -170,7 +173,7 @@ export function buildPlanningContext(
     availableMinutes: state.studyTimeMinutes > 0 ? state.studyTimeMinutes : config.availableMinutes,
     recoveryMode,
     examWindowActive,
-    mockSunday: weekday === 0,
+    mockSunday,
     weekday,
     restDay,
     gapDays,

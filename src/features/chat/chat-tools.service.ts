@@ -30,7 +30,7 @@ ACTIONS.register({ id: 'removeTask', label: 'Remove task from a day', descriptio
 ACTIONS.register({ id: 'bulkRemoveTasks', label: 'Bulk remove from day', description: 'Hide multiple tasks for one day only; the task bank is never modified.', entityType: 'dynamicTaskBank', permissions: ['bulk-edit'], confirmationRequired: true, supportsBulk: true });
 ACTIONS.register({ id: 'markDone', label: 'Mark task done', description: 'Update completion log for one task.', entityType: 'taskLogs', permissions: ['edit'] });
 ACTIONS.register({ id: 'bulkMarkDone', label: 'Bulk mark done', description: 'Update completion logs for multiple tasks.', entityType: 'taskLogs', permissions: ['bulk-edit'], confirmationRequired: true, supportsBulk: true });
-ACTIONS.register({ id: 'setDayMode', label: 'Mark rest/study day', description: 'Mark or unmark a journey day as a rest (holiday) day.', entityType: 'restDays', permissions: ['edit'], confirmationRequired: true });
+ACTIONS.register({ id: 'setDayMode', label: 'Set day mode (study/rest/test)', description: 'Mark a journey day as study, rest (holiday) or test (mock test) day.', entityType: 'dayModes', permissions: ['edit'], confirmationRequired: true });
 // Task Bank management
 ACTIONS.register({ id: 'editAnyTask', label: 'Edit any task', description: 'Edit any task in the task bank (title, duration, category).', entityType: 'taskBank', permissions: ['edit'] });
 ACTIONS.register({ id: 'deleteAnyTask', label: 'Delete task from bank', description: 'Permanently delete a task from the task bank.', entityType: 'taskBank', permissions: ['delete'], confirmationRequired: true });
@@ -265,9 +265,9 @@ export class ChatToolsService {
       }
       if (parsed !== undefined) {
         const single = chatToolActionSchema.safeParse(parsed);
-        if (single.success) return [single.data as ChatToolAction];
+        if (single.success) return stripModelConfirmed([single.data as ChatToolAction]);
         const batch = chatToolBatchSchema.safeParse(parsed);
-        if (batch.success) return batch.data.actions;
+        if (batch.success) return stripModelConfirmed(batch.data.actions);
         // If the model emitted an actions wrapper but one action is incomplete
         // (for example addTask without required durationMin), fail the whole
         // decision so ChatService can issue the strict retry instead of silently
@@ -283,7 +283,7 @@ export class ChatToolsService {
         if (Array.isArray(parsedArr)) {
           const parsedActions = parsedArr.map((a) => chatToolActionSchema.safeParse(a));
           if (parsedActions.every((r) => r.success)) {
-            return parsedActions.map((r) => (r as { success: true; data: ChatToolAction }).data).slice(0, 100);
+            return stripModelConfirmed(parsedActions.map((r) => (r as { success: true; data: ChatToolAction }).data).slice(0, 100));
           }
           // Not a valid action array — fall through to python-call parsing
           // instead of failing (e.g. intents=["a","b"] inside a python call).
@@ -293,7 +293,7 @@ export class ChatToolsService {
       }
     }
     const python = parsePythonToolCalls(text);
-    if (python.length > 0) return python;
+    if (python.length > 0) return stripModelConfirmed(python);
     return [];
   }
 
@@ -372,7 +372,7 @@ export class ChatToolsService {
         summary:
           'Preview only — inhe confirm karna hoga (destructive/bulk):\n' +
           lines.join('\n') +
-          '\nJab user confirm kare, poora batch wapas bhejo, in destructive actions par "confirmed":true ke saath.',
+          '\nUser ke Yes tap karne par hi apply hoga (app isse confirmed mark karegi).',
       };
     }
     const summaries: string[] = [];
@@ -1095,30 +1095,44 @@ export class ChatToolsService {
     };
   }
 
-  private setDayMode(state: AppState, day: number, mode: 'study' | 'rest', confirmed = false): ChatToolResult {
+  private setDayMode(state: AppState, day: number, mode: 'study' | 'rest' | 'test', confirmed = false): ChatToolResult {
     if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
     const d = clamp(day);
+    const restDays = state.restDays ?? [];
+    const testDays = state.testDays ?? [];
+    const isRest = restDays.includes(d);
+    const isTest = testDays.includes(d);
     const wantsRest = mode === 'rest';
-    const current = (state.restDays ?? []).includes(d);
-    if (current === wantsRest) {
-      return { ok: true, summary: `Day ${d} already ${wantsRest ? 'rest (chhuti) hai' : 'study day hai'}. ${this.planPreview(state, d)}` };
+    const wantsTest = mode === 'test';
+    if (isRest === wantsRest && isTest === wantsTest) {
+      const label = wantsRest ? 'REST DAY (chhuti)' : wantsTest ? 'TEST DAY (mock test)' : 'normal study day';
+      return { ok: true, summary: `Day ${d} already ${label} hai. ${this.planPreview(state, d)}` };
     }
-    const next = wantsRest ? [...(state.restDays ?? []), d] : (state.restDays ?? []).filter((x) => x !== d);
+    const nextRest = wantsRest ? [...restDays, d] : restDays.filter((x) => x !== d);
+    const nextTest = wantsTest ? [...testDays, d] : testDays.filter((x) => x !== d);
+    const beforeState = { restDays, testDays };
+    const afterState = { restDays: nextRest, testDays: nextTest };
+    const modeLabel = wantsRest ? 'mark rest (holiday)' : wantsTest ? 'mark test (mock test)' : 'mark study';
     const resultAction = executeAiAction({
       state,
       action: ACTIONS.require('setDayMode'),
       entityId: this.dateForDay(state, d),
-      summary: `${wantsRest ? 'mark rest (holiday)' : 'mark study'} Day ${d} (${this.dateForDay(state, d)})`,
-      beforeState: state.restDays,
-      afterState: next,
+      summary: `${modeLabel} Day ${d} (${this.dateForDay(state, d)})`,
+      beforeState,
+      afterState,
       confirmed,
     });
     if (!resultAction.ok) return { ok: false, requiresConfirmation: resultAction.requiresConfirmation, summary: resultAction.summary };
     this.store.save(resultAction.state);
+    const label = wantsRest
+      ? 'REST DAY (chhuti) hai — sirf explicitly scheduled tasks dikhenge'
+      : wantsTest
+        ? 'TEST DAY hai — mock test tasks aaj ke plan me dikhenge'
+        : 'normal study day hai';
     return {
       ok: true,
       versionId: resultAction.versionId,
-      summary: `Day ${d} ab ${wantsRest ? 'REST DAY (chhuti) hai — sirf explicitly scheduled tasks dikhenge' : 'normal study day hai'}. ${this.planPreview(resultAction.state, d)}`,
+      summary: `Day ${d} ab ${label}. ${this.planPreview(resultAction.state, d)}`,
     };
   }
 
@@ -1592,4 +1606,19 @@ function parsePythonToolCalls(text: string): ChatToolAction[] {
     }
   }
   return out;
+}
+
+/**
+ * The model must NEVER decide when a destructive action is confirmed. The
+ * schema allows a "confirmed" field and older prompts taught the model to
+ * emit it after free-text agreement — which let a model self-confirm (e.g.
+ * "add + delete karo" became removeTask with "confirmed":true) and silently
+ * bypass the user-facing Yes/No buttons. The ONLY path that may set
+ * confirmed is confirmPendingAction (the user's tap on the button). So every
+ * action parsed from a model reply gets its "confirmed" field stripped here,
+ * making self-confirmation structurally impossible — any destructive/bulk
+ * action the model emits ALWAYS lands in the blocked preview + button flow.
+ */
+function stripModelConfirmed(actions: ChatToolAction[]): ChatToolAction[] {
+  return actions.map((a) => (a.confirmed === undefined ? a : { ...a, confirmed: undefined }));
 }

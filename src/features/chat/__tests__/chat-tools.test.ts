@@ -15,6 +15,7 @@ import { LLMService } from '../../ai/llm.service';
 import { ProviderSettingsService } from '../../ai/provider-settings.service';
 import { ChatService } from '../chat.service';
 import { ChatToolsService } from '../chat-tools.service';
+import { undoLastAiAction, redoLastAiAction } from '../../../core/domain/ai-actions';
 import { PlannerService, PlannerToolsService } from '../../planner/planner.service';
 import type { TaskGenerationService } from '../../ai/task-generation.service';
 
@@ -209,7 +210,9 @@ describe('ChatToolsService', () => {
   it('markDone uses special plan log keys such as mock days', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    // Day 19 (2026-07-19) is an actual Sunday past the Day-15 gate → mock protocol active.
+    // Sundays are NOT auto mock anymore — Day 19 (2026-07-19) becomes a mock
+    // day only when explicitly marked as a TEST day via setDayMode.
+    await tools.run({ action: 'setDayMode', day: 19, mode: 'test', confirmed: true });
     const result = await tools.run({ action: 'markDone', day: 19, taskId: 'mock_1' });
     expect(result.ok).toBe(true);
     expect(store.get().taskLogs['mock:2026-07-19']?.mock_1).toBe(true);
@@ -406,6 +409,64 @@ describe('ChatToolsService', () => {
     expect(studyPlan.summary).toContain('id:d1_t');
   });
 
+  it('setDayMode marks a TEST day: mock protocol appears, restDays untouched; study removes it', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    // Sunday 2026-07-19 is a NORMAL study day by default — no mock tasks.
+    const before = await tools.run({ action: 'getPlan', day: 19 });
+    expect(before.summary).not.toContain('id:mock_1');
+
+    const preview = await tools.run({ action: 'setDayMode', day: 19, mode: 'test' });
+    expect(preview.ok).toBe(false);
+    expect(preview.requiresConfirmation).toBe(true);
+    expect(store.get().testDays).toEqual([]);
+
+    const test = await tools.run({ action: 'setDayMode', day: 19, mode: 'test', confirmed: true });
+    expect(test.ok).toBe(true);
+    expect(store.get().testDays).toEqual([19]);
+    expect(store.get().restDays).toEqual([]);
+    const testPlan = await tools.run({ action: 'getPlan', day: 19 });
+    expect(testPlan.summary).toContain('id:mock_1');
+    // A test day is NOT a rest day — it is not empty.
+    expect(testPlan.summary).not.toContain('REST DAY');
+
+    const study = await tools.run({ action: 'setDayMode', day: 19, mode: 'study', confirmed: true });
+    expect(study.ok).toBe(true);
+    expect(store.get().testDays).toEqual([]);
+    const after = await tools.run({ action: 'getPlan', day: 19 });
+    expect(after.summary).not.toContain('id:mock_1');
+  });
+
+  it('setDayMode rest clears a test day and test clears a rest day atomically', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    await tools.run({ action: 'setDayMode', day: 5, mode: 'test', confirmed: true });
+    await tools.run({ action: 'setDayMode', day: 5, mode: 'rest', confirmed: true });
+    expect(store.get().testDays).toEqual([]);
+    expect(store.get().restDays).toEqual([5]);
+    await tools.run({ action: 'setDayMode', day: 5, mode: 'test', confirmed: true });
+    expect(store.get().testDays).toEqual([5]);
+    expect(store.get().restDays).toEqual([]);
+  });
+
+  it('setDayMode test/rest/study changes are undoable and redoable (combined dayModes entity)', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    await tools.run({ action: 'setDayMode', day: 19, mode: 'test', confirmed: true });
+    expect(store.get().testDays).toEqual([19]);
+    store.save(undoLastAiAction(store.get()));
+    expect(store.get().testDays).toEqual([]);
+    store.save(redoLastAiAction(store.get()));
+    expect(store.get().testDays).toEqual([19]);
+    // Rest + test toggling stays atomic through undo.
+    await tools.run({ action: 'setDayMode', day: 19, mode: 'rest', confirmed: true });
+    expect(store.get().testDays).toEqual([]);
+    expect(store.get().restDays).toEqual([19]);
+    store.save(undoLastAiAction(store.get()));
+    expect(store.get().testDays).toEqual([19]);
+    expect(store.get().restDays).toEqual([]);
+  });
+
   describe('describeParseFailure', () => {
     it('names the exact missing field for a known action instead of a generic nudge', () => {
       const { tools } = makeTools(makeStore());
@@ -446,7 +507,11 @@ describe('ChatToolsService', () => {
   it('can add tasks on a mock Sunday and they appear in that plan', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
-    // Day 19 (2026-07-19) is an actual Sunday past the Day-15 gate → mock protocol active.
+    // Sundays are normal study days by default — Day 19 (2026-07-19) gets the
+    // mock protocol ONLY when explicitly marked as a TEST day.
+    const normal = await tools.run({ action: 'getPlan', day: 19 });
+    expect(normal.summary).not.toContain('id:mock_1');
+    await tools.run({ action: 'setDayMode', day: 19, mode: 'test', confirmed: true });
     const sunday = await tools.run({ action: 'getPlan', day: 19 });
     expect(sunday.summary).toContain('id:mock_1');
     const add = await tools.run({ action: 'addTask', day: 19, intent: 'sunday revision', durationMin: 20 });
@@ -1356,6 +1421,50 @@ describe('ChatService with tools', () => {
   });
 });
 
+describe('model self-confirmation is structurally impossible (strip "confirmed" from parsed actions)', () => {
+  it('blocks a mixed add+delete batch even when the model emits confirmed:true on its own', async () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    // User asks "add + delete". A model that "helpfully" decides the user
+    // already agreed emits removeTask WITH confirmed:true — before the strip
+    // that silently ran the delete (no buttons, no preview). Now the whole
+    // batch must land in the blocked preview + Yes/No button flow.
+    const provider = providerWith(
+      '{"actions":[{"action":"addTask","day":1,"intent":"maths 10 questions","durationMin":30},{"action":"removeTask","day":1,"taskId":"d1_t1","confirmed":true}]}',
+      'Sab kuch ho gaya.',
+    );
+    const chat = makeChat(store, provider, tools);
+    const session = chat.createSession();
+    const preview = await chat.send(session.id, 'day 1 mein maths add karo aur d1_t1 hata do');
+
+    // NOTHING applied: the add is blocked along with the delete (all-or-nothing),
+    // d1_t1 is not hidden yet, and the tap-carrying actions have no confirmed set.
+    expect(preview.pendingConfirmation?.kind).toBe('tools');
+    expect(preview.pendingConfirmation?.actions).toHaveLength(2);
+    expect(preview.pendingConfirmation?.actions.every((a) => a.confirmed !== true)).toBe(true);
+    const before = await tools.run({ action: 'getPlan', day: 1 });
+    expect(before.summary).toContain('d1_t1'); // not hidden yet
+
+    // Only the user's tap applies the WHOLE batch (add + delete).
+    const confirmed = await chat.confirmPendingAction(session.id, preview.id, true);
+    expect(confirmed.content).toBe('Sab kuch ho gaya.');
+    const after = await tools.run({ action: 'getPlan', day: 1 });
+    expect(after.summary).toContain('ai-chat-test'); // add applied
+    expect(after.summary).not.toContain('d1_t1'); // delete applied
+  });
+
+  it('parseTools drops confirmed from single, batch and bare-array replies', () => {
+    const { tools } = makeTools(makeStore());
+    const single = tools.parseTools('{"action":"removeTask","day":1,"taskId":"d1_t1","confirmed":true}');
+    expect(single).toHaveLength(1);
+    expect(single[0].confirmed).not.toBe(true);
+    const batch = tools.parseTools('{"actions":[{"action":"removeTask","day":1,"taskId":"d1_t1","confirmed":true}]}');
+    expect(batch[0].confirmed).not.toBe(true);
+    const arr = tools.parseTools('[{"action":"removeTask","day":1,"taskId":"d1_t1","confirmed":true}]');
+    expect(arr[0].confirmed).not.toBe(true);
+  });
+});
+
 describe('ChatService tool retry + reasoning', () => {
   it('retries the decision hop once when the model refuses with prose', async () => {
     const store = makeStore();
@@ -1381,11 +1490,22 @@ describe('ChatService tool retry + reasoning', () => {
     const session = chat.createSession();
     const reply = await chat.send(session.id, 'aaj ka d1_t1 task delete karo');
     expect(calls).toBe(2);
-    expect(reply.content).toBe('Hata diya.');
-    expect(reply.tool).toBe('removeTask');
-    expect(reply.toolCalls).toHaveLength(1);
-    expect(reply.toolCalls?.[0]).toMatchObject({ action: 'removeTask', ok: true });
-    expect(typeof reply.toolCalls?.[0]?.message).toBe('string');
+    // The retried action is destructive, so it must land in the blocked
+    // preview + Yes/No flow — the model's own "confirmed":true is stripped and
+    // NOTHING is applied until the user taps Yes.
+    expect(reply.pendingConfirmation?.kind).toBe('tools');
+    expect(reply.pendingConfirmation?.actions).toHaveLength(1);
+    expect(reply.pendingConfirmation?.actions[0]).toMatchObject({ action: 'removeTask' });
+    expect(reply.pendingConfirmation?.actions[0].confirmed).not.toBe(true);
+    const planBefore = await tools.run({ action: 'getPlan', day: 1 });
+    expect(planBefore.summary).toContain('d1_t1'); // not hidden yet
+    // The user's Yes (not the model) is the only path that applies it.
+    const confirmed = await chat.confirmPendingAction(session.id, reply.id, true);
+    expect(confirmed.content).toBe('Hata diya.');
+    expect(confirmed.toolCalls).toHaveLength(1);
+    expect(confirmed.toolCalls?.[0]).toMatchObject({ action: 'removeTask', ok: true });
+    const planAfter = await tools.run({ action: 'getPlan', day: 1 });
+    expect(planAfter.summary).not.toContain('d1_t1');
   });
 
   it('retry prompt names the exact missing field when the model half-attempts a tool call, so it can self-correct', async () => {
@@ -1422,7 +1542,15 @@ describe('ChatService tool retry + reasoning', () => {
     // is wrong here since the model DID attempt JSON.
     expect(seenSystemPrompts[1]).toMatch(/mode/i);
     expect(seenSystemPrompts[1]).not.toMatch(/you (just )?answered with normal text/i);
-    // And the correction actually took effect — the day is really marked rest.
+    // setDayMode is destructive → the corrected attempt is previewed (its
+    // own confirmed:true is stripped) and NOT applied until the user taps Yes.
+    expect(reply.pendingConfirmation?.kind).toBe('tools');
+    expect(reply.pendingConfirmation?.actions).toHaveLength(1);
+    expect(reply.pendingConfirmation?.actions[0]).toMatchObject({ action: 'setDayMode', day: 2, mode: 'rest' });
+    expect(reply.pendingConfirmation?.actions[0].confirmed).not.toBe(true);
+    expect(store.get().restDays).toEqual([]);
+    // The user's tap is the only path that marks the day rest.
+    await chat.confirmPendingAction(session.id, reply.id, true);
     expect(store.get().restDays).toEqual([2]);
     expect(reply.tool).toBe('setDayMode');
   });
@@ -1656,7 +1784,7 @@ describe('ChatService tool retry + reasoning', () => {
       ),
     ).toEqual([
       { action: 'addTask', day: 5, intent: 'maths', durationMin: 30 },
-      { action: 'removeTask', day: 5, taskId: 'd1_t1', confirmed: true },
+      { action: 'removeTask', day: 5, taskId: 'd1_t1' },
     ]);
     expect(tools.parseTools('[{"action":"markDone","day":3,"taskId":"d1_t2"}]')).toEqual([
       { action: 'markDone', day: 3, taskId: 'd1_t2' },
@@ -1666,9 +1794,10 @@ describe('ChatService tool retry + reasoning', () => {
     ]);
     // durationMin is optional — an addTask that omits it parses and gets a
     // sensible default at execution time instead of rejecting the whole batch.
+    // Model-emitted confirmed is always stripped (the app adds it after Yes).
     expect(tools.parseTools('{"actions":[{"action":"addTask","day":5,"intent":"maths"},{"action":"removeTask","day":5,"taskId":"d1_t1","confirmed":true}]}')).toEqual([
       { action: 'addTask', day: 5, intent: 'maths' },
-      { action: 'removeTask', day: 5, taskId: 'd1_t1', confirmed: true },
+      { action: 'removeTask', day: 5, taskId: 'd1_t1' },
     ]);
     expect(tools.parseTools('koi json nahi')).toEqual([]);
   });
@@ -1687,7 +1816,7 @@ describe('ChatService tool retry + reasoning', () => {
     ]);
 
     expect(tools.parseTools('removeTask(day=5, task_id="d1_t1", confirmed=True)')).toEqual([
-      { action: 'removeTask', day: 5, taskId: 'd1_t1', confirmed: true },
+      { action: 'removeTask', day: 5, taskId: 'd1_t1' },
     ]);
 
     expect(tools.parseTools('bulkAddTasks(day_id="Day 2", intents=["maths 10 questions","thermo revision"], duration_min=30)')).toEqual([
