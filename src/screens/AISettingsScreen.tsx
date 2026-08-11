@@ -193,6 +193,10 @@ export default function AISettingsScreen({
       setBackupStatus({ type: 'ok', text: 'Sab data delete ho gaya — app default stage pe wapas aa gaya.' });
     } catch (err) {
       setBackupStatus({ type: 'error', text: shortError(err) });
+      // A mid-sequence failure rolled the wipe back to the pre-delete data —
+      // re-read the restored store so every screen shows the real (intact)
+      // data instead of the half-wiped state.
+      update(() => container.store.get());
     } finally {
       setDeletingAll(false);
       setConfirmDeleteAll(false);

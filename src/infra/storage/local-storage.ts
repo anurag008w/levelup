@@ -9,14 +9,33 @@ class PersistentKeyValueStore implements KeyValueRepository {
 
   async init() {
     if (this.initialized) return;
+    await this.reload();
+    this.initialized = true;
+  }
+
+  /**
+   * Re-reads storage into the cache. Also used at boot (via reloadPersistentStore)
+   * and on visibilitychange → visible so another tab's writes become visible.
+   *
+   * NOTE: persistentStorage.get() JSON.parses localStorage values, so a value
+   * written as a STRING (our state/chat blobs — LocalStateRepository passes a
+   * serialized string, then persistentStorage.set JSON.stringify's it again)
+   * comes back as a string, but a value written single-encoded (direct
+   * localStorage write, legacy path, external tool) comes back as an OBJECT.
+   * The cache is typed Map<string,string> and LocalStateRepository JSON.parses
+   * getItem() AGAIN — caching a raw object here would make repo.load() throw
+   * and silently return a fresh (empty) state, wiping the user's data on the
+   * next cold start. Re-stringify non-strings so BOTH encodings survive.
+   */
+  async reload() {
+    this.cache.clear();
     const keys = await persistentStorage.keys();
     for (const key of keys) {
       const value = await persistentStorage.get<string>(key);
       if (value !== null) {
-        this.cache.set(key, value);
+        this.cache.set(key, typeof value === 'string' ? value : JSON.stringify(value));
       }
     }
-    this.initialized = true;
   }
 
   getItem(key: string): string | null {
@@ -32,9 +51,25 @@ class PersistentKeyValueStore implements KeyValueRepository {
 
 export const persistentStore = new PersistentKeyValueStore();
 
-// Initialize on load
-if (typeof window !== 'undefined') {
-  persistentStore.init();
+const initPromise = typeof window !== 'undefined' ? persistentStore.init() : Promise.resolve();
+/**
+ * Resolves once the persistent cache is hydrated from localStorage. The app
+ * boot sequence MUST await this before the first store read (see main.tsx):
+ * without it the first store.get() can cache an EMPTY state forever
+ * (CachedStateStore loads once) and a subsequent save overwrites real data.
+ * Never rejects — worst case the app boots with an empty cache.
+ */
+export const persistentStoreReady: Promise<void> = initPromise.catch(() => {
+  console.error('[storage] persistent store init failed — booting with an empty cache');
+});
+
+/**
+ * Re-reads the whole storage chain (persistentStorage → PersistentKeyValueStore)
+ * so the state/chat repositories see data written by another tab or process.
+ */
+export async function reloadPersistentStore(): Promise<void> {
+  persistentStorage.reload();
+  await persistentStore.reload();
 }
 
 export class BrowserStorage implements KeyValueRepository {

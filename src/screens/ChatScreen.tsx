@@ -1642,6 +1642,18 @@ function AttachmentChip({ attachment, onRemove }: { attachment: DraftAttachment;
   );
 }
 
+/**
+ * Image thumbnail with a graceful dead-blob fallback (N5). Blob `previewUrl`s
+ * are session-scoped, so a message restored from storage after an app reload
+ * points at a URL that no longer resolves. Instead of rendering a broken
+ * <img>, the chip swaps to the type badge on load error.
+ */
+function ImageThumb({ src, name, mimeType, className }: { src: string; name: string; mimeType?: string; className: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <FileKindBadge name={name} mimeType={mimeType} size="sm" />;
+  return <img src={src} alt="" className={className} onError={() => setFailed(true)} />;
+}
+
 /* =====================================================================
    Sheets
    ===================================================================== */
@@ -2189,7 +2201,11 @@ async function readAttachment(file: File): Promise<DraftAttachment> {
   const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
 
   if (file.type.startsWith('image/')) {
-    return { id: uid('att'), name: file.name, type: file.type, size: file.size, kind: 'image', previewUrl: URL.createObjectURL(file) };
+    // Stable content descriptor (N5/M11): the blob previewUrl never survives an
+    // app restart, so without this the AI would silently lose the image's
+    // context on the next turn / retry. Like files, images now carry a stable
+    // text note the model can see whenever the actual bytes are gone.
+    return { id: uid('att'), name: file.name, type: file.type, size: file.size, kind: 'image', previewUrl: URL.createObjectURL(file), content: `[Image: ${file.name}]` };
   }
 
   const isPdf = file.type === 'application/pdf' || extension === 'pdf';
@@ -2326,7 +2342,7 @@ function UserMessageContent({ content, attachments }: { content: string; attachm
                 className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-black/15 bg-black/10 px-1.5 py-1 text-[10px]"
               >
                 {isImage ? (
-                  <img src={c.previewUrl} alt="" className="h-7 w-7 rounded-md object-cover" />
+                  <ImageThumb src={c.previewUrl!} name={c.name} className="h-7 w-7 rounded-md object-cover" />
                 ) : (
                   <FileKindBadge name={c.name} size="sm" />
                 )}

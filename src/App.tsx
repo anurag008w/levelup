@@ -67,7 +67,7 @@ function wipeForNewOwner(previousOwner: string | null, nextOwner: string): void 
 }
 
 export default function App() {
-  const { state, today, update, refresh, resetAll, adminUnlocked, unlockAdmin, autoUnlock, lockAdmin, setAdminDay } = useAppState();
+  const { state, today, update, refresh, resetAll, adminUnlocked, unlockAdmin, autoUnlock, lockAdmin, setAdminDay, pruneNotice, dismissPruneNotice } = useAppState();
   const [tab, setTab] = useState<Tab>('today');
   // Once the user has opened the coach, keep it mounted across tab switches so
   // an in-flight AI stream survives (a fresh chat reply must not die just
@@ -248,6 +248,46 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-bg text-text">
+      {pruneNotice && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            top: 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 2000,
+            maxWidth: '92vw',
+            background: 'var(--color-surface, #1e1e2e)',
+            color: 'var(--color-text, #eee)',
+            border: '1px solid rgba(250, 204, 21, 0.45)',
+            borderRadius: 12,
+            padding: '10px 14px',
+            boxShadow: '0 6px 20px rgba(0,0,0,0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            fontSize: 13,
+          }}
+        >
+          <span>{pruneNotice}</span>
+          <button
+            onClick={dismissPruneNotice}
+            aria-label="Dismiss"
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: 'inherit',
+              fontSize: 16,
+              cursor: 'pointer',
+              lineHeight: 1,
+              padding: '2px 4px',
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
       <AnimatePresence mode="wait" initial={false}>
         {tab !== 'chat' && (
           <motion.div

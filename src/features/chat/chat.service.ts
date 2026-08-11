@@ -82,7 +82,12 @@ function looksLikeToolOutput(text: string): boolean {
     const parsed: unknown = JSON.parse(inner);
     return typeof parsed === 'object' && parsed !== null;
   } catch {
-    return false;
+    // Brace/array-prefixed text that won't parse is a BROKEN tool call, not a
+    // natural-language answer (M2). Treating it as tool output lets the harness
+    // (chat.service.ts:609-630) drop it and fall through to the normal reply
+    // path — instead of leaking raw malformed JSON into the assistant history,
+    // where it would be shown verbatim and corrupt the next generation.
+    return true;
   }
 }
 
@@ -1275,11 +1280,21 @@ export class ChatService {
         const parts: ContentPart[] = [];
         if (m.content) parts.push({ type: 'text', text: `${formatMsgTime(m.createdAt)} ${m.content}` });
         for (const att of m.attachments) {
-          if (att.kind === 'image' && att.previewUrl) {
-            // Convert blob URL to data URL for LLM
-            const dataUrl = await this.blobToDataUrl(att.previewUrl);
+          if (att.kind === 'image') {
+            // Convert blob URL to data URL for LLM. The blob dies on app
+            // restart (and can be revoked), so never silently drop the image
+            // (N5/M11): mirror the file fallback and surface a stable text
+            // note so the model knows an image was attached and can ask the
+            // user to re-upload instead of answering with zero context.
+            const dataUrl = att.previewUrl ? await this.blobToDataUrl(att.previewUrl) : null;
             if (dataUrl) {
               parts.push({ type: 'image', image: dataUrl });
+            } else {
+              const descriptor = att.content?.trim() ? att.content : `[Image: ${att.name}]`;
+              parts.push({
+                type: 'text',
+                text: `\n${descriptor} — image bytes unavailable after app reload. Agar is image ka content chahiye toh user se dobara upload karne ko kaho.`,
+              });
             }
           } else if (att.kind === 'file' && att.previewUrl) {
             if (this.fileFallbackSessions.has(session.id)) {

@@ -85,15 +85,24 @@ export function pruneMemoryToBudget(store: MemoryStore, budgetBytes: number): Me
   }
 
   // 2) Oldest, lowest-importance non-long-term entries (never AI blocks/rollups).
+  // Drop in CHUNKS: sizeOf stringifies the whole store, so a per-drop check
+  // turns the trim quadratic (~N stringifies of a multi-MB store — seconds of
+  // jank on low-end devices). Checking every 8 drops bounds the work to ~N/8
+  // stringifies; the ≤7 extra drops are the lowest-importance entries anyway.
   const droppable = entries
     .filter((e) => !isArchive(e) && e.longTerm !== true && !e.summarized)
     .sort((a, b) => a.importance - b.importance || a.createdAt.localeCompare(b.createdAt));
+  const dropIds = new Set<string>();
   for (const drop of droppable) {
-    entries = entries.filter((e) => e.id !== drop.id);
-    if (sizeOf(entries) <= budgetBytes) return { ...store, entries };
+    dropIds.add(drop.id);
+    if (dropIds.size % 8 === 0) {
+      const pruned = entries.filter((e) => !dropIds.has(e.id));
+      if (sizeOf(pruned) <= budgetBytes) return { ...store, entries: pruned };
+    }
   }
 
-  return { ...store, entries };
+  // Exhausted the droppable pool — return the survivors (best effort).
+  return { ...store, entries: entries.filter((e) => !dropIds.has(e.id)) };
 }
 
 /** Shape guard for a single memory entry — used by state + backup validation. */

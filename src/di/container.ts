@@ -1,9 +1,9 @@
 import { LEVELS, TOTAL_DAYS } from '../data/curriculum';
-import { emptyAppState } from '../core/domain/state';
+import { emptyAppState, type AppState } from '../core/domain/state';
 import { DEFAULT_PROGRESSION_CONFIG } from '../core/domain/progress';
 import type { StateRepository, StateStore, HabitRepository, ChatRepository } from '../core/ports/repositories';
 import { deviceTimeZone, SystemClock, type Clock, todayISO } from '../core/ports/clock';
-import { BrowserStorage, persistentStore } from '../infra/storage/local-storage';
+import { BrowserStorage, persistentStore, reloadPersistentStore } from '../infra/storage/local-storage';
 import { CachedStateStore, LocalStateRepository, normalizeState } from '../infra/storage/state-repository';
 import { FetchHttpClient, type HttpClient } from '../infra/ai/http';
 import { CapacitorHttpClient, isNativePlatform } from '../infra/ai/http-native';
@@ -31,7 +31,9 @@ import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from '../fea
 import { buildRecentProgress, buildJourneyOverview } from '../features/chat/context-overview';
 export interface AppContainer {
   stateRepository: StateRepository;
-  store: StateStore;
+  /** The app-wide StateStore, plus an explicit storage re-read (N1/N2),
+   *  one-shot memory-prune notice (M7) and immediate persist (N3). */
+  store: StateStore & { reload(): AppState; consumePruneNotice(): string | null; flush(): void };
   clock: Clock;
   http: HttpClient;
   providerSettings: ProviderSettingsService;
@@ -78,12 +80,21 @@ export function createContainer(
   // State writes are trailing-debounced (see CachedStateStore) so rapid UI
   // interactions never serialize+write the whole state per keystroke. The
   // in-memory cache always has the latest data — these hooks only guarantee
-  // the last write reaches localStorage when the app is hidden/closed.
+  // the last write reaches localStorage when the app is hidden/closed. On
+  // becoming visible again, the FULL storage chain is re-read so another tab's
+  // writes (or a sync restore that ran while hidden) show up in the UI (N2).
   if (typeof window !== 'undefined') {
     const flushStore = () => innerStore.flush();
     window.addEventListener('pagehide', flushStore);
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') flushStore();
+      if (document.visibilityState === 'hidden') {
+        flushStore();
+      } else if (document.visibilityState === 'visible') {
+        // Flush our own pending debounced write first so the re-read below
+        // doesn't clobber a change that hasn't reached localStorage yet.
+        flushStore();
+        void reloadPersistentStore().then(() => innerStore.reload());
+      }
     });
   }
   const http: HttpClient = httpOverride ?? (isNativePlatform() ? new CapacitorHttpClient() : new FetchHttpClient());
@@ -110,12 +121,15 @@ export function createContainer(
     { debounceMs: opts.syncDebounceMs },
   );
 
-  const store: StateStore = {
+  const store: StateStore & { reload(): AppState; consumePruneNotice(): string | null; flush(): void } = {
     get: () => innerStore.get(),
     save: (s) => {
       innerStore.save(s);
       syncCoordinator.markDirty('state');
     },
+    reload: () => innerStore.reload(),
+    consumePruneNotice: () => innerStore.consumePruneNotice(),
+    flush: () => innerStore.flush(),
   };
   const providerSettings = new ProviderSettingsService(store, factory);
   const modelCache = new ModelCacheService(factory, store, () => store.save(store.get()));

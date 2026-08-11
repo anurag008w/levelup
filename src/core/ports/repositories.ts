@@ -10,6 +10,10 @@ export interface StateRepository {
   load(): AppState;
   save(state: AppState): void;
   clear(): void;
+  /** One-time notice when a save silently had to trim memory to fit the
+   *  storage quota (M7). Returns and clears it so the UI shows it at most
+   *  once per prune. Optional — storage backends that never prune return null. */
+  consumePruneNotice?(): string | null;
 }
 
 /** Read/write handle with an in-memory copy; preferred by services. */

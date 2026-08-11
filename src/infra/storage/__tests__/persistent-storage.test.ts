@@ -109,4 +109,15 @@ describe('PersistentStorage', () => {
     const secondMod = await import('../persistent-storage');
     expect(await secondMod.persistentStorage.get('persist')).toEqual({ v: 1 });
   });
+
+  it('reload() re-seeds the cache from localStorage (multi-tab writes)', async () => {
+    const storage = await fresh();
+    await storage.set('x', { v: 1 });
+    // Another tab writes directly to localStorage, bypassing this cache.
+    localStorage.setItem('@levelup:x', JSON.stringify({ v: 2 }));
+    // Known keys read from the stale cache until reload() is called.
+    expect(await storage.get('x')).toEqual({ v: 1 });
+    storage.reload();
+    expect(await storage.get('x')).toEqual({ v: 2 });
+  });
 });

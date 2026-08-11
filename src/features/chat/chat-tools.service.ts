@@ -73,6 +73,32 @@ const TASK_QUERY_WORDS = [
 // they appear inside a custom-block command (anchored by block/phase + verb).
 const BLOCK_COMMAND_WORDS = ['banao', 'bana', 'create', 'delete', 'remove', 'hatao', 'activate', 'extend', 'shuru', 'custom'];
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Word-boundary matcher for intent words (M1 fix). Each word only fires as a
+ * WHOLE word — "mark" no longer fires inside "remark"/"market", "day" no
+ * longer fires inside "today"/"monday", "test" no longer fires inside
+ * "latest"/"contest", "list" no longer fires inside "listen". An optional
+ * trailing "s" keeps plural forms ("tests", "days", "marks") matching; words
+ * already ending in "s" ("tasks", "questions") match only that exact form.
+ */
+function buildWordBoundaryRegex(words: readonly string[]): RegExp {
+  const pattern = words
+    .map((w) => {
+      const escaped = escapeRegExp(w.toLowerCase());
+      return w.endsWith('s') ? escaped : `${escaped}s?`;
+    })
+    .join('|');
+  return new RegExp(`\\b(?:${pattern})\\b`);
+}
+
+const TASK_QUERY_REGEX = buildWordBoundaryRegex(TASK_QUERY_WORDS);
+const BLOCK_ANCHOR_REGEX = buildWordBoundaryRegex(['block', 'phase']);
+const BLOCK_COMMAND_REGEX = buildWordBoundaryRegex(BLOCK_COMMAND_WORDS);
+
 // Block type configurations
 const BLOCK_TYPES: Record<string, { name: string; icon: string; habits: Record<string, string[]> }> = {
   physics: { name: 'Physics', icon: '⚛️', habits: { easy: ['Read HCV Concepts'], medium: ['Read HCV Concepts', 'Solve 10 Problems'], hard: ['Read HCV Concepts', 'Solve 20 Problems', 'Formula Revision'] } },
@@ -184,9 +210,9 @@ export class ChatToolsService {
   isTaskQuery(text: string): boolean {
     if (this.hasPlannerData() && this.plannerTools && this.plannerTools.isPlannerQuery(text)) return true;
     const t = text.toLowerCase();
-    if (TASK_QUERY_WORDS.some((w) => t.includes(w))) return true;
-    if (!t.includes('block') && !t.includes('phase')) return false;
-    return BLOCK_COMMAND_WORDS.some((w) => t.includes(w));
+    if (TASK_QUERY_REGEX.test(t)) return true;
+    if (!BLOCK_ANCHOR_REGEX.test(t)) return false;
+    return BLOCK_COMMAND_REGEX.test(t);
   }
 
   /** True when the message is about uploaded coaching planners AND no planner
