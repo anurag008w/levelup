@@ -228,3 +228,75 @@ describe('delete all data — guest (no session)', () => {
     expect(app.syncCoordinator.isAttached).toBe(false);
   });
 });
+
+describe('delete all data — transactional rollback (N3)', () => {
+  beforeEach(async () => {
+    ({ app, server } = await freshContainer());
+    localStorage.setItem('levelup.data-owner', 'testuser');
+    app.store.save(seededState());
+    app.chat.replaceStore([
+      {
+        id: 's1',
+        title: 'Old chat',
+        messages: [{ id: 'msg1', role: 'user', content: 'hi', createdAt: '' }],
+        prefs: {} as never,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+    await app.syncCoordinator.attach(SESSION);
+    await settle();
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+    localStorage.clear();
+  });
+
+  it('restores chat + state + owner when a mid-sequence step throws', async () => {
+    // Force the WIPE call itself (replaceStore([])) to fail.
+    const spy = vi.spyOn(app.chat, 'replaceStore').mockImplementationOnce(() => {
+      throw new Error('storage write failed');
+    });
+
+    await expect(deleteAllData(app, SESSION)).rejects.toThrow('storage write failed');
+    expect(spy).toHaveBeenCalled();
+
+    // Rollback restored the full pre-delete data.
+    expect(app.chat.listSessions()).toHaveLength(1);
+    expect(app.chat.listSessions()[0].id).toBe('s1');
+    expect(app.store.get().startDateISO).toBe('2026-01-01');
+    expect(app.store.get().taskLogs).toEqual({ '2026-01-01': { done: { task1: true } } as never });
+    expect(localStorage.getItem('levelup.data-owner')).toBe('testuser');
+    // Sync is attached again with the same session.
+    expect(app.syncCoordinator.isAttached).toBe(true);
+    expect(app.syncCoordinator.getSession()?.username).toBe('testuser');
+  });
+
+  it('restores everything when re-applying server auth throws (no half-wipe)', async () => {
+    vi.spyOn(app.providerSettings, 'configureServerAuth').mockImplementationOnce(() => {
+      throw new Error('auth failed');
+    });
+
+    await expect(deleteAllData(app, SESSION)).rejects.toThrow('auth failed');
+
+    // Nothing is left half-deleted: state + chat are intact.
+    expect(app.store.get().startDateISO).toBe('2026-01-01');
+    expect(app.store.get().studyTimeMinutes).toBe(480);
+    expect(app.chat.listSessions()).toHaveLength(1);
+    // Re-attach re-seeds the (wiped) server backup from the restored data.
+    await settle();
+    expect(server.perUser.has(SESSION.username)).toBe(true);
+  });
+
+  it('the wipe is durable immediately — no debounce window that resurrects data', async () => {
+    await deleteAllData(app, SESSION);
+    // No settle(): reload() re-reads localStorage, which must already be empty
+    // because deleteAllData flushed the wipe before resolving.
+    const reloaded = app.store.reload();
+    expect(reloaded.startDateISO).toBeNull();
+    expect(reloaded.taskLogs).toEqual({});
+    expect(reloaded.memory.entries).toHaveLength(0);
+    expect(reloaded.studyTimeMinutes).toBe(360);
+  });
+});

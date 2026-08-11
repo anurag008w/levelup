@@ -119,6 +119,8 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 export class LocalStateRepository {
   private readonly store: KeyValueRepository;
+  /** Set when save() had to trim memory to fit the quota (M7). */
+  private pruneNotice: string | null = null;
 
   constructor(store: KeyValueRepository) {
     this.store = store;
@@ -155,8 +157,19 @@ export class LocalStateRepository {
     if (serialized.length > STATE_SAVE_BUDGET) {
       normalized = { ...normalized, memory: pruneMemoryToBudget(normalized.memory, MEMORY_BYTES_BUDGET) };
       serialized = JSON.stringify(normalized);
+      // M7: surface the trim — old memories were dropped to make room, and the
+      // user should know instead of wondering where their early-day notes went.
+      this.pruneNotice =
+        'Storage was full, so some older memories were compacted to fit. Your progress is safe — only old AI memory notes were trimmed.';
     }
     this.store.setItem(STATE_KEY, serialized);
+  }
+
+  /** Returns + clears the pending prune notice (one-shot; M7). */
+  consumePruneNotice(): string | null {
+    const notice = this.pruneNotice;
+    this.pruneNotice = null;
+    return notice;
   }
 
   clear(): void {
@@ -186,6 +199,18 @@ export class CachedStateStore implements StateStore {
     return this.cache;
   }
 
+  /**
+   * Re-reads the repository into the cache and returns the fresh snapshot.
+   * Used at boot (repair a pre-init empty read — N1) and whenever external
+   * storage may have changed (multi-tab sync, sync restore, backup import —
+   * N2). Without this, a state written by another tab or restored from the
+   * server is invisible to the UI until a full page reload.
+   */
+  reload(): AppState {
+    this.cache = this.repo.load();
+    return this.cache;
+  }
+
   save(state: AppState): void {
     // The in-memory cache is the source of truth for the UI and every
     // service, so it updates immediately. The repository (localStorage) write
@@ -212,5 +237,10 @@ export class CachedStateStore implements StateStore {
       this.persistTimer = null;
       this.repo.save(this.cache);
     }
+  }
+
+  /** One-time notice when the last save had to trim memory (M7). */
+  consumePruneNotice(): string | null {
+    return this.repo.consumePruneNotice ? this.repo.consumePruneNotice() : null;
   }
 }

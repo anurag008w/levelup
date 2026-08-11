@@ -133,6 +133,17 @@ class PersistentStorage {
       return [];
     }
   }
+
+  /**
+   * Re-seeds the in-memory cache from localStorage. Call when another tab may
+   * have written data (e.g. on visibilitychange → visible): known keys are
+   * normally served from the cache, so without this the other tab's writes
+   * stay invisible forever.
+   */
+  reload(): void {
+    this.cache.clear();
+    this.loadFromLocalStorage();
+  }
 }
 
 const _persistentStorage = new PersistentStorage();

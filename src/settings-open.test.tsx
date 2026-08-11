@@ -30,7 +30,10 @@ describe('settings open smoke', () => {
     render(React.createElement(AISettingsScreen, { state: container.store.get(), update: () => {}, session: null, onLogout: () => {} }));
     const btn = screen.getByText('Chat Experience');
     fireEvent.click(btn);
-    await waitFor(() => expect(screen.getByText('Response Quality')).toBeTruthy());
+    // Generous timeout: this waitFor has historically flaked under parallel
+    // worker load (N4 class — documented in docs/misa_ai_bug_audit.md §10),
+    // where the default 1s budget is too tight for a full 87-file run.
+    await waitFor(() => expect(screen.getByText('Response Quality')).toBeTruthy(), { timeout: 15000 });
   });
 
   it('AISettingsScreen Delete all data shows a Yes/No confirm dialog', async () => {

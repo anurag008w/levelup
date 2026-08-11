@@ -177,6 +177,36 @@ describe('ChatToolsService', () => {
     expect(tools.isTaskQuery('what comes next in the story?')).toBe(false);
   });
 
+  it('does NOT hijack ordinary chat words that merely contain a plan word (M1 word-boundary fix)', () => {
+    const store = makeStore();
+    const { tools } = makeTools(store);
+    // Substring matches that previously routed to tools by accident: "Today"
+    // contains "day", "Remark" contains "mark", "contest"/"latest" contain
+    // "test", "listening" contains "list", "addition" contains "add", etc.
+    expect(tools.isTaskQuery('today ka kya scene hai')).toBe(false);
+    expect(tools.isTaskQuery('monday ko kya hua')).toBe(false);
+    expect(tools.isTaskQuery('remark dena hai')).toBe(false);
+    expect(tools.isTaskQuery('market mein kya chal raha hai')).toBe(false);
+    expect(tools.isTaskQuery('i am listening to you')).toBe(false);
+    expect(tools.isTaskQuery('contest ka winner kaun hai')).toBe(false);
+    expect(tools.isTaskQuery('latest news kya hai')).toBe(false);
+    expect(tools.isTaskQuery('addition sum batao')).toBe(false);
+    expect(tools.isTaskQuery('address batao')).toBe(false);
+    expect(tools.isTaskQuery('clarify please')).toBe(false);
+    expect(tools.isTaskQuery('clearly samjhao')).toBe(false);
+    expect(tools.isTaskQuery('wall kya hai')).toBe(false);
+    expect(tools.isTaskQuery('call me later')).toBe(false);
+    // The same words in a REAL task context still route to tools.
+    expect(tools.isTaskQuery('mark yahi task done')).toBe(true);
+    expect(tools.isTaskQuery('aaj ke tasks list karo')).toBe(true);
+    expect(tools.isTaskQuery('add task kal ke liye')).toBe(true);
+    expect(tools.isTaskQuery('clear aaj ka backlog')).toBe(true);
+    expect(tools.isTaskQuery('all tasks dikhao')).toBe(true);
+    expect(tools.isTaskQuery('test ka result kya hai')).toBe(true);
+    expect(tools.isTaskQuery('day 30 ka plan batao')).toBe(true);
+    expect(tools.isTaskQuery('today ka plan batao')).toBe(true);
+  });
+
   it('getPlan returns the deterministic plan for any day with ids', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);

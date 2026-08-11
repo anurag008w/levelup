@@ -713,6 +713,142 @@ describe('ChatService', () => {
     expect(again.content).toContain('extracted reply');
   });
 
+  it('drops malformed tool JSON instead of leaking it into the assistant history (M2)', async () => {
+    // Truncated actions wrapper: starts with '{' but won't parse, and carries
+    // NO `"action":` token (so even the pre-fix regex sniff didn't catch it).
+    // Pre-fix this fell through looksLikeToolOutput -> shown verbatim to the
+    // user and persisted into history, corrupting the next generation.
+    const malformed = '{"actions":[';
+    const repo = new MemoryChatRepository();
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+    });
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({ text: malformed, model: 'a' }),
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        if (req.onDelta) for (const ch of 'normal reply') req.onDelta(ch);
+        return { text: 'normal reply', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), null, null, store);
+    const s1 = chat.createSession();
+
+    const result = await chat.send(s1.id, 'kal ka plan kya hai', undefined, undefined, undefined, undefined, undefined, ['listTasks']);
+
+    // The reply is the normal streaming answer, NOT the broken JSON.
+    expect(result.content).toBe('normal reply');
+    const persisted = JSON.stringify(repo.load().sessions[0].messages);
+    expect(persisted).not.toContain('actions');
+    expect(persisted).toContain('normal reply');
+  });
+
+  it('sends image attachments to the model as image parts while the blob is alive', async () => {
+    const restore = stubBlobUtils();
+    try {
+      let captured: LLMRequest | null = null;
+      const repo = new MemoryChatRepository();
+      const store = makeStore({
+        providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+        aiEnabled: true,
+      });
+      const provider: LLMProvider = {
+        id: 'openrouter',
+        label: 'OpenRouter',
+        isConfigured: () => true,
+        complete: async (): Promise<LLMResponse> => ({ text: '', model: 'a' }),
+        stream: async (req: LLMRequest): Promise<LLMResponse> => {
+          captured = req;
+          return { text: 'image seen', model: 'a' };
+        },
+        fetchModels: async (): Promise<ModelInfo[]> => [],
+        healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+      };
+      const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+      const settings = new ProviderSettingsService(store, factory);
+      const llm = new LLMService(factory, settings);
+      const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), null, null, store);
+      const s1 = chat.createSession();
+
+      await chat.send(
+        s1.id,
+        'yeh photo dekho',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        [{ id: 'a1', name: 'photo.png', kind: 'image', previewUrl: 'blob:fake', content: '[Image: photo.png]' }],
+      );
+
+      expect(captured).not.toBeNull();
+      const lastUser = captured!.messages.filter((m) => m.role === 'user').pop()!;
+      const parts = lastUser.content as ContentPart[];
+      const imagePart = parts.find((p) => p.type === 'image');
+      expect(imagePart).toBeDefined();
+      if (imagePart && imagePart.type === 'image') expect(imagePart.image).toContain('data:');
+    } finally {
+      restore();
+    }
+  });
+
+  it('never silently drops an image with a dead blob — sends a text descriptor instead (N5/M11)', async () => {
+    // No stubBlobUtils: the blob URL never resolves (as after an app reload or
+    // a revoke), so blobToDataUrl returns null. The old code dropped the image
+    // silently and the AI answered with ZERO image context; the fix surfaces a
+    // stable descriptor so the model knows an image was attached.
+    let captured: LLMRequest | null = null;
+    const repo = new MemoryChatRepository();
+    const store = makeStore({
+      providers: { openrouter: { id: 'openrouter', label: 'OpenRouter', model: 'a', enabled: true } },
+      aiEnabled: true,
+    });
+    const provider: LLMProvider = {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      isConfigured: () => true,
+      complete: async (): Promise<LLMResponse> => ({ text: '', model: 'a' }),
+      stream: async (req: LLMRequest): Promise<LLMResponse> => {
+        captured = req;
+        return { text: 'ok', model: 'a' };
+      },
+      fetchModels: async (): Promise<ModelInfo[]> => [],
+      healthCheck: async (): Promise<HealthCheckResult> => ({ ok: true, provider: 'openrouter', latencyMs: 1 }),
+    };
+    const factory: ProviderFactory = { create: () => provider } as unknown as ProviderFactory;
+    const settings = new ProviderSettingsService(store, factory);
+    const llm = new LLMService(factory, settings);
+    const chat = new ChatService(repo, llm, settings, () => 'ctx', new FakeClock(), null, null, store);
+    const s1 = chat.createSession();
+
+    await chat.send(
+      s1.id,
+      'yeh photo dekho',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [{ id: 'a1', name: 'photo.png', kind: 'image', previewUrl: 'blob:dead', content: '[Image: photo.png]' }],
+    );
+
+    expect(captured).not.toBeNull();
+    const lastUser = captured!.messages.filter((m) => m.role === 'user').pop()!;
+    const parts = lastUser.content as ContentPart[];
+    // No dead image part is sent…
+    expect(parts.find((p) => p.type === 'image')).toBeUndefined();
+    // …but the attachment is NOT silently dropped — the model sees the name.
+    const text = parts.filter((p) => p.type === 'text').map((p) => p.text).join(' ');
+    expect(text).toContain('photo.png');
+    expect(text).toContain('[Image: photo.png]');
+  });
+
   it('flushes the sanitizer tail so the final streamed chars are not lost', async () => {
     let captureDelta: ((d: string) => void) | null = null;
     const repo = new MemoryChatRepository();

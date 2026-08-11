@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { emptyAppState } from '../../core/domain/state';
+import type { AppState } from '../../core/domain/state';
 import type { KeyValueRepository } from '../../core/ports/repositories';
 import {
   LocalStateRepository,
@@ -234,5 +235,90 @@ describe('CachedStateStore', () => {
     expect(repo.load().startDateISO).toBe('2026-06-06');
     // flush with nothing pending is a safe no-op.
     expect(() => cached.flush()).not.toThrow();
+  });
+
+  it('reload() re-reads repository changes into the cache (N2)', () => {
+    const kv = memoryStore();
+    const repo = new LocalStateRepository(kv);
+    repo.save({ ...emptyAppState(), startDateISO: '2026-01-01' });
+    const cached = new CachedStateStore(repo);
+    expect(cached.get().startDateISO).toBe('2026-01-01');
+    // Another tab / sync restore writes storage directly.
+    repo.save({ ...emptyAppState(), startDateISO: '2026-02-02' });
+    expect(cached.get().startDateISO).toBe('2026-01-01'); // stale cache (N2)
+    cached.reload();
+    expect(cached.get().startDateISO).toBe('2026-02-02');
+  });
+
+  it('reload() recovers from a pre-init empty read (N1 boot race)', () => {
+    const kv = memoryStore();
+    const repo = new LocalStateRepository(kv);
+    const cached = new CachedStateStore(repo);
+    // The very first get() ran while storage hydration was still in flight, so
+    // the repo read an empty state and cached it permanently.
+    expect(cached.get().startDateISO).toBeNull();
+    // Hydration finishes; the repo now has real data.
+    kv.setItem(STATE_KEY, JSON.stringify({ ...emptyAppState(), startDateISO: '2026-09-09' }));
+    expect(cached.get().startDateISO).toBeNull(); // still the poisoned cache
+    cached.reload();
+    expect(cached.get().startDateISO).toBe('2026-09-09');
+  });
+
+  it('reload() before first get() still hydrates the cache', () => {
+    const kv = memoryStore();
+    const repo = new LocalStateRepository(kv);
+    repo.save({ ...emptyAppState(), startDateISO: '2026-10-10' });
+    const cached = new CachedStateStore(repo);
+    cached.reload();
+    expect(cached.get().startDateISO).toBe('2026-10-10');
+  });
+});
+
+/** A state big enough (after the 200-entry normalization cap) to exceed the
+ *  3.5MB serialized save budget and force the quota-trim path. */
+function oversizedState(): AppState {
+  const state = emptyAppState();
+  state.memory = { entries: [], summaries: [], lastSummarizedAt: null };
+  for (let i = 0; i < 200; i++) {
+    state.memory.entries.push({
+      id: `e${i}`,
+      type: 'observation' as const,
+      content: `long note ${i} `.repeat(3000),
+      importance: 0.5,
+      source: 'ai' as const,
+      createdAt: '2026-07-01',
+      summarized: false,
+      context: { tags: [] },
+    });
+  }
+  return state;
+}
+
+describe('prune notice (M7)', () => {
+  it('surfaces a one-time notice when a save had to trim memory', () => {
+    const kv = memoryStore();
+    const repo = new LocalStateRepository(kv);
+    expect(repo.consumePruneNotice()).toBeNull();
+    repo.save(oversizedState());
+    expect(repo.consumePruneNotice()).toContain('Storage was full');
+    // One-shot: a second consume returns null (notice is cleared).
+    expect(repo.consumePruneNotice()).toBeNull();
+  });
+
+  it('does not raise a notice for normal-sized saves', () => {
+    const kv = memoryStore();
+    const repo = new LocalStateRepository(kv);
+    repo.save(emptyAppState());
+    expect(repo.consumePruneNotice()).toBeNull();
+  });
+
+  it('CachedStateStore delegates the one-shot notice after a flushed save', () => {
+    const kv = memoryStore();
+    const repo = new LocalStateRepository(kv);
+    const cached = new CachedStateStore(repo);
+    cached.save(oversizedState());
+    cached.flush(); // debounced write lands now → trim + notice
+    expect(cached.consumePruneNotice()).toContain('Storage was full');
+    expect(cached.consumePruneNotice()).toBeNull();
   });
 });

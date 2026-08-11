@@ -3,6 +3,7 @@ import type { AppState } from '../types';
 import { emptyAppState } from '../core/domain/state';
 import { container } from '../di/container';
 import { dateForDayNumber } from '../features/habit-engine/dates';
+import { mergeDaySummary, shouldRollupDay } from '../features/ai/summary-scheduler';
 import { canAutoUnlockSession, isAdminUnlocked, setAdminUnlocked, verifyAdminLogin, type AdminVerifyResult } from './admin';
 import { loadSession } from './auth';
 import { todayISO } from './storage';
@@ -22,6 +23,8 @@ export function useAppState() {
   const [realToday, setRealToday] = useState<string>(() => todayISO(container.store.get().timeZone));
   const [adminUnlocked, setAdminUnlockedState] = useState<boolean>(() => isAdminUnlocked(loadSession()?.username ?? null));
   const [adminDay, setAdminDayState] = useState<number | null>(null);
+  /** One-time banner when storage was full and old memories got trimmed (M7). */
+  const [pruneNotice, setPruneNotice] = useState<string | null>(null);
 
   // Listen for external store updates (e.g., from chat tools) and sync state
   useEffect(() => {
@@ -32,6 +35,10 @@ export function useAppState() {
         lastState = currentState;
         setState(currentState);
       }
+      // Surface any silent memory-pruning notice (M7) — consumed once, so the
+      // banner never re-appears unless a NEW prune happens.
+      const notice = container.store.consumePruneNotice();
+      if (notice) setPruneNotice(notice);
     }, 100); // Check every 100ms for external changes
     return () => clearInterval(checkInterval);
   }, []);
@@ -40,6 +47,36 @@ export function useAppState() {
   useEffect(() => {
     const id = setInterval(() => setRealToday(todayISO(container.store.get().timeZone)), 60 * 1000);
     return () => clearInterval(id);
+  }, []);
+
+  // Day snapshot (M8): the daily summary pipeline used to be dead code. Run it
+  // once per calendar day — on mount and on the minute tick — so the journey
+  // context finally sees real day snapshots. Best-effort: a failure must never
+  // block the app, and the merged result is based on the LATEST state so
+  // concurrent edits are never lost.
+  useEffect(() => {
+    let cancelled = false;
+    async function maybeRollupDay() {
+      const s = container.store.get();
+      const date = todayISO(s.timeZone);
+      if (!shouldRollupDay(s, date)) return;
+      let next: AppState;
+      try {
+        next = await container.summaries.runDailyPipeline(s, date);
+      } catch {
+        return; // summary is best-effort
+      }
+      if (cancelled) return;
+      const latest = container.store.get();
+      if (!shouldRollupDay(latest, date)) return; // another rollup already landed
+      container.store.save(mergeDaySummary(latest, next, date));
+    }
+    void maybeRollupDay();
+    const id = setInterval(() => void maybeRollupDay(), 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, []);
 
   const today =
@@ -100,5 +137,5 @@ export function useAppState() {
     setAdminDayState(day);
   }
 
-  return { state, today, update, refresh, startJourney, resetAll, adminUnlocked, adminDay, unlockAdmin, autoUnlock, lockAdmin, setAdminDay };
+  return { state, today, update, refresh, startJourney, resetAll, adminUnlocked, adminDay, unlockAdmin, autoUnlock, lockAdmin, setAdminDay, pruneNotice, dismissPruneNotice: () => setPruneNotice(null) };
 }
