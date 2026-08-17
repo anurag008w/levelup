@@ -1,5 +1,7 @@
 # Using Android gitignore template: https://github.com/github/gitignore/blob/HEAD/Android.gitignore
 
+# Using Android gitignore template: https://github.com/github/gitignore/blob/HEAD/Android.gitignore
+
 # Built application files
 *.apk
 *.aar
@@ -35,9 +37,6 @@ proguard/
 # Android Studio Navigation editor temp files
 .navigation/
 
-# Android Studio captures folder
-captures/
-
 # IntelliJ
 *.iml
 .idea/workspace.xml
@@ -53,9 +52,8 @@ captures/
 .idea/navEditor.xml
 
 # Keystore files
-# Uncomment the following lines if you do not want to check your keystore files in.
-#*.jks
-#*.keystore
+*.jks
+*.keystore
 
 # External native build folder generated in Android Studio 2.2 and later
 .externalNativeBuild
