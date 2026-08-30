@@ -11,6 +11,8 @@ import type { HabitProgressionService } from '../habit-engine/planner';
 import type { TaskBankService } from '../task-bank/task-bank.service';
 import type { TaskGenerationService } from '../ai/task-generation.service';
 import type { PlannerToolsService } from '../planner/planner.service';
+import type { MemoryToolsService } from './memory-tools.service';
+import { isMemoryQuery, type MemoryToolAction } from '../../core/domain/memory-tools';
 import { plannerActionForQuery, type PlannerToolAction, type SubjectPlanner } from '../../core/domain/subject-planner';
 import { isAbortError } from '../../core/domain/llm';
 import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from './plan-format';
@@ -43,6 +45,14 @@ ACTIONS.register({ id: 'deleteAnyTask', label: 'Delete task from bank', descript
 ACTIONS.register({ id: 'createBlock', label: 'Create custom block', description: 'Create a custom study block for post-journey mode.', entityType: 'customBlocks', permissions: ['create'] });
 ACTIONS.register({ id: 'deleteBlock', label: 'Delete block', description: 'Delete a custom study block.', entityType: 'customBlocks', permissions: ['delete'], confirmationRequired: true });
 ACTIONS.register({ id: 'activateBlock', label: 'Activate block', description: 'Set a custom block as active.', entityType: 'customBlocks', permissions: ['edit'] });
+// AI Memory Management
+ACTIONS.register({ id: 'readMemory', label: 'Read memory', description: 'Read student saved memory facts.', entityType: 'appState', permissions: ['read'] });
+ACTIONS.register({ id: 'searchMemory', label: 'Search memory', description: 'Search memory by topic/keyword.', entityType: 'appState', permissions: ['read'] });
+ACTIONS.register({ id: 'addMemory', label: 'Add memory', description: 'Save a new fact or preference.', entityType: 'appState', permissions: ['edit'] });
+ACTIONS.register({ id: 'editMemory', label: 'Edit memory', description: 'Update memory entry text.', entityType: 'appState', permissions: ['edit'] });
+ACTIONS.register({ id: 'deleteMemory', label: 'Delete memory', description: 'Delete memory entry.', entityType: 'appState', permissions: ['edit'], confirmationRequired: true });
+ACTIONS.register({ id: 'pinMemory', label: 'Pin memory', description: 'Pin entry to long-term memory.', entityType: 'appState', permissions: ['edit'] });
+ACTIONS.register({ id: 'unpinMemory', label: 'Unpin memory', description: 'Unpin entry from long-term memory.', entityType: 'appState', permissions: ['edit'] });
 
 // Strong plan/block/chat action words. A message containing any of these is
 // clearly about the plan, task bank, custom blocks or chat history.
@@ -58,8 +68,8 @@ const TASK_QUERY_WORDS = [
   // Chat history & conversation browsing triggers
   'chat', 'chats', 'message', 'messages', 'purani', 'purane', 'purana', 'pichhli', 'pichhle', 'pichhla',
   'pichli', 'pichle', 'pichla', 'pehle', 'search', 'browse', 'dhoondo', 'dhoond', 'khojo', 'khoj',
-  'poocha', 'pucha', 'puche', 'puchi', 'bola', 'bole', 'boli', 'bolatha', 'kaha', 'kahe', 'kahi',
-  'likha', 'likhe', 'likhi', 'bheja', 'bheje', 'bheji', 'baat', 'batein', 'baatein',
+  'poocha', 'pucha', 'puche', 'puchi', 'bolatha', 'kahatha', 'kaha tha', 'kahi thi', 'kahe the',
+  'bola tha', 'boli thi', 'bole the', 'likha tha', 'bheja tha', 'baat hui', 'baatein hui',
   'discussed', 'discuss', 'discussion', 'conversation', 'transcript', 'session', 'sessions',
   'doubt', 'doubts', 'sawaal', 'sawal',
   // Months & dates
@@ -174,6 +184,7 @@ export class ChatToolsService {
   private readonly plannerTools: PlannerToolsService | null;
   private readonly now: Clock;
   private readonly chatSessionsProvider?: () => ChatSession[];
+  private readonly memoryTools?: MemoryToolsService | null;
 
   constructor(
     store: StateStore,
@@ -184,6 +195,7 @@ export class ChatToolsService {
     plannerTools: PlannerToolsService | null = null,
     now: Clock = { now: () => new Date() },
     chatSessionsProvider?: () => ChatSession[],
+    memoryTools?: MemoryToolsService | null,
   ) {
     this.store = store;
     this.planner = planner;
@@ -193,6 +205,7 @@ export class ChatToolsService {
     this.plannerTools = plannerTools;
     this.now = now;
     this.chatSessionsProvider = chatSessionsProvider;
+    this.memoryTools = memoryTools;
   }
 
   /** True when the student imported at least one coaching planner. */
@@ -214,14 +227,15 @@ export class ChatToolsService {
     return [...new Set(ids)].filter((id) => known.has(id));
   }
 
-  /** Cheap heuristic: does this message plausibly ask about the plan/tasks?
+  /** Cheap heuristic: does this message plausibly ask about the plan/tasks/memory?
    *  General concept questions ("concept samjhao", "physics kaise padhein")
-   *  deliberately do NOT route to tools — only concrete plan/task/block
+   *  deliberately do NOT route to tools — only concrete plan/task/block/memory/chat
    *  commands do. "concept building block banao" still works because it is
    *  anchored on block + a command verb. Uploaded-planner questions route to
    *  the SAME tools hop (tests/routine/subjects) when planner data exists. */
   isTaskQuery(text: string): boolean {
     if (this.hasPlannerData() && this.plannerTools && this.plannerTools.isPlannerQuery(text)) return true;
+    if (isMemoryQuery(text)) return true;
     const t = text.toLowerCase();
     if (/\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b|\b\d{4}-\d{2}-\d{2}\b/i.test(t)) {
       return true;
@@ -543,11 +557,31 @@ export class ChatToolsService {
           return this.listChatSessions(state, action);
         case 'getChatSession':
           return this.getChatSession(state, action);
+        // AI Memory Management
+        case 'readMemory':
+        case 'searchMemory':
+        case 'addMemory':
+        case 'editMemory':
+        case 'deleteMemory':
+        case 'pinMemory':
+        case 'unpinMemory':
+          return this.runMemory(action);
       }
     } catch (err) {
       if (isAbortError(err)) throw err;
       return { ok: false, summary: err instanceof Error ? err.message : 'tool execution failed' };
     }
+  }
+
+  /** Delegates one memory action to the deterministic memory executor. */
+  private async runMemory(action: ChatToolAction): Promise<ChatToolResult> {
+    if (!this.memoryTools) return { ok: false, summary: 'Memory tools available nahi hain.' };
+    const result = await this.memoryTools.runMany([action as unknown as MemoryToolAction]);
+    return {
+      ok: result.ok,
+      summary: result.summary,
+      requiresConfirmation: result.requiresConfirmation,
+    };
   }
 
   /** Delegates one planner action to the deterministic planner executor. */

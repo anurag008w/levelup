@@ -133,6 +133,14 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
     sessionId: z.string().min(1),
     limit: z.number().int().min(1).max(100).optional(),
   }),
+  // AI Memory Management
+  z.object({ action: z.literal('readMemory'), limit: z.number().int().min(1).max(50).optional() }),
+  z.object({ action: z.literal('searchMemory'), query: z.string().min(1), type: z.string().optional(), tag: z.string().optional(), limit: z.number().int().min(1).max(50).optional() }),
+  z.object({ action: z.literal('addMemory'), content: z.string().min(1), type: z.enum(['fact', 'goal', 'preference', 'observation', 'summary']).optional(), tags: z.array(z.string()).optional(), longTerm: z.boolean().optional() }),
+  z.object({ action: z.literal('editMemory'), id: z.string().min(1), content: z.string().min(1) }),
+  z.object({ action: z.literal('deleteMemory'), id: z.string().min(1), confirmed: z.boolean().optional() }),
+  z.object({ action: z.literal('pinMemory'), id: z.string().min(1) }),
+  z.object({ action: z.literal('unpinMemory'), id: z.string().min(1) }),
 ]);
 
 export type ChatToolAction = z.infer<typeof chatToolActionSchema>;
@@ -231,6 +239,14 @@ CHAT HISTORY & CONVERSATION BROWSING:
 - List all past chat sessions: {"action":"listChatSessions"}
 - View full transcript of a specific chat session: {"action":"getChatSession","sessionId":"<session-id>"}
 
+AI PERSISTENT MEMORY MANAGEMENT:
+- Search saved memory facts/goals/weaknesses: {"action":"searchMemory","query":"weakness in rotation"}
+- Read all saved memory facts: {"action":"readMemory"}
+- Save a new fact to memory ("yaad rakho X"): {"action":"addMemory","content":"Formula revision 15 min daily zaroori hai","type":"goal"}
+- Edit a saved memory: {"action":"editMemory","id":"<entryId>","content":"<new text>"}
+- Delete a memory: {"action":"deleteMemory","id":"<entryId>"} (needs confirmation)
+- Pin/unpin memory to long-term: {"action":"pinMemory","id":"<entryId>"} / {"action":"unpinMemory","id":"<entryId>"}
+
 CUSTOM BLOCK MANAGEMENT (post-journey, after Day 90):
 - List all blocks: {"action":"listBlocks"} (shows status).
 - Create a block: {"action":"createBlock","name":"Physics Mastery","description":"15-day physics focus","days":15,"focusAreas":["physics"],"difficulty":"medium"}.
@@ -258,16 +274,19 @@ Examples:
 - "25 august ko humne kya discuss kiya tha" → searchChatHistory with date:"2026-08-25"
 - "saari purani chats dikhao" → listChatSessions
 - "chat sess-1 ka poora transcript dikhao" → getChatSession with sessionId:"sess-1"
+- "meri memory mein kya saved hai" → readMemory
+- "rotation ke baare mein kya yaad hai" → searchMemory with query:"rotation"
+- "yaad rakhna thermo meri weakness hai" → addMemory with content:"thermo meri weakness hai"
 
 Task ids come from today's plan context or a plan you saw in this chat (format "id:<taskId>", e.g. d1_t1, mock_1, ai-xxxxx). If a day's plan is NOT visible to you yet, do NOT refuse — still emit the requested action with your best guess for the task id. The system will automatically fetch that day's plan (with the real ids) and let you retry with the correct id next.
 
-SEVERAL changes in ONE request (e.g. "3 tasks add karo, ek hatao, aur 2 mark done"):
+SEVERAL changes in ONE request (e.g. "3 tasks add karo, ek hatao, aur memory mein note karo"):
 emit EVERY change together in an actions array, e.g.
-{"actions":[{"action":"addTask","day":5,"intent":"maths 10 questions","durationMin":30},{"action":"addTask","day":5,"intent":"thermo revision","durationMin":40},{"action":"removeTask","day":5,"taskId":"d1_t1"},{"action":"markDone","day":5,"taskId":"d1_t2"}]}
+{"actions":[{"action":"addTask","day":5,"intent":"maths 10 questions","durationMin":30},{"action":"addTask","day":5,"intent":"thermo revision","durationMin":40},{"action":"removeTask","day":5,"taskId":"d1_t1"},{"action":"addMemory","content":"Maths speed slow hai"}]}
 Multi-action rules:
 - Do EVERYTHING the user asked for in the same reply — never execute only one of several requested changes.
 - Max 100 actions per reply. Actions run top-to-bottom; results come back combined with task ids.
-- Destructive/bulk actions (removeTask, bulkRemoveTasks, setDayMode, bulkMarkDone, deleteBlock, deleteAnyTask) are confirmed by the APP, not by you: NEVER emit "confirmed":true yourself — that would let a destructive action run without the user's explicit Yes. Just emit the action without "confirmed"; the app previews the WHOLE batch, shows Yes/No buttons, and adds "confirmed":true only after the user taps Yes. Without confirmed the WHOLE batch is only previewed and NOTHING is applied.
+- Destructive/bulk actions (removeTask, bulkRemoveTasks, setDayMode, bulkMarkDone, deleteBlock, deleteAnyTask, deleteMemory) are confirmed by the APP, not by you: NEVER emit "confirmed":true yourself — that would let a destructive action run without the user's explicit Yes. Just emit the action without "confirmed"; the app previews the WHOLE batch, shows Yes/No buttons, and adds "confirmed":true only after the user taps Yes. Without confirmed the WHOLE batch is only previewed and NOTHING is applied.
 - Ranges longer than 10 days auto-split into multiple calls.
 
 The tool result returns updated plans/task-bank rows with task ids and full task metadata when relevant. Days are NOT automatically mock or holiday: every day is a normal study day unless the user sets it as a REST day ("chhuti") or TEST day via setDayMode. On a TEST day the mock protocol tasks (Full Mock, Analysis, Weak Topic Focus) appear AND you can still add tasks. On a REST day no auto curriculum or AI tasks appear, only explicitly scheduled ones.
@@ -276,17 +295,17 @@ For ANYTHING else (concepts, motivation, general questions, block suggestions, s
 
 /** Correction prompt used when the model answered with prose instead of a tool action. */
 export const CHAT_TOOL_RETRY =
-  'You just answered with normal text, but this message was about study tasks, plans, or past chat history and MUST be a tool action. ' +
+  'You just answered with normal text, but this message was about study tasks, plans, past chat history, or AI memory and MUST be a tool action. ' +
   'Do NOT refuse, do NOT explain your limitations, do NOT apologize. ' +
-  'Searching past chats, viewing sessions, and modifying tasks are all fully supported and safe. ' +
+  'Searching past chats, checking memory, viewing sessions, and modifying tasks are all fully supported and safe. ' +
   'Your ENTIRE reply must be exactly one JSON object chosen from the allowed actions above — ' +
-  'either ONE action (e.g. {"action":"searchChatHistory","query":"physics"}, {"action":"listChatSessions"}, or {"action":"removeTask","day":10,"taskId":"d1_t1"}), ' +
+  'either ONE action (e.g. {"action":"searchChatHistory","query":"physics"}, {"action":"searchMemory","query":"physics"}, or {"action":"addTask","day":10,"intent":"revision"}), ' +
   'or {"actions":[...]} when the user asked for several changes at once.';
 
 export const FLEXIBLE_MODE_CHAT_TOOL_INSTRUCTIONS = `You are Misa, an AI study mentor in Flexible Study Planner mode (the 90-day challenge curriculum is off).
-You can manage the student's daily To-Dos, check uploaded study resources in the Study Vault, and view coaching planners.
+You can manage the student's daily To-Dos, check uploaded study resources in the Study Vault, search chat history, manage AI memory, and view coaching planners.
 
-When the user asks to add/complete/list/delete tasks or view resources, your ENTIRE reply must be exactly one JSON object, no extra text.
+When the user asks to add/complete/list/delete tasks, search chats, read/save memory, or view resources, your ENTIRE reply must be exactly one JSON object, no extra text.
 
 AVAILABLE TOOLS:
 - addTodo — Add a task to student's To-Do list: {"action":"addTodo","title":"Electrostatics 20 Questions","priority":"high","estimatedMinutes":45,"category":"physics"}
@@ -297,6 +316,9 @@ AVAILABLE TOOLS:
 - searchChatHistory — Search past chat history by query or date: {"action":"searchChatHistory","query":"electrostatics doubt"}
 - listChatSessions — List all previous chat sessions: {"action":"listChatSessions"}
 - getChatSession — View a full chat transcript: {"action":"getChatSession","sessionId":"<id>"}
+- searchMemory — Search saved memory: {"action":"searchMemory","query":"physics"}
+- readMemory — Read saved memory facts: {"action":"readMemory"}
+- addMemory — Save fact to memory: {"action":"addMemory","content":"Physics formulas revision daily"}
 - getContext — Get overview of student's current status and to-dos: {"action":"getContext"}
 - listPlanners / getSubject / getPlanner / getTest / getTests / getRoutine / getDay — uploaded coaching planners (read-only).
 
@@ -376,6 +398,14 @@ export const CHAT_TOOL_CATALOG: ChatToolMeta[] = [
   { id: 'deleteTodo', label: 'Delete To-Do', description: 'To-Do list se task delete karo.', example: '{"action":"deleteTodo","title":"Physics Electrostatics Revision"}' },
   // Study Resource Vault
   { id: 'listVaultResources', label: 'Study Vault', description: 'Uploaded study resources (PDFs, formula sheets, notes) ki list dekho.', example: '{"action":"listVaultResources","subject":"physics"}', readOnly: true },
+  // AI Persistent Memory
+  { id: 'readMemory', label: 'Read Memory', description: 'Student ki saved AI memory facts aur observations dekho.', example: '{"action":"readMemory"}', readOnly: true },
+  { id: 'searchMemory', label: 'Search Memory', description: 'Memory mein keyword, weakness, ya goal search karo.', example: '{"action":"searchMemory","query":"rotation"}', readOnly: true },
+  { id: 'addMemory', label: 'Save to Memory', description: 'Naya fact, goal ya preference persistent memory mein save karo.', example: '{"action":"addMemory","content":"Daily 20 physics problems"}' },
+  { id: 'editMemory', label: 'Edit Memory', description: 'Saved memory entry ka text update karo.', example: '{"action":"editMemory","id":"mem-1","content":"Updated note"}' },
+  { id: 'deleteMemory', label: 'Delete Memory', description: 'Saved memory entry delete karo.', example: '{"action":"deleteMemory","id":"mem-1"}', confirmationRequired: true },
+  { id: 'pinMemory', label: 'Pin Memory', description: 'Memory entry ko long-term memory mein pin karo.', example: '{"action":"pinMemory","id":"mem-1"}' },
+  { id: 'unpinMemory', label: 'Unpin Memory', description: 'Memory entry ko long-term memory se unpin karo.', example: '{"action":"unpinMemory","id":"mem-1"}' },
   { id: 'websearch', label: 'Web search', description: 'Live Google Search — current/recent info (news, syllabus changes, results, dates). Model khud decide karta hai kab search karna hai; raw results nahi dikhte, sirf summarized jawab.', example: 'auto — model decide karega', readOnly: true },
 ];
 

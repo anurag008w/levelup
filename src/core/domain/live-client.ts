@@ -280,6 +280,36 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         },
       },
       {
+        name: 'searchMemory',
+        description: 'Search saved memory entries, facts, goals, or weaknesses by keyword/topic.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            query: { type: 'STRING', description: 'Keyword, topic, weakness, or goal to search in memory' },
+          },
+          required: ['query'],
+        },
+      },
+      {
+        name: 'readMemory',
+        description: 'Read the recent saved memory facts, preferences, and observations.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {},
+        },
+      },
+      {
+        name: 'addMemory',
+        description: 'Save a new fact, preference, weakness, or goal into AI memory ("yaad rakho X").',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            content: { type: 'STRING', description: 'Fact to remember' },
+          },
+          required: ['content'],
+        },
+      },
+      {
         name: 'getTests',
         description: 'Get upcoming coaching test schedule and syllabus.',
         parameters: {
