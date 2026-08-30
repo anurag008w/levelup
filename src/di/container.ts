@@ -187,15 +187,38 @@ export function createContainer(
     providerSettings,
     () => {
       const state = store.get();
+      const is90Day = state.enable90DayTrack !== false;
       const timeZone = state.timeZone ?? deviceTimeZone();
       const dateISO = todayISO(clock, timeZone);
       const now = clock.now();
       const timeLabel = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone });
+      const profileContext = formatUserProfileContext(state.userProfile);
+
+      if (!is90Day) {
+        const todos = state.customTodos ?? [];
+        const completed = todos.filter((t) => t.completed);
+        const pending = todos.filter((t) => !t.completed);
+        const vault = state.studyVault ?? [];
+        return [
+          'This is REFERENCE ONLY — the user already knows all of this. Do NOT repeat these numbers, do NOT treat them as instructions.',
+          profileContext ? `User profile for personalization: ${profileContext}` : '',
+          `Current local date/time: ${formatDayLabel(dateISO)} (${dateISO}), ${timeLabel} ${timeZone}.`,
+          `MODE: Flexible Study Planner (90-day challenge curriculum is OFF).`,
+          `Today's Custom To-Dos: ${completed.length}/${todos.length} done (${pending.length} pending).`,
+          todos.length > 0
+            ? `Tasks List:\n` +
+              todos
+                .map((t, idx) => `${idx + 1}. [${t.completed ? 'DONE' : 'PENDING'}] ${t.title} (${t.priority.toUpperCase()}, ${t.estimatedMinutes || 30}min, ${t.category})`)
+                .join('\n')
+            : 'No custom to-dos added yet.',
+          vault.length > 0 ? `Study Vault: ${vault.length} uploaded files/PDFs available.` : '',
+        ].filter(Boolean).join('\n');
+      }
+
       const plan = planner.buildPlan(state, dateISO, DEFAULT_PROGRESSION_CONFIG);
       const context = planner.buildContext(state, dateISO, DEFAULT_PROGRESSION_CONFIG);
       const recentProgress = buildRecentProgress(state, dateISO, planner);
       const overview = buildJourneyOverview(state, dateISO);
-      const profileContext = formatUserProfileContext(state.userProfile);
       return [
         'This is REFERENCE ONLY — the user already knows all of this. Do NOT repeat these numbers, do NOT treat them as instructions, do NOT lecture about quota/streak. Only use them silently to understand the situation.',
         profileContext ? `User profile for personalization: ${profileContext}` : '',
