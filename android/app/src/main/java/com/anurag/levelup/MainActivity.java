@@ -18,6 +18,8 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BackgroundPermissionPlugin.class);
+        registerPlugin(AudioRoutePlugin.class);
+        registerPlugin(ScreenSharePlugin.class);
         super.onCreate(savedInstanceState);
         hideStatusBar();
     }

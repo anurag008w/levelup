@@ -622,13 +622,29 @@ export default function LiveCompanionOverlay({
         {/* Video / Screen Share Viewport */}
         {(isCameraActive || isScreenSharing) && isVisionPreviewVisible ? (
           <div className="relative w-full max-w-md aspect-[4/3] rounded-3xl overflow-hidden border border-white/15 bg-black shadow-2xl">
-            <video
-              ref={videoPreviewRef}
-              autoPlay
-              playsInline
-              muted
-              className={`h-full w-full object-cover ${cameraLens === 'user' && isCameraActive ? 'scale-x-[-1]' : ''}`}
-            />
+            {isScreenSharing && !videoPreviewRef.current?.srcObject ? (
+              <div className="flex flex-col items-center justify-center h-full w-full bg-gradient-to-br from-cyan-950/40 via-bg to-bg/90 p-6 text-center">
+                <div className="relative mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                  <Monitor size={32} className="animate-pulse" />
+                  <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-cyan-500" />
+                  </span>
+                </div>
+                <p className="text-xs font-bold text-text mb-1">Live Screen Stream Active</p>
+                <p className="text-[10px] text-muted max-w-[220px] leading-relaxed">
+                  Misa aapki screen real-time dekh rahi hai. PDFs, coaching apps ya notes open karo.
+                </p>
+              </div>
+            ) : (
+              <video
+                ref={videoPreviewRef}
+                autoPlay
+                playsInline
+                muted
+                className={`h-full w-full object-cover ${cameraLens === 'user' && isCameraActive ? 'scale-x-[-1]' : ''}`}
+              />
+            )}
             {/* Overlay Top Controls: Hide Preview vs Stop Sharing */}
             <div className="absolute top-3 left-3 right-3 flex items-center justify-between z-10">
               <span className="rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-bold text-white backdrop-blur">

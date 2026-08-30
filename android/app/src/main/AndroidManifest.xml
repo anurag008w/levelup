@@ -69,6 +69,11 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <service
+            android:name=".ScreenShareForegroundService"
+            android:foregroundServiceType="mediaProjection"
+            android:exported="false" />
     </application>
 
     <!-- Permissions -->
@@ -86,6 +91,14 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- Audio Route: Bluetooth headset / earbuds routing -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- Screen Share: MediaProjection foreground service (Android 10+ requirement) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <!-- Optional Hardware Features for universal compatibility -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />

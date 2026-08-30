@@ -10,6 +10,7 @@ import type {
 import { AudioStreamer } from './audio-streamer';
 import { VisionStreamer } from './vision-streamer';
 import { MISA_IDENTITY_GUARD, ROMAN_SCRIPT_RULE, type ChatToolCallRecord } from './chat';
+import { setNativeAudioRoute, resetNativeAudioRoute } from '../../lib/native-audio-route';
 
 export interface LiveClientCallbacks {
   onStatusChange?: (status: LiveSessionStatus) => void;
@@ -415,6 +416,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
       this.session = session;
       this.setStatus('connected');
+      void setNativeAudioRoute(this.config.defaultAudioRoute);
     } catch (err: any) {
       this.setStatus('error');
       const msg = err?.message || 'Failed to establish Gemini Live connection';
@@ -621,7 +623,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   }
 
   /** Start screen sharing stream. */
-  async startScreenStream(onEnded?: () => void): Promise<MediaStream> {
+  async startScreenStream(onEnded?: () => void): Promise<MediaStream | null> {
     return this.visionStreamer.startScreenShare(this.config.screenFps, (jpegBase64) => {
       this.sendVideoFrame(jpegBase64);
     }, onEnded);
@@ -650,15 +652,13 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     this.audioStreamer.setMuted(muted);
   }
 
-  /** Switch audio output route (Speaker / Earpiece). */
+  /** Switch audio output route (Speaker / Earpiece / Bluetooth). */
   async setAudioRoute(route: LiveAudioRoute): Promise<void> {
     this.config.defaultAudioRoute = route;
     try {
-      if ('setSinkId' in HTMLMediaElement.prototype) {
-        // Handled where applicable
-      }
-    } catch {
-      // Best effort fallback
+      await setNativeAudioRoute(route);
+    } catch (err) {
+      console.warn('[GeminiLive] setAudioRoute failed:', err);
     }
   }
 
@@ -677,6 +677,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   disconnect(): void {
     this.audioStreamer.stopRecording();
     this.visionStreamer.stop();
+    void resetNativeAudioRoute();
     if (this.session) {
       try {
         this.session.close?.();
