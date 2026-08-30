@@ -15,7 +15,7 @@ export class AudioStreamer {
 
   private isRecording = false;
   private isMuted = false;
-  private playbackSpeed = 0.85;
+  private playbackSpeed = 1.0;
   private onAudioChunk?: (pcm16Base64: string) => void;
   private onInputLevel?: (level: number) => void;
   private onOutputLevel?: (level: number) => void;
@@ -112,7 +112,7 @@ export class AudioStreamer {
     }
   }
 
-  /** Direct hardware DAC scheduling with pitch-preserved SOLA time-stretching. */
+  /** Direct hardware DAC scheduling with clean linear PCM streaming. */
   playAudioChunk(pcm24kBase64: string): void {
     const ctx = this.getContext();
     if (ctx.state === 'suspended') {
@@ -130,30 +130,25 @@ export class AudioStreamer {
       rawSamples[i] = sample / 32768;
     }
 
-    // Apply high-fidelity SOLA time-stretching when playbackSpeed differs from 1.0
-    // This alters speaking speed/duration while preserving 100% of vocal pitch & tone (zero chipmunk / zero deep distortion)
-    const stretchedSamples =
-      Math.abs(this.playbackSpeed - 1.0) > 0.02
-        ? this.timeStretchSOLA(rawSamples, this.playbackSpeed)
-        : rawSamples;
-
-    const audioBuffer = ctx.createBuffer(1, stretchedSamples.length, 24000);
-    audioBuffer.getChannelData(0).set(stretchedSamples);
+    const audioBuffer = ctx.createBuffer(1, rawSamples.length, 24000);
+    audioBuffer.getChannelData(0).set(rawSamples);
 
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
-    source.playbackRate.value = 1.0; // Keep hardware rate 1.0 to preserve natural vocal tone
+    source.playbackRate.value = 1.0; // Keep 1.0 for 100% crystal-clear, natural vocal pitch and tone
     source.connect(this.outputAnalyser!);
 
+    const playDuration = audioBuffer.duration;
     const now = ctx.currentTime;
-    // Seamless continuous playback: If nextPlayTime is in the past, schedule at now + 20ms lead time.
-    // Otherwise queue sequentially for exact natural-speed human speech.
-    if (this.nextPlayTime < now) {
-      this.nextPlayTime = now + 0.020;
+
+    // Seamless continuous playback with 50ms jitter buffer on speech start:
+    // Guarantees smooth, unbroken streaming audio without pauses or stuttering.
+    if (this.nextPlayTime <= now) {
+      this.nextPlayTime = now + 0.050;
     }
 
     source.start(this.nextPlayTime);
-    this.nextPlayTime += audioBuffer.duration;
+    this.nextPlayTime += playDuration;
 
     this.activeSources.push(source);
     source.onended = () => {
@@ -165,87 +160,6 @@ export class AudioStreamer {
         this.nextPlayTime = 0;
       }
     };
-  }
-
-  /**
-   * Synchronous Overlap-Add (SOLA) speech time-stretching algorithm.
-   * Changes speaking pace (0.5x to 1.75x) without modifying voice pitch or formants.
-   */
-  private timeStretchSOLA(input: Float32Array, speed: number): Float32Array {
-    if (input.length < 512 || Math.abs(speed - 1.0) < 0.02) {
-      return input;
-    }
-
-    const windowSize = 480; // 20ms at 24kHz (optimal for human voice frequency range)
-    const overlap = 240;    // 10ms overlap
-    const maxSearch = 120;  // 5ms search window for optimal cross-correlation match
-
-    const synthStep = overlap;
-    const analysisStep = Math.max(32, Math.round(synthStep * speed));
-
-    const estimatedLength = Math.ceil(input.length / speed) + windowSize * 2;
-    const output = new Float32Array(estimatedLength);
-    const weights = new Float32Array(estimatedLength);
-
-    // Precompute Hanning window for smooth crossfade
-    const window = new Float32Array(windowSize);
-    for (let i = 0; i < windowSize; i++) {
-      window[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (windowSize - 1)));
-    }
-
-    let inPos = 0;
-    let outPos = 0;
-
-    // Initial block
-    const initLen = Math.min(windowSize, input.length);
-    for (let i = 0; i < initLen; i++) {
-      output[i] = input[i];
-      weights[i] = 1.0;
-    }
-    inPos += analysisStep;
-    outPos += synthStep;
-
-    while (inPos + windowSize + maxSearch < input.length && outPos + windowSize < estimatedLength) {
-      let bestOffset = 0;
-      let maxCorr = -Infinity;
-
-      const searchStart = Math.max(0, -Math.floor(maxSearch / 2));
-      const searchEnd = Math.floor(maxSearch / 2);
-
-      for (let offset = searchStart; offset <= searchEnd; offset++) {
-        let corr = 0;
-        const candidatePos = inPos + offset;
-        for (let i = 0; i < overlap; i++) {
-          const outSample = output[outPos + i] / (weights[outPos + i] || 1.0);
-          const inSample = input[candidatePos + i];
-          corr += outSample * inSample;
-        }
-        if (corr > maxCorr) {
-          maxCorr = corr;
-          bestOffset = offset;
-        }
-      }
-
-      const matchPos = inPos + bestOffset;
-
-      for (let i = 0; i < windowSize; i++) {
-        const w = window[i];
-        output[outPos + i] += input[matchPos + i] * w;
-        weights[outPos + i] += w;
-      }
-
-      inPos += analysisStep;
-      outPos += synthStep;
-    }
-
-    const finalLength = Math.min(outPos + windowSize, estimatedLength);
-    const result = new Float32Array(finalLength);
-    for (let i = 0; i < finalLength; i++) {
-      const w = weights[i];
-      result[i] = w > 0.0001 ? output[i] / w : output[i];
-    }
-
-    return result;
   }
 
   /** Immediately flush and stop active playback (e.g. on user interruption). */
