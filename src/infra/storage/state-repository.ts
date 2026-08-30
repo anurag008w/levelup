@@ -1,6 +1,7 @@
 import type { KeyValueRepository, StateRepository, StateStore } from '../../core/ports/repositories';
 import type { AppState } from '../../core/domain/state';
 import { defaultUserProfile, emptyAppState, STATE_SCHEMA_VERSION } from '../../core/domain/state';
+import { DEFAULT_LIVE_SETTINGS, type LiveSettingsConfig } from '../../core/domain/live-types';
 import { MEMORY_BYTES_BUDGET, normalizeMemoryStore, pruneMemoryToBudget } from '../../core/domain/memory';
 import { INTERNAL_SYSTEM_PROMPT, LEGACY_MISA_SYSTEM_PROMPT } from '../../core/domain/chat';
 import { normalizePlanners } from '../../core/domain/subject-planner';
@@ -74,6 +75,9 @@ export function normalizeState(raw: unknown): AppState {
                   return { ...base.aiSettings.chat, ...storedChat, systemPrompt: systemPrompt ?? base.aiSettings.chat.systemPrompt };
                 })()
               : base.aiSettings.chat,
+            live: isRecord((r.aiSettings as { live?: unknown }).live)
+              ? { ...DEFAULT_LIVE_SETTINGS, ...((r.aiSettings as { live: Partial<LiveSettingsConfig> }).live) }
+              : (base.aiSettings.live ?? DEFAULT_LIVE_SETTINGS),
           }
         : base.aiSettings,
     dynamicTaskBank: Array.isArray(r.dynamicTaskBank) ? r.dynamicTaskBank : [],

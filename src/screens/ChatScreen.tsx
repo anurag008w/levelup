@@ -362,6 +362,8 @@ export default function ChatScreen({
   const [liveMicStream, setLiveMicStream] = useState<MediaStream | null>(null);
   const [liveCamStream, setLiveCamStream] = useState<MediaStream | null>(null);
   const [liveConfig, setLiveConfig] = useState<LiveSettingsConfig>(() => {
+    const liveFromStore = container.store.get()?.aiSettings?.live;
+    if (liveFromStore) return liveFromStore;
     try {
       const saved = localStorage.getItem('levelup.live.settings.v1');
       return saved ? { ...DEFAULT_LIVE_SETTINGS, ...JSON.parse(saved) } : DEFAULT_LIVE_SETTINGS;
@@ -372,6 +374,20 @@ export default function ChatScreen({
 
   const handleUpdateLiveConfig = (newCfg: LiveSettingsConfig) => {
     setLiveConfig(newCfg);
+    try {
+      const cur = container.store.get();
+      if (cur) {
+        container.store.save({
+          ...cur,
+          aiSettings: {
+            ...cur.aiSettings,
+            live: newCfg,
+          },
+        });
+      }
+    } catch {
+      // Best effort
+    }
     try {
       localStorage.setItem('levelup.live.settings.v1', JSON.stringify(newCfg));
     } catch {
