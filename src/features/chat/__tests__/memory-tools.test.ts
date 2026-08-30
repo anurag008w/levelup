@@ -318,5 +318,26 @@ describe('MemoryToolsService', () => {
       expect(store.get().memory.entries.filter((e) => e.content.startsWith('Memory fact number'))).toHaveLength(20);
       expect(JSON.stringify(store.get().memory).length).toBeLessThan(100_000);
     });
+
+    it('searches memory by keyword and filters by type', async () => {
+      const { tools } = setup();
+      const res = await tools.runMany([
+        { action: 'searchMemory', query: 'Advanced' },
+      ]);
+      expect(res.ok).toBe(true);
+      expect(res.summary).toContain('Target JEE Advanced 2026');
+
+      const resType = await tools.runMany([
+        { action: 'searchMemory', type: 'preference' },
+      ]);
+      expect(resType.ok).toBe(true);
+      expect(resType.summary).toContain('Prefers Hinglish explanations');
+
+      const emptyRes = await tools.runMany([
+        { action: 'searchMemory', query: 'nonexistent-concept-xyz' },
+      ]);
+      expect(emptyRes.ok).toBe(true);
+      expect(emptyRes.summary).toContain('koi saved memory nahi mili');
+    });
   });
 });

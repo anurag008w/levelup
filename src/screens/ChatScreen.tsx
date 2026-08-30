@@ -625,7 +625,36 @@ export default function ChatScreen({
             subject: args.subject ? String(args.subject) : undefined,
           },
         ]);
-        return { vault: res.summary };
+        return { vaultResources: res.summary };
+      }
+      if (name === 'searchChatHistory') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'searchChatHistory',
+            query: args.query ? String(args.query) : undefined,
+            date: args.date ? String(args.date) : undefined,
+            fromDate: args.fromDate ? String(args.fromDate) : undefined,
+            toDate: args.toDate ? String(args.toDate) : undefined,
+          },
+        ]);
+        return { chatSearchResults: res.summary };
+      }
+      if (name === 'listChatSessions') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'listChatSessions',
+          },
+        ]);
+        return { chatSessions: res.summary };
+      }
+      if (name === 'getChatSession') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'getChatSession',
+            sessionId: String(args.sessionId || ''),
+          },
+        ]);
+        return { chatTranscript: res.summary };
       }
       return { result: 'Success' };
     } catch (e: any) {
@@ -2002,6 +2031,10 @@ const TOOL_LABELS: Record<string, string> = {
   webSearch: 'Web search hua',
   getTime: 'Time & Date dekha',
   saveCustomMemory: 'Memory me save kiya',
+  searchChatHistory: 'Purani chats search ki',
+  listChatSessions: 'Chat sessions dekhe',
+  getChatSession: 'Chat transcript dekha',
+  searchMemory: 'Memory search ki',
 };
 
 /* =====================================================================

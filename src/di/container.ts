@@ -171,7 +171,16 @@ export function createContainer(
   const taskGeneration = new TaskGenerationService(llm, taskBank, taskBankRepo);
   const plannerService = new PlannerService(store);
   const plannerTools = new PlannerToolsService(store, plannerService);
-  const chatTools = new ChatToolsService(store, planner, taskBank, taskGeneration, undefined, plannerTools);
+  const chatTools = new ChatToolsService(
+    store,
+    planner,
+    taskBank,
+    taskGeneration,
+    undefined,
+    plannerTools,
+    clock,
+    () => (chatRef ? chatRef.listSessions() : chatRepo.load().sessions),
+  );
   const memoryTools = new MemoryToolsService(store, memory);
   const rawChatRepo = new LocalChatRepository(storage);
   const chatRepo: ChatRepository = {

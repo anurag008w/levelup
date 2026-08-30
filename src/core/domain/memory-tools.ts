@@ -9,9 +9,15 @@ import { z } from 'zod';
 export const memoryToolActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('readMemory') }),
   z.object({
+    action: z.literal('searchMemory'),
+    query: z.string().optional(),
+    type: z.enum(['goal', 'preference', 'observation', 'journal', 'summary', 'all']).optional(),
+    tag: z.string().optional(),
+  }),
+  z.object({
     action: z.literal('addMemory'),
     content: z.string().min(1).max(500),
-    type: z.enum(['goal', 'preference', 'observation']).optional(),
+    type: z.enum(['goal', 'preference', 'observation', 'journal']).optional(),
     importance: z.number().min(0).max(1).optional(),
   }),
   z.object({ action: z.literal('editMemory'), id: z.string().min(1), content: z.string().min(1).max(500) }),
@@ -42,11 +48,12 @@ export interface MemoryToolResult {
 
 export const MEMORY_TOOL_INSTRUCTIONS = `You have access to the student's saved AI memory — condensed facts from earlier coaching chats, plus user-entered entries.
 
-You can ADD a fact, READ the memory, EDIT an entry's text, DELETE an entry, or PIN an entry into long-term memory (and UNPIN it).
+You can SEARCH memory, ADD a fact, READ all memory, EDIT an entry's text, DELETE an entry, or PIN an entry into long-term memory (and UNPIN it).
 
 Available actions (reply with exactly ONE JSON object, no prose, no markdown):
 
-{"action":"readMemory"}                                        # list the student's memory
+{"action":"readMemory"}                                        # list the student's recent memory
+{"action":"searchMemory","query":"<topic/keyword>"}            # search memory by keyword or concept
 {"action":"addMemory","content":"<fact to remember>"}          # save a NEW fact ("yaad rakho X")
 {"action":"addMemory","content":"<fact>","type":"goal"}        # save as a goal/preference/observation (optional)
 {"action":"editMemory","id":"<entryId>","content":"<new text>"} # rewrite an entry (user asked to change it)
@@ -55,9 +62,9 @@ Available actions (reply with exactly ONE JSON object, no prose, no markdown):
 {"action":"unpinMemory","id":"<entryId>"}                       # remove from long-term memory
 
 RULES:
-- readMemory first whenever the user asks what you remember or about saved memory.
+- readMemory or searchMemory first whenever the user asks what you remember or about saved memory.
 - When the user says "yaad rakho X" / "yaad rakhna X" / "mat bhoolna X", ADD it with addMemory instead of just talking.
-- For edits/deletes you MUST use the real entry id from readMemory. Never invent ids.
+- For edits/deletes you MUST use the real entry id from readMemory/searchMemory. Never invent ids.
 - Deleting is destructive: if the user did not explicitly ask to delete, do nothing.
 - NEVER include a "confirmed" field on deleteMemory — the app always asks the user to confirm before deleting; you cannot skip that step.
 - After executing, explain what you did in short Hinglish (always ROMAN script).`;

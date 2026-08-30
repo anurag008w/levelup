@@ -3,7 +3,7 @@ import type { AppState } from '../../../core/domain/state';
 import { emptyAppState } from '../../../core/domain/state';
 import { LEVELS, TOTAL_DAYS } from '../../../data/curriculum';
 import type { ChatRepository, StateStore, StateRepository } from '../../../core/ports/repositories';
-import type { ChatStoreState } from '../../../core/domain/chat';
+import type { ChatSession, ChatStoreState } from '../../../core/domain/chat';
 import { chatToolScopeInstructions, CHAT_TOOL_CATALOG } from '../../../core/domain/chat-tools';
 import type { LLMProvider, LLMResponse, LLMRequest, HealthCheckResult, ModelInfo, ProviderId, ContentPart } from '../../../core/domain/llm';
 import type { ProviderFactory } from '../../../infra/ai/provider-factory';
@@ -55,7 +55,7 @@ function makeStore(): StateStore {
   };
 }
 
-function makeTools(store: StateStore): { tools: ChatToolsService; taskGeneration: TaskGenerationService } {
+function makeTools(store: StateStore, chatSessionsProvider?: () => ChatSession[]): { tools: ChatToolsService; taskGeneration: TaskGenerationService } {
   const stateRepo: StateRepository = { load: () => store.get(), save: (s) => store.save(s), clear: () => undefined };
   const taskBankRepo = new TaskBankRepositoryImpl(stateRepo, buildSeed());
   const taskBank = new TaskBankServiceImpl(taskBankRepo);
@@ -84,7 +84,7 @@ function makeTools(store: StateStore): { tools: ChatToolsService; taskGeneration
       source: 'ai',
     }),
   } as unknown as TaskGenerationService;
-  return { tools: new ChatToolsService(store, planner, taskBank, taskGeneration, DEFAULT_PROGRESSION_CONFIG, null, new FakeClock()), taskGeneration };
+  return { tools: new ChatToolsService(store, planner, taskBank, taskGeneration, DEFAULT_PROGRESSION_CONFIG, null, new FakeClock(), chatSessionsProvider), taskGeneration };
 }
 
 function makeChat(store: StateStore, provider: LLMProvider, tools: ChatToolsService): ChatService {
@@ -2208,5 +2208,90 @@ describe('notification reply flow', () => {
     expect(reply.content).toContain('add ho gaya');
     // The tool really ran — so the notification summary reflects real state.
     expect(store.get().dynamicTaskBank.some((t) => t.id === 'ai-chat-test')).toBe(true);
+  });
+
+  describe('Chat History Search & Browsing Tools', () => {
+    const mockSessions: ChatSession[] = [
+      {
+        id: 'sess-1',
+        title: 'Physics Electrostatics Doubt',
+        createdAt: '2026-08-25T10:00:00.000Z',
+        updatedAt: '2026-08-25T10:30:00.000Z',
+        prefs: { providerId: null, model: null, temperature: 0.7, maxTokens: 1000, systemPrompt: '', userPersona: '', includeContext: true },
+        messages: [
+          { id: 'm1', role: 'user', content: 'Sir Gauss Law ka flux formula kya hai?', createdAt: '2026-08-25T10:05:00.000Z' },
+          { id: 'm2', role: 'assistant', content: 'Electric flux through closed surface is Q_enclosed / epsilon_0.', createdAt: '2026-08-25T10:06:00.000Z' },
+          { id: 'm3', role: 'user', content: 'Got it, thanks!', createdAt: '2026-08-25T10:07:00.000Z' },
+        ],
+      },
+      {
+        id: 'sess-2',
+        title: 'Chemistry Thermodynamics Revision',
+        createdAt: '2026-08-28T14:00:00.000Z',
+        updatedAt: '2026-08-28T14:45:00.000Z',
+        prefs: { providerId: null, model: null, temperature: 0.7, maxTokens: 1000, systemPrompt: '', userPersona: '', includeContext: true },
+        messages: [
+          { id: 'm4', role: 'user', content: 'Gibbs free energy change delta G ka relation batao', createdAt: '2026-08-28T14:15:00.000Z' },
+          { id: 'm5', role: 'assistant', content: 'Delta G = Delta H - T * Delta S. Spontaneous process ke liye Delta G negative hota hai.', createdAt: '2026-08-28T14:16:00.000Z' },
+        ],
+      },
+    ];
+
+    it('searchChatHistory finds matching messages with formatted timestamps and surrounding context', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store, () => mockSessions);
+
+      const res = await tools.runMany([
+        { action: 'searchChatHistory', query: 'Gauss Law' },
+      ]);
+
+      expect(res.ok).toBe(true);
+      expect(res.summary).toContain('Physics Electrostatics Doubt');
+      expect(res.summary).toContain('Gauss Law ka flux formula');
+      expect(res.summary).toContain('Electric flux through closed surface');
+      expect(res.summary).toContain('Student (User)');
+      expect(res.summary).toContain('Misa (AI)');
+    });
+
+    it('searchChatHistory filters by specific date or date range', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store, () => mockSessions);
+
+      // Search on 2026-08-28 only
+      const res = await tools.runMany([
+        { action: 'searchChatHistory', date: '2026-08-28' },
+      ]);
+
+      expect(res.ok).toBe(true);
+      expect(res.summary).toContain('Chemistry Thermodynamics Revision');
+      expect(res.summary).toContain('Gibbs free energy');
+      expect(res.summary).not.toContain('Gauss Law');
+    });
+
+    it('listChatSessions lists previous sessions with message counts', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store, () => mockSessions);
+
+      const res = await tools.runMany([{ action: 'listChatSessions' }]);
+      expect(res.ok).toBe(true);
+      expect(res.summary).toContain('Physics Electrostatics Doubt');
+      expect(res.summary).toContain('Chemistry Thermodynamics Revision');
+      expect(res.summary).toContain('3 msgs');
+      expect(res.summary).toContain('2 msgs');
+    });
+
+    it('getChatSession returns full chronological transcript with timestamps', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store, () => mockSessions);
+
+      const res = await tools.runMany([
+        { action: 'getChatSession', sessionId: 'sess-1' },
+      ]);
+      expect(res.ok).toBe(true);
+      expect(res.summary).toContain('CHAT TRANSCRIPT: "Physics Electrostatics Doubt"');
+      expect(res.summary).toContain('Sir Gauss Law ka flux formula kya hai?');
+      expect(res.summary).toContain('Q_enclosed / epsilon_0');
+      expect(res.summary).toContain('Got it, thanks!');
+    });
   });
 });

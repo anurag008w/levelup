@@ -93,6 +93,25 @@ export class MemoryToolsService {
         const items = this.memory.relevant(state, { max: 30 });
         return { result: { ok: true, summary: `Current memory:\n${memoryEntriesToText(items)}` } };
       }
+      case 'searchMemory': {
+        const query = action.query?.toLowerCase().trim();
+        const type = action.type;
+        const tag = action.tag?.toLowerCase().trim();
+        let list = [...state.memory.summaries, ...state.memory.entries];
+        if (type && type !== 'all') {
+          list = list.filter((e) => e.type === type);
+        }
+        if (tag) {
+          list = list.filter((e) => e.context.tags.some((t) => t.toLowerCase().includes(tag)));
+        }
+        if (query) {
+          list = list.filter((e) => e.content.toLowerCase().includes(query) || e.context.tags.some((t) => t.toLowerCase().includes(query)));
+        }
+        if (list.length === 0) {
+          return { result: { ok: true, summary: `Memory search: "${query || tag || type || 'all'}" se related koi saved memory nahi mili.` } };
+        }
+        return { result: { ok: true, summary: `Memory search results (${list.length} matches):\n${memoryEntriesToText(list, 20)}` } };
+      }
       case 'addMemory': {
         const next = this.memory.add(state, {
           type: action.type ?? 'observation',

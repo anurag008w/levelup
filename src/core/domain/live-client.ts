@@ -237,6 +237,38 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         },
       },
       {
+        name: 'searchChatHistory',
+        description: 'Search past chat conversations and messages by topic/keyword, date, or query with full context.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            query: { type: 'STRING', description: 'Keyword, topic or sentence to search in past chats' },
+            date: { type: 'STRING', description: 'Specific calendar date (YYYY-MM-DD)' },
+            fromDate: { type: 'STRING', description: 'Start date (YYYY-MM-DD)' },
+            toDate: { type: 'STRING', description: 'End date (YYYY-MM-DD)' },
+          },
+        },
+      },
+      {
+        name: 'listChatSessions',
+        description: 'List all previous chat sessions with titles, dates, and message counts.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {},
+        },
+      },
+      {
+        name: 'getChatSession',
+        description: 'Get full transcript of a specific past conversation by sessionId or title.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            sessionId: { type: 'STRING', description: 'ID or title of the session to view' },
+          },
+          required: ['sessionId'],
+        },
+      },
+      {
         name: 'saveCustomMemory',
         description: 'Save an important user fact, goal, or weakness to persistent memory.',
         parameters: {

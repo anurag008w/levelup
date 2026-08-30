@@ -24,7 +24,7 @@ const AISettingsScreen = lazy(() => import('./screens/AISettingsScreen'));
 const UpdatesScreen = lazy(() => import('./screens/UpdatesScreen'));
 const ChatScreen = lazy(() => import('./screens/ChatScreen'));
 
-const pageSpring = { type: 'tween', duration: 0.32, ease: [0.2, 0, 0, 1] } as const;
+const pageSpring = { type: 'tween', duration: 0.14, ease: 'easeOut' } as const;
 
 /**
  * Which account the local data (state + chat) belongs to. 'guest' for offline
@@ -321,7 +321,6 @@ export default function App() {
         update={update}
         onChange={(next) => {
           if (next !== tab) {
-            refresh();
             setTab(next);
           }
         }}
