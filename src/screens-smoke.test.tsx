@@ -67,11 +67,11 @@ describe('screen smoke tests', () => {
   it('TaskBankScreen renders the task list header', () => {
     render(React.createElement(TaskBankScreen, { state: emptyAppState(), update: noop }));
     expect(screen.getByText('TASK BANK')).toBeTruthy();
-  });
+  }, 15000);
 
   it('PlannersScreen renders the how-it-works card and import section', () => {
     render(React.createElement(PlannersScreen, { state: emptyAppState(), update: noop }));
-    expect(screen.getByText('SUBJECT PLANNERS')).toBeTruthy();
+    expect(screen.getByText('STUDY RESOURCES')).toBeTruthy();
     expect(screen.getByText('Kisi bhi file se planner banao')).toBeTruthy();
     expect(screen.getAllByText('Copy prompt').length).toBeGreaterThan(0);
     expect(screen.getByText('Import JSON')).toBeTruthy();

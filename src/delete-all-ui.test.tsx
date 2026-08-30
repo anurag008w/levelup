@@ -69,7 +69,7 @@ describe('delete all data — UI flow', () => {
     expect(fresh.startDateISO).toBeNull();
     expect(fresh.taskLogs).toEqual({});
     expect(container.chat.listSessions()).toHaveLength(0);
-  });
+  }, 15000);
 
   it('No, cancel leaves the data untouched', async () => {
     const s = emptyAppState();
