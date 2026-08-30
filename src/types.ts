@@ -9,3 +9,5 @@ export * from './core/domain/llm';
 export * from './core/domain/state';
 export * from './core/domain/ai-actions';
 export * from './core/domain/subject-planner';
+export * from './core/domain/study-vault';
+export * from './core/domain/todo-tasks';

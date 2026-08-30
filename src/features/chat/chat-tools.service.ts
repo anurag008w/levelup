@@ -1,16 +1,16 @@
-import type { StateStore } from '../../core/ports/repositories';
+import type { CustomTodoTask } from '../../core/domain/todo-tasks';
 import { defaultPostJourney, type AppState, type CustomPhase, type PostJourneyState } from '../../core/domain/state';
 import type { Difficulty, EnergyLevel, JeeRelevance, PhaseId, TaskBankEntry, TaskType, ThinkingSkill } from '../../core/domain/task-bank';
-import type { DailyPlan, ProgressionConfig } from '../../core/domain/progress';
-import { DEFAULT_PROGRESSION_CONFIG } from '../../core/domain/progress';
+import { DEFAULT_PROGRESSION_CONFIG, type DailyPlan, type ProgressionConfig } from '../../core/domain/progress';
+import type { StateStore } from '../../core/ports/repositories';
 import type { ChatToolAction, ChatToolActionResult, ChatToolResult } from '../../core/domain/chat-tools';
-import { CHAT_TOOL_CATALOG, chatToolActionSchema, chatToolBatchSchema, type ChatToolMeta } from '../../core/domain/chat-tools';
+import { chatToolActionSchema, chatToolBatchSchema, getAvailableChatTools, type ChatToolMeta } from '../../core/domain/chat-tools';
 import { AiActionRegistry, executeAiAction } from '../../core/domain/ai-actions';
 import type { HabitProgressionService } from '../habit-engine/planner';
 import type { TaskBankService } from '../task-bank/task-bank.service';
 import type { TaskGenerationService } from '../ai/task-generation.service';
 import type { PlannerToolsService } from '../planner/planner.service';
-import { plannerActionForQuery, type PlannerToolAction } from '../../core/domain/subject-planner';
+import { plannerActionForQuery, type PlannerToolAction, type SubjectPlanner } from '../../core/domain/subject-planner';
 import { isAbortError } from '../../core/domain/llm';
 import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from './plan-format';
 import { buildContextOverview } from './context-overview';
@@ -191,13 +191,15 @@ export class ChatToolsService {
 
   /** The full user-pickable tool set for the chat "@" tool-scope picker. */
   listTools(): ChatToolMeta[] {
-    return CHAT_TOOL_CATALOG;
+    const state = this.store.get();
+    return getAvailableChatTools(state.enable90DayTrack !== false);
   }
 
   /** Picks the tools the user pinned via "@" mentions — validates ids so a
    *  stale/unknown mention can never slip through into the decision prompt. */
   resolveToolScope(ids: string[]): string[] {
-    const known = new Set(CHAT_TOOL_CATALOG.map((t) => t.id));
+    const available = this.listTools();
+    const known = new Set(available.map((t) => t.id));
     return [...new Set(ids)].filter((id) => known.has(id));
   }
 
@@ -241,7 +243,7 @@ export class ChatToolsService {
   private subjectDataMatch(subject: string): boolean {
     const w = subject.toLowerCase();
     return (this.store.get().subjectPlanners ?? []).some(
-      (p) => p.subject.toLowerCase().includes(w) || w.includes(p.subject.toLowerCase()),
+      (p: SubjectPlanner) => p.subject.toLowerCase().includes(w) || w.includes(p.subject.toLowerCase()),
     );
   }
 
@@ -502,6 +504,17 @@ export class ChatToolsService {
         case 'getRoutine':
         case 'getDay':
           return this.runPlanner(action);
+        // Custom To-Dos & Vault
+        case 'addTodo':
+          return this.addTodo(state, action);
+        case 'listTodos':
+          return this.listTodos(state, action);
+        case 'toggleTodo':
+          return this.toggleTodo(state, action);
+        case 'deleteTodo':
+          return this.deleteTodo(state, action);
+        case 'listVaultResources':
+          return this.listVaultResources(state, action);
       }
     } catch (err) {
       if (isAbortError(err)) throw err;
@@ -516,28 +529,175 @@ export class ChatToolsService {
     return { ok: result.ok, summary: result.summary, retryable: result.retryable };
   }
 
-  /**
-   * Deterministic getContext tool: the full current-journey snapshot (date,
-   * day/phase/streak, today's tasks + progress, XP/habits/gaps) plus post-journey
-   * blocks and uploaded-planner summary — read-only, always succeeds.
-   */
   private async getContext(state: AppState): Promise<ChatToolResult> {
     const timeZone = state.timeZone ?? deviceTimeZone();
     const dateISO = todayISO(this.now, timeZone);
-    const lines: string[] = [buildContextOverview(state, dateISO, this.planner, this.config)];
-    const blocks = sortBlocks(state.postJourney?.customPhases ?? []);
-    if (blocks.length > 0) {
-      const active = state.postJourney?.activeCustomPhaseId;
-      const activeName = blocks.find((b) => b.id === active)?.name;
-      lines.push(
-        `Post-journey blocks: ${blocks.length} — ${blocks.map((b) => `${b.name} (Days ${b.dayStart}-${b.dayEnd})`).join(', ')}.${activeName ? ` Active: ${activeName}.` : ' No active block.'}`,
-      );
+
+    const is90Day = state.enable90DayTrack !== false;
+    const lines: string[] = [];
+
+    if (is90Day) {
+      lines.push(buildContextOverview(state, dateISO, this.planner, this.config));
+      const blocks = sortBlocks(state.postJourney?.customPhases ?? []);
+      if (blocks.length > 0) {
+        const active = state.postJourney?.activeCustomPhaseId;
+        const activeName = blocks.find((b) => b.id === active)?.name;
+        lines.push(
+          `Post-journey blocks: ${blocks.length} — ${blocks.map((b) => `${b.name} (Days ${b.dayStart}-${b.dayEnd})`).join(', ')}.${activeName ? ` Active: ${activeName}.` : ' No active block.'}`,
+        );
+      }
+    } else {
+      lines.push(`MODE: Flexible Study Planner (90-day track is disabled)`);
+      lines.push(`TODAY: ${dateISO}`);
+      const todos = state.customTodos ?? [];
+      const pending = todos.filter((t) => !t.completed);
+      const done = todos.filter((t) => t.completed);
+      lines.push(`CUSTOM TO-DOS: ${done.length}/${todos.length} completed (${pending.length} pending).`);
+      if (todos.length > 0) {
+        lines.push(
+          todos
+            .slice(0, 10)
+            .map((t, i) => `${i + 1}. [${t.completed ? 'x' : ' '}] ${t.title} (${t.priority.toUpperCase()})`)
+            .join('\n'),
+        );
+      }
+      const vault = state.studyVault ?? [];
+      if (vault.length > 0) {
+        lines.push(`STUDY VAULT: ${vault.length} uploaded resources/PDFs.`);
+      }
     }
+
     if (this.hasPlannerData() && this.plannerTools) {
       const plannerList = await this.plannerTools.runMany([{ action: 'listPlanners' }]);
       if (plannerList.ok) lines.push(`Uploaded coaching planners:\n${plannerList.summary}`);
     }
     return { ok: true, summary: lines.join('\n') };
+  }
+
+  // ========== CUSTOM TO-DOS & STUDY VAULT ==========
+
+  private addTodo(state: AppState, action: Extract<ChatToolAction, { action: 'addTodo' }>): ChatToolResult {
+    const title = action.title.trim();
+    if (!title) return { ok: false, summary: 'To-Do title khali nahi ho sakta.' };
+
+    const newTodo: CustomTodoTask = {
+      id: `todo_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      title,
+      completed: false,
+      priority: action.priority || 'medium',
+      category: action.category || 'general',
+      estimatedMinutes: action.estimatedMinutes || 30,
+      createdAtISO: new Date().toISOString(),
+      createdBy: 'ai',
+    };
+
+    const nextState: AppState = {
+      ...state,
+      customTodos: [newTodo, ...(state.customTodos ?? [])],
+    };
+    this.store.save(nextState);
+
+    return {
+      ok: true,
+      summary: `To-Do "${title}" add ho gaya.\nPriority: ${newTodo.priority.toUpperCase()} | Est: ${newTodo.estimatedMinutes} min | Category: ${newTodo.category}`,
+    };
+  }
+
+  private listTodos(state: AppState, action: Extract<ChatToolAction, { action: 'listTodos' }>): ChatToolResult {
+    const todos = state.customTodos ?? [];
+    const filter = action.filter || 'all';
+    const filtered = todos.filter((t) => {
+      if (filter === 'pending') return !t.completed;
+      if (filter === 'completed') return t.completed;
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      return { ok: true, summary: `Koi ${filter !== 'all' ? filter : ''} To-Do nahi mila.` };
+    }
+
+    const lines = filtered.map((t, idx) => {
+      const mark = t.completed ? '[x]' : '[ ]';
+      const prio = t.priority ? `(${t.priority.toUpperCase()})` : '';
+      const dur = t.estimatedMinutes ? `${t.estimatedMinutes}m` : '';
+      return `${idx + 1}. ${mark} ${t.title} ${prio} ${dur}`.trim();
+    });
+
+    const pendingCount = todos.filter((t) => !t.completed).length;
+    const completedCount = todos.filter((t) => t.completed).length;
+
+    return {
+      ok: true,
+      summary: `To-Dos (${completedCount}/${todos.length} done, ${pendingCount} pending):\n${lines.join('\n')}`,
+    };
+  }
+
+  private toggleTodo(state: AppState, action: Extract<ChatToolAction, { action: 'toggleTodo' }>): ChatToolResult {
+    const todos = state.customTodos ?? [];
+    const target = todos.find(
+      (t) => (action.todoId && t.id === action.todoId) || (action.title && t.title.toLowerCase().includes(action.title.toLowerCase())),
+    );
+
+    if (!target) {
+      return { ok: false, summary: `To-Do "${action.title || action.todoId || ''}" nahi mila.` };
+    }
+
+    const nextCompleted = action.completed !== undefined ? action.completed : !target.completed;
+    const nextState: AppState = {
+      ...state,
+      customTodos: todos.map((t) =>
+        t.id === target.id
+          ? { ...t, completed: nextCompleted, completedAtISO: nextCompleted ? new Date().toISOString() : undefined }
+          : t,
+      ),
+    };
+    this.store.save(nextState);
+
+    return {
+      ok: true,
+      summary: `To-Do "${target.title}" ko ${nextCompleted ? 'COMPLETED' : 'PENDING'} mark kar diya gaya.`,
+    };
+  }
+
+  private deleteTodo(state: AppState, action: Extract<ChatToolAction, { action: 'deleteTodo' }>): ChatToolResult {
+    const todos = state.customTodos ?? [];
+    const target = todos.find(
+      (t) => (action.todoId && t.id === action.todoId) || (action.title && t.title.toLowerCase().includes(action.title.toLowerCase())),
+    );
+
+    if (!target) {
+      return { ok: false, summary: `To-Do "${action.title || action.todoId || ''}" nahi mila.` };
+    }
+
+    const nextState: AppState = {
+      ...state,
+      customTodos: todos.filter((t) => t.id !== target.id),
+    };
+    this.store.save(nextState);
+
+    return {
+      ok: true,
+      summary: `To-Do "${target.title}" delete ho gaya.`,
+    };
+  }
+
+  private listVaultResources(state: AppState, action: Extract<ChatToolAction, { action: 'listVaultResources' }>): ChatToolResult {
+    const vault = state.studyVault ?? [];
+    const subject = action.subject?.toLowerCase();
+    const filtered = subject ? vault.filter((r) => r.subject.toLowerCase() === subject) : vault;
+
+    if (filtered.length === 0) {
+      return { ok: true, summary: `Study Vault me koi resource nahi mila${subject ? ` for ${subject}` : ''}.` };
+    }
+
+    const lines = filtered.map((r, idx) => {
+      return `${idx + 1}. [${r.fileType.toUpperCase()}] ${r.title} (${r.subject}) - ${(r.fileSize / 1024).toFixed(1)} KB`;
+    });
+
+    return {
+      ok: true,
+      summary: `Study Vault Resources (${filtered.length} items):\n${lines.join('\n')}`,
+    };
   }
 
   // ========== BLOCK MANAGEMENT ==========

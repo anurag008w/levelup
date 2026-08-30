@@ -15,7 +15,7 @@ import {
 } from '../../core/domain/chat';
 import type { LLMMessage, LLMRequest, LLMResponse, ThinkingLevel, ContentPart } from '../../core/domain/llm';
 import { isAbortError } from '../../core/domain/llm';
-import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY, CHAT_PLANNER_INSTRUCTIONS, chatToolScopeInstructions, type ChatToolMeta } from '../../core/domain/chat-tools';
+import { CHAT_TOOL_INSTRUCTIONS, CHAT_TOOL_RETRY, CHAT_PLANNER_INSTRUCTIONS, FLEXIBLE_MODE_CHAT_TOOL_INSTRUCTIONS, chatToolScopeInstructions, type ChatToolMeta } from '../../core/domain/chat-tools';
 import { PLANNER_TOOL_INSTRUCTIONS, PLANNER_TOOL_RETRY } from '../../core/domain/subject-planner';
 import type { ChatToolAction, ChatToolActionResult, ChatToolResult } from '../../core/domain/chat-tools';
 import { createStreamSanitizer, sanitizeAssistantLeaks } from './leak-sanitizer';
@@ -994,9 +994,13 @@ export class ChatService {
     }
   }
 
-  /** Base tool instructions, plus the uploaded-planner section + today's date
-   *  context whenever the student has imported coaching planners — so the model
-   *  answers tests/routine/subject questions with planner tools in the SAME
+  private getBaseToolInstructions(): string {
+    const is90Day = this.store ? this.store.get().enable90DayTrack !== false : true;
+    return is90Day ? CHAT_TOOL_INSTRUCTIONS : FLEXIBLE_MODE_CHAT_TOOL_INSTRUCTIONS;
+  }
+
+  /** Wraps the task-tools base instructions with planner instructions (when
+   *  planner data exists) so the model can read coaching planners in the SAME
    *  decision hop as the task tools. */
   private toolSystem(base: string): string {
     const planner = this.tools?.hasPlannerData() ? `\n\n${CHAT_PLANNER_INSTRUCTIONS}\n\n${this.plannerDateContext()}` : '';
@@ -1006,7 +1010,7 @@ export class ChatService {
   private async buildDecisionRequest(session: ChatSession, signal?: AbortSignal, onlyTools?: string[]): Promise<LLMRequest> {
     // When the user pinned tools with "@" mentions, list ONLY those tools —
     // the model physically cannot choose anything outside the set.
-    const system = onlyTools?.length ? chatToolScopeInstructions(onlyTools) : this.toolSystem(CHAT_TOOL_INSTRUCTIONS);
+    const system = onlyTools?.length ? chatToolScopeInstructions(onlyTools) : this.toolSystem(this.getBaseToolInstructions());
     const request: LLMRequest = {
       messages: await this.buildMessages(session, system),
       temperature: this.decisionTemperature(session),
@@ -1116,7 +1120,7 @@ export class ChatService {
         `either ONE action, or {"actions":[...]} for several changes. Task ids come from the plan (e.g. d1_t1, mock_1, ai-xxxxx).`
       : CHAT_TOOL_RETRY;
     const system =
-      this.toolSystem(`${CHAT_TOOL_INSTRUCTIONS}\n\n${retryFraming}`) +
+      this.toolSystem(`${this.getBaseToolInstructions()}\n\n${retryFraming}`) +
       scopeRule +
       `\n\nYour previous reply was:\n${previousReply}\n\nReplace it with exactly one JSON object now.`;
     const request: LLMRequest = {
@@ -1156,7 +1160,7 @@ export class ChatService {
       ? `\nThe user pinned ONLY these tools: ${onlyTools.join(', ')}. Never re-emit anything outside this set.\n`
       : '';
     const system =
-      this.toolSystem(CHAT_TOOL_INSTRUCTIONS) +
+      this.toolSystem(this.getBaseToolInstructions()) +
       scopeRule +
       `\n\nYour previous tool call partially failed. The errors below are FIXABLE — ` +
       `look the real id up first if needed (listBlocks / getTaskBank / getAllTasks / getPlan / listPlanners), ` +
@@ -1200,7 +1204,7 @@ export class ChatService {
       ? `\nThe user pinned ONLY these tools: ${onlyTools.join(', ')}. Re-emit actions only from this set.\n`
       : '';
     const system =
-      this.toolSystem(CHAT_TOOL_INSTRUCTIONS) +
+      this.toolSystem(this.getBaseToolInstructions()) +
       scopeRule +
       `\n\nYour previous tool call failed because the task id was NOT in that day's plan.\n` +
       `Below is the affected day's exact plan with REAL task ids (format "id:<taskId>").\n` +

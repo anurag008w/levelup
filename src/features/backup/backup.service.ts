@@ -200,6 +200,8 @@ export function buildBackupPayload(state: AppState, chat: ChatStoreState | null,
     const full = normalizeState(state);
     data.state = {
       dynamicTaskBank: full.dynamicTaskBank,
+      customTodos: full.customTodos,
+      studyVault: full.studyVault,
       customHabits: full.customHabits,
       taskLogs: full.taskLogs,
       planCache: full.planCache,
@@ -303,6 +305,8 @@ export function applyBackup(payload: BackupPayload, targets: ApplyBackupTargets,
 
   if (scope === 'tasks') {
     if (Array.isArray(rawState.dynamicTaskBank)) next.dynamicTaskBank = rawState.dynamicTaskBank as AppState['dynamicTaskBank'];
+    if (Array.isArray(rawState.customTodos)) next.customTodos = rawState.customTodos as AppState['customTodos'];
+    if (Array.isArray(rawState.studyVault)) next.studyVault = rawState.studyVault as AppState['studyVault'];
     if (isRecord(rawState.taskLogs)) next.taskLogs = rawState.taskLogs as AppState['taskLogs'];
     if (isRecord(rawState.planCache)) next.planCache = rawState.planCache as AppState['planCache'];
     if (Array.isArray(rawState.restDays)) next.restDays = rawState.restDays as AppState['restDays'];

@@ -83,13 +83,35 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
     subject: z.string().max(60).optional(),
   }),
   z.object({ action: z.literal('getRoutine'), day: z.string().max(60).optional() }),
-  z.object({
-    action: z.literal('getDay'),
-    date: z.string().max(60).optional(),
-    from: z.string().max(60).optional(),
-    to: z.string().max(60).optional(),
-  }),
+  z.object({ action: z.literal('getDay'), date: z.string().max(60).optional(), from: z.string().max(60).optional(), to: z.string().max(60).optional() }),
   z.object({ action: z.literal('getContext') }),
+  // Custom To-Do & Task Management
+  z.object({
+    action: z.literal('addTodo'),
+    title: z.string().min(1).max(300),
+    priority: z.enum(['high', 'medium', 'low']).optional(),
+    estimatedMinutes: z.number().int().min(1).max(600).optional(),
+    category: z.enum(['physics', 'chemistry', 'maths', 'general', 'revision']).optional(),
+  }),
+  z.object({
+    action: z.literal('listTodos'),
+    filter: z.enum(['all', 'pending', 'completed']).optional(),
+  }),
+  z.object({
+    action: z.literal('toggleTodo'),
+    todoId: z.string().optional(),
+    title: z.string().optional(),
+    completed: z.boolean().optional(),
+  }),
+  z.object({
+    action: z.literal('deleteTodo'),
+    todoId: z.string().optional(),
+    title: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal('listVaultResources'),
+    subject: z.string().optional(),
+  }),
 ]);
 
 export type ChatToolAction = z.infer<typeof chatToolActionSchema>;
@@ -172,6 +194,13 @@ TASK BANK MANAGEMENT (full control):
 - Edit any dynamic task: {"action":"editAnyTask","taskId":"<taskId>","title":"New Title","durationMin":45,"category":"chemistry","difficulty":3,"energyLevel":"medium","tags":["chemistry"]}. Also updatable: description, habitId, phase, prerequisites, taskType, revisionSuitability, backlogSuitability, thinkingSkills, jeeRelevance. Base/seed tasks cannot be edited directly — add/edit creates dynamic copies only.
 - Delete from bank: {"action":"deleteAnyTask","taskId":"<taskId>"} — DESTRUCTIVE, needs confirmation.
 
+CUSTOM TO-DO & TASK MANAGEMENT:
+- Add a To-Do: {"action":"addTodo","title":"Physics Electrostatics Revision","priority":"high","estimatedMinutes":45,"category":"physics"}
+- List To-Dos: {"action":"listTodos","filter":"pending"} or "filter":"all" / "filter":"completed"
+- Toggle To-Do: {"action":"toggleTodo","title":"Physics Electrostatics Revision","completed":true}
+- Delete a To-Do: {"action":"deleteTodo","title":"Physics Electrostatics Revision"}
+- Study Vault Resources: {"action":"listVaultResources","subject":"physics"} (lists uploaded PDFs, notes, formula sheets)
+
 CUSTOM BLOCK MANAGEMENT (post-journey, after Day 90):
 - List all blocks: {"action":"listBlocks"} (shows status).
 - Create a block: {"action":"createBlock","name":"Physics Mastery","description":"15-day physics focus","days":15,"focusAreas":["physics"],"difficulty":"medium"}.
@@ -219,6 +248,22 @@ export const CHAT_TOOL_RETRY =
   'either ONE action (e.g. {"action":"removeTask","day":10,"taskId":"d1_t1"}), ' +
   'or {"actions":[...]} when the user asked for several changes at once. ' +
   'The task ids come from the plan (e.g. d1_t1, mock_1, ai-xxxxx).';
+
+export const FLEXIBLE_MODE_CHAT_TOOL_INSTRUCTIONS = `You are Misa, an AI study mentor in Flexible Study Planner mode (the 90-day challenge curriculum is off).
+You can manage the student's daily To-Dos, check uploaded study resources in the Study Vault, and view coaching planners.
+
+When the user asks to add/complete/list/delete tasks or view resources, your ENTIRE reply must be exactly one JSON object, no extra text.
+
+AVAILABLE TOOLS:
+- addTodo — Add a task to student's To-Do list: {"action":"addTodo","title":"Electrostatics 20 Questions","priority":"high","estimatedMinutes":45,"category":"physics"}
+- listTodos — View active/pending/completed tasks: {"action":"listTodos","filter":"pending"}
+- toggleTodo — Mark a task done or undone: {"action":"toggleTodo","title":"Electrostatics 20 Questions","completed":true}
+- deleteTodo — Remove a task from the list: {"action":"deleteTodo","title":"Electrostatics 20 Questions"}
+- listVaultResources — List uploaded PDFs / notes in Study Vault: {"action":"listVaultResources","subject":"physics"}
+- getContext — Get overview of student's current status and to-dos: {"action":"getContext"}
+- listPlanners / getSubject / getPlanner / getTest / getTests / getRoutine / getDay — uploaded coaching planners (read-only).
+
+JSON FORMAT ONLY: Emit JSON directly without backticks or extra words.`;
 
 /** Planner-tools section appended to the system prompt ONLY when the student
  *  has imported coaching planners — so the model can read them in the SAME
@@ -284,8 +329,48 @@ export const CHAT_TOOL_CATALOG: ChatToolMeta[] = [
   { id: 'getTests', label: 'Tests list', description: 'Uploaded planner se tests list (date range optional).', example: '{"action":"getTests","from":"2026-07-01","to":"2026-07-31"}', readOnly: true },
   { id: 'getRoutine', label: 'Routine', description: 'Uploaded planner se weekly routine.', example: '{"action":"getRoutine","day":"Monday"}', readOnly: true },
   { id: 'getDay', label: 'Day detail', description: 'Uploaded planner se ek din ka poora detail (classes + tests + lectures).', example: '{"action":"getDay","date":"2026-07-05"}', readOnly: true },
+  // Custom To-Dos & Tasks
+  { id: 'addTodo', label: 'Add To-Do', description: 'Student ki daily To-Do list me naya task add karo.', example: '{"action":"addTodo","title":"Physics Electrostatics Revision","priority":"high","estimatedMinutes":45,"category":"physics"}' },
+  { id: 'listTodos', label: 'List To-Dos', description: 'Student ke active ya pending to-dos dekho.', example: '{"action":"listTodos","filter":"pending"}', readOnly: true },
+  { id: 'toggleTodo', label: 'Toggle To-Do', description: 'To-Do ko complete/uncomplete mark karo.', example: '{"action":"toggleTodo","title":"Physics Electrostatics Revision","completed":true}' },
+  { id: 'deleteTodo', label: 'Delete To-Do', description: 'To-Do list se task delete karo.', example: '{"action":"deleteTodo","title":"Physics Electrostatics Revision"}' },
+  // Study Resource Vault
+  { id: 'listVaultResources', label: 'Study Vault', description: 'Uploaded study resources (PDFs, formula sheets, notes) ki list dekho.', example: '{"action":"listVaultResources","subject":"physics"}', readOnly: true },
   { id: 'websearch', label: 'Web search', description: 'Live Google Search — current/recent info (news, syllabus changes, results, dates). Model khud decide karta hai kab search karna hai; raw results nahi dikhte, sirf summarized jawab.', example: 'auto — model decide karega', readOnly: true },
 ];
+
+/**
+ * Returns available chat tools based on whether the 90-day challenge track is active.
+ * When 90-day track is OFF, 90-day curriculum/day-specific tools are cleanly hidden.
+ */
+export function getAvailableChatTools(enable90DayTrack = true): ChatToolMeta[] {
+  if (!enable90DayTrack) {
+    const excluded90DayToolIds = new Set([
+      'getPlan',
+      'getRange',
+      'getAllTasks',
+      'getTaskBank',
+      'addTask',
+      'bulkAddTasks',
+      'editTask',
+      'editAnyTask',
+      'removeTask',
+      'bulkRemoveTasks',
+      'deleteAnyTask',
+      'markDone',
+      'bulkMarkDone',
+      'setDayMode',
+      'listBlocks',
+      'createBlock',
+      'editBlock',
+      'extendBlock',
+      'activateBlock',
+      'deleteBlock',
+    ]);
+    return CHAT_TOOL_CATALOG.filter((t) => !excluded90DayToolIds.has(t.id));
+  }
+  return CHAT_TOOL_CATALOG;
+}
 
 /**
  * Decision-hop system prompt when the user pinned a set of tools with "@"

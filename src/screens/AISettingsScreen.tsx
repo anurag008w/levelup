@@ -1,9 +1,10 @@
 import { Suspense, useEffect, useRef, useState, lazy } from 'react';
-import { Bell, BellOff, Check, ChevronRight, Database, Download, ExternalLink, Globe, KeyRound, ListChecks, LogIn, LogOut, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff, X } from 'lucide-react';
+import { AlertTriangle, Bell, BellOff, Check, ChevronRight, Database, Download, ExternalLink, Globe, KeyRound, LayoutList, ListChecks, LogIn, LogOut, Pause, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff, X } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ProviderConfig, ModelInfo } from '../core/domain/llm';
 import type { AuthSession } from '../lib/auth';
 import { container } from '../di/container';
+import { getCurrentDayNumber, isoAddDays } from '../lib/engine';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
 import EmptyState from '../components/ui/EmptyState';
@@ -66,6 +67,9 @@ export default function AISettingsScreen({
   const [notifBusy, setNotifBusy] = useState(false);
   const [notifTesting, setNotifTesting] = useState(false);
   const [notifMessage, setNotifMessage] = useState<{ type: 'ok' | 'error' | 'info'; text: string } | null>(null);
+  const [showPauseModal, setShowPauseModal] = useState(false);
+  const [trackMessage, setTrackMessage] = useState<{ type: 'ok' | 'error' | 'info'; text: string } | null>(null);
+  const today = new Date().toISOString().slice(0, 10);
 
   useEffect(() => {
     let cancelled = false;
@@ -724,40 +728,220 @@ export default function AISettingsScreen({
         <SectionHeader
           icon={<ListChecks size={14} color="var(--color-l)" />}
           accent="var(--color-l)"
-          title="Curriculum"
-          meta="customization"
+          title="Track & Curriculum Mode"
+          meta={state.enable90DayTrack !== false ? '90-day track' : 'flexible mode'}
         />
       </div>
 
-      <div className="card mb-4 p-4">
+      <div className="card mb-4 p-4 space-y-4">
+        {/* Toggle 1: 90-Day Challenge Mode */}
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
-              <ListChecks size={19} />
+              <LayoutList size={19} />
             </span>
             <div className="min-w-0">
-              <p className="font-display text-[15px] font-bold">Advanced curriculum controls</p>
-              <p className="text-xs leading-snug text-muted">
-                ON: full edit controls on Levels tab (add/edit/delete blocks, tasks, habits). OFF: clean read-only view.
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-display text-[15px] font-bold">90-Day Challenge Track</p>
+                {state.pausedTrackDay && (
+                  <span className="rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 text-[10px] font-bold text-amber-400">
+                    ⏸ Paused at Day {state.pausedTrackDay}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs leading-snug text-muted mt-0.5">
+                {state.enable90DayTrack !== false
+                  ? `ON (Day ${getCurrentDayNumber(state, today) || 1}): 90 Days JEE curriculum with Levels growth map & Task bank active.`
+                  : state.pausedTrackDay
+                  ? `OFF (Paused at Day ${state.pausedTrackDay}): Wapas ON karne par exact Day ${state.pausedTrackDay} se resume hoga.`
+                  : 'OFF: Flexible Daily Planner mode (Levels & Task bank hidden). Use for custom to-dos & general study.'}
               </p>
             </div>
           </div>
-          <label className="toggle mt-1 shrink-0" title="Toggle advanced curriculum controls">
+          <label className="toggle mt-1 shrink-0" title="Toggle 90-Day Challenge Track">
             <input
               type="checkbox"
-              checked={state.curriculumEditing}
+              checked={state.enable90DayTrack !== false}
               onChange={(e) => {
+                const checked = e.target.checked;
                 haptic();
-                update((s) => ({ ...s, curriculumEditing: e.target.checked }));
+                if (!checked) {
+                  setShowPauseModal(true);
+                } else {
+                  if (state.pausedTrackDay) {
+                    const resumeDay = state.pausedTrackDay;
+                    const newStartDate = isoAddDays(today, -(resumeDay - 1));
+                    update((s) => ({
+                      ...s,
+                      enable90DayTrack: true,
+                      startDateISO: newStartDate,
+                      pausedTrackDay: undefined,
+                    }));
+                    setTrackMessage({ type: 'ok', text: `90-Day Challenge Day ${resumeDay} se resume ho gaya!` });
+                  } else {
+                    update((s) => ({
+                      ...s,
+                      enable90DayTrack: true,
+                      startDateISO: s.startDateISO || today,
+                    }));
+                    setTrackMessage({ type: 'ok', text: '90-Day Challenge Track ON ho gaya.' });
+                  }
+                }
               }}
-              aria-label="Toggle advanced curriculum controls"
+              aria-label="Toggle 90-Day Challenge Track"
             />
             <span className="track">
               <span className="thumb" />
             </span>
           </label>
         </div>
+
+        {trackMessage && (
+          <div
+            className={`rounded-xl border p-3 text-xs leading-relaxed ${
+              trackMessage.type === 'ok'
+                ? 'border-green-500/30 bg-green-500/10 text-green-300'
+                : 'border-blue-500/30 bg-blue-500/10 text-blue-300'
+            }`}
+          >
+            {trackMessage.text}
+          </div>
+        )}
+
+        {/* Toggle 2: Advanced curriculum controls (only when 90-day is ON) */}
+        {state.enable90DayTrack !== false && (
+          <div className="flex items-start justify-between gap-4 border-t border-border/50 pt-3">
+            <div className="flex items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/5 text-muted">
+                <ListChecks size={16} />
+              </span>
+              <div className="min-w-0">
+                <p className="font-display text-sm font-bold">Advanced curriculum editing</p>
+                <p className="text-[11px] leading-snug text-muted">
+                  ON: full edit controls on Levels tab (add/edit/delete blocks, tasks, habits).
+                </p>
+              </div>
+            </div>
+            <label className="toggle mt-0.5 shrink-0" title="Toggle advanced curriculum controls">
+              <input
+                type="checkbox"
+                checked={state.curriculumEditing}
+                onChange={(e) => {
+                  haptic();
+                  update((s) => ({ ...s, curriculumEditing: e.target.checked }));
+                }}
+                aria-label="Toggle advanced curriculum controls"
+              />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+            </label>
+          </div>
+        )}
       </div>
+
+      {/* Pause / Delete 90-Day Track Confirmation Modal */}
+      {showPauseModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm fade-in">
+          <div className="card w-full max-w-md p-5 space-y-4 border-l/40 bg-panel-raised shadow-2xl">
+            <div className="flex items-center gap-2.5 text-amber-400">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 border border-amber-500/20">
+                <AlertTriangle size={20} />
+              </div>
+              <div>
+                <h3 className="font-display text-base font-bold text-text">90-Day Track Off Karein?</h3>
+                <p className="text-xs text-muted">Aap abhi Day {getCurrentDayNumber(state, today) || 1} par hain.</p>
+              </div>
+            </div>
+
+            <p className="text-xs leading-relaxed text-muted">
+              90-Day Track band karne par Levels map aur Task Bank hide ho jayenge aur app Flexible To-Dos mode me switch ho jayega. Apna progress choose karein:
+            </p>
+
+            <div className="space-y-2.5 pt-1">
+              {/* Pause Option */}
+              <button
+                type="button"
+                onClick={() => {
+                  haptic();
+                  const day = getCurrentDayNumber(state, today) || 1;
+                  update((s) => ({
+                    ...s,
+                    enable90DayTrack: false,
+                    pausedTrackDay: day,
+                  }));
+                  setShowPauseModal(false);
+                  setTrackMessage({
+                    type: 'info',
+                    text: `90-Day Track Day ${day} pe pause ho gaya. Jab bhi wapas ON karoge, exact Day ${day} se resume hoga!`,
+                  });
+                }}
+                className="w-full flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-left transition-all hover:border-amber-500/60 active:scale-[0.98]"
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/20 text-amber-400 mt-0.5">
+                  <Pause size={16} />
+                </span>
+                <div className="min-w-0">
+                  <p className="font-display text-xs font-bold text-text flex items-center gap-1.5">
+                    Pause Track (Recommended)
+                    <span className="text-[10px] rounded bg-amber-500/20 text-amber-300 px-1.5 py-0.2">Freeze Day {getCurrentDayNumber(state, today) || 1}</span>
+                  </p>
+                  <p className="text-[11px] text-muted mt-0.5 leading-snug">
+                    Progress save rahegi. Jab bhi wapas ON karoge, exact <b>Day {getCurrentDayNumber(state, today) || 1}</b> se bina kisi progress loss ke chalu hoga.
+                  </p>
+                </div>
+              </button>
+
+              {/* Reset/Delete Option */}
+              <button
+                type="button"
+                onClick={() => {
+                  haptic();
+                  update((s) => ({
+                    ...s,
+                    enable90DayTrack: false,
+                    startDateISO: null,
+                    pausedTrackDay: undefined,
+                    clearedLevels: [],
+                    bonusDaysUsed: 0,
+                    taskLogs: {},
+                    masteryPlacement: {},
+                    planCache: {},
+                  }));
+                  setShowPauseModal(false);
+                  setTrackMessage({
+                    type: 'info',
+                    text: '90-Day Challenge data reset ho gaya. Flexible mode active.',
+                  });
+                }}
+                className="w-full flex items-start gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-left transition-all hover:border-rose-500/60 active:scale-[0.98]"
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-rose-500/20 text-rose-400 mt-0.5">
+                  <Trash2 size={16} />
+                </span>
+                <div className="min-w-0">
+                  <p className="font-display text-xs font-bold text-rose-300">
+                    Delete & Reset 90-Day Progress
+                  </p>
+                  <p className="text-[11px] text-muted mt-0.5 leading-snug">
+                    90-Day track start date, level clears aur curriculum logs reset ho jayenge.
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowPauseModal(false)}
+                className="btn btn-ghost text-xs px-4"
+              >
+                Cancel (Keep ON)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mb-2.5">
         <SectionHeader

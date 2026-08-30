@@ -110,6 +110,10 @@ export function normalizeState(raw: unknown): AppState {
     customHabits: Array.isArray(r.customHabits) ? r.customHabits : [],
     curriculumEditing: typeof r.curriculumEditing === 'boolean' ? r.curriculumEditing : false,
     subjectPlanners: normalizePlanners(r.subjectPlanners),
+    enable90DayTrack: typeof r.enable90DayTrack === 'boolean' ? r.enable90DayTrack : true,
+    pausedTrackDay: typeof r.pausedTrackDay === 'number' ? r.pausedTrackDay : undefined,
+    customTodos: Array.isArray(r.customTodos) ? r.customTodos : [],
+    studyVault: Array.isArray(r.studyVault) ? r.studyVault : [],
   };
 }
 
