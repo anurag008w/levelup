@@ -71,7 +71,7 @@ RULES:
 
 /** Keywords that route a user message to the memory tool decision hop. */
 const MEMORY_QUERY_PATTERN =
-  /(?:yaad rakho|yaad hai|yaad rakh|yaad kar|yaad karo|yaad rahe|kaise yaad|kya yaad|yaad se|yaad rakhega|mat bhool|bhool mat|bhoolna|note kar|note le|likh le|save kar|store kar|memory|memories|long[- ]?term|pehle bola|pehle bata|delete (?:kar|karo).*memory|edit.*memory|memory.*edit|memory.*delete|surakshit|bhaagne)/i;
+  /(?:yaad|bhool|mat\s+bhool|note\s+(?:kar|karo|le|lo|rakh)|likh\s+(?:le|lo|rakh)|save\s+(?:kar|karo|to\s+memory|in\s+memory)|store\s+(?:kar|karo)|memory|memories|long[- ]?term|pehle\s+bola|pehle\s+kaha|pehle\s+bata|search\s+memory|memory\s+search|what\s+(?:do\s+you\s+remember|is\s+saved)|remember\s+(?:this|that|my)|delete\s+memory|edit\s+memory|pin\s+memory|kamzori\s+yaad|weakness\s+yaad)/i;
 
 export function isMemoryQuery(text: string): boolean {
   return MEMORY_QUERY_PATTERN.test(text);

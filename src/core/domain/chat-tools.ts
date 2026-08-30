@@ -253,6 +253,11 @@ Examples:
 - "delete the chemistry block" → deleteBlock (needs confirm)
 - "show all my blocks" → listBlocks
 - "activate revision block" → activateBlock (use exact block id from listBlocks)
+- "purani chat mein physics formula dhoondo" → searchChatHistory with query:"physics formula"
+- "kal kya baat hui thi" → searchChatHistory with query:"" and date of yesterday
+- "25 august ko humne kya discuss kiya tha" → searchChatHistory with date:"2026-08-25"
+- "saari purani chats dikhao" → listChatSessions
+- "chat sess-1 ka poora transcript dikhao" → getChatSession with sessionId:"sess-1"
 
 Task ids come from today's plan context or a plan you saw in this chat (format "id:<taskId>", e.g. d1_t1, mock_1, ai-xxxxx). If a day's plan is NOT visible to you yet, do NOT refuse — still emit the requested action with your best guess for the task id. The system will automatically fetch that day's plan (with the real ids) and let you retry with the correct id next.
 
@@ -271,13 +276,12 @@ For ANYTHING else (concepts, motivation, general questions, block suggestions, s
 
 /** Correction prompt used when the model answered with prose instead of a tool action. */
 export const CHAT_TOOL_RETRY =
-  'You just answered with normal text, but this message was about the study plan and MUST be a tool action. ' +
+  'You just answered with normal text, but this message was about study tasks, plans, or past chat history and MUST be a tool action. ' +
   'Do NOT refuse, do NOT explain your limitations, do NOT apologize. ' +
-  'If the user asks to add/remove/complete a task, that is fully supported and safe. ' +
+  'Searching past chats, viewing sessions, and modifying tasks are all fully supported and safe. ' +
   'Your ENTIRE reply must be exactly one JSON object chosen from the allowed actions above — ' +
-  'either ONE action (e.g. {"action":"removeTask","day":10,"taskId":"d1_t1"}), ' +
-  'or {"actions":[...]} when the user asked for several changes at once. ' +
-  'The task ids come from the plan (e.g. d1_t1, mock_1, ai-xxxxx).';
+  'either ONE action (e.g. {"action":"searchChatHistory","query":"physics"}, {"action":"listChatSessions"}, or {"action":"removeTask","day":10,"taskId":"d1_t1"}), ' +
+  'or {"actions":[...]} when the user asked for several changes at once.';
 
 export const FLEXIBLE_MODE_CHAT_TOOL_INSTRUCTIONS = `You are Misa, an AI study mentor in Flexible Study Planner mode (the 90-day challenge curriculum is off).
 You can manage the student's daily To-Dos, check uploaded study resources in the Study Vault, and view coaching planners.
