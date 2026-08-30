@@ -1,4 +1,5 @@
 import type { CustomTodoTask } from '../../core/domain/todo-tasks';
+import type { ChatSession } from '../../core/domain/chat';
 import { defaultPostJourney, type AppState, type CustomPhase, type PostJourneyState } from '../../core/domain/state';
 import type { Difficulty, EnergyLevel, JeeRelevance, PhaseId, TaskBankEntry, TaskType, ThinkingSkill } from '../../core/domain/task-bank';
 import { DEFAULT_PROGRESSION_CONFIG, type DailyPlan, type ProgressionConfig } from '../../core/domain/progress';
@@ -43,8 +44,8 @@ ACTIONS.register({ id: 'createBlock', label: 'Create custom block', description:
 ACTIONS.register({ id: 'deleteBlock', label: 'Delete block', description: 'Delete a custom study block.', entityType: 'customBlocks', permissions: ['delete'], confirmationRequired: true });
 ACTIONS.register({ id: 'activateBlock', label: 'Activate block', description: 'Set a custom block as active.', entityType: 'customBlocks', permissions: ['edit'] });
 
-// Strong plan/block action words. A message containing any of these is
-// clearly about the plan, task bank or custom blocks.
+// Strong plan/block/chat action words. A message containing any of these is
+// clearly about the plan, task bank, custom blocks or chat history.
 const TASK_QUERY_WORDS = [
   'task', 'plan', 'din', 'day', 'aaj', 'kal', 'parso', 'week', 'hafta', 'month', 'mahina',
   'mark', 'done', 'complete', 'delete', 'remove', 'hata', 'hatao', 'add', 'badlo', 'badal',
@@ -54,15 +55,15 @@ const TASK_QUERY_WORDS = [
   'karo', 'karna', 'banao', 'bana', 'dikhao', 'show', 'check', 'status', 'progress',
   'score', 'streak', 'history', 'backup', 'sync', 'reset', 'clear', 'uncomplete',
   'pending', 'todo', 'audit', 'analyze', 'summary', 'report',
+  // Chat history & browsing triggers
+  'chat', 'chats', 'message', 'messages', 'purani', 'pichhli', 'pichli', 'pehle', 'search',
+  'browse', 'dhoondo', 'dhoond', 'poocha', 'pucha', 'bola', 'bolatha', 'discussed', 'conversation',
   // Study workflow triggers
   'study', 'padhna', 'syllabus', 'chapter', 'mock',
   'test', 'questions', 'problems', 'notes', 'formula', 'jee', 'exam', 'rank', 'percentile',
   // Block-related anchors
   'block', 'phase', 'activate', 'extend', 'list',
   // Real-user Hinglish/English — high-precision plan/task/rest intent.
-  // Deliberately generic conversation words (batao/dekh/kya/next/left) are
-  // excluded: each match costs an extra decision-hop LLM call, so only words
-  // with strong plan/task/rest intent belong here.
   'tomorrow', 'bacha', 'bache', 'remaining', 'chutti', 'holiday', 'rest', 'skip', 'chhod',
   'cancel', 'adjust', 'postpone', 'delay', 'routine', 'timetable', 'time table',
   'taiyari', 'preparation', 'revise', 'planner', 'deadline', 'due',
@@ -165,6 +166,7 @@ export class ChatToolsService {
   private readonly config: ProgressionConfig;
   private readonly plannerTools: PlannerToolsService | null;
   private readonly now: Clock;
+  private readonly chatSessionsProvider?: () => ChatSession[];
 
   constructor(
     store: StateStore,
@@ -174,6 +176,7 @@ export class ChatToolsService {
     config: ProgressionConfig = DEFAULT_PROGRESSION_CONFIG,
     plannerTools: PlannerToolsService | null = null,
     now: Clock = { now: () => new Date() },
+    chatSessionsProvider?: () => ChatSession[],
   ) {
     this.store = store;
     this.planner = planner;
@@ -182,6 +185,7 @@ export class ChatToolsService {
     this.config = config;
     this.plannerTools = plannerTools;
     this.now = now;
+    this.chatSessionsProvider = chatSessionsProvider;
   }
 
   /** True when the student imported at least one coaching planner. */
@@ -264,6 +268,13 @@ export class ChatToolsService {
     const NEGATION = /\b(mat|nahi|nhi|mata|na hi|don'?t|dont|not|never)\b/;
     if (NEGATION.test(t)) return null;
     if (/\bcontext\b/.test(t)) return { action: 'getContext' };
+    if (
+      /\b(chats?|sessions?|conversations?)\b/.test(t) &&
+      /\b(list|saari|all|purani|previous|past|dikhao|batao|dekho)\b/.test(t) &&
+      !/\b(search|dhoondo|kya tha|kya bola)\b/.test(t)
+    ) {
+      return { action: 'listChatSessions' };
+    }
     if (
       /\b(overview|status|progress|streak|journey|report|summary)\b/.test(t) &&
       /\b(batao|dekho|dikhao|de do|check|kya hai|kaisa|kitna|chahiye|chal raha)\b/.test(t)
@@ -515,6 +526,13 @@ export class ChatToolsService {
           return this.deleteTodo(state, action);
         case 'listVaultResources':
           return this.listVaultResources(state, action);
+        // AI Chat History Search & Browsing
+        case 'searchChatHistory':
+          return this.searchChatHistory(state, action);
+        case 'listChatSessions':
+          return this.listChatSessions(state, action);
+        case 'getChatSession':
+          return this.getChatSession(state, action);
       }
     } catch (err) {
       if (isAbortError(err)) throw err;
@@ -698,6 +716,298 @@ export class ChatToolsService {
       ok: true,
       summary: `Study Vault Resources (${filtered.length} items):\n${lines.join('\n')}`,
     };
+  }
+
+  // ========== AI CHAT HISTORY SEARCH & BROWSING ==========
+
+  private searchChatHistory(state: AppState, action: Extract<ChatToolAction, { action: 'searchChatHistory' }>): ChatToolResult {
+    const sessions = this.chatSessionsProvider ? this.chatSessionsProvider() : [];
+    if (sessions.length === 0) {
+      return { ok: true, summary: 'Koi purani chat history nahi mili.' };
+    }
+
+    const timeZone = state.timeZone ?? deviceTimeZone();
+    const query = action.query?.toLowerCase().trim();
+    const dateFilter = action.date?.trim();
+    const fromDate = action.fromDate?.trim();
+    const toDate = action.toDate?.trim();
+    const targetSessionId = action.sessionId?.trim();
+    const roleFilter = action.role;
+    const limit = Math.min(action.limit ?? 15, 30);
+    const includeSurrounding = action.includeSurrounding !== false;
+
+    // Filter sessions if sessionId is specified
+    const targetSessions = targetSessionId
+      ? sessions.filter((s) => s.id === targetSessionId || s.title.toLowerCase().includes(targetSessionId.toLowerCase()))
+      : sessions;
+
+    if (targetSessions.length === 0) {
+      return { ok: false, summary: `Session "${targetSessionId}" nahi mila.` };
+    }
+
+    interface ScoredMatch {
+      score: number;
+      sessionTitle: string;
+      sessionId: string;
+      msgIndex: number;
+      message: {
+        id: string;
+        role: string;
+        content: string;
+        createdAt: string;
+        formattedDateTime: string;
+      };
+      allSessionMessages: typeof sessions[0]['messages'];
+    }
+
+    const scoredMatches: ScoredMatch[] = [];
+
+    const formatTime = (d: Date) => {
+      try {
+        const dateStr = d.toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+          timeZone,
+        });
+        const timeStr = d.toLocaleTimeString('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true,
+          timeZone,
+        });
+        return `${dateStr} ${timeStr}`;
+      } catch {
+        return d.toISOString();
+      }
+    };
+
+    const queryWords = query ? query.split(/\s+/).filter((w) => w.length > 1) : [];
+
+    for (const session of targetSessions) {
+      const messages = session.messages ?? [];
+      for (let i = 0; i < messages.length; i++) {
+        const m = messages[i];
+        if (!m.content || !m.content.trim()) continue;
+
+        // Role filter
+        if (roleFilter && roleFilter !== 'all') {
+          if (roleFilter === 'user' && m.role !== 'user') continue;
+          if (roleFilter === 'assistant' && m.role !== 'assistant') continue;
+        }
+
+        // Date filter
+        const msgDate = new Date(m.createdAt);
+        const msgDateISO = msgDate.toLocaleDateString('en-CA', { timeZone }); // YYYY-MM-DD
+        if (dateFilter && msgDateISO !== dateFilter) continue;
+        if (fromDate && msgDateISO < fromDate) continue;
+        if (toDate && msgDateISO > toDate) continue;
+
+        const contentLower = m.content.toLowerCase();
+        const titleLower = (session.title ?? '').toLowerCase();
+
+        let score = 0;
+
+        if (query) {
+          // Exact phrase match
+          if (contentLower.includes(query)) {
+            score += 15;
+          } else if (titleLower.includes(query)) {
+            score += 8;
+          }
+
+          // Individual word matches
+          let matchedWordCount = 0;
+          for (const word of queryWords) {
+            if (contentLower.includes(word)) {
+              score += 3;
+              matchedWordCount++;
+            }
+          }
+
+          if (queryWords.length > 1 && matchedWordCount === queryWords.length) {
+            score += 5; // Bonus for containing all query words
+          }
+
+          if (score === 0) continue; // No match
+        } else {
+          // Date-only or browse query
+          score = 5;
+        }
+
+        // Substance bonus: real conceptual questions/answers score higher than 1-word replies
+        if (m.content.trim().length > 15) score += 2;
+        if (m.content.trim().length > 40) score += 2;
+
+        scoredMatches.push({
+          score,
+          sessionTitle: session.title || 'Untitled Session',
+          sessionId: session.id,
+          msgIndex: i,
+          message: {
+            id: m.id,
+            role: m.role === 'assistant' ? 'Misa (AI)' : 'Student (User)',
+            content: m.content,
+            createdAt: m.createdAt,
+            formattedDateTime: formatTime(msgDate),
+          },
+          allSessionMessages: messages,
+        });
+      }
+    }
+
+    if (scoredMatches.length === 0) {
+      const criteria: string[] = [];
+      if (query) criteria.push(`query: "${query}"`);
+      if (dateFilter) criteria.push(`date: "${dateFilter}"`);
+      if (fromDate || toDate) criteria.push(`date range: ${fromDate || 'start'} to ${toDate || 'now'}`);
+      if (targetSessionId) criteria.push(`session: "${targetSessionId}"`);
+      return {
+        ok: true,
+        summary: `Chat history me koi message nahi mila (${criteria.join(', ') || 'no criteria'}).`,
+      };
+    }
+
+    // Sort by score descending (most relevant first), then recency
+    scoredMatches.sort((a, b) => b.score - a.score || b.message.createdAt.localeCompare(a.message.createdAt));
+
+    const totalFound = scoredMatches.length;
+    const topDetailedCount = Math.min(limit, 4); // Include surrounding context for TOP 4 highest-relevance matches ONLY
+    const detailedMatches = scoredMatches.slice(0, topDetailedCount);
+    const indexMatches = scoredMatches.slice(topDetailedCount, limit);
+
+    const lines: string[] = [
+      `=== CHAT HISTORY SEARCH RESULTS (${totalFound} total matches, showing top ${Math.min(limit, totalFound)}) ===`,
+    ];
+
+    // Group detailed matches by session to merge contiguous windows (Deduplication)
+    const detailedBySession = new Map<string, typeof detailedMatches>();
+    for (const match of detailedMatches) {
+      const list = detailedBySession.get(match.sessionId) ?? [];
+      list.push(match);
+      detailedBySession.set(match.sessionId, list);
+    }
+
+    for (const [sessId, sessMatches] of detailedBySession.entries()) {
+      const sessTitle = sessMatches[0].sessionTitle;
+      lines.push(`\n📁 Session: "${sessTitle}" (ID: ${sessId})`);
+
+      // Find all message indices in this session to include
+      const indicesToInclude = new Set<number>();
+      for (const sm of sessMatches) {
+        if (includeSurrounding) {
+          if (sm.msgIndex > 0) indicesToInclude.add(sm.msgIndex - 1);
+          indicesToInclude.add(sm.msgIndex);
+          if (sm.msgIndex < sm.allSessionMessages.length - 1) indicesToInclude.add(sm.msgIndex + 1);
+        } else {
+          indicesToInclude.add(sm.msgIndex);
+        }
+      }
+
+      const sortedIndices = Array.from(indicesToInclude).sort((a, b) => a - b);
+      const allMsgs = sessMatches[0].allSessionMessages;
+
+      for (const idx of sortedIndices) {
+        const msg = allMsgs[idx];
+        const isMatchedTarget = sessMatches.some((sm) => sm.msgIndex === idx);
+        const d = new Date(msg.createdAt);
+        const dtStr = formatTime(d);
+        const role = msg.role === 'assistant' ? 'Misa (AI)' : 'Student (User)';
+
+        if (isMatchedTarget) {
+          lines.push(`  ★ [${dtStr}] ${role}:\n    "${msg.content}"`);
+        } else {
+          // Surrounding context line
+          const preview = msg.content.length > 200 ? `${msg.content.slice(0, 199)}…` : msg.content;
+          lines.push(`  ↳ (Context [${dtStr}] ${role}): "${preview}"`);
+        }
+      }
+    }
+
+    // Concise 1-line index for remaining matches (saving token budget)
+    if (indexMatches.length > 0) {
+      lines.push(`\n--- Other Relevant Matches (${indexMatches.length} more) ---`);
+      for (const im of indexMatches) {
+        const preview = im.message.content.length > 80 ? `${im.message.content.slice(0, 79)}…` : im.message.content;
+        lines.push(`• [${im.message.formattedDateTime}] Session "${im.sessionTitle}": ${im.message.role} - "${preview}"`);
+      }
+      lines.push(`(Tip: Use getChatSession with sessionId if you need the full transcript of any listed session)`);
+    }
+
+    lines.push(`\n======================================================`);
+    return { ok: true, summary: lines.join('\n') };
+  }
+
+  private listChatSessions(state: AppState, action: Extract<ChatToolAction, { action: 'listChatSessions' }>): ChatToolResult {
+    const sessions = this.chatSessionsProvider ? this.chatSessionsProvider() : [];
+    if (sessions.length === 0) {
+      return { ok: true, summary: 'Koi chat session available nahi hai.' };
+    }
+
+    const timeZone = state.timeZone ?? deviceTimeZone();
+    const limit = Math.min(action.limit ?? 20, 50);
+    const lines = [`=== PREVIOUS CHAT SESSIONS (${sessions.length} total) ===`];
+
+    const formatTime = (iso: string) => {
+      try {
+        const d = new Date(iso);
+        return d.toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+          timeZone,
+        });
+      } catch {
+        return iso;
+      }
+    };
+
+    sessions.slice(0, limit).forEach((s, idx) => {
+      const msgCount = s.messages?.length ?? 0;
+      const lastMsg = s.messages && s.messages.length > 0 ? s.messages[s.messages.length - 1].content : '';
+      const preview = lastMsg ? (lastMsg.length > 80 ? `${lastMsg.slice(0, 79)}…` : lastMsg) : 'empty';
+      lines.push(`${idx + 1}. [${s.id}] "${s.title || 'Untitled Session'}" · ${formatTime(s.createdAt)} · ${msgCount} msgs\n   Last: "${preview}"`);
+    });
+
+    return { ok: true, summary: lines.join('\n') };
+  }
+
+  private getChatSession(state: AppState, action: Extract<ChatToolAction, { action: 'getChatSession' }>): ChatToolResult {
+    const sessions = this.chatSessionsProvider ? this.chatSessionsProvider() : [];
+    const session = sessions.find((s) => s.id === action.sessionId || s.title.toLowerCase() === action.sessionId.toLowerCase());
+    if (!session) {
+      return { ok: false, summary: `Session "${action.sessionId}" nahi mila. Use listChatSessions to see available sessions.` };
+    }
+
+    const timeZone = state.timeZone ?? deviceTimeZone();
+    const limit = Math.min(action.limit ?? 50, 100);
+    const messages = (session.messages ?? []).slice(-limit);
+
+    const lines = [
+      `=== CHAT TRANSCRIPT: "${session.title || 'Untitled'}" (ID: ${session.id}) ===`,
+      `Created: ${session.createdAt}, Messages: ${session.messages?.length ?? 0}`,
+      `----------------------------------------------------------------`,
+    ];
+
+    for (const m of messages) {
+      const d = new Date(m.createdAt);
+      const timeStr = d.toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+        timeZone,
+      });
+      const dateStr = d.toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        timeZone,
+      });
+      const role = m.role === 'assistant' ? 'Misa (AI)' : 'Student (User)';
+      lines.push(`[${dateStr} ${timeStr}] ${role}:\n${m.content}\n`);
+    }
+
+    return { ok: true, summary: lines.join('\n') };
   }
 
   // ========== BLOCK MANAGEMENT ==========

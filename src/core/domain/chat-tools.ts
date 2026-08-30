@@ -112,6 +112,27 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
     action: z.literal('listVaultResources'),
     subject: z.string().optional(),
   }),
+  // AI Chat History Search & Deep Browsing
+  z.object({
+    action: z.literal('searchChatHistory'),
+    query: z.string().optional(),
+    date: z.string().max(60).optional(),
+    fromDate: z.string().max(60).optional(),
+    toDate: z.string().max(60).optional(),
+    sessionId: z.string().optional(),
+    role: z.enum(['user', 'assistant', 'all']).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+    includeSurrounding: z.boolean().optional(),
+  }),
+  z.object({
+    action: z.literal('listChatSessions'),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  z.object({
+    action: z.literal('getChatSession'),
+    sessionId: z.string().min(1),
+    limit: z.number().int().min(1).max(100).optional(),
+  }),
 ]);
 
 export type ChatToolAction = z.infer<typeof chatToolActionSchema>;
@@ -201,6 +222,15 @@ CUSTOM TO-DO & TASK MANAGEMENT:
 - Delete a To-Do: {"action":"deleteTodo","title":"Physics Electrostatics Revision"}
 - Study Vault Resources: {"action":"listVaultResources","subject":"physics"} (lists uploaded PDFs, notes, formula sheets)
 
+CHAT HISTORY & CONVERSATION BROWSING:
+- Search messages across all or specific chats by keyword, sentence, or date:
+  {"action":"searchChatHistory","query":"thermodynamics question"}
+  {"action":"searchChatHistory","date":"2026-08-25"}
+  {"action":"searchChatHistory","query":"formula","fromDate":"2026-08-20","toDate":"2026-08-30"}
+  Returns full message text, exact timestamps (e.g. 2026-08-25 04:30 PM IST), speaker role (Student / Misa), and session title with conversational context.
+- List all past chat sessions: {"action":"listChatSessions"}
+- View full transcript of a specific chat session: {"action":"getChatSession","sessionId":"<session-id>"}
+
 CUSTOM BLOCK MANAGEMENT (post-journey, after Day 90):
 - List all blocks: {"action":"listBlocks"} (shows status).
 - Create a block: {"action":"createBlock","name":"Physics Mastery","description":"15-day physics focus","days":15,"focusAreas":["physics"],"difficulty":"medium"}.
@@ -260,6 +290,9 @@ AVAILABLE TOOLS:
 - toggleTodo — Mark a task done or undone: {"action":"toggleTodo","title":"Electrostatics 20 Questions","completed":true}
 - deleteTodo — Remove a task from the list: {"action":"deleteTodo","title":"Electrostatics 20 Questions"}
 - listVaultResources — List uploaded PDFs / notes in Study Vault: {"action":"listVaultResources","subject":"physics"}
+- searchChatHistory — Search past chat history by query or date: {"action":"searchChatHistory","query":"electrostatics doubt"}
+- listChatSessions — List all previous chat sessions: {"action":"listChatSessions"}
+- getChatSession — View a full chat transcript: {"action":"getChatSession","sessionId":"<id>"}
 - getContext — Get overview of student's current status and to-dos: {"action":"getContext"}
 - listPlanners / getSubject / getPlanner / getTest / getTests / getRoutine / getDay — uploaded coaching planners (read-only).
 
@@ -302,6 +335,9 @@ export interface ChatToolMeta {
 /** The full, user-pickable tool set — mirrors CHAT_TOOL_INSTRUCTIONS + planner tools. */
 export const CHAT_TOOL_CATALOG: ChatToolMeta[] = [
   { id: 'getContext', label: 'Journey status', description: 'Current journey snapshot: date, day/phase/streak, today\'s tasks + progress, XP/habits, gaps, blocks, planners.', example: '{"action":"getContext"}', readOnly: true },
+  { id: 'searchChatHistory', label: 'Search Chat History', description: 'Purani chats me words, sentences, ya specific dates se messages search karo.', example: '{"action":"searchChatHistory","query":"physics doubt"}', readOnly: true },
+  { id: 'listChatSessions', label: 'List Chat Sessions', description: 'Saari past chat sessions ki list dekho.', example: '{"action":"listChatSessions"}', readOnly: true },
+  { id: 'getChatSession', label: 'Get Chat Session', description: 'Kisi specific chat ka poora transcript dekho.', example: '{"action":"getChatSession","sessionId":"<id>"}', readOnly: true },
   { id: 'getPlan', label: 'Day plan', description: 'One day ka plan with real task ids.', example: '{"action":"getPlan","day":3}', readOnly: true },
   { id: 'getRange', label: 'Range overview', description: 'Plan overview for a day range (max 10 days).', example: '{"action":"getRange","fromDay":1,"toDay":7}', readOnly: true },
   { id: 'getAllTasks', label: 'All tasks of a day', description: 'AI + user tasks for one day.', example: '{"action":"getAllTasks","day":3}', readOnly: true },
