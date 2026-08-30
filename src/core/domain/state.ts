@@ -6,6 +6,8 @@ import type { TaskBankEntry } from './task-bank';
 import type { Habit } from './habit';
 import type { AiActionHistoryState } from './ai-actions';
 import type { SubjectPlanner } from './subject-planner';
+import type { StudyResource } from './study-vault';
+import type { CustomTodoTask } from './todo-tasks';
 import { emptyAiActionHistory } from './ai-actions';
 import { INTERNAL_SYSTEM_PROMPT } from './chat';
 
@@ -267,6 +269,14 @@ export interface AppState {
   curriculumEditing: boolean;
   /** Uploaded study planners per subject (PCM + custom), readable by the AI. */
   subjectPlanners: SubjectPlanner[];
+  /** Whether the structured 90-day track & levels map is active (true), or flexible daily planner mode (false). */
+  enable90DayTrack: boolean;
+  /** When 90-day track is paused, store the exact day number to resume from. */
+  pausedTrackDay?: number;
+  /** Custom user/AI daily to-dos. */
+  customTodos: CustomTodoTask[];
+  /** Study resource library (PDFs, Notes, Formula sheets). */
+  studyVault: StudyResource[];
 }
 
 export function defaultAiSettings(): AiSettings {
@@ -308,5 +318,8 @@ export function emptyAppState(): AppState {
     customHabits: [],
     curriculumEditing: false,
     subjectPlanners: [],
+    enable90DayTrack: true,
+    customTodos: [],
+    studyVault: [],
   };
 }

@@ -42,6 +42,16 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
+  const visibleTabs = useMemo(() => {
+    const is90Day = state.enable90DayTrack !== false;
+    return TABS.filter((t) => {
+      if (!is90Day && (t.id === 'levels' || t.id === 'task-bank')) {
+        return false;
+      }
+      return true;
+    });
+  }, [state.enable90DayTrack]);
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
@@ -287,7 +297,7 @@ export default function TabBar({ active, state, onChange, update }: TabBarProps)
               </div>
 
               <div className="side-nav-list">
-                {TABS.map(({ id, label, hint, icon: Icon, tone }) => {
+                {visibleTabs.map(({ id, label, hint, icon: Icon, tone }) => {
                   const isActive = active === id;
                   return (
                     <button

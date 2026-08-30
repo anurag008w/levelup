@@ -155,6 +155,7 @@ export interface LiveSettingsConfig {
   model: string;
   voice: GeminiLiveVoice;
   playbackSpeed?: number; // e.g. 0.85 (default)
+  enable90DayTrack?: boolean;
   vadSensitivity: 'low' | 'medium' | 'high';
   defaultAudioRoute: LiveAudioRoute;
   videoFps: number;

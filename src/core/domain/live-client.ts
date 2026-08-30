@@ -148,7 +148,9 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       .filter(Boolean)
       .join('\n\n');
 
-    const toolDeclarations = [
+    const is90Day = this.config.enable90DayTrack !== false;
+
+    const allToolDeclarations = [
       {
         name: 'webSearch',
         description: 'Search Google and live web for latest JEE Main/Advanced dates, NTA notices, exam announcements, news, cutoffs, facts, and live real-time information.',
@@ -168,45 +170,67 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
           properties: {},
         },
       },
+      // Custom To-Dos & Study Vault
       {
-        name: 'getPlan',
-        description: 'Get the study plan for a specific day (Day 1-90). Returns tasks and schedule.',
+        name: 'addTodo',
+        description: 'Add a new custom To-Do task for the student (title, priority, duration).',
         parameters: {
           type: 'OBJECT',
           properties: {
-            day: { type: 'INTEGER', description: 'Day number (1 to 90)' },
+            title: { type: 'STRING', description: 'Task title / description' },
+            priority: { type: 'STRING', description: 'high, medium, or low' },
+            estimatedMinutes: { type: 'INTEGER', description: 'Estimated minutes (e.g. 30, 45, 60)' },
+            category: { type: 'STRING', description: 'physics, chemistry, maths, or general' },
           },
-          required: ['day'],
+          required: ['title'],
         },
       },
       {
-        name: 'addTask',
-        description: 'Add a new study task to a specific day in the plan.',
+        name: 'listTodos',
+        description: 'List active, pending, or completed To-Dos of the student.',
         parameters: {
           type: 'OBJECT',
           properties: {
-            day: { type: 'INTEGER', description: 'Day number (1 to 90)' },
-            intent: { type: 'STRING', description: 'What to study / title of the task' },
-            durationMin: { type: 'INTEGER', description: 'Duration in minutes (e.g. 30, 45, 60)' },
+            filter: { type: 'STRING', description: 'all, pending, or completed' },
           },
-          required: ['day', 'intent', 'durationMin'],
         },
       },
       {
-        name: 'markDone',
-        description: 'Mark a study task as completed for a day.',
+        name: 'toggleTodo',
+        description: 'Mark a To-Do as completed or pending.',
         parameters: {
           type: 'OBJECT',
           properties: {
-            day: { type: 'INTEGER', description: 'Day number (1 to 90)' },
-            taskId: { type: 'STRING', description: 'The task id from plan' },
+            title: { type: 'STRING', description: 'Title or substring of the todo to complete' },
+            completed: { type: 'BOOLEAN', description: 'true for completed, false for pending' },
           },
-          required: ['day', 'taskId'],
+          required: ['title'],
+        },
+      },
+      {
+        name: 'deleteTodo',
+        description: 'Delete a To-Do from the student list.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            title: { type: 'STRING', description: 'Title of the todo to delete' },
+          },
+          required: ['title'],
+        },
+      },
+      {
+        name: 'listVaultResources',
+        description: 'List uploaded PDFs, formula sheets, and notes in the Study Vault.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            subject: { type: 'STRING', description: 'physics, chemistry, maths, or formula' },
+          },
         },
       },
       {
         name: 'getContext',
-        description: 'Get current student status: current day, streak, today tasks, and habit progress.',
+        description: 'Get current student status: tasks, streak, and progress.',
         parameters: {
           type: 'OBJECT',
           properties: {},
@@ -241,7 +265,50 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
           },
         },
       },
+      // 90-Day Challenge specific tools (only included when is90Day is true)
+      ...(is90Day
+        ? [
+            {
+              name: 'getPlan',
+              description: 'Get the study plan for a specific day (Day 1-90). Returns tasks and schedule.',
+              parameters: {
+                type: 'OBJECT',
+                properties: {
+                  day: { type: 'INTEGER', description: 'Day number (1 to 90)' },
+                },
+                required: ['day'],
+              },
+            },
+            {
+              name: 'addTask',
+              description: 'Add a new study task to a specific day in the 90-day plan.',
+              parameters: {
+                type: 'OBJECT',
+                properties: {
+                  day: { type: 'INTEGER', description: 'Day number (1 to 90)' },
+                  intent: { type: 'STRING', description: 'What to study / title of the task' },
+                  durationMin: { type: 'INTEGER', description: 'Duration in minutes (e.g. 30, 45, 60)' },
+                },
+                required: ['day', 'intent', 'durationMin'],
+              },
+            },
+            {
+              name: 'markDone',
+              description: 'Mark a 90-day study task as completed for a day.',
+              parameters: {
+                type: 'OBJECT',
+                properties: {
+                  day: { type: 'INTEGER', description: 'Day number (1 to 90)' },
+                  taskId: { type: 'STRING', description: 'The task id from plan' },
+                },
+                required: ['day', 'taskId'],
+              },
+            },
+          ]
+        : []),
     ];
+
+    const toolDeclarations = allToolDeclarations;
 
     try {
       const ai = new GoogleGenAI({ apiKey });

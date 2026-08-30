@@ -1,8 +1,9 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Calendar, Check, CheckCircle2, ChevronDown, Flame, Pencil, Plus, RotateCcw, ShieldCheck, Siren, Sunrise, Sunset, Target, Timer, Trash2, X, Zap } from 'lucide-react';
-import type { AppState } from '../types';
+import { Calendar, Check, CheckCircle2, ChevronDown, Clock, Flame, Pencil, Plus, RotateCcw, ShieldCheck, Siren, Sunrise, Sunset, Target, Timer, Trash2, X, Zap } from 'lucide-react';
+import type { AppState, CustomTodoTask, TodoCategory, TodoPriority } from '../types';
 import type { EnergyLevel, TaskBankEntry, TaskType } from '../core/domain/task-bank';
+import CustomTodoSection from '../components/CustomTodoSection';
 import { PHASES } from '../data/curriculum';
 import { DEFAULT_PROGRESSION_CONFIG, type DailyPlan, type PlannedTask } from '../core/domain/progress';
 import { TASK_TYPES } from '../core/domain/task-bank';
@@ -119,6 +120,158 @@ export default function TodayScreen({
       setConfettiKey((n) => n + 1);
     }
   }, [pct, totalCount]);
+
+  const is90Day = state.enable90DayTrack !== false;
+  const todos = state.customTodos ?? [];
+
+  useEffect(() => {
+    if (!state.startDateISO && !is90Day) {
+      update((s) => ({ ...s, startDateISO: today }));
+    }
+  }, [state.startDateISO, is90Day, today, update]);
+
+  function handleAddCustomTodo(newTodoData: { title: string; priority: TodoPriority; category: TodoCategory; estimatedMinutes: number }) {
+    const newTodo: CustomTodoTask = {
+      id: `todo_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      title: newTodoData.title,
+      completed: false,
+      priority: newTodoData.priority,
+      category: newTodoData.category,
+      estimatedMinutes: newTodoData.estimatedMinutes,
+      createdAtISO: new Date().toISOString(),
+      createdBy: 'user',
+    };
+    update((s) => ({
+      ...s,
+      customTodos: [newTodo, ...(s.customTodos ?? [])],
+    }));
+  }
+
+  function handleToggleCustomTodo(id: string) {
+    haptic(8);
+    update((s) => ({
+      ...s,
+      customTodos: (s.customTodos ?? []).map((t) =>
+        t.id === id
+          ? { ...t, completed: !t.completed, completedAtISO: !t.completed ? new Date().toISOString() : undefined }
+          : t,
+      ),
+    }));
+  }
+
+  function handleDeleteCustomTodo(id: string) {
+    haptic();
+    update((s) => ({
+      ...s,
+      customTodos: (s.customTodos ?? []).filter((t) => t.id !== id),
+    }));
+  }
+
+  function handleEditCustomTodo(id: string, newTitle: string) {
+    haptic();
+    update((s) => ({
+      ...s,
+      customTodos: (s.customTodos ?? []).map((t) =>
+        t.id === id ? { ...t, title: newTitle } : t,
+      ),
+    }));
+  }
+
+  // --- FLEXIBLE STUDY PLANNER MODE (90-day track disabled) ---
+  if (!is90Day) {
+    const completedTodos = todos.filter((t) => t.completed);
+    const pendingTodos = todos.filter((t) => !t.completed);
+    const todoPct = todos.length > 0 ? Math.round((completedTodos.length / todos.length) * 100) : 0;
+    const totalMinutes = todos.reduce((acc, t) => acc + (t.estimatedMinutes || 30), 0);
+
+    return (
+      <div className="screen fade-up">
+        <Confetti trigger={confettiKey} />
+
+        <ScreenHeader
+          eyebrow="DAILY MISSION"
+          title={greeting()}
+          subtitle={`${dateLabel} · ${pendingTodos.length} tasks pending`}
+          right={
+            <div className="flex items-center gap-2">
+              <StreakPill streak={streak} />
+              <button
+                type="button"
+                aria-label={adminUnlocked ? 'Admin panel khula hai (lock karo)' : 'Admin login'}
+                className="icon-btn"
+                style={adminUnlocked ? { color: 'var(--color-peak)' } : undefined}
+                onClick={() => {
+                  if (adminUnlocked) {
+                    onLockAdmin();
+                    return;
+                  }
+                  if (canAutoUnlock && onAutoUnlock()) {
+                    hapticSuccess();
+                    return;
+                  }
+                  setShowAdminLogin(true);
+                }}
+              >
+                <ShieldCheck size={16} />
+              </button>
+            </div>
+          }
+        />
+
+        {/* Progress Card for Flexible Mode */}
+        <div className="gradient-border mb-4 rounded-2xl p-px">
+          <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel/90 px-4 pb-4 pt-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="eyebrow text-l">TODAY'S TARGET</p>
+                <h2 className="font-display text-xl font-bold tracking-tight text-text mt-0.5">
+                  {completedTodos.length === todos.length && todos.length > 0
+                    ? 'All Tasks Done! 🎉'
+                    : `${completedTodos.length} of ${todos.length} Done`}
+                </h2>
+                <p className="text-xs text-muted mt-0.5">
+                  {totalMinutes > 0 ? `${totalMinutes} min scheduled for today` : 'Add tasks to start your day'}
+                </p>
+              </div>
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-l/10 font-mono text-base font-bold text-light">
+                {todoPct}%
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <ProgressBar value={todoPct} height={8} color={todoPct === 100 ? 'var(--color-success)' : 'var(--color-l)'} />
+            </div>
+          </div>
+        </div>
+
+        {/* Quick stats */}
+        <div className="stat-strip mb-4">
+          <StatTile icon={<Target size={15} color="var(--color-l)" />} value={`${completedTodos.length}/${todos.length}`} label="Tasks done" />
+          <StatTile icon={<Clock size={15} color="var(--color-light)" />} value={`${totalMinutes}m`} label="Total time" />
+          <StatTile icon={<Flame size={15} color="var(--color-peak)" />} value={streak} label="Streak days" />
+        </div>
+
+        {notice && (
+          <div className="toast mb-4 fade-in" role="status">
+            <Check size={15} color="var(--color-l)" />
+            {notice}
+          </div>
+        )}
+
+        <CustomTodoSection
+          todos={todos}
+          onToggle={handleToggleCustomTodo}
+          onDelete={handleDeleteCustomTodo}
+          onEdit={handleEditCustomTodo}
+          onAdd={handleAddCustomTodo}
+          flash={flash}
+          isStandalone={true}
+        />
+
+        {showAdminLogin && <AdminLogin onLogin={onUnlockAdmin} onClose={() => setShowAdminLogin(false)} />}
+      </div>
+    );
+  }
 
   if (!state.startDateISO) {
     return <StartScreen onStart={() => update((s) => ({ ...s, startDateISO: today }))} onNavigate={onNavigate} />;
@@ -497,6 +650,17 @@ export default function TodayScreen({
           )}
         </div>
       )}
+
+      {/* Custom To-Dos */}
+      <CustomTodoSection
+        todos={todos}
+        onToggle={handleToggleCustomTodo}
+        onDelete={handleDeleteCustomTodo}
+        onEdit={handleEditCustomTodo}
+        onAdd={handleAddCustomTodo}
+        flash={flash}
+        isStandalone={false}
+      />
 
       {/* Floating add button */}
       <button

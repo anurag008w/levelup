@@ -87,6 +87,12 @@ export default function App() {
     if (tab === 'chat') setChatVisited(true);
   }, [tab]);
 
+  useEffect(() => {
+    if (state.enable90DayTrack === false && (tab === 'levels' || tab === 'task-bank')) {
+      setTab('today');
+    }
+  }, [state.enable90DayTrack, tab]);
+
   // Tell the notifications service whether the user is looking at the Chat
   // tab, so AI-reply alerts are suppressed while the chat is the active tab
   // (they fire again as soon as the user switches to any other tab or the app

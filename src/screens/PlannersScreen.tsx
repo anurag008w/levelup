@@ -3,6 +3,8 @@ import { BookOpen, CalendarDays, Check, ChevronDown, Copy, FileText, FlaskConica
 import type { AppState } from '../types';
 import type { PlannerRoutineRow, PlannerTestRow, SubjectPlanner } from '../core/domain/subject-planner';
 import { PLANNER_CONVERSION_PROMPT, groupBySubject, plannerCountLabel, kindLabel, sortPlannerItems } from '../core/domain/subject-planner';
+import type { StudyResource } from '../core/domain/study-vault';
+import StudyVaultSection from '../components/StudyVaultSection';
 import { container } from '../di/container';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
@@ -24,6 +26,8 @@ export default function PlannersScreen({ state, update }: { state: AppState; upd
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
 
+  const [activeTab, setActiveTab] = useState<'planners' | 'vault'>('planners');
+
   const grouped = useMemo(() => groupBySubject(state.subjectPlanners ?? []), [state.subjectPlanners]);
   const stats = useMemo(() => {
     const planners = state.subjectPlanners ?? [];
@@ -41,6 +45,24 @@ export default function PlannersScreen({ state, update }: { state: AppState; upd
   function flash(n: Notice) {
     setNotice(n);
     if (n) window.setTimeout(() => setNotice(null), 4000);
+  }
+
+  function flashMsg(msg: string) {
+    flash({ type: 'ok', text: msg });
+  }
+
+  function handleAddVaultResource(resource: StudyResource) {
+    update((s) => ({
+      ...s,
+      studyVault: [resource, ...(s.studyVault ?? [])],
+    }));
+  }
+
+  function handleDeleteVaultResource(id: string) {
+    update((s) => ({
+      ...s,
+      studyVault: (s.studyVault ?? []).filter((r) => r.id !== id),
+    }));
   }
 
   function refresh() {
@@ -120,11 +142,46 @@ export default function PlannersScreen({ state, update }: { state: AppState; upd
   return (
     <div className="screen fade-up">
       <ScreenHeader
-        eyebrow="SUBJECT PLANNERS"
-        title="Planners"
-        subtitle="PCM aur custom subjects ke planners upload karo — Misa unhe padh aur answer kar sakti hai."
+        eyebrow="STUDY RESOURCES"
+        title="Planners & Vault"
+        subtitle="Coaching planners, syllabus, routine aur PDFs / notes ek jagah store karo."
       />
 
+      {/* Tab Switcher */}
+      <div className="segment mb-4 w-full grid grid-cols-2" role="group" aria-label="Planners screen view">
+        <button
+          type="button"
+          className="segment-btn py-2 text-xs font-bold"
+          aria-pressed={activeTab === 'planners'}
+          onClick={() => {
+            haptic(4);
+            setActiveTab('planners');
+          }}
+        >
+          Coaching Planners ({stats.planners})
+        </button>
+        <button
+          type="button"
+          className="segment-btn py-2 text-xs font-bold"
+          aria-pressed={activeTab === 'vault'}
+          onClick={() => {
+            haptic(4);
+            setActiveTab('vault');
+          }}
+        >
+          Study Vault ({state.studyVault?.length ?? 0})
+        </button>
+      </div>
+
+      {activeTab === 'vault' ? (
+        <StudyVaultSection
+          resources={state.studyVault ?? []}
+          onAddResource={handleAddVaultResource}
+          onDeleteResource={handleDeleteVaultResource}
+          flash={flashMsg}
+        />
+      ) : (
+        <>
       {/* How it works */}
       <div className="gradient-border mb-5 rounded-2xl p-px" data-tone="blood">
         <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel p-4">
@@ -282,6 +339,8 @@ export default function PlannersScreen({ state, update }: { state: AppState; upd
             );
           })}
         </div>
+      )}
+        </>
       )}
     </div>
   );

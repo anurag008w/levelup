@@ -37,22 +37,30 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
     );
   }
 
-  const dayNumber = getCurrentDayNumber(state, today);
+  const is90Day = state.enable90DayTrack !== false;
+  const dayNumber = is90Day ? getCurrentDayNumber(state, today) : 1;
   // Merged (seed + custom) habits so user-created habits also score/streak here.
-  const habits = container.habitBank.getAllHabits().filter((h) => h.dayStart <= dayNumber);
+  const habits = is90Day
+    ? container.habitBank.getAllHabits().filter((h) => h.dayStart <= dayNumber)
+    : [];
   const overallStreak = computeOverallStreak(state, today);
-  const clearedCount = LEVELS.filter((l) => l.authored && getLevelStatus(l, state, dayNumber) === 'cleared').length;
-  const recoveryCount = LEVELS.filter((l) => l.authored && getLevelStatus(l, state, dayNumber) === 'needs-recovery').length;
-  const activeLevel = LEVELS.find((l) => dayNumber >= l.dayStart && dayNumber <= l.dayEnd);
+  const clearedCount = is90Day ? LEVELS.filter((l) => l.authored && getLevelStatus(l, state, dayNumber) === 'cleared').length : 0;
+  const recoveryCount = is90Day ? LEVELS.filter((l) => l.authored && getLevelStatus(l, state, dayNumber) === 'needs-recovery').length : 0;
+  const activeLevel = is90Day ? LEVELS.find((l) => dayNumber >= l.dayStart && dayNumber <= l.dayEnd) : undefined;
+
+  const completedTodosCount = state.customTodos?.filter((t) => t.completed).length ?? 0;
+  const pendingTodosCount = state.customTodos?.filter((t) => !t.completed).length ?? 0;
 
   // ---- Derived metrics ----
-  const dayInfos = buildDayInfos(state, state.startDateISO, today);
-  const totalDone = dayInfos.reduce((acc, d) => acc + d.done, 0);
+  const dayInfos = buildDayInfos(state, state.startDateISO, today, is90Day);
+  const totalDone = is90Day
+    ? dayInfos.reduce((acc, d) => acc + d.done, 0)
+    : completedTodosCount + dayInfos.reduce((acc, d) => acc + d.done, 0);
   const xp = totalDone * XP_PER_TASK;
   const xpLevel = Math.floor(xp / XP_PER_LEVEL) + 1;
   const xpIntoLevel = xp % XP_PER_LEVEL;
   const activeDays = dayInfos.filter((d) => d.done > 0).length;
-  const consistency = dayInfos.length > 0 ? Math.round((activeDays / dayInfos.length) * 100) : 0;
+  const consistency = dayInfos.length > 0 ? Math.round((activeDays / dayInfos.length) * 100) : (completedTodosCount > 0 ? 100 : 0);
 
   // ---- Habit tiers ----
   const withScores = habits
@@ -74,13 +82,21 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
 
   const latest = [...state.summaries].sort((a, b) => b.dateISO.localeCompare(a.dateISO))[0];
 
-  const achievements = [
-    { ok: dayNumber >= 7, label: 'Week 1 done' },
-    { ok: overallStreak >= 7, label: '7-day streak' },
-    { ok: clearedCount >= 1, label: 'First level cleared' },
-    { ok: consistency >= 70, label: '70%+ consistency' },
-    { ok: xp >= 500, label: '500 XP' },
-  ];
+  const achievements = is90Day
+    ? [
+        { ok: dayNumber >= 7, label: 'Week 1 done' },
+        { ok: overallStreak >= 7, label: '7-day streak' },
+        { ok: clearedCount >= 1, label: 'First level cleared' },
+        { ok: consistency >= 70, label: '70%+ consistency' },
+        { ok: xp >= 500, label: '500 XP' },
+      ]
+    : [
+        { ok: completedTodosCount >= 1, label: 'First to-do done' },
+        { ok: completedTodosCount >= 5, label: '5 to-dos completed' },
+        { ok: overallStreak >= 7, label: '7-day streak' },
+        { ok: consistency >= 70, label: '70%+ consistency' },
+        { ok: xp >= 500, label: '500 XP' },
+      ];
 
   const motivation =
     consistency >= 70
@@ -94,7 +110,7 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
       <ScreenHeader
         eyebrow="PROGRESS"
         title="Progress"
-        subtitle={activeLevel ? `Abhi: ${activeLevel.title}` : undefined}
+        subtitle={is90Day && activeLevel ? `Abhi: ${activeLevel.title}` : undefined}
         right={<StreakPill streak={overallStreak} />}
       />
 
@@ -125,13 +141,27 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
 
       <div className="stat-strip mb-4">
         <Stat label="Day Streak" value={overallStreak} icon={<Flame size={14} color="var(--color-light)" />} accent="var(--color-light)" />
-        <Stat label="Levels Cleared" value={clearedCount} icon={<Trophy size={14} color="var(--color-l)" />} accent="var(--color-l)" />
-        <Stat
-          label="Needs Recovery"
-          value={recoveryCount}
-          icon={<Medal size={14} color={recoveryCount > 0 ? 'var(--color-danger)' : 'var(--color-muted)'} />}
-          accent={recoveryCount > 0 ? 'var(--color-danger)' : 'var(--color-text)'}
-        />
+        {is90Day ? (
+          <>
+            <Stat label="Levels Cleared" value={clearedCount} icon={<Trophy size={14} color="var(--color-l)" />} accent="var(--color-l)" />
+            <Stat
+              label="Needs Recovery"
+              value={recoveryCount}
+              icon={<Medal size={14} color={recoveryCount > 0 ? 'var(--color-danger)' : 'var(--color-muted)'} />}
+              accent={recoveryCount > 0 ? 'var(--color-danger)' : 'var(--color-text)'}
+            />
+          </>
+        ) : (
+          <>
+            <Stat label="To-Dos Done" value={completedTodosCount} icon={<Trophy size={14} color="var(--color-l)" />} accent="var(--color-l)" />
+            <Stat
+              label="Pending Tasks"
+              value={pendingTodosCount}
+              icon={<Activity size={14} color="var(--color-light)" />}
+              accent="var(--color-light)"
+            />
+          </>
+        )}
       </div>
 
       {/* Heatmap */}
@@ -205,7 +235,7 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
           ))}
         </div>
 
-        {latest && (
+        {is90Day && latest && (
           <>
             <div className="divider my-4" />
             <SectionHeader icon={<Activity size={14} color="var(--color-l)" />} accent="var(--color-l)" title="Latest Day Snapshot" meta={latest.dateISO} />
@@ -228,14 +258,17 @@ export default function ProgressScreen({ state, today }: { state: AppState; toda
         )}
       </div>
 
+      {is90Day && (
+        <>
+          {habits.length === 0 && (
+            <EmptyState icon={<Brain size={28} color="var(--color-muted)" />} title="Abhi koi habit unlock nahi hui" hint="Levels complete karte jaoge toh habits unlock hoti jayengi." />
+          )}
 
-      {habits.length === 0 && (
-        <EmptyState icon={<Brain size={28} color="var(--color-muted)" />} title="Abhi koi habit unlock nahi hui" hint="Levels complete karte jaoge toh habits unlock hoti jayengi." />
+          <TierSection title="Strong" accent="var(--color-success)" icon={<TrendingUp size={14} color="var(--color-success)" />} items={grouped.strong} />
+          <TierSection title="Building" accent="var(--color-light)" icon={<Zap size={14} color="var(--color-light)" />} items={grouped.building} />
+          <TierSection title="Needs Work" accent="var(--color-danger)" icon={<TrendingDown size={14} color="var(--color-danger)" />} items={grouped.weak} />
+        </>
       )}
-
-      <TierSection title="Strong" accent="var(--color-success)" icon={<TrendingUp size={14} color="var(--color-success)" />} items={grouped.strong} />
-      <TierSection title="Building" accent="var(--color-light)" icon={<Zap size={14} color="var(--color-light)" />} items={grouped.building} />
-      <TierSection title="Needs Work" accent="var(--color-danger)" icon={<TrendingDown size={14} color="var(--color-danger)" />} items={grouped.weak} />
     </div>
   );
 }
@@ -265,9 +298,30 @@ function isoFor(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-function buildDayInfos(state: AppState, startISO: string, todayISO: string): DayInfo[] {
+function buildDayInfos(state: AppState, startISO: string, todayISO: string, is90Day = true): DayInfo[] {
   const out: DayInfo[] = [];
-  // Pure UTC iteration so `iso` keys match the planner's UTC taskLogs keys.
+  if (!is90Day) {
+    // In flexible mode, only consider completed custom todos
+    const todoCompletedDates = (state.customTodos ?? [])
+      .filter((t) => t.completed && t.completedAtISO)
+      .map((t) => t.completedAtISO!.slice(0, 10))
+      .sort();
+
+    const effectiveStart = todoCompletedDates.length > 0 ? todoCompletedDates[0] : todayISO;
+    const d = new Date(`${effectiveStart}T00:00:00Z`);
+    const end = new Date(`${todayISO}T00:00:00Z`);
+    let offset = 1;
+    while (d.getTime() <= end.getTime()) {
+      const iso = isoFor(d);
+      const done = (state.customTodos ?? []).filter((t) => t.completed && t.completedAtISO?.startsWith(iso)).length;
+      out.push({ iso, offset, done });
+      d.setUTCDate(d.getUTCDate() + 1);
+      offset += 1;
+    }
+    return out;
+  }
+
+  // 90-Day track mode
   const d = new Date(`${startISO}T00:00:00Z`);
   const end = new Date(`${todayISO}T00:00:00Z`);
   let offset = 1;

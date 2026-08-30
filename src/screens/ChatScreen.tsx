@@ -10,6 +10,8 @@ import {
   Download,
   Eraser,
   FileText,
+  FolderArchive,
+  HardDrive,
   Image,
   ImagePlus,
   MessageSquarePlus,
@@ -19,6 +21,7 @@ import {
   Paperclip,
   PenLine,
   RefreshCw,
+  Search,
   Send,
   Settings2,
   Share,
@@ -29,6 +32,9 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
+import type { StudyResource, VaultSubject } from '../core/domain/study-vault';
+import { formatFileSize } from '../core/domain/study-vault';
+import { getVaultFileBlob } from '../infra/storage/vault-db';
 import type { ChatAttachment, ChatMessage, ChatPreferences, ChatSession, ChatToolCallRecord } from '../core/domain/chat';
 import type { ChatToolMeta } from '../core/domain/chat-tools';
 import type { ArchivedConversation } from '../core/domain/chat-transcript';
@@ -98,6 +104,7 @@ const SUGGESTIONS = [
 ];
 
 const ATTACH_TOOLS: { id: string; label: string; hint: string; icon: React.ReactNode }[] = [
+  { id: 'vault', label: 'Study Vault', hint: 'PDFs & Notes', icon: <FolderArchive size={20} /> },
   { id: 'math', label: 'Math Solver', hint: 'LaTeX solve', icon: <Sigma size={20} /> },
   { id: 'image', label: 'Image', hint: 'Upload photo', icon: <Image size={20} /> },
   { id: 'pdf', label: 'PDF', hint: 'Docs upload', icon: <FileText size={20} /> },
@@ -135,6 +142,7 @@ export default function ChatScreen({
   const [processing, setProcessing] = useState<string[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [showAttach, setShowAttach] = useState(false);
+  const [showVaultPicker, setShowVaultPicker] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showProviderPicker, setShowProviderPicker] = useState(false);
   const [showMemoryChatId, setShowMemoryChatId] = useState<string | null>(null);
@@ -161,8 +169,8 @@ export default function ChatScreen({
   const revealScheduleRef = useRef<RevealSchedule | null>(null);
 
   const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? null, [sessions, activeId]);
-  // User-pickable AI tools for the "@" composer picker (empty when tools are off).
-  const toolCatalog = useMemo(() => container.chat.listTools(), []);
+  // User-pickable AI tools for the "@" composer picker (filtered dynamically by 90-day track setting).
+  const toolCatalog = useMemo(() => container.chat.listTools(), [sessions, activeId, showSettings]);
   const filteredTools = useMemo(() => {
     if (toolQuery === null) return [];
     const q = toolQuery.toLowerCase().trim();
@@ -550,6 +558,58 @@ export default function ChatScreen({
       if (name === 'getRoutine') {
         const res = await container.chatTools.runMany([{ action: 'getRoutine', day: args.day ? String(args.day) : undefined }]);
         return { routine: res.summary };
+      }
+      // Custom To-Dos & Study Vault tools
+      if (name === 'addTodo') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'addTodo',
+            title: String(args.title || ''),
+            priority: (args.priority as any) || 'medium',
+            estimatedMinutes: Number(args.estimatedMinutes) || 30,
+            category: (args.category as any) || 'general',
+          },
+        ]);
+        return { result: res.summary };
+      }
+      if (name === 'listTodos') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'listTodos',
+            filter: (args.filter as any) || 'all',
+          },
+        ]);
+        return { todos: res.summary };
+      }
+      if (name === 'toggleTodo') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'toggleTodo',
+            todoId: args.todoId ? String(args.todoId) : undefined,
+            title: args.title ? String(args.title) : undefined,
+            completed: args.completed !== undefined ? Boolean(args.completed) : undefined,
+          },
+        ]);
+        return { result: res.summary };
+      }
+      if (name === 'deleteTodo') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'deleteTodo',
+            todoId: args.todoId ? String(args.todoId) : undefined,
+            title: args.title ? String(args.title) : undefined,
+          },
+        ]);
+        return { result: res.summary };
+      }
+      if (name === 'listVaultResources') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'listVaultResources',
+            subject: args.subject ? String(args.subject) : undefined,
+          },
+        ]);
+        return { vault: res.summary };
       }
       return { result: 'Success' };
     } catch (e: any) {
@@ -1028,10 +1088,36 @@ export default function ChatScreen({
     setDraft((prev) => (prev.trim() ? `${prev.trim()}\n\n${template}` : template));
   }
 
+  async function handleAttachVaultResource(resource: StudyResource) {
+    setShowVaultPicker(false);
+    haptic();
+    try {
+      setProcessing((prev) => [...prev, resource.fileName]);
+      const blob = await getVaultFileBlob(resource.storageKey);
+      if (!blob) {
+        setError(`"${resource.title}" ka file data nahi mila.`);
+        return;
+      }
+      const blobObj = typeof blob === 'string' ? new Blob([blob]) : blob;
+      const file = new File([blobObj], resource.fileName, { type: blobObj.type || resource.fileType || 'application/pdf' });
+      const att = await readAttachment(file);
+      setAttachments((prev) => [...prev, att]);
+      setNotice(`"${resource.title}" message me attach ho gaya!`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Vault file attach karne me error aaya.');
+    } finally {
+      setProcessing((prev) => prev.filter((name) => name !== resource.fileName));
+      focusComposer();
+    }
+  }
+
   function attachTool(id: string) {
     setShowAttach(false);
     haptic();
     switch (id) {
+      case 'vault':
+        setShowVaultPicker(true);
+        return;
       case 'math':
         insertPromptTemplate(MATH_TEMPLATE);
         break;
@@ -1420,6 +1506,7 @@ export default function ChatScreen({
       )}
 
       {showAttach && <AttachmentSheet onPick={attachTool} onClose={() => setShowAttach(false)} />}
+      {showVaultPicker && <VaultPickerModal onSelect={handleAttachVaultResource} onClose={() => setShowVaultPicker(false)} />}
 
       {menu && (
         <MessageMenu
@@ -1469,7 +1556,7 @@ export default function ChatScreen({
           initialCameraStream={liveCamStream || undefined}
           initialMessages={active?.messages || []}
           toolCatalog={toolCatalog}
-          config={liveConfig}
+          config={{ ...liveConfig, enable90DayTrack: container.store.get().enable90DayTrack !== false }}
           onUpdateConfig={handleUpdateLiveConfig}
           onExecuteTool={handleExecuteLiveTool}
           onTranscriptUpdate={handleLiveTranscriptUpdate}
@@ -2307,6 +2394,146 @@ function HistorySheet({
         )}
       </div>
     </Sheet>
+  );
+}
+
+function VaultPickerModal({ onSelect, onClose }: { onSelect: (res: StudyResource) => void; onClose: () => void }) {
+  const state = container.store.get();
+  const resources: StudyResource[] = state.studyVault ?? [];
+  const [selectedSubject, setSelectedSubject] = useState<VaultSubject | 'all'>('all');
+  const [search, setSearch] = useState('');
+
+  const subjects: { id: VaultSubject | 'all'; label: string; color: string }[] = [
+    { id: 'all', label: 'All Files', color: 'text-stone-300 bg-stone-500/10 border-stone-500/20' },
+    { id: 'physics', label: 'Physics', color: 'text-blue-400 bg-blue-500/10 border-blue-500/20' },
+    { id: 'chemistry', label: 'Chemistry', color: 'text-purple-400 bg-purple-500/10 border-purple-500/20' },
+    { id: 'maths', label: 'Maths', color: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20' },
+    { id: 'formula', label: 'Formula Sheets', color: 'text-amber-400 bg-amber-500/10 border-amber-500/20' },
+    { id: 'general', label: 'General / DPPs', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
+  ];
+
+  const filtered = resources.filter((r) => {
+    const matchesSubject = selectedSubject === 'all' || r.subject === selectedSubject;
+    const matchesSearch =
+      !search.trim() ||
+      r.title.toLowerCase().includes(search.toLowerCase()) ||
+      r.fileName.toLowerCase().includes(search.toLowerCase());
+    return matchesSubject && matchesSearch;
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm fade-in">
+      <div className="card w-full max-w-lg p-5 space-y-3.5 border-l/40 bg-panel-raised shadow-2xl max-h-[85vh] flex flex-col">
+        <div className="flex items-center justify-between border-b border-border/60 pb-3">
+          <div className="flex items-center gap-2">
+            <FolderArchive size={18} className="text-l" />
+            <div>
+              <h3 className="font-display text-sm font-bold text-text">Study Resource Vault</h3>
+              <p className="text-[11px] text-muted">AI ko analyze karwane ke liye koi bhi file attach karo</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="icon-btn" aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Subjects Filter */}
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {subjects.map((s) => {
+            const count = s.id === 'all' ? resources.length : resources.filter((r) => r.subject === s.id).length;
+            const active = selectedSubject === s.id;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => {
+                  haptic(4);
+                  setSelectedSubject(s.id);
+                }}
+                className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-all ${
+                  active ? 'border-l bg-l/15 text-light font-bold' : 'border-border/50 bg-panel/50 text-muted hover:border-border'
+                }`}
+              >
+                {s.label} ({count})
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Search */}
+        {resources.length > 0 && (
+          <div className="relative">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              type="text"
+              className="field pl-8 text-xs py-1.5"
+              placeholder="Search in vault..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+        )}
+
+        {/* List */}
+        <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[150px]">
+          {filtered.length === 0 ? (
+            <div className="p-6 text-center text-muted space-y-2">
+              <HardDrive size={24} className="mx-auto text-muted-dim" />
+              <p className="text-xs font-semibold text-text">
+                {resources.length === 0 ? 'Study Vault mein koi file nahi hai.' : 'Koi matching file nahi mili.'}
+              </p>
+              <p className="text-[11px] text-muted">
+                {resources.length === 0
+                  ? 'Planners tab me ja kar pehle Study Vault me PDFs ya Notes upload karo.'
+                  : 'Dusra keyword search karo ya filter badlo.'}
+              </p>
+            </div>
+          ) : (
+            filtered.map((res) => {
+              const subj = subjects.find((s) => s.id === res.subject) || subjects[5];
+              return (
+                <div
+                  key={res.id}
+                  className="card flex items-center justify-between gap-3 p-3 bg-panel/75 hover:border-border-strong transition-all"
+                >
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/5 border border-border/50 text-l">
+                      <FileText size={16} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-display text-xs font-semibold text-text truncate">{res.title}</p>
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted mt-0.5">
+                        <span className={`inline-flex rounded border px-1.5 py-0.1 font-medium ${subj.color}`}>
+                          {subj.label}
+                        </span>
+                        <span>·</span>
+                        <span>{formatFileSize(res.fileSize)}</span>
+                        <span>·</span>
+                        <span className="truncate max-w-[100px]">{res.fileName}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => onSelect(res)}
+                    className="btn btn-primary min-h-8 px-3 text-xs font-bold shrink-0 gap-1"
+                  >
+                    <Paperclip size={12} /> Attach
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <div className="pt-2 border-t border-border/60 flex justify-end">
+          <button type="button" onClick={onClose} className="btn btn-ghost text-xs">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
