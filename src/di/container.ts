@@ -61,6 +61,8 @@ export interface AppContainer {
   sync: SyncService;
   /** Debounced push + fresh-install pull orchestration (attach on login). */
   syncCoordinator: SyncCoordinator;
+  /** Dedicated web search service. */
+  websearch: WebSearchService;
 }
 /**
  * Composition root. Wires infrastructure + features once at startup; the
@@ -267,6 +269,7 @@ export function createContainer(
     backup,
     sync,
     syncCoordinator,
+    websearch,
   };
 }
 

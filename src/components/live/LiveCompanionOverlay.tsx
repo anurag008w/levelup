@@ -1,0 +1,1128 @@
+import { useEffect, useRef, useState, useMemo, memo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Mic,
+  MicOff,
+  Camera,
+  CameraOff,
+  SwitchCamera,
+  Monitor,
+  PhoneOff,
+  Volume2,
+  Minimize2,
+  Settings,
+  Sparkles,
+  Check,
+  MessageSquare,
+  Send,
+  X,
+  EyeOff,
+  ChevronDown,
+  Wrench,
+} from 'lucide-react';
+import type { ChatMessage, ChatToolCallRecord } from '../../core/domain/chat';
+import type { ChatToolMeta } from '../../core/domain/chat-tools';
+import type {
+  LiveAudioRoute,
+  LiveCameraLens,
+  LiveSessionStatus,
+  LiveSettingsConfig,
+  LiveStreamStats,
+  LiveTranscriptItem,
+} from '../../core/domain/live-types';
+import { GeminiLiveClient } from '../../core/domain/live-client';
+import { haptic, hapticError } from '../../lib/haptics';
+import ChatMarkdown from '../ChatMarkdown';
+import LiveSettingsModal from './LiveSettingsModal';
+
+const TOOL_LABELS: Record<string, string> = {
+  getPlan: 'Plan dekha',
+  getRange: 'Range dekhi',
+  getContext: 'Journey status dekha',
+  listPlanners: 'Planners dekhe',
+  getSubject: 'Subject detail dekha',
+  getPlanner: 'Planner detail dekha',
+  getTest: 'Test detail dekha',
+  getTests: 'Tests dekhe',
+  getRoutine: 'Routine dekhi',
+  getDay: 'Day detail dekha',
+  addTask: 'Task add kiya',
+  bulkAddTasks: 'Tasks add kiye',
+  removeTask: 'Task hata diya',
+  bulkRemoveTasks: 'Tasks hata diye',
+  setDayMode: 'Din mode badla',
+  editTask: 'Task edit kiya',
+  markDone: 'Task done kiya',
+  bulkMarkDone: 'Tasks done kiye',
+  getAllTasks: 'Tasks dekhe',
+  getTaskBank: 'Task bank dekha',
+  editAnyTask: 'Task bank edit kiya',
+  deleteAnyTask: 'Task bank delete kiya',
+  createBlock: 'Block banaya',
+  deleteBlock: 'Block delete kiya',
+  activateBlock: 'Block activate kiya',
+  editBlock: 'Block edit kiya',
+  listBlocks: 'Blocks dekhe',
+  extendBlock: 'Block extend kiya',
+  websearch: 'Web search hua',
+  webSearch: 'Web search hua',
+  getTime: 'Time & Date dekha',
+  saveCustomMemory: 'Memory me save kiya',
+};
+
+function ThinkingBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-2 overflow-hidden rounded-lg border border-peak/20 bg-peak/5">
+      <button
+        type="button"
+        onClick={() => {
+          haptic();
+          setOpen((v) => !v);
+        }}
+        className="flex w-full items-center justify-between px-2.5 py-1.5 text-[10px] font-semibold text-muted transition-colors hover:text-text"
+      >
+        <span>AI soch raha hai ({text.length} chars)</span>
+        <ChevronDown size={11} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="max-h-48 overflow-y-auto border-t border-peak/15 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
+          <ChatMarkdown text={text} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolCallsBlock({ calls }: { calls: ChatToolCallRecord[] }) {
+  const [open, setOpen] = useState(false);
+  const okCount = calls.filter((c) => c.ok).length;
+  return (
+    <div className="mb-2 overflow-hidden rounded-lg border border-peak/20 bg-peak/5">
+      <button
+        type="button"
+        onClick={() => {
+          haptic();
+          setOpen((v) => !v);
+        }}
+        className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-[10px] font-semibold text-muted transition-colors hover:text-text"
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Wrench size={11} className="shrink-0 text-peak" />
+          <span className="truncate">
+            {calls.length} tool{calls.length > 1 ? 's' : ''} use kiye
+            {okCount !== calls.length ? ` — ${calls.length - okCount} fail` : ''}
+          </span>
+        </span>
+        <ChevronDown size={11} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="max-h-72 overflow-y-auto border-t border-peak/15 px-2.5 py-2 text-[11px] leading-relaxed">
+          {calls.map((c, i) => (
+            <div key={i} className="mb-2 last:mb-0">
+              <div className="flex items-center gap-1.5 font-semibold text-text">
+                <span className="shrink-0">{c.ok ? '✅' : '❌'}</span>
+                <span className="truncate">{TOOL_LABELS[c.action] ?? c.action}</span>
+              </div>
+              <div className="mt-1 pl-5 text-muted text-xs markdown-body">
+                <ChatMarkdown text={c.message || ''} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolChip({ id, catalog, onRemove }: { id: string; catalog: ChatToolMeta[]; onRemove: () => void }) {
+  const tool = catalog.find((t) => t.id.toLowerCase() === id.toLowerCase());
+  return (
+    <div className="flex min-w-0 shrink-0 items-center gap-1.5 rounded-xl border border-l/35 bg-l/10 px-2 py-1">
+      <span className="text-[10px] font-bold leading-tight text-l">@{id}</span>
+      {tool && <span className="hidden text-[9px] text-muted sm:inline">{tool.label}</span>}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="rounded-full p-0.5 text-muted hover:bg-danger/10 hover:text-danger"
+        aria-label={`Remove ${id} from tools`}
+      >
+        <X size={11} />
+      </button>
+    </div>
+  );
+}
+
+interface LiveCompanionOverlayProps {
+  isOpen: boolean;
+  onClose: (transcripts: LiveTranscriptItem[]) => void;
+  apiKey: string;
+  systemPrompt: string;
+  memoryContext: string;
+  initialMicStream: MediaStream;
+  initialCameraStream?: MediaStream;
+  initialMessages?: ChatMessage[];
+  toolCatalog?: ChatToolMeta[];
+  config: LiveSettingsConfig;
+  onUpdateConfig: (newConfig: LiveSettingsConfig) => void;
+  onExecuteTool?: (name: string, args: Record<string, unknown>) => Promise<any>;
+  onTranscriptUpdate?: (transcripts: LiveTranscriptItem[]) => void;
+}
+
+export default function LiveCompanionOverlay({
+  isOpen,
+  onClose,
+  apiKey,
+  systemPrompt,
+  memoryContext,
+  initialMicStream,
+  initialCameraStream,
+  initialMessages = [],
+  toolCatalog = [],
+  config,
+  onUpdateConfig,
+  onExecuteTool,
+  onTranscriptUpdate,
+}: LiveCompanionOverlayProps) {
+  const [status, setStatus] = useState<LiveSessionStatus>('connecting');
+  const [transcripts, setTranscripts] = useState<LiveTranscriptItem[]>([]);
+  const [showChatInput, setShowChatInput] = useState(false);
+  const [isExecutingTool, setIsExecutingTool] = useState(false);
+  const [stats, setStats] = useState<LiveStreamStats>({
+    latencyMs: 24,
+    inputVolume: 0,
+    outputVolume: 0,
+    fps: 0,
+    framesSent: 0,
+  });
+
+  const [isMuted, setIsMuted] = useState(false);
+  const [isCameraActive, setIsCameraActive] = useState(Boolean(initialCameraStream));
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [isVisionPreviewVisible, setIsVisionPreviewVisible] = useState(true);
+  const [cameraLens, setCameraLens] = useState<LiveCameraLens>('environment');
+  const [audioRoute, setAudioRoute] = useState<LiveAudioRoute>(config.defaultAudioRoute);
+  const [showAudioMenu, setShowAudioMenu] = useState(false);
+
+  const [isMinimized, setIsMinimized] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [activeTool, setActiveTool] = useState<{ name: string; args: any; status: 'running' | 'done' } | null>(null);
+
+  const clientRef = useRef<GeminiLiveClient | null>(null);
+  const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
+
+  // Initialize and connect Gemini Live
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const liveClient = new GeminiLiveClient(config, {
+      onStatusChange: (newStatus) => setStatus(newStatus),
+      onTranscriptUpdate: (newTranscripts) => {
+        setTranscripts(newTranscripts);
+        onTranscriptUpdate?.(newTranscripts);
+      },
+      onStatsUpdate: (newStats) => setStats(newStats),
+      onExecuteTool: onExecuteTool ? (name, args) => onExecuteTool(name, args) : undefined,
+      onToolCall: (name, args) => {
+        setActiveTool({ name, args, status: 'running' });
+      },
+      onToolResult: (name) => {
+        setActiveTool({ name, args: {}, status: 'done' });
+        window.setTimeout(() => setActiveTool(null), 3500);
+      },
+      onError: (err) => {
+        hapticError();
+        setErrorMessage(err);
+      },
+    });
+
+    liveClient.setPrompts(systemPrompt, memoryContext);
+    clientRef.current = liveClient;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        await liveClient.connect(apiKey);
+        if (cancelled) {
+          liveClient.disconnect();
+          return;
+        }
+        await liveClient.startVoiceStreaming(initialMicStream);
+        if (cancelled) {
+          liveClient.disconnect();
+          return;
+        }
+        if (initialCameraStream) {
+          const stream = await liveClient.startCameraStream('environment');
+          if (cancelled) {
+            liveClient.disconnect();
+            return;
+          }
+          setIsCameraActive(true);
+          setIsVisionPreviewVisible(true);
+          if (videoPreviewRef.current) {
+            videoPreviewRef.current.srcObject = stream;
+          }
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          hapticError();
+          setErrorMessage(err?.message || 'Connection to Gemini Live failed');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      liveClient.disconnect();
+      if (clientRef.current === liveClient) {
+        clientRef.current = null;
+      }
+    };
+  }, [isOpen, apiKey]);
+
+  // Dynamically update audio playback speed on the active live client
+  useEffect(() => {
+    if (clientRef.current && config.playbackSpeed) {
+      clientRef.current.setPlaybackSpeed(config.playbackSpeed);
+    }
+  }, [config.playbackSpeed]);
+
+  // Audio mute toggle
+  function handleToggleMute() {
+    haptic();
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+    clientRef.current?.setMuted(nextMuted);
+  }
+
+  // Stop Vision completely (Camera or Screen Share) and return to voice hologram
+  function handleStopVision() {
+    haptic();
+    const client = clientRef.current;
+    if (client) {
+      client.stopVision();
+    }
+    setIsCameraActive(false);
+    setIsScreenSharing(false);
+    setIsVisionPreviewVisible(true);
+    if (videoPreviewRef.current) {
+      videoPreviewRef.current.srcObject = null;
+    }
+  }
+
+  // Camera toggle (Start / Stop)
+  async function handleToggleCamera() {
+    haptic();
+    const client = clientRef.current;
+    if (!client) return;
+
+    if (isCameraActive) {
+      handleStopVision();
+    } else {
+      try {
+        if (isScreenSharing) {
+          client.stopVision();
+          setIsScreenSharing(false);
+        }
+        const stream = await client.startCameraStream(cameraLens);
+        setIsCameraActive(true);
+        setIsVisionPreviewVisible(true);
+        if (videoPreviewRef.current) {
+          videoPreviewRef.current.srcObject = stream;
+        }
+      } catch (err: any) {
+        hapticError();
+        setErrorMessage(err?.message || 'Camera access permission nahi mili');
+      }
+    }
+  }
+
+  // Camera lens flip (Front <-> Back)
+  async function handleFlipCamera() {
+    haptic();
+    const client = clientRef.current;
+    if (!client || !isCameraActive) return;
+    try {
+      const stream = await client.flipCamera();
+      const nextLens: LiveCameraLens = cameraLens === 'environment' ? 'user' : 'environment';
+      setCameraLens(nextLens);
+      if (videoPreviewRef.current) {
+        videoPreviewRef.current.srcObject = stream;
+      }
+    } catch (err: any) {
+      hapticError();
+      setErrorMessage(err?.message || 'Camera flip nahi ho saka');
+    }
+  }
+
+  // Screen share toggle (Start / Stop)
+  async function handleToggleScreenShare() {
+    haptic();
+    const client = clientRef.current;
+    if (!client) return;
+
+    if (isScreenSharing) {
+      handleStopVision();
+    } else {
+      try {
+        if (isCameraActive) {
+          client.stopVision();
+          setIsCameraActive(false);
+        }
+        const stream = await client.startScreenStream(() => {
+          setIsScreenSharing(false);
+          setIsVisionPreviewVisible(true);
+          if (videoPreviewRef.current) {
+            videoPreviewRef.current.srcObject = null;
+          }
+        });
+        setIsScreenSharing(true);
+        setIsVisionPreviewVisible(true);
+        if (videoPreviewRef.current) {
+          videoPreviewRef.current.srcObject = stream;
+        }
+      } catch (err: any) {
+        hapticError();
+        setErrorMessage(err?.message || 'Screen share start nahi ho saka');
+      }
+    }
+  }
+
+  // Audio route switch
+  function handleSelectAudioRoute(route: LiveAudioRoute) {
+    haptic();
+    setAudioRoute(route);
+    setShowAudioMenu(false);
+    clientRef.current?.setAudioRoute(route);
+  }
+
+  // In-Call Live Text Message with Tool Execution
+  async function handleSendChatMessage(rawText: string, selectedTools: string[]) {
+    const text = rawText.trim();
+    if (!text && selectedTools.length === 0) return;
+    haptic();
+
+    let cleanPrompt = text;
+    const words = text.split(/\s+/);
+    for (const w of words) {
+      if (w.startsWith('@')) {
+        const id = w.slice(1);
+        if (toolCatalog.some((t) => t.id.toLowerCase() === id.toLowerCase()) || id.toLowerCase() === 'websearch') {
+          if (!selectedTools.includes(id)) {
+            selectedTools.push(id);
+          }
+          cleanPrompt = cleanPrompt.replace(w, '').trim();
+        }
+      }
+    }
+
+    // If tools were selected, execute them immediately!
+    const toolCalls: ChatToolCallRecord[] = [];
+    let toolContextInjection = '';
+
+    if (selectedTools.length > 0) {
+      setIsExecutingTool(true);
+      setActiveTool({ name: selectedTools[0], args: { query: cleanPrompt }, status: 'running' });
+
+      for (const toolId of selectedTools) {
+        if (toolId.toLowerCase() === 'websearch') {
+          if (onExecuteTool) {
+            const res = await onExecuteTool('webSearch', { query: cleanPrompt || text });
+            const searchResultText = res?.searchResult || res?.result || 'Web search complete';
+            toolCalls.push({
+              action: 'websearch',
+              ok: Boolean(res?.searchResult),
+              message: searchResultText,
+            });
+            toolContextInjection += `\n[LIVE WEB SEARCH RESULTS]:\n${searchResultText}\n`;
+          }
+        } else if (onExecuteTool) {
+          const res = await onExecuteTool(toolId, { query: cleanPrompt, day: 1 });
+          toolCalls.push({
+            action: toolId,
+            ok: true,
+            message: res?.summary || res?.result || res?.plan || 'Tool executed',
+          });
+          toolContextInjection += `\n[TOOL @${toolId} RESULT]:\n${JSON.stringify(res)}\n`;
+        }
+      }
+
+      setIsExecutingTool(false);
+      setActiveTool(null);
+    }
+
+    // Now send the turn to Gemini Live WebSocket:
+    // Clean user prompt is displayed in user bubble, tool context is fed to AI,
+    // and toolCalls are rendered inside the assistant's collapsible card box!
+    if (clientRef.current) {
+      const userPrompt = cleanPrompt || rawText;
+      if (toolContextInjection) {
+        clientRef.current.sendTextMessage(
+          `${toolContextInjection}\nStudent Doubt/Question: ${userPrompt}`,
+          userPrompt,
+          toolCalls,
+        );
+      } else {
+        clientRef.current.sendTextMessage(userPrompt, userPrompt);
+      }
+    }
+  }
+
+  // End Call & Return Transcripts
+  function handleEndCall() {
+    haptic();
+    const currentTranscripts = clientRef.current?.getTranscripts() || transcripts;
+    clientRef.current?.disconnect();
+    onClose(currentTranscripts);
+  }
+
+  if (!isOpen) return null;
+
+  // Active latest subtitle
+  const latestMessage = transcripts.at(-1);
+
+  // Dynamic visualizer size from audio output/input levels
+  const glowScale = 1 + Math.max(stats.inputVolume, stats.outputVolume) * 0.45;
+  const isSpeaking = status === 'speaking';
+
+  // PiP Floating Bubble Mode
+  if (isMinimized) {
+    return (
+      <div className="fixed bottom-24 right-4 z-50">
+        <motion.button
+          drag
+          dragConstraints={{ left: -250, right: 0, top: -450, bottom: 0 }}
+          onClick={() => {
+            haptic();
+            setIsMinimized(false);
+          }}
+          className="relative flex h-16 w-16 items-center justify-center rounded-full border-2 border-l bg-card shadow-2xl transition-transform active:scale-95"
+          style={{ transform: `scale(${glowScale})` }}
+        >
+          <Sparkles size={24} className="text-l animate-pulse" />
+          <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-l text-[10px] font-bold text-bg">
+            Live
+          </span>
+        </motion.button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-bg/95 backdrop-blur-xl text-text select-none">
+      {/* Top Floating Bar */}
+      <div className="flex items-center justify-between p-4 px-6 z-10">
+        <div className="flex items-center gap-2">
+          {/* PiP Button */}
+          <button
+            type="button"
+            onClick={() => {
+              haptic();
+              setIsMinimized(true);
+            }}
+            className="icon-btn h-9 w-9 rounded-full border border-white/10 bg-white/5"
+            aria-label="Minimize to PiP"
+          >
+            <Minimize2 size={16} />
+          </button>
+
+          {/* Connection Status Pill */}
+          <div className="flex items-center gap-2 rounded-full border border-white/10 bg-card/80 px-3 py-1 text-xs backdrop-blur">
+            <span
+              className={`h-2 w-2 rounded-full ${
+                status === 'connected'
+                  ? 'bg-emerald-400 animate-pulse'
+                  : status === 'speaking'
+                  ? 'bg-cyan-400 animate-ping'
+                  : status === 'listening'
+                  ? 'bg-amber-400'
+                  : status === 'thinking'
+                  ? 'bg-purple-400 animate-spin'
+                  : 'bg-red-400'
+              }`}
+            />
+            <span className="font-semibold capitalize text-text">
+              {status === 'thinking' ? 'Thinking & Tools' : status}
+            </span>
+            <span className="text-[10px] text-muted">{stats.latencyMs}ms</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Audio Route Selector */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                haptic();
+                setShowAudioMenu(!showAudioMenu);
+              }}
+              className="icon-btn flex items-center gap-1 px-2.5 rounded-full border border-white/10 bg-white/5 text-xs text-text"
+            >
+              <Volume2 size={15} />
+              <span className="capitalize text-[11px]">{audioRoute}</span>
+            </button>
+
+            {showAudioMenu && (
+              <div className="absolute right-0 mt-2 w-36 overflow-hidden rounded-2xl border border-white/15 bg-card p-1 shadow-2xl z-20">
+                <button
+                  type="button"
+                  onClick={() => handleSelectAudioRoute('speaker')}
+                  className="flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-white/5 rounded-xl"
+                >
+                  <span>📢 Speaker</span>
+                  {audioRoute === 'speaker' && <Check size={13} className="text-l" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectAudioRoute('earpiece')}
+                  className="flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-white/5 rounded-xl"
+                >
+                  <span>📞 Earpiece</span>
+                  {audioRoute === 'earpiece' && <Check size={13} className="text-l" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectAudioRoute('bluetooth')}
+                  className="flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-white/5 rounded-xl"
+                >
+                  <span>🎧 Headset</span>
+                  {audioRoute === 'bluetooth' && <Check size={13} className="text-l" />}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Settings button */}
+          <button
+            type="button"
+            onClick={() => {
+              haptic();
+              setShowSettings(true);
+            }}
+            className="icon-btn h-9 w-9 rounded-full border border-white/10 bg-white/5"
+            aria-label="Live Settings"
+          >
+            <Settings size={16} />
+          </button>
+        </div>
+      </div>
+
+      {/* Main Companion Display (Audio Visualizer OR Video Preview) */}
+      <div className="flex-1 flex flex-col items-center justify-center p-6 relative overflow-hidden">
+        {errorMessage && (
+          <div className="absolute top-4 mx-auto max-w-sm rounded-2xl border border-danger/40 bg-danger/20 p-3 text-xs text-danger text-center">
+            {errorMessage}
+          </div>
+        )}
+
+        {/* Video / Screen Share Viewport */}
+        {(isCameraActive || isScreenSharing) && isVisionPreviewVisible ? (
+          <div className="relative w-full max-w-md aspect-[4/3] rounded-3xl overflow-hidden border border-white/15 bg-black shadow-2xl">
+            <video
+              ref={videoPreviewRef}
+              autoPlay
+              playsInline
+              muted
+              className={`h-full w-full object-cover ${cameraLens === 'user' && isCameraActive ? 'scale-x-[-1]' : ''}`}
+            />
+            {/* Overlay Top Controls: Hide Preview vs Stop Sharing */}
+            <div className="absolute top-3 left-3 right-3 flex items-center justify-between z-10">
+              <span className="rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-bold text-white backdrop-blur">
+                {isScreenSharing ? '🖥️ Screen Sharing' : cameraLens === 'user' ? 'Front Cam' : 'Back Cam'}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic();
+                    setIsVisionPreviewVisible(false);
+                  }}
+                  className="flex items-center gap-1 rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-bold text-text hover:bg-black/80 backdrop-blur"
+                  title="Hide preview to view notes/screen while keeping stream active"
+                >
+                  <EyeOff size={11} /> Hide Preview
+                </button>
+                <button
+                  type="button"
+                  onClick={handleStopVision}
+                  className="rounded-full bg-danger/80 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-danger"
+                  title="Stop sharing video entirely"
+                >
+                  ✕ Stop
+                </button>
+              </div>
+            </div>
+
+            {/* Lens Switch button for camera */}
+            {isCameraActive && (
+              <button
+                type="button"
+                onClick={handleFlipCamera}
+                className="absolute bottom-3 right-3 icon-btn h-9 w-9 rounded-full bg-black/60 text-white backdrop-blur hover:bg-black/80"
+                aria-label="Flip Camera Lens"
+              >
+                <SwitchCamera size={16} />
+              </button>
+            )}
+          </div>
+        ) : (
+          /* Pure Audio Holographic Orb Visualizer */
+          <div className="flex flex-col items-center justify-center space-y-6">
+            {/* Background Stream Active Floating Badge */}
+            {(isCameraActive || isScreenSharing) && !isVisionPreviewVisible && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-center gap-2 rounded-full border border-l/40 bg-l/15 px-3 py-1 text-xs text-l shadow-lg backdrop-blur"
+              >
+                <span>{isScreenSharing ? '🖥️ Screen Streaming Active' : '📷 Camera Streaming Active'}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic();
+                    setIsVisionPreviewVisible(true);
+                  }}
+                  className="rounded-lg border border-l/40 bg-l/25 px-2 py-0.5 text-[11px] font-semibold text-l hover:bg-l/35"
+                >
+                  Show
+                </button>
+                <button
+                  type="button"
+                  onClick={handleStopVision}
+                  className="rounded-lg border border-danger/30 bg-danger/20 px-2 py-0.5 text-[11px] font-semibold text-danger hover:bg-danger/30"
+                >
+                  Stop
+                </button>
+              </motion.div>
+            )}
+            <div className="relative flex items-center justify-center">
+              {/* Outer animated wave rings */}
+              <div
+                style={{ transform: `scale(${glowScale * 1.35})` }}
+                className="absolute h-56 w-56 rounded-full border border-l/20 bg-l/5 transition-transform duration-150"
+              />
+              <div
+                style={{ transform: `scale(${glowScale * 1.18})` }}
+                className="absolute h-44 w-44 rounded-full border border-l/30 bg-l/10 transition-transform duration-100"
+              />
+
+              {/* Core Holographic Orb */}
+              <div
+                style={{ transform: `scale(${glowScale})` }}
+                className={`flex h-32 w-32 items-center justify-center rounded-full transition-all duration-100 shadow-2xl ${
+                  isSpeaking
+                    ? 'bg-gradient-to-tr from-l to-emerald-400 text-bg shadow-l/60'
+                    : 'bg-gradient-to-tr from-l/30 to-card text-l border border-l/50 shadow-black'
+                }`}
+              >
+                <Sparkles size={48} className={isSpeaking ? 'animate-spin' : ''} />
+              </div>
+            </div>
+
+            <div className="text-center space-y-1">
+              <h2 className="text-lg font-bold text-text">Misa AI</h2>
+              <p className="text-xs text-muted">
+                {status === 'thinking'
+                  ? 'Thinking & executing tools...'
+                  : status === 'speaking'
+                  ? 'Explaining solution...'
+                  : status === 'listening'
+                  ? 'Listening to your voice / doubt...'
+                  : 'Ready to solve JEE problems'}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Active Tool Execution / Thinking Indicator Pill */}
+        {activeTool && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 5 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 5 }}
+            className="mt-3 inline-flex items-center gap-2 rounded-full border border-l/40 bg-l/15 px-4 py-1.5 text-xs font-semibold text-l shadow-xl backdrop-blur-md animate-pulse"
+          >
+            <Sparkles size={13} className="animate-spin text-l" />
+            <span>
+              {activeTool.name === 'webSearch'
+                ? `Searching Web for: "${activeTool.args?.query || 'latest updates'}"...`
+                : activeTool.name === 'getTime'
+                ? 'Checking Indian Standard Time (IST)...'
+                : activeTool.name === 'getPlan'
+                ? 'Fetching study plan...'
+                : activeTool.name === 'addTask'
+                ? 'Adding task to plan...'
+                : `Running tool: @${activeTool.name}...`}
+            </span>
+          </motion.div>
+        )}
+
+        {/* Live Subtitles Floating Card */}
+        {latestMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-4 max-h-24 w-full max-w-lg overflow-y-auto rounded-2xl border border-white/10 bg-card/80 p-3.5 text-center text-xs leading-relaxed text-text backdrop-blur-lg shadow-lg"
+          >
+            <span className="font-bold text-l mr-1.5">
+              {latestMessage.role === 'assistant' ? 'Misa:' : 'You:'}
+            </span>
+            <span>{latestMessage.text}</span>
+          </motion.div>
+        )}
+
+        {/* In-Call Full Chat History & Live Messages Drawer */}
+        <AnimatePresence>
+          {showChatInput && (
+            <motion.div
+              initial={{ opacity: 0, y: 20, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.96 }}
+              className="absolute inset-x-4 bottom-24 top-16 z-30 flex flex-col overflow-hidden rounded-3xl border border-white/20 bg-card/95 shadow-2xl backdrop-blur-2xl max-w-xl mx-auto"
+            >
+              {/* Chat Drawer Header */}
+              <div className="flex items-center justify-between border-b border-border px-4 py-3 bg-bg/50">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-l/15 text-l">
+                    <MessageSquare size={16} />
+                  </span>
+                  <div>
+                    <h4 className="text-xs font-bold text-text">Chat History & Live Transcripts</h4>
+                    <p className="text-[10px] text-muted">Previous chat messages + live voice turns</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic();
+                    setShowChatInput(false);
+                  }}
+                  className="icon-btn h-7 w-7 rounded-full border border-white/10 bg-white/5"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              {/* Scrollable Message Thread */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {initialMessages.length === 0 && transcripts.length === 0 && (
+                  <div className="flex h-full items-center justify-center text-center text-xs text-muted">
+                    Abhi tak koi message nahi hai. Niche type karein ya voice mein bolein!
+                  </div>
+                )}
+
+                {/* Previous Existing Messages from this Chat Session */}
+                {initialMessages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={`flex flex-col ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
+                  >
+                    <div className="flex items-center gap-1 mb-0.5 px-1">
+                      <span className="text-[10px] font-semibold text-muted">
+                        {msg.role === 'assistant' ? 'Misa' : 'You'}
+                      </span>
+                    </div>
+                    {msg.role === 'assistant' ? (
+                      <div className="flex flex-col items-start gap-1 max-w-[92%]">
+                        {msg.reasoning && <ThinkingBlock text={msg.reasoning} />}
+                        {msg.toolCalls && msg.toolCalls.length > 0 && <ToolCallsBlock calls={msg.toolCalls} />}
+                        <div className="rounded-2xl border border-border bg-bg/80 px-3.5 py-2 text-xs leading-relaxed text-text markdown-body">
+                          <ChatMarkdown text={msg.content} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="max-w-[85%] rounded-2xl bg-l px-3.5 py-2 text-xs font-medium text-bg leading-relaxed">
+                        {msg.content}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {/* Live Call Real-Time Transcripts Divider if transcripts exist */}
+                {transcripts.length > 0 && initialMessages.length > 0 && (
+                  <div className="flex items-center gap-2 my-3">
+                    <div className="flex-1 border-t border-white/10" />
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-l">Live Voice Session</span>
+                    <div className="flex-1 border-t border-white/10" />
+                  </div>
+                )}
+
+                {/* Live Transcripts */}
+                {transcripts.map((t) => (
+                  <div
+                    key={t.id}
+                    className={`flex flex-col ${t.role === 'assistant' ? 'items-start' : 'items-end'}`}
+                  >
+                    <div className="flex items-center gap-1 mb-0.5 px-1">
+                      <span className="text-[10px] font-semibold text-muted">
+                        {t.role === 'assistant' ? 'Misa (Live)' : 'You (Live)'}
+                      </span>
+                    </div>
+                    {t.role === 'assistant' ? (
+                      <div className="flex flex-col items-start gap-1 max-w-[92%]">
+                        {t.reasoning && <ThinkingBlock text={t.reasoning} />}
+                        {t.toolCalls && t.toolCalls.length > 0 && <ToolCallsBlock calls={t.toolCalls} />}
+                        <div className="rounded-2xl border border-l/30 bg-l/10 px-3.5 py-2 text-xs leading-relaxed text-text shadow-sm markdown-body">
+                          <ChatMarkdown text={t.text} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="max-w-[85%] rounded-2xl bg-l px-3.5 py-2 text-xs font-medium text-bg leading-relaxed">
+                        {t.text}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Bottom Input Field */}
+              <div className="relative border-t border-border p-3 bg-bg/40">
+                <LiveChatComposer
+                  toolCatalog={toolCatalog}
+                  isExecutingTool={isExecutingTool}
+                  onSend={handleSendChatMessage}
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Bottom Floating Control Dock */}
+      <div className="p-6 flex items-center justify-center z-10">
+        <div className="flex items-center gap-3 rounded-full border border-white/15 bg-card/90 p-2 px-4 shadow-2xl backdrop-blur-2xl">
+          {/* Mic Toggle */}
+          <button
+            type="button"
+            onClick={handleToggleMute}
+            className={`flex h-12 w-12 items-center justify-center rounded-full transition-transform active:scale-90 ${
+              isMuted ? 'bg-danger text-white' : 'border border-white/10 bg-white/5 text-text hover:bg-white/10'
+            }`}
+            aria-label={isMuted ? 'Unmute' : 'Mute'}
+          >
+            {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
+          </button>
+
+          {/* In-Call Text Chat Drawer Button */}
+          <button
+            type="button"
+            onClick={() => {
+              haptic();
+              setShowChatInput(!showChatInput);
+            }}
+            className={`relative flex h-12 w-12 items-center justify-center rounded-full transition-transform active:scale-90 ${
+              showChatInput
+                ? 'bg-l text-bg font-bold shadow-lg shadow-l/30'
+                : 'border border-white/10 bg-white/5 text-text hover:bg-white/10'
+            }`}
+            aria-label="Open In-Call Chat Drawer"
+            title="Chat History & Live Transcripts"
+          >
+            <MessageSquare size={20} />
+            {transcripts.length > 0 && !showChatInput && (
+              <span className="absolute 1 top-1 right-1 h-2.5 w-2.5 rounded-full bg-l animate-pulse" />
+            )}
+          </button>
+
+          {/* Camera Stream Toggle */}
+          <button
+            type="button"
+            onClick={handleToggleCamera}
+            className={`flex h-12 w-12 items-center justify-center rounded-full transition-transform active:scale-90 ${
+              isCameraActive ? 'bg-l text-bg' : 'border border-white/10 bg-white/5 text-text hover:bg-white/10'
+            }`}
+            aria-label={isCameraActive ? 'Stop Camera' : 'Start Camera'}
+          >
+            {isCameraActive ? <Camera size={20} /> : <CameraOff size={20} />}
+          </button>
+
+          {/* Screen Sharing Toggle */}
+          <button
+            type="button"
+            onClick={handleToggleScreenShare}
+            className={`flex h-12 w-12 items-center justify-center rounded-full transition-transform active:scale-90 ${
+              isScreenSharing ? 'bg-cyan-500 text-bg' : 'border border-white/10 bg-white/5 text-text hover:bg-white/10'
+            }`}
+            aria-label={isScreenSharing ? 'Stop Screen Sharing' : 'Share Screen'}
+          >
+            <Monitor size={20} />
+          </button>
+
+          {/* End Call Button */}
+          <button
+            type="button"
+            onClick={handleEndCall}
+            className="flex h-12 w-12 items-center justify-center rounded-full bg-danger text-white transition-transform active:scale-90 shadow-lg shadow-danger/40"
+            aria-label="End Call"
+          >
+            <PhoneOff size={20} />
+          </button>
+        </div>
+      </div>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <LiveSettingsModal
+          isOpen={showSettings}
+          onClose={() => setShowSettings(false)}
+          config={config}
+          onSave={(newConfig) => {
+            onUpdateConfig(newConfig);
+            clientRef.current?.reconnectWithNewConfig(apiKey, initialMicStream).catch(console.warn);
+          }}
+          defaultApiKey={apiKey}
+        />
+      )}
+    </div>
+  );
+}
+
+const LiveChatComposer = memo(function LiveChatComposer({
+  toolCatalog,
+  isExecutingTool,
+  onSend,
+}: {
+  toolCatalog: ChatToolMeta[];
+  isExecutingTool: boolean;
+  onSend: (text: string, toolMentions: string[]) => void;
+}) {
+  const [text, setText] = useState('');
+  const [toolMentions, setToolMentions] = useState<string[]>([]);
+  const [showToolPicker, setShowToolPicker] = useState(false);
+  const [toolQuery, setToolQuery] = useState<string | null>(null);
+
+  const filteredTools = useMemo(() => {
+    if (toolQuery === null) return toolCatalog;
+    const q = toolQuery.toLowerCase().trim();
+    return toolCatalog.filter((t) => !q || t.id.toLowerCase().includes(q) || t.label.toLowerCase().includes(q));
+  }, [toolCatalog, toolQuery]);
+
+  const handleSelectTool = (id: string) => {
+    haptic();
+    if (!toolMentions.includes(id)) {
+      setToolMentions((prev) => [...prev, id]);
+    }
+    // Remove query prefix from text
+    setText((prev) => prev.replace(/(^|\s)@[a-zA-Z0-9_-]*$/, '$1').trim());
+    setShowToolPicker(false);
+    setToolQuery(null);
+  };
+
+  const handleSend = () => {
+    const raw = text.trim();
+    if (!raw && toolMentions.length === 0) return;
+    onSend(raw, toolMentions);
+    setText('');
+    setToolMentions([]);
+    setShowToolPicker(false);
+    setToolQuery(null);
+  };
+
+  return (
+    <div className="relative">
+      {/* Floating @ Tool Mention Picker */}
+      <AnimatePresence>
+        {showToolPicker && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            className="absolute bottom-full left-0 right-0 mb-2 max-h-56 overflow-y-auto rounded-2xl border border-white/20 bg-card/95 p-1.5 shadow-2xl backdrop-blur-xl z-20 [scrollbar-width:thin]"
+          >
+            <p className="px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-l">
+              Tools — Select tool to use
+            </p>
+            {filteredTools.map((t) => {
+              const isSelected = toolMentions.includes(t.id);
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => handleSelectTool(t.id)}
+                  className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors ${
+                    isSelected ? 'bg-l/15' : 'hover:bg-white/5'
+                  } active:scale-[0.98]`}
+                >
+                  <span className="mt-0.5 text-xs font-bold text-l">@{t.id}</span>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[11px] font-semibold text-text">{t.label}</span>
+                    <span className="block truncate text-[10px] text-muted">{t.description}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="rounded-2xl border border-white/20 bg-card p-1.5 shadow-lg">
+        {/* Tool Mentions Chip Row */}
+        {toolMentions.length > 0 && (
+          <div className="no-scrollbar mb-1.5 flex gap-1.5 overflow-x-auto px-1 pt-1">
+            {toolMentions.map((id) => (
+              <ToolChip
+                key={id}
+                id={id}
+                catalog={toolCatalog}
+                onRemove={() => setToolMentions((prev) => prev.filter((t) => t !== id))}
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowToolPicker((prev) => !prev)}
+            className={`flex h-7 w-7 items-center justify-center rounded-lg border text-xs font-bold transition-transform active:scale-90 ${
+              showToolPicker || toolMentions.length > 0
+                ? 'border-l bg-l text-bg'
+                : 'border-white/10 bg-white/5 text-muted hover:text-text'
+            }`}
+            aria-label="Insert tool mention"
+            title="AI Tools"
+          >
+            @
+          </button>
+          <input
+            type="text"
+            value={text}
+            onChange={(e) => {
+              const val = e.target.value;
+              setText(val);
+              const match = /(^|\s)@([a-zA-Z0-9_-]*)$/.exec(val);
+              if (match) {
+                setToolQuery(match[2] ?? '');
+                setShowToolPicker(true);
+              } else {
+                setShowToolPicker(false);
+                setToolQuery(null);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder="Live doubt ya formula type karo... (@ se tools)"
+            className="flex-1 bg-transparent px-2 py-1.5 text-xs text-text placeholder:text-muted focus:outline-none"
+          />
+          <button
+            type="button"
+            disabled={isExecutingTool}
+            onClick={handleSend}
+            className="flex h-8 w-8 items-center justify-center rounded-xl bg-l text-bg transition-transform active:scale-90 disabled:opacity-50"
+            aria-label="Send in-call text message"
+          >
+            {isExecutingTool ? <Sparkles size={14} className="animate-spin" /> : <Send size={14} />}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});

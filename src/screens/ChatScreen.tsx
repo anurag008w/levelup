@@ -58,6 +58,10 @@ import {
   splitReplyIntoBubbles,
   type RevealSchedule,
 } from '../features/chat/message-segments';
+import type { LiveSettingsConfig, LiveTranscriptItem } from '../core/domain/live-types';
+import { DEFAULT_LIVE_SETTINGS } from '../core/domain/live-types';
+import LivePermissionModal from '../components/live/LivePermissionModal';
+import LiveCompanionOverlay from '../components/live/LiveCompanionOverlay';
 
 interface DraftAttachment {
   id: string;
@@ -343,6 +347,252 @@ export default function ChatScreen({
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
   }, [draft]);
+
+  // Live Voice & Video Streaming State
+  const [showLivePermission, setShowLivePermission] = useState(false);
+  const [showLiveOverlay, setShowLiveOverlay] = useState(false);
+  const [liveMicStream, setLiveMicStream] = useState<MediaStream | null>(null);
+  const [liveCamStream, setLiveCamStream] = useState<MediaStream | null>(null);
+  const [liveConfig, setLiveConfig] = useState<LiveSettingsConfig>(() => {
+    try {
+      const saved = localStorage.getItem('levelup.live.settings.v1');
+      return saved ? { ...DEFAULT_LIVE_SETTINGS, ...JSON.parse(saved) } : DEFAULT_LIVE_SETTINGS;
+    } catch {
+      return DEFAULT_LIVE_SETTINGS;
+    }
+  });
+
+  const handleUpdateLiveConfig = (newCfg: LiveSettingsConfig) => {
+    setLiveConfig(newCfg);
+    try {
+      localStorage.setItem('levelup.live.settings.v1', JSON.stringify(newCfg));
+    } catch {
+      // Best effort
+    }
+  };
+
+  const getGeminiLiveApiKey = (): string => {
+    if (liveConfig.apiKey) return liveConfig.apiKey;
+    const geminiProv = providers.find((p) => p.id === 'gemini');
+    if (geminiProv?.apiKey) return geminiProv.apiKey;
+    const activeProv = container.providerSettings.getActiveProvider();
+    if (activeProv?.apiKey) return activeProv.apiKey;
+    return '';
+  };
+
+  const handleStartLiveCall = async () => {
+    haptic();
+    const key = getGeminiLiveApiKey();
+    if (!key) {
+      hapticError();
+      setShowProviderPicker(true);
+      return;
+    }
+
+    const hasGrantedBefore = localStorage.getItem('levelup.live.permission_granted') === 'true';
+    if (hasGrantedBefore) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
+        setLiveMicStream(stream);
+        setShowLiveOverlay(true);
+        return;
+      } catch {
+        // Fallback to permission modal if stream acquisition failed
+      }
+    }
+
+    setShowLivePermission(true);
+  };
+
+  const handlePermissionProceed = (micStream: MediaStream, camStream?: MediaStream) => {
+    try {
+      localStorage.setItem('levelup.live.permission_granted', 'true');
+    } catch {
+      // Ignored
+    }
+    setLiveMicStream(micStream);
+    setLiveCamStream(camStream || null);
+    setShowLivePermission(false);
+    setShowLiveOverlay(true);
+  };
+
+  const handleExecuteLiveTool = async (name: string, args: Record<string, unknown>): Promise<any> => {
+    try {
+      if (name === 'getTime') {
+        const now = new Date();
+        const time = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+        const date = now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' });
+        return { currentTime: time, currentDate: date, timeZone: 'Asia/Kolkata' };
+      }
+      if (name === 'webSearch') {
+        const query = String(args.query || '');
+        const state = container.store.get();
+        const wsSettings = state.aiSettings.websearch;
+
+        // Resolve WebSearch Context strictly according to user settings in Settings screen!
+        if (wsSettings && wsSettings.providerId === 'smartrotator') {
+          const s = container.syncCoordinator.getSession();
+          const gateway = container.providerSettings.getHiddenDefaultFull();
+          const root = s?.serverUrl ?? (gateway?.baseUrl ? gateway.baseUrl.replace(/\/+$/, '') : '');
+          const baseUrl = root ? (/\/v1$/.test(root) ? root : `${root}/v1`) : 'https://api.smartrotator.com/v1';
+          const key = s?.apiKey || wsSettings.apiKey.trim() || gateway?.apiKey || '';
+          if (key && query) {
+            const searchRes = await container.websearch.search(
+              {
+                providerId: 'smartrotator',
+                apiKey: key,
+                baseUrl,
+                model: wsSettings.model?.trim() || undefined,
+              },
+              [{ role: 'user', content: query }],
+            );
+            if (searchRes.ok && searchRes.text) {
+              return { searchResult: searchRes.text };
+            }
+          }
+        } else if (wsSettings && wsSettings.providerId === 'google') {
+          const key = wsSettings.apiKey.trim() || getGeminiLiveApiKey();
+          if (key && query) {
+            const searchRes = await container.websearch.search(
+              {
+                providerId: 'google',
+                apiKey: key,
+                baseUrl: wsSettings.baseUrl?.trim() || 'https://generativelanguage.googleapis.com',
+                model: wsSettings.model?.trim() || 'gemini-2.5-flash',
+              },
+              [{ role: 'user', content: query }],
+            );
+            if (searchRes.ok && searchRes.text) {
+              return { searchResult: searchRes.text };
+            }
+          }
+        }
+
+        // Direct fallback
+        const fallbackKey = getGeminiLiveApiKey();
+        if (fallbackKey && query) {
+          try {
+            const customModel = wsSettings?.model?.trim() || 'gemini-2.5-flash';
+            const resp = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(customModel)}:generateContent?key=${fallbackKey}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [{ parts: [{ text: `Search the web and provide direct factual information with dates/sources for: ${query}` }] }],
+                  tools: [{ google_search: {} }],
+                }),
+              },
+            );
+            if (resp.ok) {
+              const data = await resp.json();
+              const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text) return { searchResult: text };
+            }
+          } catch {
+            // Ignored
+          }
+        }
+        return { searchResult: `No live search results found for query: ${query}` };
+      }
+      if (name === 'getPlan') {
+        const res = await container.chatTools.runMany([{ action: 'getPlan', day: Number(args.day) || 1 }]);
+        return { plan: res.summary };
+      }
+      if (name === 'addTask') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'addTask',
+            day: Number(args.day) || 1,
+            intent: String(args.intent || 'Study task'),
+            durationMin: Number(args.durationMin) || 30,
+          },
+        ]);
+        return { result: res.summary };
+      }
+      if (name === 'markDone') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'markDone',
+            day: Number(args.day) || 1,
+            taskId: String(args.taskId || ''),
+          },
+        ]);
+        return { result: res.summary };
+      }
+      if (name === 'getContext') {
+        const res = await container.chatTools.runMany([{ action: 'getContext' }]);
+        return { context: res.summary };
+      }
+      if (name === 'saveCustomMemory') {
+        const cur = container.store.get();
+        const updated = container.memory.add(cur, {
+          type: 'observation',
+          content: String(args.content || ''),
+          source: 'user',
+          importance: 0.8,
+          longTerm: true,
+        });
+        container.store.save(updated);
+        return { result: 'Memory saved into persistent recollections.' };
+      }
+      if (name === 'getTests') {
+        const res = await container.chatTools.runMany([{ action: 'getTests' }]);
+        return { tests: res.summary };
+      }
+      if (name === 'getRoutine') {
+        const res = await container.chatTools.runMany([{ action: 'getRoutine', day: args.day ? String(args.day) : undefined }]);
+        return { routine: res.summary };
+      }
+      return { result: 'Success' };
+    } catch (e: any) {
+      return { error: e?.message || 'Tool execution failed' };
+    }
+  };
+
+  const handleLiveTranscriptUpdate = (transcripts: LiveTranscriptItem[]) => {
+    if (transcripts.length === 0) return;
+    const s = ensureSession();
+    for (const t of transcripts) {
+      if (!t.text.trim()) continue;
+      const msg: ChatMessage = {
+        id: t.id,
+        role: t.role,
+        content: t.text,
+        createdAt: t.timestamp,
+        model: t.role === 'assistant' ? liveConfig.model : undefined,
+        toolCalls: t.toolCalls,
+        reasoning: t.reasoning,
+      };
+      container.chat.appendMessage(s.id, msg);
+    }
+    const all = container.chat.listSessions();
+    setSessions(all);
+    if (!activeId || activeId !== s.id) {
+      setActiveId(s.id);
+    }
+  };
+
+  const handleLiveOverlayClose = (transcripts: LiveTranscriptItem[]) => {
+    setShowLiveOverlay(false);
+    setLiveMicStream(null);
+    setLiveCamStream(null);
+    if (transcripts.length > 0) {
+      handleLiveTranscriptUpdate(transcripts);
+    }
+    const all = container.chat.listSessions();
+    setSessions(all);
+    if (all.length > 0 && !activeId) {
+      setActiveId(all[0].id);
+    }
+  };
 
   function refresh() {
     setSessions(container.chat.listSessions());
@@ -1050,6 +1300,16 @@ export default function ChatScreen({
               className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-[14px] leading-snug text-text outline-none placeholder:text-muted-dim"
               aria-label="Message"
             />
+            {/* Live Voice / Multimodal Call Button */}
+            <button
+              type="button"
+              onClick={handleStartLiveCall}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-l/30 bg-l/15 text-l transition-transform active:scale-90 hover:bg-l/25"
+              aria-label="Start Misa Live Call"
+              title="Misa Live (Voice & Doubt Call)"
+            >
+              <Sparkles size={17} className="animate-pulse" />
+            </button>
             {streaming ? (
               <button
                 type="button"
@@ -1174,6 +1434,45 @@ export default function ChatScreen({
           onDelete={deleteMessage}
           onDownload={downloadMessage}
           onShare={(m) => shareMessage(m)}
+        />
+      )}
+
+      {/* Live Voice & Multimodal Overlays */}
+      <LivePermissionModal
+        isOpen={showLivePermission}
+        onClose={() => setShowLivePermission(false)}
+        onProceed={handlePermissionProceed}
+      />
+
+      {showLiveOverlay && liveMicStream && (
+        <LiveCompanionOverlay
+          isOpen={showLiveOverlay}
+          onClose={handleLiveOverlayClose}
+          apiKey={getGeminiLiveApiKey()}
+          systemPrompt={active?.prefs.systemPrompt || ''}
+          memoryContext={
+            [
+              container.store.get().memory.entries.length > 0
+                ? `[PERSISTENT USER MEMORIES]:\n${container.store.get().memory.entries.map((e) => `- ${e.content}`).join('\n')}`
+                : '',
+              active?.messages && active.messages.length > 0
+                ? `[EXISTING CHAT HISTORY IN THIS SESSION]:\n${active.messages
+                    .slice(-15)
+                    .map((m) => `${m.role === 'assistant' ? 'Misa' : 'Student'}: ${m.content}`)
+                    .join('\n')}`
+                : '',
+            ]
+              .filter(Boolean)
+              .join('\n\n')
+          }
+          initialMicStream={liveMicStream}
+          initialCameraStream={liveCamStream || undefined}
+          initialMessages={active?.messages || []}
+          toolCatalog={toolCatalog}
+          config={liveConfig}
+          onUpdateConfig={handleUpdateLiveConfig}
+          onExecuteTool={handleExecuteLiveTool}
+          onTranscriptUpdate={handleLiveTranscriptUpdate}
         />
       )}
     </div>
@@ -1402,7 +1701,7 @@ const MessageBubble = memo(function MessageBubble({
         </div>
       ) : (
         <div className="flex flex-col items-start gap-1.5">
-          {(message.reasoning && showThinking !== false) || message.tool ? (
+          {(message.reasoning && showThinking !== false) || message.tool || (message.toolCalls && message.toolCalls.length > 0) ? (
             <div className="message-card relative rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-ai">
               {message.reasoning && showThinking !== false && <ThinkingBlock text={message.reasoning} />}
               {message.toolCalls && message.toolCalls.length > 0 ? (
@@ -1538,7 +1837,9 @@ function ToolCallsBlock({ calls }: { calls: ChatToolCallRecord[] }) {
                 <span className="shrink-0">{c.ok ? '✅' : '❌'}</span>
                 <span className="truncate">{TOOL_LABELS[c.action] ?? c.action}</span>
               </div>
-              <p className="mt-0.5 pl-5 text-muted">{c.message}</p>
+              <div className="mt-1 pl-5 text-muted text-xs markdown-body">
+                <ChatMarkdown text={c.message || ''} />
+              </div>
             </div>
           ))}
         </div>
@@ -1595,6 +1896,9 @@ const TOOL_LABELS: Record<string, string> = {
   listBlocks: 'Blocks dekhe',
   extendBlock: 'Block extend kiya',
   websearch: 'Web search hua',
+  webSearch: 'Web search hua',
+  getTime: 'Time & Date dekha',
+  saveCustomMemory: 'Memory me save kiya',
 };
 
 /* =====================================================================
