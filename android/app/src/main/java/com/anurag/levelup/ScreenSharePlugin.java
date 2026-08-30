@@ -26,6 +26,8 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import androidx.activity.result.ActivityResult;
+
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 

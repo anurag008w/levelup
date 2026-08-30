@@ -16,6 +16,8 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.util.List;
+
 /**
  * Misa Live — Audio Route Plugin
  *
@@ -71,7 +73,7 @@ public class AudioRoutePlugin extends Plugin {
         am.setMode(AudioManager.MODE_IN_COMMUNICATION);
 
         AudioDeviceInfo targetDevice = null;
-        AudioDeviceInfo[] devices = am.getAvailableCommunicationDevices();
+        List<AudioDeviceInfo> devices = am.getAvailableCommunicationDevices();
 
         if ("speaker".equals(route)) {
             // Find loudspeaker
@@ -192,7 +194,7 @@ public class AudioRoutePlugin extends Plugin {
         boolean hasEarpiece = false;
 
         if (am != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            AudioDeviceInfo[] devices = am.getAvailableCommunicationDevices();
+            List<AudioDeviceInfo> devices = am.getAvailableCommunicationDevices();
             for (AudioDeviceInfo d : devices) {
                 int type = d.getType();
                 if (type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
