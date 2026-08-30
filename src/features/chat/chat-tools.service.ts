@@ -55,9 +55,16 @@ const TASK_QUERY_WORDS = [
   'karo', 'karna', 'banao', 'bana', 'dikhao', 'show', 'check', 'status', 'progress',
   'score', 'streak', 'history', 'backup', 'sync', 'reset', 'clear', 'uncomplete',
   'pending', 'todo', 'audit', 'analyze', 'summary', 'report',
-  // Chat history & browsing triggers
-  'chat', 'chats', 'message', 'messages', 'purani', 'pichhli', 'pichli', 'pehle', 'search',
-  'browse', 'dhoondo', 'dhoond', 'poocha', 'pucha', 'bola', 'bolatha', 'discussed', 'conversation',
+  // Chat history & conversation browsing triggers
+  'chat', 'chats', 'message', 'messages', 'purani', 'purane', 'purana', 'pichhli', 'pichhle', 'pichhla',
+  'pichli', 'pichle', 'pichla', 'pehle', 'search', 'browse', 'dhoondo', 'dhoond', 'khojo', 'khoj',
+  'poocha', 'pucha', 'puche', 'puchi', 'bola', 'bole', 'boli', 'bolatha', 'kaha', 'kahe', 'kahi',
+  'likha', 'likhe', 'likhi', 'bheja', 'bheje', 'bheji', 'baat', 'batein', 'baatein',
+  'discussed', 'discuss', 'discussion', 'conversation', 'transcript', 'session', 'sessions',
+  'doubt', 'doubts', 'sawaal', 'sawal',
+  // Months & dates
+  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+  'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec', 'tarikh', 'taarikh', 'date',
   // Study workflow triggers
   'study', 'padhna', 'syllabus', 'chapter', 'mock',
   'test', 'questions', 'problems', 'notes', 'formula', 'jee', 'exam', 'rank', 'percentile',
@@ -216,6 +223,9 @@ export class ChatToolsService {
   isTaskQuery(text: string): boolean {
     if (this.hasPlannerData() && this.plannerTools && this.plannerTools.isPlannerQuery(text)) return true;
     const t = text.toLowerCase();
+    if (/\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b|\b\d{4}-\d{2}-\d{2}\b/i.test(t)) {
+      return true;
+    }
     if (TASK_QUERY_REGEX.test(t)) return true;
     if (!BLOCK_ANCHOR_REGEX.test(t)) return false;
     return BLOCK_COMMAND_REGEX.test(t);
