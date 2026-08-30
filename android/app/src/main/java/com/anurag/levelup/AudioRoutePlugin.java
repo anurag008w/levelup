@@ -20,17 +20,15 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * Misa Live — Audio Route Plugin
  *
  * Switches audio output between Speaker, Earpiece, and Bluetooth headset
- * using Android's AudioManager. WebAudio AudioContext always plays through
- * the default media stream (loudspeaker), so we must override at the native
- * Android level when the user switches routes in the Live session.
+ * using Android's AudioManager. WebAudio AudioContext plays through the
+ * media communication path, so we route dynamically via Android APIs.
  *
  * Supported routes:
  *  - "speaker"   → Loudspeaker (default for media playback)
  *  - "earpiece"  → Phone earpiece (quiet, private listening)
- *  - "bluetooth" → Bluetooth headset / earbuds (if connected)
+ *  - "bluetooth" → Bluetooth headset / earbuds / BLE Audio / Wired headset
  *
- * Compatibility: Android 7+ (API 24+). Uses setCommunicationDevice()
- * on API 31+ and legacy methods on older devices.
+ * Verified against Android 12 to Android 16 setCommunicationDevice requirements.
  */
 @CapacitorPlugin(name = "AudioRoute")
 public class AudioRoutePlugin extends Plugin {
@@ -43,7 +41,7 @@ public class AudioRoutePlugin extends Plugin {
 
     /**
      * Set audio output route.
-     * JS: await AudioRoutePlugin.setRoute({ route: 'speaker' | 'earpiece' | 'bluetooth' })
+     * JS: await AudioRoute.setRoute({ route: 'speaker' | 'earpiece' | 'bluetooth' })
      */
     @PluginMethod
     public void setRoute(PluginCall call) {
@@ -70,30 +68,53 @@ public class AudioRoutePlugin extends Plugin {
 
     @android.annotation.SuppressLint("NewApi")
     private void setRouteApi31(AudioManager am, String route, PluginCall call) {
-        // Set to communication mode so earpiece/BT routing works.
         am.setMode(AudioManager.MODE_IN_COMMUNICATION);
 
         AudioDeviceInfo targetDevice = null;
-        int targetType = AudioDeviceInfo.TYPE_UNKNOWN;
-
-        switch (route) {
-            case "earpiece":
-                targetType = AudioDeviceInfo.TYPE_BUILTIN_EARPIECE;
-                break;
-            case "bluetooth":
-                targetType = AudioDeviceInfo.TYPE_BLUETOOTH_SCO;
-                break;
-            case "speaker":
-            default:
-                targetType = AudioDeviceInfo.TYPE_BUILTIN_SPEAKER;
-                break;
-        }
-
         AudioDeviceInfo[] devices = am.getAvailableCommunicationDevices();
-        for (AudioDeviceInfo d : devices) {
-            if (d.getType() == targetType) {
-                targetDevice = d;
-                break;
+
+        if ("speaker".equals(route)) {
+            // Find loudspeaker
+            for (AudioDeviceInfo d : devices) {
+                if (d.getType() == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
+                    targetDevice = d;
+                    break;
+                }
+            }
+            if (targetDevice != null) {
+                am.setCommunicationDevice(targetDevice);
+            } else {
+                am.clearCommunicationDevice();
+            }
+            JSObject ret = new JSObject();
+            ret.put("route", "speaker");
+            call.resolve(ret);
+            return;
+
+        } else if ("earpiece".equals(route)) {
+            // Find phone earpiece
+            for (AudioDeviceInfo d : devices) {
+                if (d.getType() == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
+                    targetDevice = d;
+                    break;
+                }
+            }
+
+        } else if ("bluetooth".equals(route)) {
+            // Find any connected Bluetooth / BLE / Wired headset
+            for (AudioDeviceInfo d : devices) {
+                int type = d.getType();
+                if (type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                    type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
+                    type == AudioDeviceInfo.TYPE_HEARING_AID ||
+                    type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                    type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                    type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                    type == AudioDeviceInfo.TYPE_USB_HEADSET) {
+                    targetDevice = d;
+                    break;
+                }
             }
         }
 
@@ -109,12 +130,11 @@ public class AudioRoutePlugin extends Plugin {
             }
         }
 
-        // Fallback: setCommunicationDevice failed or device not found — use legacy.
+        // Fallback to legacy if setCommunicationDevice did not resolve
         setRouteLegacy(am, route, call);
     }
 
     private void setRouteLegacy(AudioManager am, String route, PluginCall call) {
-        // Put audio in communication mode for proper earpiece/BT routing.
         am.setMode(AudioManager.MODE_IN_COMMUNICATION);
 
         switch (route) {
@@ -163,7 +183,7 @@ public class AudioRoutePlugin extends Plugin {
         call.resolve();
     }
 
-    /** List currently available audio output devices (for UI). */
+    /** List currently available audio output devices. */
     @PluginMethod
     public void getAvailableRoutes(PluginCall call) {
         AudioManager am = audioManager();
@@ -176,7 +196,12 @@ public class AudioRoutePlugin extends Plugin {
             for (AudioDeviceInfo d : devices) {
                 int type = d.getType();
                 if (type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                    type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
+                    type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                    type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
+                    type == AudioDeviceInfo.TYPE_HEARING_AID ||
+                    type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                    type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                    type == AudioDeviceInfo.TYPE_USB_HEADSET) {
                     hasBluetooth = true;
                 }
                 if (type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
@@ -184,11 +209,14 @@ public class AudioRoutePlugin extends Plugin {
                 }
             }
         } else {
-            // Legacy: assume earpiece available on phones; check BT via BluetoothAdapter
             hasEarpiece = true;
-            BluetoothAdapter bt = BluetoothAdapter.getDefaultAdapter();
-            hasBluetooth = bt != null && bt.isEnabled() &&
-                bt.getProfileConnectionState(BluetoothProfile.HEADSET) == BluetoothAdapter.STATE_CONNECTED;
+            try {
+                BluetoothAdapter bt = BluetoothAdapter.getDefaultAdapter();
+                hasBluetooth = bt != null && bt.isEnabled() &&
+                    bt.getProfileConnectionState(BluetoothProfile.HEADSET) == BluetoothAdapter.STATE_CONNECTED;
+            } catch (Exception ignored) {
+                hasBluetooth = false;
+            }
         }
 
         ret.put("speaker", true);
