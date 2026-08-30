@@ -3,6 +3,7 @@
 // Encodes frames to low-latency compressed JPEG (1-5 FPS) for Gemini Live multimodal vision.
 
 import type { LiveCameraLens } from './live-types';
+import { NativeScreenShare } from '../../lib/native-screen-share';
 
 export class VisionStreamer {
   private videoStream: MediaStream | null = null;
@@ -49,13 +50,23 @@ export class VisionStreamer {
     fps: number,
     onFrame: (jpegBase64: string) => void,
     onEnded?: () => void,
-  ): Promise<MediaStream> {
+  ): Promise<MediaStream | null> {
     this.stop();
     this.isScreenSharing = true;
     this.isCameraActive = false;
 
+    // 1. Android Native MediaProjection support
+    if (NativeScreenShare.isNative()) {
+      await NativeScreenShare.start(fps, onFrame, () => {
+        this.stop();
+        if (onEnded) onEnded();
+      });
+      return null;
+    }
+
+    // 2. Web browser getDisplayMedia fallback
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-      throw new Error('Screen sharing is not supported by your current browser / WebView.');
+      throw new Error('Screen sharing is not supported by your current browser.');
     }
 
     const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -156,6 +167,9 @@ export class VisionStreamer {
   }
 
   stop(): void {
+    if (this.isScreenSharing && NativeScreenShare.isNative()) {
+      void NativeScreenShare.stop();
+    }
     if (this.frameInterval !== null) {
       clearInterval(this.frameInterval);
       this.frameInterval = null;
