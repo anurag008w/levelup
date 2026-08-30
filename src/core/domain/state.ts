@@ -8,6 +8,7 @@ import type { AiActionHistoryState } from './ai-actions';
 import type { SubjectPlanner } from './subject-planner';
 import type { StudyResource } from './study-vault';
 import type { CustomTodoTask } from './todo-tasks';
+import { DEFAULT_LIVE_SETTINGS, type LiveSettingsConfig } from './live-types';
 import { emptyAiActionHistory } from './ai-actions';
 import { INTERNAL_SYSTEM_PROMPT } from './chat';
 
@@ -26,6 +27,8 @@ export interface AiSettings {
   chat: ChatSettings;
   /** Live web search: which provider/search is used and how it's configured. */
   websearch: WebSearchSettings;
+  /** Multimodal Gemini Live voice & audio settings. */
+  live?: LiveSettingsConfig;
 }
 
 /** Search backends available for live web search. */
@@ -287,6 +290,7 @@ export function defaultAiSettings(): AiSettings {
     aiEnabled: true,
     chat: defaultChatSettings(),
     websearch: defaultWebSearchSettings(),
+    live: DEFAULT_LIVE_SETTINGS,
   };
 }
 
