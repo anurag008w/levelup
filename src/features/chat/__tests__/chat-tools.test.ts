@@ -19,6 +19,8 @@ import { DEFAULT_PROGRESSION_CONFIG } from '../../../core/domain/progress';
 import { undoLastAiAction, redoLastAiAction } from '../../../core/domain/ai-actions';
 import { PlannerService, PlannerToolsService } from '../../planner/planner.service';
 import type { TaskGenerationService } from '../../ai/task-generation.service';
+import { MemoryService } from '../../ai/memory.service';
+import { MemoryToolsService } from '../memory-tools.service';
 
 class MemoryChatRepository implements ChatRepository {
   private state: ChatStoreState = { version: 1, sessions: [] };
@@ -84,7 +86,9 @@ function makeTools(store: StateStore, chatSessionsProvider?: () => ChatSession[]
       source: 'ai',
     }),
   } as unknown as TaskGenerationService;
-  return { tools: new ChatToolsService(store, planner, taskBank, taskGeneration, DEFAULT_PROGRESSION_CONFIG, null, new FakeClock(), chatSessionsProvider), taskGeneration };
+  const memory = new MemoryService(new FakeClock());
+  const memTools = new MemoryToolsService(store, memory);
+  return { tools: new ChatToolsService(store, planner, taskBank, taskGeneration, DEFAULT_PROGRESSION_CONFIG, null, new FakeClock(), chatSessionsProvider, memTools), taskGeneration };
 }
 
 function makeChat(store: StateStore, provider: LLMProvider, tools: ChatToolsService): ChatService {
@@ -2292,6 +2296,53 @@ describe('notification reply flow', () => {
       expect(res.summary).toContain('Sir Gauss Law ka flux formula kya hai?');
       expect(res.summary).toContain('Q_enclosed / epsilon_0');
       expect(res.summary).toContain('Got it, thanks!');
+    });
+
+    it('unifies memory tools (addMemory, searchMemory, readMemory) in ChatToolsService', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store, () => mockSessions);
+
+      // Add a memory
+      const addRes = await tools.runMany([
+        { action: 'addMemory', content: 'Rotational dynamics formulas revision zaroori hai' },
+      ]);
+      expect(addRes.ok).toBe(true);
+      expect(addRes.summary).toContain('Rotational dynamics formulas');
+
+      // Search the memory
+      const searchRes = await tools.runMany([
+        { action: 'searchMemory', query: 'Rotational dynamics' },
+      ]);
+      expect(searchRes.ok).toBe(true);
+      expect(searchRes.summary).toContain('Rotational dynamics');
+
+      // Read all memory
+      const readRes = await tools.runMany([
+        { action: 'readMemory' },
+      ]);
+      expect(readRes.ok).toBe(true);
+      expect(readRes.summary).toContain('Rotational dynamics');
+    });
+
+    it('executes multi-tool batch combining chat tools and memory tools in one hop', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store, () => mockSessions);
+
+      const multiRes = await tools.runMany([
+        { action: 'addTask', day: 1, intent: 'Rotation 20 PYQs', durationMin: 45 },
+        { action: 'addMemory', content: 'Rotation is weak, focus on moment of inertia' },
+        { action: 'searchChatHistory', query: 'Gauss Law' },
+      ]);
+
+      expect(multiRes.ok).toBe(true);
+      expect(multiRes.results).toHaveLength(3);
+      expect(multiRes.results?.[0].action).toBe('addTask');
+      expect(multiRes.results?.[1].action).toBe('addMemory');
+      expect(multiRes.results?.[2].action).toBe('searchChatHistory');
+      // addTask uses mocked taskGeneration which outputs "Chat se add hua task", not raw intent
+      expect(multiRes.summary).toContain('Day 1');
+      expect(multiRes.summary).toContain('Rotation is weak');
+      expect(multiRes.summary).toContain('Gauss Law');
     });
   });
 });

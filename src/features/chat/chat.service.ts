@@ -458,22 +458,21 @@ export class ChatService {
       // has already moved on from.
       this.pendingMemoryConfirms.delete(session.id);
 
-      // Memory tool decision hop — the AI can read/edit/delete/pin its memory
-      // on command ("memory mein kya hai", "ye delete karo", "yaad rakho").
-      // Skipped entirely when AI memory is turned off in settings, and when
-      // the user pinned chat tools with "@" — memory tools are not in that set.
-      if (!hasAttachments && toolScope.length === 0 && this.memoryTools && this.memoryEnabled() && this.memoryTools.isMemoryQuery(text)) {
+      // Standalone memory hop — only runs when ChatToolsService is not wired
+      // (e.g., test environments or reduced contexts). When this.tools IS set,
+      // memory actions are handled in the unified decision hop below.
+      if (!hasAttachments && !this.tools && toolScope.length === 0 && this.memoryTools && this.memoryEnabled() && this.memoryTools.isMemoryQuery(text)) {
         onStatus?.('AI memory soch raha hai…');
         const decision = await this.llm.complete(await this.buildMemoryDecisionRequest(session, signal));
-        let actions = this.memoryTools.parseTools(decision.text);
+        let memActions = this.memoryTools.parseTools(decision.text);
         let answer = decision.text;
-        if (actions.length === 0 && answer) {
+        if (memActions.length === 0 && answer) {
           onStatus?.('Memory tool retry kar raha hai…');
           const retry = await this.llm.complete(await this.buildMemoryDecisionRequest(session, signal, decision.text));
-          actions = this.memoryTools.parseTools(retry.text);
+          memActions = this.memoryTools.parseTools(retry.text);
           if (retry.text) answer = retry.text;
         }
-        if (actions.length === 0) {
+        if (memActions.length === 0) {
           if (answer) {
             const assistant: ChatMessage = {
               id: uid(),
@@ -488,33 +487,24 @@ export class ChatService {
           throw new Error('AI memory ka jawab nahi de paya — simple language mein pucho.');
         }
         onStatus?.('Memory update kar raha hai…');
-        const memoryResult: MemoryToolResult = await this.memoryTools.runMany(actions);
-        // Destructive actions (deleteMemory) never auto-apply. The preview is
-        // surfaced as a user-facing question and the action is held until the
-        // user explicitly agrees in their next message — a model round-trip
-        // must not decide consent on the user's behalf (data-loss risk).
-        if (memoryResult.requiresConfirmation) {
-          const deleteActions = actions.filter((a) => a.action === 'deleteMemory');
+        const memResult: MemoryToolResult = await this.memoryTools.runMany(memActions);
+        if (memResult.requiresConfirmation) {
+          const deleteActions = memActions.filter((a) => a.action === 'deleteMemory');
           this.pendingMemoryConfirms.set(session.id, deleteActions);
-          const memoryAssistant: ChatMessage = {
+          const memAssistant: ChatMessage = {
             id: uid(),
             role: 'assistant',
-            content: sanitizeAssistantLeaks(memoryResult.summary),
+            content: sanitizeAssistantLeaks(memResult.summary),
             createdAt: this.clock.now().toISOString(),
             model: decision.model,
             pendingConfirmation: { kind: 'memory', actions: deleteActions },
           };
-          this.appendAssistant(session, memoryAssistant);
-          return memoryAssistant;
+          this.appendAssistant(session, memAssistant);
+          return memAssistant;
         }
-        // readMemory returns the RAW internal dump ("- [type] content (id:xxx)")
-        // — that was going straight into the chat bubble verbatim, leaking
-        // internal ids/type-tags to the user. Route it through the same
-        // summary hop the plan/task tools use so the reply is a normal
-        // Hinglish sentence instead of the raw memory format.
-        const memorySummaryRequest = await this.buildSummaryRequest(
+        const memSummaryRequest = await this.buildSummaryRequest(
           session,
-          memoryResult.summary,
+          memResult.summary,
           (delta) => {
             partial += delta;
             onDelta?.(delta);
@@ -522,27 +512,25 @@ export class ChatService {
           signal,
           onReasoningDelta,
         );
-        let memoryReply: LLMResponse;
+        let memReply: LLMResponse;
         try {
-          memoryReply = await this.llm.stream(memorySummaryRequest);
+          memReply = await this.llm.stream(memSummaryRequest);
         } catch {
-          memoryReply = { text: '', model: decision.model ?? '' };
+          memReply = { text: '', model: decision.model ?? '' };
         }
-        const memoryAssistant: ChatMessage = {
+        const memAssistant: ChatMessage = {
           id: uid(),
           role: 'assistant',
-          // Fall back to the raw summary only if the synthesis call came back
-          // empty — better an ugly reply than a silently dropped one.
-          content: sanitizeAssistantLeaks(memoryReply.text || memoryResult.summary),
+          content: sanitizeAssistantLeaks(memReply.text || memResult.summary),
           createdAt: this.clock.now().toISOString(),
-          model: memoryReply.model || decision.model,
-          reasoning: memoryReply.reasoning || undefined,
+          model: memReply.model || decision.model,
+          reasoning: memReply.reasoning || undefined,
         };
-        this.appendAssistant(session, memoryAssistant);
-        return memoryAssistant;
+        this.appendAssistant(session, memAssistant);
+        return memAssistant;
       }
 
-      // Tool decision hop for plan/task/uploaded-planner queries. Skipped when
+      // Tool decision hop for plan/task/memory/chat-history queries. Skipped when
       // files are attached — document analysis must reach the model directly
       // (see the hasAttachments comment above). When the user pinned tools with
       // "@" mentions, the hop ALWAYS runs (scoped to only those tools).
@@ -551,23 +539,15 @@ export class ChatService {
         // ("friday ka schedule", "tests dekho", "physics mein kya kya hai")
         // and whole-journey overview questions ("mera progress batao",
         // "context batao") resolve straight to a tool — no LLM hop that can
-        // drift to getPlan/getAllTasks. Still runs through the same runMany +
-        // summary flow, so the reply is a normal Hinglish message with ✅/❌
-        // per action. With "@" scoping, a fast-path action is only used when
-        // the user pinned that tool.
+        // drift to getPlan/getAllTasks. Multi-part requests ("aaj ka plan dikhao aur task add karo")
+        // bypass fast-path so the model generates the full batch of actions.
         const inScope = (a: ChatToolAction) => toolScope.length === 0 || toolScope.includes(a.action);
+        const isMultiPart = /(?:aur|and|plus|bhi|phir|also|,)/i.test(text);
         const plannerAction = this.tools.plannerActionFor(text, isoDate(this.clock.now(), deviceTimeZone()));
         const contextAction = plannerAction ? null : this.tools.contextActionFor(text);
-        const fastAction = plannerAction && inScope(plannerAction) ? plannerAction : contextAction && inScope(contextAction) ? contextAction : null;
-        // When the user pinned a SINGLE tool (or none), an unambiguous fast-path
-        // action wins deterministically — no LLM hop that can drift. With
-        // MULTIPLE pinned tools the fast path would silently drop the other
-        // selected tools ("@getDay @addTask aaj ke tasks + ek task add karo"
-        // must run BOTH), so the scoped decision hop runs instead. The fast
-        // path action stays as a FALLBACK when the model can't produce a valid
-        // scoped action, so planner/today questions keep working on weak models.
+        const fastAction = !isMultiPart && (plannerAction && inScope(plannerAction) ? plannerAction : contextAction && inScope(contextAction) ? contextAction : null);
         let actions: ChatToolAction[] | null = toolScope.length <= 1 && fastAction ? [fastAction] : null;
-        const fastFallback: ChatToolAction[] | null = toolScope.length > 1 && fastAction ? [fastAction] : null;
+        const fastFallback: ChatToolAction[] | null = (toolScope.length > 1 || isMultiPart) && fastAction ? [fastAction] : null;
         // When the decision hop produces raw tool JSON that isn't a valid plan/
         // task action (e.g. the model invents a websearch action), skip the tool
         // execution below and fall through to the default streaming path instead

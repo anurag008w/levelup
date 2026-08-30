@@ -656,6 +656,32 @@ export default function ChatScreen({
         ]);
         return { chatTranscript: res.summary };
       }
+      if (name === 'searchMemory') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'searchMemory',
+            query: String(args.query || ''),
+          },
+        ]);
+        return { memorySearchResults: res.summary };
+      }
+      if (name === 'readMemory') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'readMemory',
+          },
+        ]);
+        return { memory: res.summary };
+      }
+      if (name === 'addMemory') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'addMemory',
+            content: String(args.content || ''),
+          },
+        ]);
+        return { result: res.summary };
+      }
       return { result: 'Success' };
     } catch (e: any) {
       return { error: e?.message || 'Tool execution failed' };
@@ -2035,6 +2061,12 @@ const TOOL_LABELS: Record<string, string> = {
   listChatSessions: 'Chat sessions dekhe',
   getChatSession: 'Chat transcript dekha',
   searchMemory: 'Memory search ki',
+  readMemory: 'Memory dekhi',
+  addMemory: 'Memory me save kiya',
+  editMemory: 'Memory edit ki',
+  deleteMemory: 'Memory delete ki',
+  pinMemory: 'Memory pin ki',
+  unpinMemory: 'Memory unpin ki',
 };
 
 /* =====================================================================
