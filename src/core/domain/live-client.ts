@@ -135,7 +135,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.memoryContext ? `\n=== USER CONTEXT & RECOLLECTIONS ===\n${this.memoryContext}\n========================` : '',
       ROMAN_SCRIPT_RULE,
       (() => {
-        const speed = this.config.playbackSpeed ?? 0.85;
+        const speed = this.config.playbackSpeed ?? 1.0;
         if (speed <= 0.88) {
           return 'VOICE PACING: Speak at a calm, relaxed, steady and articulate pace so the student can easily follow formulas and concepts.';
         } else if (speed >= 1.15) {

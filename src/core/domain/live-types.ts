@@ -165,7 +165,7 @@ export interface LiveSettingsConfig {
 export const DEFAULT_LIVE_SETTINGS: LiveSettingsConfig = {
   model: 'gemini-3.1-flash-live-preview',
   voice: 'Aoede',
-  playbackSpeed: 0.85,
+  playbackSpeed: 1.0,
   vadSensitivity: 'high',
   defaultAudioRoute: 'speaker',
   videoFps: 2,

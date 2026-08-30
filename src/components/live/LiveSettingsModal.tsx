@@ -261,7 +261,7 @@ export default function LiveSettingsModal({
                   <Gauge size={16} className="text-l" /> Voice Output Speed
                 </span>
                 <span className="rounded-lg bg-l/15 px-2 py-0.5 text-[11px] font-bold text-l">
-                  {(currentConfig.playbackSpeed ?? 0.85).toFixed(2)}x
+                  {(currentConfig.playbackSpeed ?? 1.0).toFixed(2)}x
                 </span>
               </div>
 
@@ -269,12 +269,12 @@ export default function LiveSettingsModal({
               <div className="flex flex-wrap items-center gap-1.5">
                 {[
                   { label: '0.75x', val: 0.75 },
-                  { label: '0.85x (Default)', val: 0.85 },
-                  { label: '1.0x (Normal)', val: 1.0 },
+                  { label: '0.90x', val: 0.90 },
+                  { label: '1.0x (Default)', val: 1.0 },
                   { label: '1.15x', val: 1.15 },
                   { label: '1.25x', val: 1.25 },
                 ].map((p) => {
-                  const isCur = Math.abs((currentConfig.playbackSpeed ?? 0.85) - p.val) < 0.02;
+                  const isCur = Math.abs((currentConfig.playbackSpeed ?? 1.0) - p.val) < 0.02;
                   return (
                     <button
                       key={p.val}
@@ -299,7 +299,7 @@ export default function LiveSettingsModal({
               <div className="space-y-1">
                 <div className="flex justify-between text-[10px] text-muted">
                   <span>Slow (0.5x)</span>
-                  <span>Default (0.85x)</span>
+                  <span>Normal (1.0x)</span>
                   <span>Fast (1.5x)</span>
                 </div>
                 <input
@@ -307,7 +307,7 @@ export default function LiveSettingsModal({
                   min="0.5"
                   max="1.5"
                   step="0.05"
-                  value={currentConfig.playbackSpeed ?? 0.85}
+                  value={currentConfig.playbackSpeed ?? 1.0}
                   onChange={(e) =>
                     setCurrentConfig({ ...currentConfig, playbackSpeed: parseFloat(e.target.value) })
                   }
