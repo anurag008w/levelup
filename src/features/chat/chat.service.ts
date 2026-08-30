@@ -255,6 +255,22 @@ export class ChatService {
     return session;
   }
 
+  /** Append or live-update a message in an existing session and persist to storage. */
+  appendMessage(sessionId: string, message: ChatMessage): void {
+    const session = this.getSession(sessionId);
+    if (!session) return;
+    const existingIdx = session.messages.findIndex((m) => m.id === message.id);
+    if (existingIdx >= 0) {
+      session.messages[existingIdx] = message;
+    } else {
+      session.messages.push(message);
+      const overflow = session.messages.length - MAX_MESSAGES_PER_SESSION;
+      if (overflow > 0) session.messages.splice(0, overflow);
+    }
+    session.updatedAt = this.clock.now().toISOString();
+    this.persist();
+  }
+
   deleteSession(id: string): void {
     const state = this.state();
     // Deleting a chat removes its memory footprint too: the raw transcript

@@ -555,7 +555,7 @@ export default function AISettingsScreen({
                     <option value="gemini-2.5-flash" />
                     <option value="gemini-2.5-pro" />
                     <option value="gemini-2.5-flash-lite" />
-                    <option value="gemini-2.0-flash" />
+                    <option value="gemini-3.1-flash-live-preview" />
                   </datalist>
                 </Field>
                 <Field label="Base URL (optional)">

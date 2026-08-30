@@ -76,7 +76,7 @@ const DEFAULT_USER_PROGRESS: UserProgress = {
 };
 
 const DEFAULT_AI_SETTINGS: AISettings = {
-  selectedModel: 'gemini-2.0-flash',
+  selectedModel: 'gemini-2.5-flash',
   temperature: 0.7,
   maxTokens: 2048,
   systemPrompt:

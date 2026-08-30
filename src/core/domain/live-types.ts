@@ -1,0 +1,180 @@
+// Domain contracts and types for Gemini Live Multimodal Streaming.
+
+export type GeminiLiveVoice =
+  | 'Aoede'
+  | 'Kore'
+  | 'Leda'
+  | 'Zephyr'
+  | 'Thallo'
+  | 'Autonoe'
+  | 'Callisto'
+  | 'Despina'
+  | 'Galatea'
+  | 'Himalia'
+  | 'Larissa'
+  | 'Naiad'
+  | 'Pandora'
+  | 'Thebe';
+
+export interface GeminiLiveVoiceOption {
+  id: GeminiLiveVoice;
+  name: string;
+  gender: 'female';
+  description: string;
+  previewSampleText: string;
+}
+
+export const OFFICIAL_GEMINI_VOICES: GeminiLiveVoiceOption[] = [
+  {
+    id: 'Aoede',
+    name: 'Aoede (Default)',
+    gender: 'female',
+    description: 'Warm, cheerful, friendly aur expressive (Misa Recommended)',
+    previewSampleText: 'Hey! Main Misa hoon, tumhari JEE study partner. Chalo aaj physics solve karte hain!',
+  },
+  {
+    id: 'Kore',
+    name: 'Kore',
+    gender: 'female',
+    description: 'Calm, soothing, sweet aur clear voice',
+    previewSampleText: 'Hello! Chalo tumhara study plan aur doubts step-by-step review karte hain.',
+  },
+  {
+    id: 'Leda',
+    name: 'Leda',
+    gender: 'female',
+    description: 'Bright, inquisitive aur energetic student companion',
+    previewSampleText: 'Hi there! Aaj kaunsa topic master karna hai? Formula list ready hai!',
+  },
+  {
+    id: 'Zephyr',
+    name: 'Zephyr',
+    gender: 'female',
+    description: 'Soft, gentle, smooth aur motivating voice',
+    previewSampleText: 'Relax ho jao, sab cover ho jayega. Hum concept ko simple bana ke samjhenge.',
+  },
+  {
+    id: 'Thallo',
+    name: 'Thallo',
+    gender: 'female',
+    description: 'Upbeat, cheerful, lively aur encouraging',
+    previewSampleText: 'Great job! Har ek problem solve karke tum JEE rank ke kareeb aa rahe ho!',
+  },
+  {
+    id: 'Autonoe',
+    name: 'Autonoe',
+    gender: 'female',
+    description: 'Crisp, articulate, focused aur sharp tutor',
+    previewSampleText: 'Direct calculation par dhyan do, accuracy se tumhara percentile increase hoga.',
+  },
+  {
+    id: 'Callisto',
+    name: 'Callisto',
+    gender: 'female',
+    description: 'Grounded, mature aur elegant educator voice',
+    previewSampleText: 'Deep conceptual clarity hi JEE Advanced mein kaam aati hai.',
+  },
+  {
+    id: 'Despina',
+    name: 'Despina',
+    gender: 'female',
+    description: 'Playful, lively aur curious study buddy',
+    previewSampleText: 'Ye numerical kitna interesting hai na! Chalo shortcut trick dekhte hain.',
+  },
+  {
+    id: 'Galatea',
+    name: 'Galatea',
+    gender: 'female',
+    description: 'Intelligent, precise aur clean articulation',
+    previewSampleText: 'Derivation complete hai, ab limiting cases check karte hain.',
+  },
+  {
+    id: 'Himalia',
+    name: 'Himalia',
+    gender: 'female',
+    description: 'Melodious, soft-spoken aur pleasant tone',
+    previewSampleText: 'Consistent revision hi memory retention ka secret hai.',
+  },
+  {
+    id: 'Larissa',
+    name: 'Larissa',
+    gender: 'female',
+    description: 'Natural, friendly aur engaging partner',
+    previewSampleText: 'Batao agla question kaunsa hai, hum milkar solve karenge.',
+  },
+  {
+    id: 'Naiad',
+    name: 'Naiad',
+    gender: 'female',
+    description: 'Serene, thoughtful aur calm guidance',
+    previewSampleText: 'Exam hall mein calm mind hi best performance nikalta hai.',
+  },
+  {
+    id: 'Pandora',
+    name: 'Pandora',
+    gender: 'female',
+    description: 'Dynamic, expressive aur inspiring coach',
+    previewSampleText: 'Full energy ke saath aaj ka target complete karna hai!',
+  },
+  {
+    id: 'Thebe',
+    name: 'Thebe',
+    gender: 'female',
+    description: 'Confident, bright aur motivating voice',
+    previewSampleText: 'Tumhara progress bohot solid hai, keep leveling up!',
+  },
+];
+
+export type LiveAudioRoute = 'speaker' | 'earpiece' | 'bluetooth';
+
+export type LiveCameraLens = 'user' | 'environment';
+
+export type LiveSessionStatus =
+  | 'idle'
+  | 'requesting-permissions'
+  | 'connecting'
+  | 'connected'
+  | 'listening'
+  | 'speaking'
+  | 'thinking'
+  | 'error'
+  | 'disconnected';
+
+export interface LiveTranscriptItem {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp: string;
+  isInterrupted?: boolean;
+  toolCalls?: import('./chat').ChatToolCallRecord[];
+  reasoning?: string;
+}
+
+export interface LiveSettingsConfig {
+  apiKey?: string;
+  model: string;
+  voice: GeminiLiveVoice;
+  playbackSpeed?: number; // e.g. 0.85 (default)
+  vadSensitivity: 'low' | 'medium' | 'high';
+  defaultAudioRoute: LiveAudioRoute;
+  videoFps: number;
+  screenFps: number;
+}
+
+export const DEFAULT_LIVE_SETTINGS: LiveSettingsConfig = {
+  model: 'gemini-3.1-flash-live-preview',
+  voice: 'Aoede',
+  playbackSpeed: 0.85,
+  vadSensitivity: 'high',
+  defaultAudioRoute: 'speaker',
+  videoFps: 2,
+  screenFps: 2,
+};
+
+export interface LiveStreamStats {
+  latencyMs: number;
+  inputVolume: number; // 0..1
+  outputVolume: number; // 0..1
+  fps: number;
+  framesSent: number;
+}
