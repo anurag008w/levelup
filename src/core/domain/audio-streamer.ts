@@ -135,16 +135,19 @@ export class AudioStreamer {
 
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
-    source.playbackRate.value = 1.0; // Keep 1.0 for 100% crystal-clear, natural vocal pitch and tone
+
+    const speed = this.playbackSpeed && this.playbackSpeed > 0 ? this.playbackSpeed : 1.0;
+    source.playbackRate.value = speed;
     source.connect(this.outputAnalyser!);
 
-    const playDuration = audioBuffer.duration;
+    const playDuration = audioBuffer.duration / speed;
     const now = ctx.currentTime;
 
-    // Seamless continuous playback with 50ms jitter buffer on speech start:
-    // Guarantees smooth, unbroken streaming audio without pauses or stuttering.
-    if (this.nextPlayTime <= now) {
-      this.nextPlayTime = now + 0.050;
+    // Seamless continuous playback:
+    // If consecutive chunks stream in continuously (nextPlayTime >= now), schedule seamlessly with 0ms gap.
+    // If audio buffer underruns or starting initial speech, buffer with minimal 20ms lead.
+    if (this.nextPlayTime < now) {
+      this.nextPlayTime = now + 0.020;
     }
 
     source.start(this.nextPlayTime);

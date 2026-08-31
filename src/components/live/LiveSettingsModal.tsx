@@ -137,6 +137,16 @@ export default function LiveSettingsModal({
           ...hiddenDefault,
           apiKey: cleanKey,
         });
+      } else if (selectedProviderId === 'gemini') {
+        const target = storedProviders.find((p) => p.id === 'gemini');
+        container.providerSettings.upsertProvider({
+          id: 'gemini',
+          label: 'Google Gemini',
+          enabled: true,
+          baseUrl: 'https://generativelanguage.googleapis.com',
+          ...target,
+          apiKey: cleanKey,
+        });
       } else if (selectedProviderId !== 'custom') {
         const target = storedProviders.find((p) => p.id === selectedProviderId);
         if (target) {
@@ -218,8 +228,11 @@ export default function LiveSettingsModal({
                   <option value="app-default">
                     ⭐ App Default Provider ({hiddenDefault?.label || activeProv?.label || 'Default Gateway'})
                   </option>
+                  <option value="gemini">
+                    🔷 Google Gemini (google / gemini)
+                  </option>
                   {storedProviders
-                    .filter((p) => !p.hidden)
+                    .filter((p) => !p.hidden && p.id !== 'gemini')
                     .map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.label || p.id} ({p.id})
