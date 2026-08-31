@@ -1,14 +1,17 @@
 import { Suspense, useEffect, useRef, useState, lazy } from 'react';
-import { AlertTriangle, Bell, BellOff, Check, ChevronRight, Database, Download, ExternalLink, Globe, KeyRound, LayoutList, ListChecks, LogIn, LogOut, Pause, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff, X } from 'lucide-react';
+import { AlertTriangle, Bell, BellOff, Check, ChevronRight, Database, Download, ExternalLink, Globe, KeyRound, LayoutList, ListChecks, LogIn, LogOut, Pause, PhoneCall, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff, X } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ProviderConfig, ModelInfo } from '../core/domain/llm';
 import type { AuthSession } from '../lib/auth';
+import type { LiveSettingsConfig } from '../core/domain/live-types';
+import { DEFAULT_LIVE_SETTINGS } from '../core/domain/live-types';
 import { container } from '../di/container';
 import { getCurrentDayNumber, isoAddDays } from '../lib/engine';
 import ScreenHeader from '../components/ui/ScreenHeader';
 import SectionHeader from '../components/ui/SectionHeader';
 import EmptyState from '../components/ui/EmptyState';
 import AddProviderForm from '../components/AddProviderForm';
+import LiveSettingsModal from '../components/live/LiveSettingsModal';
 import { haptic } from '../lib/haptics';
 import {
   getNotificationPermission,
@@ -57,6 +60,21 @@ export default function AISettingsScreen({
 
   // Navigation state for sub-screens
   const [showChatSettings, setShowChatSettings] = useState(false);
+  const [showLiveModal, setShowLiveModal] = useState(false);
+
+  const handleSaveLiveConfig = (newCfg: LiveSettingsConfig) => {
+    haptic();
+    update((s) => ({
+      ...s,
+      aiSettings: {
+        ...s.aiSettings,
+        live: newCfg,
+      },
+    }));
+    try {
+      localStorage.setItem('levelup.live.settings.v1', JSON.stringify(newCfg));
+    } catch {}
+  };
 
   // Notifications state
   const [notifEnabled, setNotifEnabled] = useState(false);
@@ -460,7 +478,7 @@ export default function AISettingsScreen({
         </div>
       )}
 
-      <button type="button" onClick={() => setShowChatSettings(true)} className="card card-press mb-4 flex w-full items-center justify-between gap-3 p-4 text-left">
+      <button type="button" onClick={() => setShowChatSettings(true)} className="card card-press mb-3 flex w-full items-center justify-between gap-3 p-4 text-left">
         <div className="flex items-center gap-3">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
             <SlidersHorizontal size={19} />
@@ -468,6 +486,19 @@ export default function AISettingsScreen({
           <div>
             <p className="font-display text-[15px] font-bold">Chat Experience</p>
             <p className="text-xs leading-snug text-muted">Memory, temperature, system prompt aur coaching tone.</p>
+          </div>
+        </div>
+        <ChevronRight size={18} className="text-muted" />
+      </button>
+
+      <button type="button" onClick={() => setShowLiveModal(true)} className="card card-press mb-4 flex w-full items-center justify-between gap-3 p-4 text-left">
+        <div className="flex items-center gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
+            <PhoneCall size={19} />
+          </span>
+          <div>
+            <p className="font-display text-[15px] font-bold">Misa Live Voice & Video</p>
+            <p className="text-xs leading-snug text-muted">Thinking level, tokens, voice selection, audio routing & VAD.</p>
           </div>
         </div>
         <ChevronRight size={18} className="text-muted" />
@@ -1185,6 +1216,16 @@ export default function AISettingsScreen({
             </div>
           </div>
         </div>
+      )}
+
+      {showLiveModal && (
+        <LiveSettingsModal
+          isOpen={showLiveModal}
+          onClose={() => setShowLiveModal(false)}
+          config={settings.live ?? DEFAULT_LIVE_SETTINGS}
+          defaultApiKey={container.providerSettings.getActiveProvider()?.apiKey || ''}
+          onSave={handleSaveLiveConfig}
+        />
       )}
     </div>
   );

@@ -12,6 +12,9 @@ import {
   Layers,
   PhoneCall,
   Gauge,
+  Brain,
+  Cpu,
+  Video,
 } from 'lucide-react';
 import type { GeminiLiveVoice, LiveSettingsConfig } from '../../core/domain/live-types';
 import { OFFICIAL_GEMINI_VOICES } from '../../core/domain/live-types';
@@ -316,7 +319,141 @@ export default function LiveSettingsModal({
               </div>
             </div>
 
-            {/* Section 3: Persona Continuity */}
+            {/* Section 3: Thinking & Reasoning Budget */}
+            <div className="rounded-2xl border border-border bg-black/20 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 font-bold text-text">
+                  <Brain size={16} className="text-l" /> Thinking & Reasoning Budget
+                </span>
+                <span className="rounded-lg bg-l/15 px-2 py-0.5 text-[10px] font-bold text-l">
+                  {currentConfig.thinkingBudget === 0 || !currentConfig.thinkingBudget
+                    ? 'Off / Ultra Fast'
+                    : `${currentConfig.thinkingBudget} Tokens`}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[
+                  { label: 'Off / Fast', val: 0, desc: 'Instant live replies' },
+                  { label: '512 Tokens', val: 512, desc: 'Quick reasoning' },
+                  { label: '1024 Tokens', val: 1024, desc: 'Balanced JEE solving' },
+                  { label: '2048 Tokens', val: 2048, desc: 'Deep derivations' },
+                ].map((tb) => {
+                  const isSel = (currentConfig.thinkingBudget ?? 0) === tb.val;
+                  return (
+                    <button
+                      key={tb.val}
+                      type="button"
+                      onClick={() => {
+                        haptic();
+                        setCurrentConfig({ ...currentConfig, thinkingBudget: tb.val });
+                      }}
+                      className={`flex flex-col items-start rounded-xl border p-2 text-left transition-all ${
+                        isSel
+                          ? 'border-l bg-l/15 text-text shadow-sm'
+                          : 'border-border bg-bg/50 text-muted hover:border-white/20 hover:text-text'
+                      }`}
+                    >
+                      <span className="text-[11px] font-bold">{tb.label}</span>
+                      <span className="text-[9px] text-muted-dim">{tb.desc}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Section 4: Temperature & Max Tokens */}
+            <div className="rounded-2xl border border-border bg-black/20 p-4 space-y-3">
+              <span className="flex items-center gap-2 font-bold text-text">
+                <Cpu size={16} className="text-l" /> Generation Config & Tokens
+              </span>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-semibold text-muted">Temperature (Creativity)</label>
+                    <span className="font-mono text-[10px] text-l font-bold">
+                      {(currentConfig.temperature ?? 0.7).toFixed(1)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="1.5"
+                    step="0.1"
+                    value={currentConfig.temperature ?? 0.7}
+                    onChange={(e) =>
+                      setCurrentConfig({ ...currentConfig, temperature: parseFloat(e.target.value) })
+                    }
+                    className="w-full accent-l cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[9px] text-muted-dim mt-0.5">
+                    <span>Precise (0.2)</span>
+                    <span>Natural (0.7)</span>
+                    <span>Expressive (1.2)</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold text-muted">Max Output Tokens</label>
+                  <select
+                    value={currentConfig.maxOutputTokens ?? 2048}
+                    onChange={(e) =>
+                      setCurrentConfig({ ...currentConfig, maxOutputTokens: parseInt(e.target.value, 10) })
+                    }
+                    className="w-full rounded-xl border border-border bg-bg/80 px-2.5 py-2 text-xs text-text focus:border-l focus:outline-none font-mono"
+                  >
+                    <option value={512}>512 tokens (Short voice replies)</option>
+                    <option value={1024}>1024 tokens (Standard voice)</option>
+                    <option value={2048}>2048 tokens (Detailed step-by-step)</option>
+                    <option value={4096}>4096 tokens (Maximum explanations)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Section 5: Video & Screen Share Streaming FPS */}
+            <div className="rounded-2xl border border-border bg-black/20 p-4 space-y-3">
+              <span className="flex items-center gap-2 font-bold text-text">
+                <Video size={16} className="text-l" /> Vision & Screen Share Quality
+              </span>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold text-muted">Camera Stream (FPS)</label>
+                  <select
+                    value={currentConfig.videoFps ?? 2}
+                    onChange={(e) =>
+                      setCurrentConfig({ ...currentConfig, videoFps: parseInt(e.target.value, 10) })
+                    }
+                    className="w-full rounded-xl border border-border bg-bg/80 px-2.5 py-2 text-xs text-text focus:border-l focus:outline-none"
+                  >
+                    <option value={1}>1 FPS (Low bandwidth / save data)</option>
+                    <option value={2}>2 FPS (Recommended / smooth)</option>
+                    <option value={3}>3 FPS (Fast motion)</option>
+                    <option value={5}>5 FPS (High fidelity)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold text-muted">Screen Share (FPS)</label>
+                  <select
+                    value={currentConfig.screenFps ?? 2}
+                    onChange={(e) =>
+                      setCurrentConfig({ ...currentConfig, screenFps: parseInt(e.target.value, 10) })
+                    }
+                    className="w-full rounded-xl border border-border bg-bg/80 px-2.5 py-2 text-xs text-text focus:border-l focus:outline-none"
+                  >
+                    <option value={1}>1 FPS (PDFs / static notes)</option>
+                    <option value={2}>2 FPS (Recommended)</option>
+                    <option value={3}>3 FPS (Interactive solving)</option>
+                    <option value={5}>5 FPS (Real-time tracking)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Section 6: Persona Continuity */}
             <div className="rounded-2xl border border-l/25 bg-l/5 p-4 space-y-1.5">
               <div className="flex items-center gap-2 font-bold text-l">
                 <Sparkles size={16} /> Persona Synchronization
@@ -327,7 +464,7 @@ export default function LiveSettingsModal({
               </p>
             </div>
 
-            {/* Section 4: Audio Routing & VAD */}
+            {/* Section 7: Audio Routing & VAD */}
             <div className="rounded-2xl border border-border bg-black/20 p-4 space-y-3">
               <span className="flex items-center gap-2 font-bold text-text">
                 <PhoneCall size={16} className="text-l" /> Call Audio & Interruption

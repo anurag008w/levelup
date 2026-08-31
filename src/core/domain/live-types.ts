@@ -161,6 +161,9 @@ export interface LiveSettingsConfig {
   videoFps: number;
   screenFps: number;
   timeZone?: string;
+  temperature?: number;
+  maxOutputTokens?: number;
+  thinkingBudget?: number;
 }
 
 export const DEFAULT_LIVE_SETTINGS: LiveSettingsConfig = {
@@ -171,6 +174,9 @@ export const DEFAULT_LIVE_SETTINGS: LiveSettingsConfig = {
   defaultAudioRoute: 'speaker',
   videoFps: 2,
   screenFps: 2,
+  temperature: 0.7,
+  maxOutputTokens: 2048,
+  thinkingBudget: 0,
 };
 
 export interface LiveStreamStats {

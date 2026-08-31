@@ -388,6 +388,13 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
               },
             },
           },
+          generationConfig: {
+            ...(this.config.temperature !== undefined ? { temperature: this.config.temperature } : {}),
+            ...(this.config.maxOutputTokens !== undefined ? { maxOutputTokens: this.config.maxOutputTokens } : {}),
+          },
+          ...(this.config.thinkingBudget !== undefined && this.config.thinkingBudget > 0
+            ? { thinkingConfig: { thinkingBudget: this.config.thinkingBudget } }
+            : {}),
           systemInstruction: {
             parts: [{ text: fullSystemInstruction }],
           },
