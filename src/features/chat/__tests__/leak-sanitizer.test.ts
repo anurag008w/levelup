@@ -99,6 +99,12 @@ describe('sanitizeAssistantLeaks', () => {
     expect(sanitizeAssistantLeaks(`[05:42 PM] Done.
 tool: bulkRemoveTasks`)).toBe(' Done.');
   });
+
+  it('strips raw control tokens like < | begin__of__sentence | > and <|begin_of_sentence|>', () => {
+    expect(sanitizeAssistantLeaks('< | begin__of__sentence | >Haan bolo, kya help chahiye?')).toBe('Haan bolo, kya help chahiye?');
+    expect(sanitizeAssistantLeaks('<|begin_of_sentence|>Theek hai kar diya.<|end_of_sentence|>')).toBe('Theek hai kar diya.');
+    expect(sanitizeAssistantLeaks('<|im_start|>assistant\nKaam ho gaya.<|im_end|>')).toBe('Kaam ho gaya.');
+  });
 });
 
 describe('createStreamSanitizer', () => {

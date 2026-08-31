@@ -232,36 +232,46 @@ export default function TodayScreen({
         />
 
         {/* Progress Card for Flexible Mode */}
-        <div className="gradient-border mb-4 rounded-2xl p-px">
-          <div className="rounded-[calc(var(--radius-2xl)-1px)] bg-panel/90 px-4 pb-4 pt-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="eyebrow text-l">TODAY'S TARGET</p>
-                <h2 className="font-display text-xl font-bold tracking-tight text-text mt-0.5">
-                  {completedTodos.length === todos.length && todos.length > 0
-                    ? 'All Tasks Done! 🎉'
-                    : `${completedTodos.length} of ${todos.length} Done`}
-                </h2>
-                <p className="text-xs text-muted mt-0.5">
-                  {totalMinutes > 0 ? `${totalMinutes} min scheduled for today` : 'Add tasks to start your day'}
-                </p>
-              </div>
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-l/10 font-mono text-base font-bold text-light">
-                {todoPct}%
-              </div>
+        <div className="mb-4 overflow-hidden rounded-2xl border border-white/10 bg-panel/90 p-4 shadow-sm backdrop-blur-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="eyebrow text-l font-semibold tracking-wider">TODAY'S TARGET</p>
+              <h2 className="font-display text-xl font-bold tracking-tight text-text mt-1">
+                {completedTodos.length === todos.length && todos.length > 0
+                  ? 'All Tasks Done! 🎉'
+                  : `${completedTodos.length} of ${todos.length} Done`}
+              </h2>
+              <p className="text-xs text-muted mt-0.5">
+                {totalMinutes > 0 ? `${totalMinutes} min scheduled for today` : 'Add tasks to start your day'}
+              </p>
             </div>
+            <div className="flex h-12 w-14 items-center justify-center rounded-xl bg-l/15 border border-l/30 font-mono text-base font-bold text-light shadow-xs">
+              {todoPct}%
+            </div>
+          </div>
 
-            <div className="mt-4">
-              <ProgressBar value={todoPct} height={8} color={todoPct === 100 ? 'var(--color-success)' : 'var(--color-l)'} />
-            </div>
+          <div className="mt-3.5">
+            <ProgressBar value={todoPct} height={6} color={todoPct === 100 ? 'var(--color-success)' : 'var(--color-l)'} />
           </div>
         </div>
 
         {/* Quick stats */}
-        <div className="stat-strip mb-4">
-          <StatTile icon={<Target size={15} color="var(--color-l)" />} value={`${completedTodos.length}/${todos.length}`} label="Tasks done" />
-          <StatTile icon={<Clock size={15} color="var(--color-light)" />} value={`${totalMinutes}m`} label="Total time" />
-          <StatTile icon={<Flame size={15} color="var(--color-peak)" />} value={streak} label="Streak days" />
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-white/8 bg-panel/80 p-3 text-center transition-all">
+            <span className="mb-1 text-l"><Target size={16} /></span>
+            <span className="font-display text-base font-bold leading-tight text-text">{completedTodos.length}/{todos.length}</span>
+            <span className="text-[11px] text-muted font-medium mt-0.5">Tasks done</span>
+          </div>
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-white/8 bg-panel/80 p-3 text-center transition-all">
+            <span className="mb-1 text-light"><Clock size={16} /></span>
+            <span className="font-display text-base font-bold leading-tight text-text">{totalMinutes}m</span>
+            <span className="text-[11px] text-muted font-medium mt-0.5">Total time</span>
+          </div>
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-white/8 bg-panel/80 p-3 text-center transition-all">
+            <span className="mb-1 text-peak"><Flame size={16} /></span>
+            <span className="font-display text-base font-bold leading-tight text-text">{streak}</span>
+            <span className="text-[11px] text-muted font-medium mt-0.5">Streak days</span>
+          </div>
         </div>
 
         {notice && (

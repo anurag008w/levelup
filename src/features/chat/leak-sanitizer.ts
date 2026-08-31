@@ -36,11 +36,36 @@ const PYTHON_TOOL_CALL_LINE_PATTERN = new RegExp(`^\\s*(?:print\\s*\\(\\s*)?${TO
 /** Fenced code blocks (```python ... ```) that echo tool calls — dropped whole. */
 const TOOL_CODE_FENCE_PATTERN = /```[a-zA-Z0-9_-]*\s*\n[\s\S]*?```/g;
 
+/** Matches raw LLM control/special tokens (BOS, EOS, turns, headers, system tags, etc.). */
+const CONTROL_TOKEN_PATTERN = /<\s*\|?\s*(?:begin|end|start|stop|eot|pad|unk|mask|thought|turn|user|model|assistant|system|tool|header)[_a-zA-Z0-9\s|_-]*\s*\|?\s*>|<\/?(?:s|s_turn|start_of_turn|end_of_turn|pad|unk|mask|tool_call|tool_response|context|thought|im_start|im_end|INST|SYS)>/gi;
+
+/** Matches ChatML style role prefixes: `<|im_start|>assistant` / `<|start_header_id|>assistant<|end_header_id|>` */
+const CHATML_ROLE_PATTERN = /<\s*\|\s*im_start\s*\|\s*>\s*(?:assistant|model|user|system)?\s*\n?/gi;
+const LLAMA_HEADER_PATTERN = /<\s*\|\s*start_header_id\s*\|\s*>[\s\S]*?<\s*\|\s*end_header_id\s*\|\s*>\s*\n?/gi;
+
+/** Matches specific token strings like `< | begin__of__sentence | >` or `<|begin_of_sentence|>` with flexible spacing/underscores. */
+const RAW_BEGIN_TOKEN_PATTERN = /<\s*\|\s*begin(?:_{1,2}of_{1,2}sentence)?\s*\|\s*>/gi;
+const BARE_CONTROL_WORD_PATTERN = /^\s*<(?:\s*\|\s*)?begin(?:_{1,2}of_{1,2}sentence)?(?:\s*\|\s*)?>\s*$/gim;
+
 /**
- * Sanitizes a complete text: strips timestamps and raw tool-call traces.
+ * Strips raw LLM control/tokenizer tokens (e.g. `<|begin_of_sentence|>`, `< | begin__of__sentence | >`).
+ */
+export function sanitizeControlTokens(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(CHATML_ROLE_PATTERN, '')
+    .replace(LLAMA_HEADER_PATTERN, '')
+    .replace(CONTROL_TOKEN_PATTERN, '')
+    .replace(RAW_BEGIN_TOKEN_PATTERN, '')
+    .replace(BARE_CONTROL_WORD_PATTERN, '')
+    .replace(/<\s*\|\s*[\w\s_-]+\s*\|\s*>/g, '');
+}
+
+/**
+ * Sanitizes a complete text: strips timestamps, control tokens, and raw tool-call traces.
  */
 export function sanitizeAssistantLeaks(text: string): string {
-  return sanitizeToolLeaks(sanitizeTimestampLeaks(text));
+  return sanitizeControlTokens(sanitizeToolLeaks(sanitizeTimestampLeaks(text)));
 }
 
 /**
@@ -115,7 +140,7 @@ export function createStreamSanitizer(): StreamSanitizer {
   return {
     push(delta: string): string {
       const combined = hold + delta;
-      const stripped = sanitizeToolLeaks(combined.replace(TIMESTAMP_PATTERN, ''));
+      const stripped = sanitizeControlTokens(sanitizeToolLeaks(combined.replace(TIMESTAMP_PATTERN, '')));
       const lastBracket = stripped.lastIndexOf('[');
       if (lastBracket !== -1) {
         const timestampSuffix = stripped.slice(lastBracket);

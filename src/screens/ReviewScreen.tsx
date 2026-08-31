@@ -223,16 +223,21 @@ export default function ReviewScreen({
         </div>
       )}
 
-      <Card accent="var(--color-danger)" icon={<Siren size={15} color="var(--color-danger)" />} title="Exam Month Protocol">
+      <Card accent="var(--color-danger)" icon={<Siren size={16} color="var(--color-danger)" />} title="Exam Month Protocol">
         <p className="mb-3 text-sm leading-relaxed text-muted">
           Apna JEE Main attempt date set karo — attempt se 30 din pehle Today screen automatically Exam Month mode mein switch ho
           jayega (naya topic band, sirf revision + mocks).
         </p>
-        <input type="date" value={examDate} onChange={(e) => setExamDate(e.target.value)} className="field" aria-label="Exam date" />
+        <input
+          type="date"
+          value={examDate}
+          onChange={(e) => setExamDate(e.target.value)}
+          className="field w-full rounded-xl bg-panel-raised border border-white/10 px-3.5 py-2.5 text-sm text-text"
+          aria-label="Exam date"
+        />
         <button
           onClick={saveExamDate}
-          className="btn mt-2.5 w-full font-display text-sm font-bold"
-          style={{ backgroundColor: 'var(--color-danger)', color: 'var(--color-bg)' }}
+          className="btn btn-primary mt-3 w-full font-display text-sm font-bold rounded-xl"
         >
           Exam Date Save Karo
         </button>
@@ -330,18 +335,18 @@ export default function ReviewScreen({
 
 function UpcomingRow({ icon, title, when, due }: { icon: React.ReactNode; title: string; when: string; due: boolean }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-border bg-bg/60 p-3">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-panel-raised">{icon}</span>
+    <div className="flex items-center gap-3.5 rounded-2xl border border-white/8 bg-panel/60 p-3.5 transition-all hover:border-white/15">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-panel-raised/90 border border-white/5">{icon}</span>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold">{title}</p>
-        <p className="text-xs text-muted">{when}</p>
+        <p className="text-sm font-semibold text-text">{title}</p>
+        <p className="text-xs text-muted mt-0.5">{when}</p>
       </div>
       <span
-        className="badge shrink-0"
-        style={{
-          backgroundColor: due ? 'rgba(163,19,19,0.14)' : 'var(--color-panel-raised)',
-          color: due ? 'var(--color-l)' : 'var(--color-muted-dim)',
-        }}
+        className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10.5px] font-semibold border ${
+          due
+            ? 'bg-l/15 border-l/30 text-light'
+            : 'bg-white/5 border-white/10 text-muted'
+        }`}
       >
         {due ? 'Due' : 'Soon'}
       </span>
@@ -351,8 +356,8 @@ function UpcomingRow({ icon, title, when, due }: { icon: React.ReactNode; title:
 
 function Card({ title, accent, icon, children }: { title: string; accent: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="card mb-4 p-4">
-      <p className="mb-3 flex items-center gap-1.5 font-display text-[15px] font-bold" style={{ color: accent }}>
+    <div className="card mb-4 p-4.5 rounded-2xl border border-white/10 bg-panel/90 shadow-sm backdrop-blur-sm">
+      <p className="mb-3.5 flex items-center gap-2 font-display text-[15px] font-bold" style={{ color: accent }}>
         {icon}
         {title}
       </p>

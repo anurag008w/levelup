@@ -6,6 +6,7 @@ import rehypeHighlight from 'rehype-highlight';
 import 'katex/dist/katex.min.css';
 import { Check, Copy } from 'lucide-react';
 import { unwrapMarkdownFence, normalizeLatexDelimiters } from './markdown-utils';
+import { sanitizeControlTokens } from '../features/chat/leak-sanitizer';
 
 /* ------------------------------------------------------------------ *
    Production markdown renderer for chat bubbles.
@@ -194,7 +195,7 @@ export default function ChatMarkdown({ text }: { text: string }) {
     return () => { mounted = false; };
   }, []);
 
-  const processed = normalizeLatexDelimiters(unwrapMarkdownFence(text));
+  const processed = sanitizeControlTokens(normalizeLatexDelimiters(unwrapMarkdownFence(text)));
   
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const plugins: any[] = [

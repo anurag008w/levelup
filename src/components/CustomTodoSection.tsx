@@ -2,6 +2,8 @@ import { useState, useRef, useCallback } from 'react';
 import {
   ArrowUpDown,
   Check,
+  ChevronDown,
+  ChevronUp,
   Clock,
   GripVertical,
   ListTodo,
@@ -176,20 +178,20 @@ export default function CustomTodoSection({
                 haptic();
                 setIsArrangeMode(true);
               }}
-              className="btn btn-ghost min-h-8 gap-1 px-2 text-xs font-semibold text-muted hover:text-text"
+              className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-surface-2/80 px-2.5 py-1 text-xs font-semibold text-muted backdrop-blur-sm transition-all hover:border-white/20 hover:text-text active:scale-95"
               aria-label="Arrange tasks"
             >
-              <ArrowUpDown size={13} />
+              <ArrowUpDown size={12} />
               Arrange
             </button>
           )}
           <button
             type="button"
             onClick={() => setShowAddForm((v) => !v)}
-            className="btn btn-ghost min-h-8 gap-1 px-2.5 text-xs font-semibold text-l"
+            className="flex items-center gap-1.5 rounded-xl border border-l/30 bg-l/10 px-3 py-1 text-xs font-semibold text-l backdrop-blur-sm transition-all hover:bg-l/20 active:scale-95"
             aria-label={showAddForm ? 'Close add form' : 'Add custom to-do'}
           >
-            {showAddForm ? <X size={14} /> : <Plus size={14} />}
+            {showAddForm ? <X size={13} /> : <Plus size={13} />}
             {showAddForm ? 'Cancel' : 'Add To-Do'}
           </button>
         </div>
@@ -197,10 +199,15 @@ export default function CustomTodoSection({
 
       {/* Arrange Mode Banner */}
       {isArrangeMode && (
-        <div className="flex items-center justify-between rounded-xl border border-l/40 bg-l/15 p-3 fade-in">
-          <div className="flex items-center gap-2">
-            <GripVertical size={16} className="text-light" />
-            <p className="font-display text-xs font-bold text-light">Arrange Mode: Tasks ko drag ya move karein</p>
+        <div className="flex items-center justify-between rounded-2xl border border-l/40 bg-l/10 p-3.5 backdrop-blur-md fade-in shadow-md">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-l/20 text-light">
+              <ArrowUpDown size={15} />
+            </div>
+            <div>
+              <p className="font-display text-xs font-bold text-light">Arrange Mode</p>
+              <p className="text-[10.5px] text-muted font-medium">Drag karo ya up/down arrow buttons se reorder karo</p>
+            </div>
           </div>
           <button
             type="button"
@@ -209,16 +216,16 @@ export default function CustomTodoSection({
               setIsArrangeMode(false);
               flash('Tasks ka order save ho gaya.');
             }}
-            className="btn btn-primary px-3 py-1.5 text-xs font-bold gap-1 shadow-md"
+            className="btn btn-primary px-3.5 py-1.5 text-xs font-bold gap-1.5 rounded-xl shadow-md"
           >
-            <Check size={13} strokeWidth={3} /> Done
+            <Check size={14} strokeWidth={3} /> Done
           </button>
         </div>
       )}
 
       {/* Quick Add Form */}
       {showAddForm && (
-        <div className="card p-4 fade-in space-y-3 border-l/30 bg-panel-raised/95">
+        <div className="card p-4 fade-in space-y-3 border-l/30 bg-panel-raised/95 rounded-2xl">
           <div className="flex items-center justify-between">
             <p className="font-display text-sm font-bold text-text">Naya To-Do Task</p>
             <button type="button" onClick={() => setShowAddForm(false)} className="icon-btn" aria-label="Close form">
@@ -292,7 +299,7 @@ export default function CustomTodoSection({
 
             {/* Duration */}
             <div>
-              <span className="block text-[11px] font-semibold text-muted mb-1.5 uppercase tracking-wider">Estimated Time (Longer tasks on top)</span>
+              <span className="block text-[11px] font-semibold text-muted mb-1.5 uppercase tracking-wider">Estimated Time</span>
               <div className="flex flex-wrap gap-1.5">
                 {DURATIONS.map((d) => {
                   const active = duration === d;
@@ -328,7 +335,7 @@ export default function CustomTodoSection({
 
       {/* Filter Chips */}
       {!isArrangeMode && todos.length > 0 && (
-        <div className="flex items-center gap-1.5 text-xs">
+        <div className="flex items-center gap-1 p-1 rounded-xl bg-panel/60 border border-white/5 w-fit">
           {(['all', 'pending', 'completed'] as const).map((tab) => {
             const count = tab === 'all' ? todos.length : tab === 'pending' ? pendingTodos.length : completedTodos.length;
             const active = filter === tab;
@@ -340,10 +347,10 @@ export default function CustomTodoSection({
                   haptic(4);
                   setFilter(tab);
                 }}
-                className={`rounded-full border px-3 py-1 text-xs font-semibold capitalize transition-all ${
+                className={`rounded-lg px-2.5 py-1 text-xs font-semibold capitalize transition-all ${
                   active
-                    ? 'border-l/50 bg-l/15 text-light shadow-sm'
-                    : 'border-border/50 bg-panel/50 text-muted hover:border-border'
+                    ? 'bg-l/20 text-light border border-l/40 shadow-xs'
+                    : 'text-muted hover:text-text'
                 }`}
               >
                 {tab} ({count})
@@ -353,18 +360,11 @@ export default function CustomTodoSection({
         </div>
       )}
 
-      {/* Helper text about swipe gestures */}
-      {!isArrangeMode && filtered.length > 0 && (
-        <p className="text-[10px] text-muted text-center italic">
-          Tip: Slide right to delete · Slide left to edit · Long press to arrange
-        </p>
-      )}
-
       {/* To-Do Items List */}
       <div className="space-y-2">
         {filtered.length === 0 ? (
-          <div className="card p-5 text-center text-muted">
-            <p className="text-xs">
+          <div className="card p-6 text-center text-muted rounded-2xl border border-white/8 bg-panel/60">
+            <p className="text-xs font-medium">
               {todos.length === 0
                 ? 'Aaj koi custom to-do nahi hai. Upar "+ Add To-Do" dabao ya Misa AI se plan karvao!'
                 : `Koi ${filter} to-do nahi hai.`}
@@ -396,6 +396,13 @@ export default function CustomTodoSection({
           ))
         )}
       </div>
+
+      {/* Helper text about swipe gestures (subtle at bottom) */}
+      {!isArrangeMode && filtered.length > 0 && (
+        <p className="text-[10.5px] text-muted-dim text-center pt-1 font-medium select-none">
+          Slide right to delete · Slide left to edit · Long press to arrange
+        </p>
+      )}
 
       {/* Uncomplete / Undo Confirmation Dialog */}
       {uncompleteTarget && (
@@ -699,13 +706,26 @@ function SwipeableTodoCard({
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
-        className="card relative flex items-center justify-between p-3 bg-panel border-l/30 cursor-grab active:cursor-grabbing transition-all select-none"
+        className="relative flex items-center justify-between gap-3 p-3.5 rounded-2xl border border-white/10 bg-panel/90 cursor-grab active:cursor-grabbing transition-all select-none shadow-xs hover:border-l/40"
       >
-        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-          <GripVertical size={16} className="text-light/70 shrink-0" />
-          <span className={`text-sm font-semibold truncate ${task.completed ? 'line-through text-muted' : 'text-text'}`}>
-            {task.title}
-          </span>
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/5 text-muted hover:text-text">
+            <GripVertical size={16} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <span className={`text-sm font-semibold truncate block ${task.completed ? 'line-through text-muted/70' : 'text-text'}`}>
+              {task.title}
+            </span>
+            <div className="mt-1 flex items-center gap-1.5 text-[10px]">
+              <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.2 font-semibold ${prioMeta.bg}`}>
+                <span className={`h-1 w-1 rounded-full ${prioMeta.dot}`} />
+                {prioMeta.label}
+              </span>
+              {task.estimatedMinutes && (
+                <span className="text-muted font-medium">{task.estimatedMinutes}m</span>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
@@ -713,19 +733,25 @@ function SwipeableTodoCard({
             type="button"
             disabled={index === 0}
             onClick={() => onMove(index, index - 1)}
-            className={`btn btn-ghost px-2 py-1 text-xs ${index === 0 ? 'opacity-20' : 'text-text'}`}
+            className={`flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/5 transition-all active:scale-95 ${
+              index === 0 ? 'opacity-25 cursor-not-allowed' : 'text-text hover:bg-white/10 hover:border-white/20'
+            }`}
             aria-label="Move Up"
+            title="Move Up"
           >
-            ↑ Up
+            <ChevronUp size={16} />
           </button>
           <button
             type="button"
             disabled={index === totalCount - 1}
             onClick={() => onMove(index, index + 1)}
-            className={`btn btn-ghost px-2 py-1 text-xs ${index === totalCount - 1 ? 'opacity-20' : 'text-text'}`}
+            className={`flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/5 transition-all active:scale-95 ${
+              index === totalCount - 1 ? 'opacity-25 cursor-not-allowed' : 'text-text hover:bg-white/10 hover:border-white/20'
+            }`}
             aria-label="Move Down"
+            title="Move Down"
           >
-            ↓ Down
+            <ChevronDown size={16} />
           </button>
         </div>
       </div>
@@ -765,58 +791,60 @@ function SwipeableTodoCard({
           transform: `translateX(${offsetX}px)`,
           transition: isSwiping ? 'none' : 'transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1)',
         }}
-        className={`card relative flex items-start gap-2.5 p-3.5 transition-colors ${
-          task.completed ? 'opacity-65 bg-panel/35' : 'bg-panel/85 hover:border-border-strong'
+        className={`card relative flex items-start gap-3 p-3.5 transition-all rounded-2xl border ${
+          task.completed
+            ? 'opacity-60 bg-panel/40 border-white/5'
+            : 'bg-panel/85 border-white/10 hover:border-white/20 shadow-xs'
         }`}
       >
         {/* Checkbox button */}
         <button
           type="button"
           onClick={onToggle}
-          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-all ${
+          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-lg border transition-all ${
             task.completed
-              ? 'border-success bg-success text-bg'
-              : 'border-border hover:border-l hover:bg-l/10 text-transparent'
+              ? 'border-success bg-success text-bg shadow-xs'
+              : 'border-white/20 bg-white/5 hover:border-l hover:bg-l/10 text-transparent'
           }`}
           aria-label={task.completed ? `Mark ${task.title} as pending` : `Mark ${task.title} as completed`}
         >
-          <Check size={13} strokeWidth={3} />
+          <Check size={12} strokeWidth={3} />
         </button>
 
         {/* Content */}
         <div className="min-w-0 flex-1">
           <p
             className={`text-sm font-semibold leading-snug break-words ${
-              task.completed ? 'line-through text-muted' : 'text-text'
+              task.completed ? 'line-through text-muted/70' : 'text-text'
             }`}
           >
             {task.title}
           </p>
 
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px]">
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10.5px]">
             {/* Priority */}
-            <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-semibold ${prioMeta.bg}`}>
+            <span className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 font-semibold ${prioMeta.bg}`}>
               <span className={`h-1.5 w-1.5 rounded-full ${prioMeta.dot}`} />
               {prioMeta.label}
             </span>
 
             {/* Category */}
             {task.category && (
-              <span className={`inline-flex items-center rounded-md border px-1.5 py-0.5 font-medium ${catMeta.color}`}>
+              <span className={`inline-flex items-center rounded-lg border px-2 py-0.5 font-medium ${catMeta.color}`}>
                 {catMeta.label}
               </span>
             )}
 
             {/* Duration */}
             {task.estimatedMinutes && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-white/5 px-1.5 py-0.5 text-muted">
+              <span className="inline-flex items-center gap-1 rounded-lg bg-white/5 border border-white/5 px-2 py-0.5 text-muted font-medium">
                 <Clock size={10} /> {task.estimatedMinutes}m
               </span>
             )}
 
             {/* AI tag */}
             {task.createdBy === 'ai' && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-l/15 px-1.5 py-0.5 font-semibold text-l">
+              <span className="inline-flex items-center gap-1 rounded-lg bg-l/15 border border-l/25 px-2 py-0.5 font-semibold text-l">
                 <Sparkles size={10} /> Misa
               </span>
             )}
