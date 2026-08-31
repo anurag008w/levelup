@@ -1609,7 +1609,10 @@ export default function ChatScreen({
 
       {/* Overlays */}
       {(() => {
-        const currentSession = active || (sessions.length > 0 ? sessions[0] : null) || ensureSession();
+        const currentSession =
+          (showSettings || showProviderPicker)
+            ? active || (sessions.length > 0 ? sessions[0] : null) || ensureSession()
+            : null;
         return (
           <>
             {currentSession && showSettings && (

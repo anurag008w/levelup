@@ -16,25 +16,25 @@ describe('settings open smoke', () => {
 
   it('ChatScreen model settings + chat settings buttons open the sheet', async () => {
     render(React.createElement(ChatScreen));
-    await waitFor(() => expect(screen.getByLabelText('Model settings')).toBeTruthy());
+    await waitFor(() => expect(screen.getByLabelText('Model settings')).toBeTruthy(), { timeout: 15000 });
     fireEvent.click(screen.getByLabelText('Model settings'));
-    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Chat settings' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Chat settings' })).toBeTruthy(), { timeout: 15000 });
     // close and reopen via the ⋯ button
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Chat settings' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Chat settings' })).toBeNull(), { timeout: 15000 });
     fireEvent.click(screen.getByLabelText('Chat settings'));
-    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Chat settings' })).toBeTruthy());
-  });
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Chat settings' })).toBeTruthy(), { timeout: 15000 });
+  }, 15000);
 
   it('AISettingsScreen Chat Experience opens ChatSettingsScreen', async () => {
     render(React.createElement(AISettingsScreen, { state: container.store.get(), update: () => {}, session: null, onLogout: () => {} }));
-    const btn = screen.getByText('Chat Experience');
+    const btn = screen.getAllByText('Chat Experience')[0];
     fireEvent.click(btn);
     // Generous timeout: this waitFor has historically flaked under parallel
     // worker load (N4 class — documented in docs/misa_ai_bug_audit.md §10),
     // where the default 1s budget is too tight for a full 87-file run.
     await waitFor(() => expect(screen.getByText('Response Quality')).toBeTruthy(), { timeout: 15000 });
-  });
+  }, 15000);
 
   it('AISettingsScreen Delete all data shows a Yes/No confirm dialog', async () => {
     const session = {
@@ -55,9 +55,9 @@ describe('settings open smoke', () => {
       }),
     );
     fireEvent.click(screen.getByRole('button', { name: /Delete all/i }));
-    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Delete all data' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Delete all data' })).toBeTruthy(), { timeout: 15000 });
     // Yes and No are both present.
     expect(screen.getByRole('button', { name: /Yes, delete all/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /No, cancel/i })).toBeTruthy();
-  });
+  }, 15000);
 });

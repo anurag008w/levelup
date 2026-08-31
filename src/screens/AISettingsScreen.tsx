@@ -597,31 +597,6 @@ export default function AISettingsScreen({
         </div>
       )}
 
-      <button type="button" onClick={() => setShowChatSettings(true)} className="card card-press mb-3 flex w-full items-center justify-between gap-3 p-4 text-left">
-        <div className="flex items-center gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
-            <SlidersHorizontal size={19} />
-          </span>
-          <div>
-            <p className="font-display text-[15px] font-bold">Chat Experience</p>
-            <p className="text-xs leading-snug text-muted">Memory, temperature, system prompt aur coaching tone.</p>
-          </div>
-        </div>
-        <ChevronRight size={18} className="text-muted" />
-      </button>
-
-      <button type="button" onClick={() => setShowLiveModal(true)} className="card card-press mb-4 flex w-full items-center justify-between gap-3 p-4 text-left">
-        <div className="flex items-center gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
-            <PhoneCall size={19} />
-          </span>
-          <div>
-            <p className="font-display text-[15px] font-bold">Misa Live Voice & Video</p>
-            <p className="text-xs leading-snug text-muted">Thinking level, tokens, voice selection, audio routing & VAD.</p>
-          </div>
-        </div>
-        <ChevronRight size={18} className="text-muted" />
-      </button>
 
       {/* Misa Proactive & Incoming Calls */}
       <div className="mb-2.5">

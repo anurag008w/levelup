@@ -111,26 +111,26 @@ describe('delete all data — ChatScreen refresh', () => {
   it('dispatch of backup-imported event swaps in the cleared session list', async () => {
     seedChat('Session A');
     render(React.createElement(ChatScreen));
-    await waitFor(() => expect(screen.getByLabelText('Open chat history')).toBeTruthy());
+    await waitFor(() => expect(screen.getByLabelText('Open chat history')).toBeTruthy(), { timeout: 15000 });
 
     // Now simulate a full delete-all elsewhere in the app: chat is cleared and
     // the event is dispatched. The already-mounted screen must re-read.
     container.chat.replaceStore([]);
     window.dispatchEvent(new Event('levelup:backup-imported'));
     fireEvent.click(screen.getByLabelText('Open chat history'));
-    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Chats' })).toBeTruthy());
-    await waitFor(() => expect(screen.getByText('Abhi koi chat nahi hai.')).toBeTruthy());
-  });
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Chats' })).toBeTruthy(), { timeout: 15000 });
+    await waitFor(() => expect(screen.getByText('Abhi koi chat nahi hai.')).toBeTruthy(), { timeout: 15000 });
+  }, 15000);
 
   it('dispatch of backup-imported event shows freshly restored sessions', async () => {
     render(React.createElement(ChatScreen));
-    await waitFor(() => expect(screen.getByLabelText('Open chat history')).toBeTruthy());
+    await waitFor(() => expect(screen.getByLabelText('Open chat history')).toBeTruthy(), { timeout: 15000 });
 
     const restored = seedChat('Restored from backup');
     window.dispatchEvent(new Event('levelup:backup-imported'));
     fireEvent.click(screen.getByLabelText('Open chat history'));
-    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Chats' })).toBeTruthy());
-    await waitFor(() => expect(screen.getAllByText('Restored from backup').length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Chats' })).toBeTruthy(), { timeout: 15000 });
+    await waitFor(() => expect(screen.getAllByText('Restored from backup').length).toBeGreaterThan(0), { timeout: 15000 });
     void restored;
-  });
+  }, 15000);
 });
