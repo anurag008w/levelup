@@ -96,6 +96,9 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('listTodos'),
     filter: z.enum(['all', 'pending', 'completed']).optional(),
+    date: z.string().optional(),
+    daysBack: z.number().int().min(1).max(365).optional(),
+    category: z.enum(['physics', 'chemistry', 'maths', 'general', 'revision']).optional(),
   }),
   z.object({
     action: z.literal('toggleTodo'),
@@ -243,7 +246,13 @@ TASK BANK MANAGEMENT (full control):
 
 CUSTOM TO-DO & TASK MANAGEMENT:
 - Add a To-Do: {"action":"addTodo","title":"Physics Electrostatics Revision","priority":"high","estimatedMinutes":45,"category":"physics"}
-- List To-Dos: {"action":"listTodos","filter":"pending"} or "filter":"all" / "filter":"completed"
+- Edit a To-Do: {"action":"editTodo","title":"Physics Electrostatics Revision","priority":"high","estimatedMinutes":60,"category":"physics"}
+- Reorder To-Dos: {"action":"reorderTodos","title":"Physics Electrostatics Revision","position":"top"}
+- List To-Dos (current, past dates, or multi-day history):
+  {"action":"listTodos","filter":"pending"}
+  {"action":"listTodos","filter":"all","date":"yesterday"}
+  {"action":"listTodos","filter":"all","date":"2026-08-30"}
+  {"action":"listTodos","filter":"completed","daysBack":10}
 - Toggle To-Do: {"action":"toggleTodo","title":"Physics Electrostatics Revision","completed":true}
 - Delete a To-Do: {"action":"deleteTodo","title":"Physics Electrostatics Revision"}
 - Study Vault Resources: {"action":"listVaultResources","subject":"physics"} (lists uploaded PDFs, notes, formula sheets)

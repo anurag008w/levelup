@@ -634,6 +634,9 @@ export default function ChatScreen({
           {
             action: 'listTodos',
             filter: (args.filter as any) || 'all',
+            date: args.date ? String(args.date) : undefined,
+            daysBack: args.daysBack !== undefined ? Number(args.daysBack) : undefined,
+            category: (args.category as any) || undefined,
           },
         ]);
         return { todos: res.summary };

@@ -766,29 +766,66 @@ export class ChatToolsService {
   private listTodos(state: AppState, action: Extract<ChatToolAction, { action: 'listTodos' }>): ChatToolResult {
     const todos = state.customTodos ?? [];
     const filter = action.filter || 'all';
-    const filtered = todos.filter((t) => {
-      if (filter === 'pending') return !t.completed;
-      if (filter === 'completed') return t.completed;
-      return true;
-    });
+    let filtered = [...todos];
 
+    // Filter by category
+    if (action.category) {
+      filtered = filtered.filter((t) => t.category === action.category);
+    }
+
+    // Filter by status
+    if (filter === 'pending') {
+      filtered = filtered.filter((t) => !t.completed);
+    } else if (filter === 'completed') {
+      filtered = filtered.filter((t) => t.completed);
+    }
+
+    // Filter by Date ('today', 'yesterday', 'YYYY-MM-DD')
+    if (action.date) {
+      let targetDate = action.date.trim().toLowerCase();
+      const now = new Date();
+      if (targetDate === 'today') {
+        targetDate = now.toISOString().slice(0, 10);
+      } else if (targetDate === 'yesterday') {
+        const y = new Date(now.getTime() - 86400000);
+        targetDate = y.toISOString().slice(0, 10);
+      }
+      filtered = filtered.filter(
+        (t) =>
+          (t.createdAtISO && t.createdAtISO.startsWith(targetDate)) ||
+          (t.completedAtISO && t.completedAtISO.startsWith(targetDate)),
+      );
+    } else if (action.daysBack && action.daysBack > 0) {
+      const cutoff = Date.now() - action.daysBack * 86400000;
+      filtered = filtered.filter(
+        (t) =>
+          (t.createdAtISO && new Date(t.createdAtISO).getTime() >= cutoff) ||
+          (t.completedAtISO && new Date(t.completedAtISO).getTime() >= cutoff),
+      );
+    }
+
+    const dateScope = action.date ? ` for date ${action.date}` : action.daysBack ? ` for last ${action.daysBack} days` : '';
     if (filtered.length === 0) {
-      return { ok: true, summary: `Koi ${filter !== 'all' ? filter : ''} To-Do nahi mila.` };
+      return { ok: true, summary: `Koi ${filter !== 'all' ? filter : ''} To-Do nahi mila${dateScope}.` };
     }
 
     const lines = filtered.map((t, idx) => {
       const mark = t.completed ? '[x]' : '[ ]';
       const prio = t.priority ? `(${t.priority.toUpperCase()})` : '';
       const dur = t.estimatedMinutes ? `${t.estimatedMinutes}m` : '';
-      return `${idx + 1}. ${mark} ${t.title} ${prio} ${dur}`.trim();
+      const cat = t.category ? `[${t.category}]` : '';
+      const created = t.createdAtISO ? `created: ${t.createdAtISO.slice(0, 10)}` : '';
+      const completed = t.completedAtISO ? `done: ${t.completedAtISO.slice(0, 10)}` : '';
+      const dates = [created, completed].filter(Boolean).join(', ');
+      return `${idx + 1}. ${mark} ${t.title} ${prio} ${dur} ${cat} ${dates ? `(${dates})` : ''}`.trim();
     });
 
-    const pendingCount = todos.filter((t) => !t.completed).length;
-    const completedCount = todos.filter((t) => t.completed).length;
+    const pendingCount = filtered.filter((t) => !t.completed).length;
+    const completedCount = filtered.filter((t) => t.completed).length;
 
     return {
       ok: true,
-      summary: `To-Dos (${completedCount}/${todos.length} done, ${pendingCount} pending):\n${lines.join('\n')}`,
+      summary: `To-Dos${dateScope} (${completedCount}/${filtered.length} done, ${pendingCount} pending):\n${lines.join('\n')}`,
     };
   }
 

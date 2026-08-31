@@ -189,11 +189,14 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       },
       {
         name: 'listTodos',
-        description: 'List active, pending, or completed To-Dos of the student.',
+        description: 'List active, pending, completed, or past To-Dos of the student (can filter by date, daysBack, or category).',
         parameters: {
           type: 'OBJECT',
           properties: {
             filter: { type: 'STRING', description: 'all, pending, or completed' },
+            date: { type: 'STRING', description: 'today, yesterday, or YYYY-MM-DD' },
+            daysBack: { type: 'INTEGER', description: 'Number of past days (e.g. 10)' },
+            category: { type: 'STRING', description: 'physics, chemistry, maths, general, or revision' },
           },
         },
       },

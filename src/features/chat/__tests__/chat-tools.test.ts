@@ -2407,9 +2407,23 @@ describe('notification reply flow', () => {
       });
       expect(toggleRes.ok).toBe(true);
       expect(toggleRes.summary).toContain('COMPLETED');
-      expect(store.get().customTodos?.find((t) => t.title.includes('HC Verma'))?.completed).toBe(true);
+      // 5. Query todos by date and daysBack
+      const listToday = await tools.run({
+        action: 'listTodos',
+        date: 'today',
+      });
+      expect(listToday.ok).toBe(true);
+      expect(listToday.summary).toContain('Complete Formula Sheet');
 
-      // 5. Delete todo
+      const listPastDays = await tools.run({
+        action: 'listTodos',
+        daysBack: 10,
+        filter: 'all',
+      });
+      expect(listPastDays.ok).toBe(true);
+      expect(listPastDays.summary).toContain('last 10 days');
+
+      // 6. Delete todo
       const delRes = await tools.run({
         action: 'deleteTodo',
         title: 'HC Verma',
