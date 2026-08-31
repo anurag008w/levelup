@@ -207,7 +207,7 @@ export class SyncCoordinator {
           try {
             const merged = mergeChatSessions(this.getChatSessions(), remoteSessions);
             this.replaceStore(merged);
-            this.setScopeState('chat', { state: 'online', lastSyncedAt: remoteChat.updatedAt, lastError: null });
+            this.setScopeState('chat', { state: 'online', lastSyncedAt: remoteChat?.updatedAt ?? chatStatus.updatedAt, lastError: null });
           } finally {
             this.restoring = false;
           }

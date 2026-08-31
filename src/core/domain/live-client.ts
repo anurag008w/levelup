@@ -11,6 +11,7 @@ import { AudioStreamer } from './audio-streamer';
 import { VisionStreamer } from './vision-streamer';
 import { MISA_IDENTITY_GUARD, ROMAN_SCRIPT_RULE, type ChatToolCallRecord } from './chat';
 import { setNativeAudioRoute, resetNativeAudioRoute } from '../../lib/native-audio-route';
+import { deviceTimeZone } from '../ports/clock';
 
 export interface LiveClientCallbacks {
   onStatusChange?: (status: LiveSessionStatus) => void;

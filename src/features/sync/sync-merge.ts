@@ -2,7 +2,7 @@ import type { AppState, AiSettings } from '../../core/domain/state';
 import type { ChatSession, ChatMessage } from '../../core/domain/chat';
 import type { CustomTodoTask } from '../../core/domain/todo-tasks';
 import type { StudyResource } from '../../core/domain/study-vault';
-import type { MemoryEntry, MemorySummary } from '../../core/domain/memory';
+import type { MemoryEntry } from '../../core/domain/memory';
 import type { Habit } from '../../core/domain/habit';
 import type { SubjectPlanner } from '../../core/domain/subject-planner';
 import type { TaskBankEntry } from '../../core/domain/task-bank';
@@ -52,7 +52,7 @@ export function mergeAppState(local: AppState, remote: AppState): AppState {
     } else {
       // If either marked completed, keep completed: true; otherwise prefer latest updated
       const completed = existing.completed || t.completed;
-      const latest = (t.updatedAt || t.createdAt || '') >= (existing.updatedAt || existing.createdAt || '') ? t : existing;
+      const latest = (t.completedAtISO || t.createdAtISO || '') >= (existing.completedAtISO || existing.createdAtISO || '') ? t : existing;
       todoMap.set(t.id, { ...latest, completed });
     }
   }
@@ -78,7 +78,7 @@ export function mergeAppState(local: AppState, remote: AppState): AppState {
     if (normText) seenFactTexts.add(normText);
     memEntriesMap.set(e.id, e);
   }
-  const memSummariesMap = new Map<string, MemorySummary>();
+  const memSummariesMap = new Map<string, MemoryEntry>();
   for (const s of [...(normRemote.memory?.summaries || []), ...(normLocal.memory?.summaries || [])]) {
     if (s?.id) memSummariesMap.set(s.id, s);
   }
