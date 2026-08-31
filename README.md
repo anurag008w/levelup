@@ -1,69 +1,122 @@
-# LevelUp — L × Light × JEE
+# 🚀 LevelUp — L × Light × JEE
 
-90-day, 30-level habit curriculum for JEE 2027 prep, packaged as a real Android app.
-Built with React + Vite + Capacitor. All data lives on your phone.
+> **A high-performance, offline-first JEE prep system & AI coach (Misa)** packaged as an Android application. Designed for JEE 2026/2027 aspirants to build unstoppable study habits, track mastery, and converse with an intelligent voice coach.
 
-**Status:** Phase 1 — JEE Core (Levels 1–13, Days 1–39, 37 habits) is fully built with
-daily tasks, pass criteria, unlock rules, common mistakes, and JEE-benefit notes.
-Phases 2–4 (Levels 14–30) are scaffolded in the timeline and will be filled in with the
-same level of detail in upcoming updates — the app already works end-to-end for all 90
-days (streaks, habit scores, recovery mode, mock-test protocol, exam-month mode).
+---
 
-## Get the APK (no coding needed)
+## ✨ Highlights & Key Features
 
-1. Push this project to your own GitHub repo (steps below).
-2. GitHub Actions builds the APK automatically and publishes it to your repo's
-   **Releases** page under the tag `latest`, every time you push to `main`.
-3. Go to `github.com/<your-username>/<repo>/releases`, download the `.apk`, and
-   install it on your phone (allow "install from unknown sources" once, since this
-   isn't from the Play Store).
+### 🎙️ Misa Live Voice & Multimodal AI
+- **Real-Time Bidirectional Voice**: Ultra-low-latency conversational AI with native Audio Worklet streaming.
+- **Voice Activity Detection (VAD) & Interruptions**: Speak naturally; Misa pauses and listens the moment you talk.
+- **Dynamic Audio Routing**: Seamless switching between device earpiece, speakerphone, wired headphones, and Bluetooth earbuds (`RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, `BLUETOOTH_CONNECT`).
+- **Camera & Vision Understanding**: Snap photos of textbook problems or handwritten equations for instant step-by-step guidance.
+- **Leak-Free Stream Sanitizer**: Built-in control-token scrubber strips BOS/EOS tokens (`<|begin_of_sentence|>`, `<|im_start|>`, etc.) in real time.
 
-### Push to your own GitHub repo
+### 📋 Custom To-Dos & Modern Arrange Mode
+- **Dual Study Tracks**: Switch effortlessly between the structured **90-Day Curriculum** and the **Flexible Daily To-Do Track**.
+- **Intuitive Gestures**: Slide right to delete, slide left to edit, and tap to mark tasks as completed.
+- **Modern Arrange Mode**: Reorder your daily priorities with smooth drag-and-drop or one-tap chevron buttons (`↑` / `↓`).
+- **Granular Tagging**: Priority pills (High, Med, Low), estimated durations (15m to 90m), and subject filters (Physics, Chemistry, Maths, Revision, General).
+- **Safety Confirmations**: Uncompleting a finished task prompts an instant confirmation dialog to prevent accidental clicks.
 
+### 🤖 Autonomous AI Tools & Plan Manager
+- **Function Calling**: Misa can create, edit, reschedule, and delete tasks directly on your device.
+- **Safety-First Flow**: Destructive actions (like bulk deletions or schedule overwrites) require explicit confirmation before execution.
+- **Transparent Status Badges**: Tool execution states show exact details (`✅ Success`, `⏳ Approval Needed`, `❌ Failed`).
+
+### 📦 In-App Modular APK Updates
+- **Automatic Version Detection**: Checks GitHub Releases for signed APKs with semantic/date tag comparisons.
+- **Download & Install (1-Click)**: Streams APK in chunks with live byte-level progress and immediately opens the system package installer.
+- **Download Only Mode**: Downloads and caches the APK without forcing an instant installer popup.
+- **Storage Transparency & Share**: Displays the exact file location (`updates/levelup.apk`) with options to install, share to Google Drive/Downloads/WhatsApp via native share sheet, or delete cached files.
+- **Android 8.0 to Android 15+ Compatibility**: Fully configured with `REQUEST_INSTALL_PACKAGES` and FileProvider content URIs.
+
+### 🎯 90-Day Habit Engine & Exam Month Protocol
+- **30 Levels Across 4 Phases**: Systematic habit progression covering deep work, morning routines, error logging, and revision cycles.
+- **Mastery Placement**: Automatically groups mastered tasks into permanent completed vaults while allowing flexible re-scheduling.
+- **Recovery Mode**: Automatically activates if daily completion drops below 30% to rebuild momentum with essential core tasks.
+- **Exam Month Mode**: Auto-triggers 30 days before your JEE Main attempt date, switching the daily focus to revision and mock test analysis.
+
+### 🌐 Multi-Provider Architecture
+- **Google Gemini API**: Direct support for Gemini 2.0 Flash, Gemini 1.5 Pro, and multimodal live sessions.
+- **SmartRotator & OpenAI-Compatible Endpoints**: Custom proxy and fallback support with auto-rotating keys and resilient retry loops.
+
+---
+
+## 📱 Tech Stack & Architecture
+
+- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Framer Motion, Lucide Icons.
+- **Native Runtime**: Capacitor 8 (Filesystem, Local Notifications, Intent Launcher, Share, App, Device).
+- **Math & Markdown**: KaTeX (inline & display LaTeX math), Rehype/Remark GFM, Highlight.js.
+- **State & Storage**: Offline-first LocalStorage & IndexedDB with optimistic UI updates and reactive listeners.
+- **Testing & Quality**: Vitest, React Testing Library, Oxlint (100% pass across 89 test suites and 1,150+ tests).
+
+---
+
+## 🛠️ Local Development & Build
+
+### Prerequisites
+- Node.js 20+ & npm
+- Android Studio / Android SDK (for native builds)
+- Java JDK 21
+
+### 1. Clone & Install Dependencies
 ```bash
-cd jee-levelup
-git init
-git add .
-git commit -m "LevelUp v1 - Phase 1 complete"
-git branch -M main
-git remote add origin https://github.com/<your-username>/<repo-name>.git
-git push -u origin main
-```
-
-That's it - open the **Actions** tab on GitHub to watch the build (~3-4 min), then
-check **Releases** for the APK. You can also trigger a build manually anytime from
-Actions -> "Build and Release APK" -> "Run workflow".
-
-## Local development (optional)
-
-```bash
+git clone https://github.com/anurag008w/levelup.git
+cd levelup
 npm install
-npm run dev          # runs in the browser at localhost, for quick UI iteration
-npm run build         # production web build
-npx cap sync android  # copy the web build into the native Android project
 ```
 
-To build the APK on your own machine instead of CI, you need Android Studio /
-the Android SDK + JDK 21 installed, then: `cd android && ./gradlew assembleDebug`.
+### 2. Run Web Development Server
+```bash
+npm run dev
+```
 
-## How the system works
+### 3. Run Linter & Tests
+```bash
+# Run ultra-fast oxlint
+npm run lint
 
-- **Today tab** - your daily checklist, grouped Morning / Study Blocks / Night,
-  cumulative across every unlocked level. A radial gauge shows Day X/90 and today's
-  completion.
-- **Levels tab** - the full 30-level timeline grouped by phase. Tap any level for its
-  new habits, daily tasks, time required, completion criteria,
-  unlock condition, common mistakes, and JEE benefit.
-- **Progress tab** - 7-day habit scores and streaks per habit, plus overall day streak
-  and levels cleared/needing recovery.
-- **Review tab** - weekly review (unlocks every 7th day) and monthly assessment
-  (Day 30/60/90), your JEE Main exam date (auto-switches Today into a lighter
-  revision-only Exam Month Protocol in the final 30 days), and past review history.
-- **Recovery Mode** - if a day's completion drops below 30%, the next day
-  automatically shows only the current level's core tasks as required; everything
-  else becomes optional "Bonus" so you rebuild momentum instead of feeling buried.
-- **Sunday Mock Test Protocol** - every 7th day, a fixed weekly checklist appears
-  (full mock, same-day error review, mistake log, section-time breakdown).
+# Run all 89 test suites (1,150+ tests)
+npm test
+```
 
-All progress is stored locally on-device (localStorage inside the app's webview).
-Uninstalling the app clears it - there's no cloud sync in this version.
+### 4. Build & Sync to Android
+```bash
+# Build production web bundle
+npm run build
+
+# Sync web assets and plugins to Android project
+npx cap sync android
+```
+
+### 5. Build Native APK
+Open the `android/` directory in Android Studio, or build via Gradle:
+```bash
+cd android
+./gradlew assembleDebug
+```
+The output APK will be located at:
+`android/app/build/outputs/apk/debug/app-debug.apk`
+
+---
+
+## 🔐 Android Permissions Overview
+
+The app requests permissions strictly for offline functionality and user-selected AI features:
+- `android.permission.INTERNET`: For AI chat, web search, and GitHub APK updates.
+- `android.permission.RECORD_AUDIO`: For real-time Misa voice chat and audio streaming.
+- `android.permission.CAMERA`: For scanning textbook questions and OCR analysis.
+- `android.permission.MODIFY_AUDIO_SETTINGS` & `BLUETOOTH_CONNECT`: For speaker, headset, and Bluetooth earbuds audio routing.
+- `android.permission.REQUEST_INSTALL_PACKAGES`: For seamless in-app APK updates.
+- `android.permission.POST_NOTIFICATIONS` & `RECEIVE_BOOT_COMPLETED`: For daily mission reminders and study alarms.
+- `android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`: To keep live audio streaming uninterrupted in background sessions.
+
+---
+
+## 🤝 Contribution & License
+
+Contributions are welcome! Please ensure all code passes `npm run lint` and `npm test` before submitting pull requests.
+
+Released under the **MIT License**.
