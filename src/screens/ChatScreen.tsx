@@ -397,11 +397,15 @@ export default function ChatScreen({
   };
 
   const getGeminiLiveApiKey = (): string => {
-    if (liveConfig.apiKey) return liveConfig.apiKey;
+    if (liveConfig.apiKey?.trim()) return liveConfig.apiKey.trim();
     const geminiProv = providers.find((p) => p.id === 'gemini');
-    if (geminiProv?.apiKey) return geminiProv.apiKey;
+    if (geminiProv?.apiKey?.trim()) return geminiProv.apiKey.trim();
     const activeProv = container.providerSettings.getActiveProvider();
-    if (activeProv?.apiKey) return activeProv.apiKey;
+    if (activeProv?.apiKey?.trim()) return activeProv.apiKey.trim();
+    const hiddenDefault = container.providerSettings.getHiddenDefaultFull();
+    if (hiddenDefault?.apiKey?.trim()) return hiddenDefault.apiKey.trim();
+    const anyKey = providers.find((p) => p.apiKey?.trim())?.apiKey?.trim();
+    if (anyKey) return anyKey;
     return '';
   };
 

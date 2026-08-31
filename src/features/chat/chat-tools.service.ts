@@ -866,6 +866,14 @@ export class ChatToolsService {
       return { ok: false, summary: `To-Do "${action.title || action.todoId || ''}" nahi mila.` };
     }
 
+    if (action.confirmed !== true) {
+      return {
+        ok: false,
+        requiresConfirmation: true,
+        summary: `To-Do "${target.title}" ko delete karne ke liye confirmation chahiye. Kya aap sach me ise delete karna chahte hain?`,
+      };
+    }
+
     const nextState: AppState = {
       ...state,
       customTodos: todos.filter((t) => t.id !== target.id),

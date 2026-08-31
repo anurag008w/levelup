@@ -242,11 +242,12 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       },
       {
         name: 'deleteTodo',
-        description: 'Delete a To-Do from the student list.',
+        description: 'Delete a To-Do from the student list (requires user confirmation before deleting).',
         parameters: {
           type: 'OBJECT',
           properties: {
             title: { type: 'STRING', description: 'Title of the todo to delete' },
+            confirmed: { type: 'BOOLEAN', description: 'true if student explicitly confirmed deletion' },
           },
           required: ['title'],
         },

@@ -931,7 +931,7 @@ const TaskRow = memo(function TaskRow({
         </div>
         <div className="flex gap-2 pt-1">
           <button className="btn btn-primary flex-1 py-2 text-xs font-bold gap-1" onClick={onSaveEdit}>
-            <Check size={14} /> Save Changes
+            <Check size={14} /> Save
           </button>
           <button className="btn btn-ghost px-3 py-2 text-xs" onClick={onCancelEdit}>
             Cancel

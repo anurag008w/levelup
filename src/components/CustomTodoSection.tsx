@@ -7,6 +7,7 @@ import {
   ListTodo,
   Pencil,
   Plus,
+  RotateCcw,
   Sparkles,
   Trash2,
   X,
@@ -70,6 +71,9 @@ export default function CustomTodoSection({
   const [editCategory, setEditCategory] = useState<TodoCategory>('general');
   const [editDuration, setEditDuration] = useState<number>(30);
 
+  // Uncomplete confirmation modal state
+  const [uncompleteTarget, setUncompleteTarget] = useState<CustomTodoTask | null>(null);
+
   // Drag Reorder state for arrange mode
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
 
@@ -97,6 +101,24 @@ export default function CustomTodoSection({
     setTitle('');
     setShowAddForm(false);
     flash('Naya To-Do add ho gaya!');
+  }
+
+  function handleTaskToggle(t: CustomTodoTask) {
+    if (t.completed) {
+      haptic(10);
+      setUncompleteTarget(t);
+    } else {
+      haptic(8);
+      onToggle(t.id);
+    }
+  }
+
+  function confirmUncomplete() {
+    if (!uncompleteTarget) return;
+    haptic(10);
+    onToggle(uncompleteTarget.id);
+    setUncompleteTarget(null);
+    flash(`"${uncompleteTarget.title}" ko wapas Pending mark kar diya.`);
   }
 
   function startEdit(t: CustomTodoTask) {
@@ -356,7 +378,7 @@ export default function CustomTodoSection({
               index={index}
               totalCount={filtered.length}
               isArrangeMode={isArrangeMode}
-              onToggle={() => onToggle(t.id)}
+              onToggle={() => handleTaskToggle(t)}
               onDelete={() => onDelete(t.id)}
               onEdit={() => startEdit(t)}
               onMove={moveItem}
@@ -374,6 +396,47 @@ export default function CustomTodoSection({
           ))
         )}
       </div>
+
+      {/* Uncomplete / Undo Confirmation Dialog */}
+      {uncompleteTarget && (
+        <div className="modal-backdrop fade-in" style={{ zIndex: 110 }} onClick={() => setUncompleteTarget(null)}>
+          <div
+            className="modal-card max-w-sm w-full p-4.5 space-y-3.5 text-center"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Undo task completion"
+          >
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400">
+              <RotateCcw size={22} />
+            </div>
+
+            <div>
+              <p className="font-display text-base font-bold text-text">Mark Task as Pending?</p>
+              <p className="mt-1 text-xs text-muted leading-relaxed">
+                Kya aap <span className="font-semibold text-text">"{uncompleteTarget.title}"</span> ko wapas incomplete / pending list mein lana chahte hain?
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={confirmUncomplete}
+                className="btn btn-primary flex-1 py-2 text-xs font-bold gap-1"
+              >
+                <Check size={14} strokeWidth={3} /> Haan, Pending Karo
+              </button>
+              <button
+                type="button"
+                onClick={() => setUncompleteTarget(null)}
+                className="btn btn-ghost px-4 py-2 text-xs text-muted"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit Modal Dialog */}
       {editingTodo && (

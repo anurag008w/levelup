@@ -128,6 +128,7 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
     action: z.literal('deleteTodo'),
     todoId: z.string().optional(),
     title: z.string().optional(),
+    confirmed: z.boolean().optional(),
   }),
   z.object({
     action: z.literal('listVaultResources'),

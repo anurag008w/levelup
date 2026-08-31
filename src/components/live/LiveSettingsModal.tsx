@@ -15,10 +15,12 @@ import {
   Brain,
   Cpu,
   Video,
+  ShieldCheck,
 } from 'lucide-react';
 import type { GeminiLiveVoice, LiveSettingsConfig } from '../../core/domain/live-types';
 import { OFFICIAL_GEMINI_VOICES } from '../../core/domain/live-types';
 import { GeminiLiveClient } from '../../core/domain/live-client';
+import { container } from '../../di/container';
 import { haptic, hapticSuccess, hapticError } from '../../lib/haptics';
 
 interface LiveSettingsModalProps {
@@ -36,8 +38,24 @@ export default function LiveSettingsModal({
   defaultApiKey = '',
   onSave,
 }: LiveSettingsModalProps) {
-  const [currentConfig, setCurrentConfig] = useState<LiveSettingsConfig>({ ...config });
-  const [apiKeyInput, setApiKeyInput] = useState(config.apiKey || '');
+  const hiddenDefault = container.providerSettings.getHiddenDefaultFull();
+  const activeProv = container.providerSettings.getActiveProvider();
+  const storedProviders = container.providerSettings.listStoredProviders();
+
+  const [currentConfig, setCurrentConfig] = useState<LiveSettingsConfig>({
+    ...config,
+    model: config.model || 'gemini-3.1-flash-live-preview',
+  });
+  const [selectedProviderId, setSelectedProviderId] = useState<string>('app-default');
+  const [apiKeyInput, setApiKeyInput] = useState(() => {
+    if (config.apiKey) return config.apiKey;
+    if (defaultApiKey) return defaultApiKey;
+    if (hiddenDefault?.apiKey) return hiddenDefault.apiKey;
+    if (activeProv?.apiKey) return activeProv.apiKey;
+    return '';
+  });
+  const [syncToProvider, setSyncToProvider] = useState(true);
+
   const [availableModels, setAvailableModels] = useState<string[]>([
     'gemini-3.1-flash-live-preview',
     'gemini-2.5-flash-native-audio-preview-09-2025',
@@ -51,8 +69,23 @@ export default function LiveSettingsModal({
 
   const [playingVoice, setPlayingVoice] = useState<GeminiLiveVoice | null>(null);
 
+  function handleProviderChange(newProvId: string) {
+    haptic(4);
+    setSelectedProviderId(newProvId);
+    if (newProvId === 'app-default') {
+      const key = hiddenDefault?.apiKey || activeProv?.apiKey || defaultApiKey || '';
+      if (key) setApiKeyInput(key);
+    } else if (newProvId === 'gemini') {
+      const g = storedProviders.find((p) => p.id === 'gemini');
+      if (g?.apiKey) setApiKeyInput(g.apiKey);
+    } else if (newProvId !== 'custom') {
+      const p = storedProviders.find((p) => p.id === newProvId);
+      if (p?.apiKey) setApiKeyInput(p.apiKey);
+    }
+  }
+
   async function handleFetchModels() {
-    const keyToUse = apiKeyInput.trim() || defaultApiKey.trim();
+    const keyToUse = apiKeyInput.trim() || defaultApiKey.trim() || hiddenDefault?.apiKey || activeProv?.apiKey || '';
     if (!keyToUse) {
       hapticError();
       setFetchMsg('Pehle API Key daalein ya default provider set karein.');
@@ -84,7 +117,7 @@ export default function LiveSettingsModal({
 
     setPlayingVoice(voice);
     try {
-      const keyToUse = apiKeyInput.trim() || defaultApiKey.trim();
+      const keyToUse = apiKeyInput.trim() || defaultApiKey.trim() || hiddenDefault?.apiKey || activeProv?.apiKey || '';
       await GeminiLiveClient.previewVoice(keyToUse, voice, text, currentConfig.model);
     } catch {
       // Ignored
@@ -95,9 +128,30 @@ export default function LiveSettingsModal({
 
   function handleSave() {
     hapticSuccess();
+    const cleanKey = apiKeyInput.trim();
+
+    // Sync API key to App provider settings if enabled
+    if (syncToProvider && cleanKey) {
+      if (selectedProviderId === 'app-default' && hiddenDefault) {
+        container.providerSettings.updateHiddenDefault({
+          ...hiddenDefault,
+          apiKey: cleanKey,
+        });
+      } else if (selectedProviderId !== 'custom') {
+        const target = storedProviders.find((p) => p.id === selectedProviderId);
+        if (target) {
+          container.providerSettings.upsertProvider({
+            ...target,
+            apiKey: cleanKey,
+          });
+        }
+      }
+    }
+
     const finalCfg = {
       ...currentConfig,
-      apiKey: apiKeyInput.trim() || undefined,
+      model: currentConfig.model || 'gemini-3.1-flash-live-preview',
+      apiKey: cleanKey || undefined,
     };
     onSave(finalCfg);
     onClose();
@@ -144,27 +198,75 @@ export default function LiveSettingsModal({
             <div className="rounded-2xl border border-border bg-black/20 p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-2 font-bold text-text">
-                  <Layers size={16} className="text-l" /> Live Model & Provider
+                  <Layers size={16} className="text-l" /> Live Provider & API Key
                 </span>
                 <span className="rounded-lg bg-l/10 px-2 py-0.5 text-[10px] font-semibold text-l">
-                  Google Gemini
+                  Gemini Live
                 </span>
               </div>
 
-              {/* API Key Override */}
+              {/* Provider Selection */}
               <div>
                 <label className="mb-1 block text-[11px] font-semibold text-muted">
-                  Gemini API Key (Leave blank to use App default)
+                  Select Provider for Live Voice Calls
                 </label>
+                <select
+                  value={selectedProviderId}
+                  onChange={(e) => handleProviderChange(e.target.value)}
+                  className="w-full rounded-xl border border-border bg-bg/80 px-3 py-2 text-xs font-semibold text-text focus:border-l focus:outline-none"
+                >
+                  <option value="app-default">
+                    ⭐ App Default Provider ({hiddenDefault?.label || activeProv?.label || 'Default Gateway'})
+                  </option>
+                  {storedProviders
+                    .filter((p) => !p.hidden)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label || p.id} ({p.id})
+                      </option>
+                    ))}
+                  <option value="custom">Custom Live API Key Only</option>
+                </select>
+              </div>
+
+              {/* API Key Input */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-semibold text-muted">
+                    API Key for Live Voice
+                  </label>
+                  {apiKeyInput ? (
+                    <span className="flex items-center gap-1 text-[10px] text-emerald-400">
+                      <ShieldCheck size={11} /> Key Configured
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-amber-400">No Key Set</span>
+                  )}
+                </div>
                 <div className="relative flex items-center">
                   <input
                     type="password"
                     value={apiKeyInput}
                     onChange={(e) => setApiKeyInput(e.target.value)}
-                    placeholder={defaultApiKey ? 'Using default key from app settings' : 'AIzaSy...'}
-                    className="w-full rounded-xl border border-border bg-bg/80 px-3 py-2 text-xs text-text placeholder:text-muted-dim focus:border-l focus:outline-none"
+                    placeholder={
+                      defaultApiKey || hiddenDefault?.apiKey || activeProv?.apiKey
+                        ? 'Using active provider API Key'
+                        : 'AIzaSy... (Enter Gemini API Key)'
+                    }
+                    className="w-full rounded-xl border border-border bg-bg/80 px-3 py-2 text-xs text-text placeholder:text-muted-dim focus:border-l focus:outline-none font-mono"
                   />
                 </div>
+                {selectedProviderId !== 'custom' && (
+                  <label className="mt-1.5 flex items-center gap-2 text-[10.5px] text-muted cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={syncToProvider}
+                      onChange={(e) => setSyncToProvider(e.target.checked)}
+                      className="rounded border-border"
+                    />
+                    Save/sync this API key to App Provider settings too
+                  </label>
+                )}
               </div>
 
               {/* Live Model Selection + Fetch Button */}
@@ -189,7 +291,7 @@ export default function LiveSettingsModal({
                 >
                   {availableModels.map((m) => (
                     <option key={m} value={m}>
-                      {m}
+                      {m} {m === 'gemini-3.1-flash-live-preview' ? '(Default)' : ''}
                     </option>
                   ))}
                 </select>

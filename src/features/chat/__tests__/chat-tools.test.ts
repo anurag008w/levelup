@@ -2423,10 +2423,18 @@ describe('notification reply flow', () => {
       expect(listPastDays.ok).toBe(true);
       expect(listPastDays.summary).toContain('last 10 days');
 
-      // 6. Delete todo
+      // 6. Delete todo (requires confirmation preview, then confirmed execution)
+      const delPreview = await tools.run({
+        action: 'deleteTodo',
+        title: 'HC Verma',
+      });
+      expect(delPreview.requiresConfirmation).toBe(true);
+      expect(store.get().customTodos).toHaveLength(2);
+
       const delRes = await tools.run({
         action: 'deleteTodo',
         title: 'HC Verma',
+        confirmed: true,
       });
       expect(delRes.ok).toBe(true);
       expect(store.get().customTodos).toHaveLength(1);
