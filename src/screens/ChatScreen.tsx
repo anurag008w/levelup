@@ -1608,38 +1608,45 @@ export default function ChatScreen({
       />
 
       {/* Overlays */}
-      {active && showSettings && (
-        <SettingsSheet
-          prefs={active.prefs}
-          providers={providers}
-          catalog={catalog}
-          onChange={updatePrefs}
-          onReset={resetPrefs}
-          onLoadCatalog={() => void loadCatalog()}
-          onOpenProviderPicker={() => setShowProviderPicker(true)}
-          onProviderAdded={() => setProviderSig((s) => `${s}-added`)}
-          onHistoryChanged={() => {
-            setProviderSig((s) => `${s}-hist`);
-            refresh();
-          }}
-          onExport={exportChat}
-          onClear={clearMessages}
-          onClose={() => setShowSettings(false)}
-        />
-      )}
+      {(() => {
+        const currentSession = active || (sessions.length > 0 ? sessions[0] : null) || ensureSession();
+        return (
+          <>
+            {currentSession && showSettings && (
+              <SettingsSheet
+                prefs={currentSession.prefs}
+                providers={providers}
+                catalog={catalog}
+                onChange={updatePrefs}
+                onReset={resetPrefs}
+                onLoadCatalog={() => void loadCatalog()}
+                onOpenProviderPicker={() => setShowProviderPicker(true)}
+                onProviderAdded={() => setProviderSig((s) => `${s}-added`)}
+                onHistoryChanged={() => {
+                  setProviderSig((s) => `${s}-hist`);
+                  refresh();
+                }}
+                onExport={exportChat}
+                onClear={clearMessages}
+                onClose={() => setShowSettings(false)}
+              />
+            )}
 
-      {active && showProviderPicker && (
-        <ProviderPickerSheet
-          prefs={active.prefs}
-          providers={providers}
-          onSelect={(pid) => {
-            updatePrefs({ providerId: pid });
-            setShowProviderPicker(false);
-          }}
-          onProviderAdded={() => setProviderSig((s) => `${s}-added`)}
-          onClose={() => setShowProviderPicker(false)}
-        />
-      )}
+            {currentSession && showProviderPicker && (
+              <ProviderPickerSheet
+                prefs={currentSession.prefs}
+                providers={providers}
+                onSelect={(pid) => {
+                  updatePrefs({ providerId: pid });
+                  setShowProviderPicker(false);
+                }}
+                onProviderAdded={() => setProviderSig((s) => `${s}-added`)}
+                onClose={() => setShowProviderPicker(false)}
+              />
+            )}
+          </>
+        );
+      })()}
 
       {showHistory && (
         <HistorySheet

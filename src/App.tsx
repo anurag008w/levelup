@@ -17,14 +17,42 @@ import ScreenSkeleton from './components/ScreenSkeleton';
 import { IncomingCallModal } from './components/live/IncomingCallModal';
 import { proactiveAgentService, type IncomingCallEvent } from './features/ai/proactive-agent.service';
 
-const LevelsScreen = lazy(() => import('./screens/LevelsScreen'));
-const ProgressScreen = lazy(() => import('./screens/ProgressScreen'));
-const ReviewScreen = lazy(() => import('./screens/ReviewScreen'));
-const TaskBankScreen = lazy(() => import('./screens/TaskBankScreen'));
-const PlannersScreen = lazy(() => import('./screens/PlannersScreen'));
-const AISettingsScreen = lazy(() => import('./screens/AISettingsScreen'));
-const UpdatesScreen = lazy(() => import('./screens/UpdatesScreen'));
-const ChatScreen = lazy(() => import('./screens/ChatScreen'));
+function lazyRetry<T extends React.ComponentType<any>>(
+  factory: () => Promise<{ default: T }>
+) {
+  return lazy(async () => {
+    try {
+      return await factory();
+    } catch (error: any) {
+      const msg = String(error?.message || '');
+      const isChunkError =
+        msg.includes('dynamically imported module') ||
+        msg.includes('Loading chunk') ||
+        msg.includes('Failed to fetch') ||
+        msg.includes('Importing a module script failed');
+
+      if (isChunkError) {
+        const key = 'levelup_chunk_reload';
+        const lastReload = Number(sessionStorage.getItem(key) || '0');
+        if (Date.now() - lastReload > 8000) {
+          sessionStorage.setItem(key, String(Date.now()));
+          window.location.reload();
+          return new Promise<{ default: T }>(() => {});
+        }
+      }
+      throw error;
+    }
+  });
+}
+
+const LevelsScreen = lazyRetry(() => import('./screens/LevelsScreen'));
+const ProgressScreen = lazyRetry(() => import('./screens/ProgressScreen'));
+const ReviewScreen = lazyRetry(() => import('./screens/ReviewScreen'));
+const TaskBankScreen = lazyRetry(() => import('./screens/TaskBankScreen'));
+const PlannersScreen = lazyRetry(() => import('./screens/PlannersScreen'));
+const AISettingsScreen = lazyRetry(() => import('./screens/AISettingsScreen'));
+const UpdatesScreen = lazyRetry(() => import('./screens/UpdatesScreen'));
+const ChatScreen = lazyRetry(() => import('./screens/ChatScreen'));
 
 const pageSpring = { type: 'tween', duration: 0.14, ease: 'easeOut' } as const;
 

@@ -32,7 +32,35 @@ import { normalizeState } from '../infra/storage/state-repository';
 import { deleteAllData } from '../features/sync/delete-all';
 import { exportTextFile } from '../lib/exportFile';
 
-const ChatSettingsScreen = lazy(() => import('./ChatSettingsScreen'));
+function lazyRetry<T extends React.ComponentType<any>>(
+  factory: () => Promise<{ default: T }>
+) {
+  return lazy(async () => {
+    try {
+      return await factory();
+    } catch (error: any) {
+      const msg = String(error?.message || '');
+      const isChunkError =
+        msg.includes('dynamically imported module') ||
+        msg.includes('Loading chunk') ||
+        msg.includes('Failed to fetch') ||
+        msg.includes('Importing a module script failed');
+
+      if (isChunkError) {
+        const key = 'levelup_chunk_reload';
+        const lastReload = Number(sessionStorage.getItem(key) || '0');
+        if (Date.now() - lastReload > 8000) {
+          sessionStorage.setItem(key, String(Date.now()));
+          window.location.reload();
+          return new Promise<{ default: T }>(() => {});
+        }
+      }
+      throw error;
+    }
+  });
+}
+
+const ChatSettingsScreen = lazyRetry(() => import('./ChatSettingsScreen'));
 
 export default function AISettingsScreen({
   state,
@@ -401,6 +429,49 @@ export default function AISettingsScreen({
           <MiniStat label="Active" value={effectiveActive ? 'Set' : 'None'} />
         </div>
       </section>
+
+      {/* Quick Settings: Live Voice & Chat Experience */}
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={() => {
+            haptic();
+            setShowLiveModal(true);
+          }}
+          className="card group flex items-center justify-between p-4 text-left transition-colors hover:border-border-strong active:scale-[0.99]"
+        >
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l transition-transform group-hover:scale-105">
+              <PhoneCall size={18} />
+            </span>
+            <div>
+              <p className="font-display text-sm font-bold text-text">Live Companion</p>
+              <p className="text-xs text-muted">Voice, speed, camera & screen FPS</p>
+            </div>
+          </div>
+          <ChevronRight size={16} className="text-muted-dim transition-transform group-hover:translate-x-0.5" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            haptic();
+            setShowChatSettings(true);
+          }}
+          className="card group flex items-center justify-between p-4 text-left transition-colors hover:border-border-strong active:scale-[0.99]"
+        >
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l transition-transform group-hover:scale-105">
+              <SlidersHorizontal size={18} />
+            </span>
+            <div>
+              <p className="font-display text-sm font-bold text-text">Chat Experience</p>
+              <p className="text-xs text-muted">Persona, models, prompts & style</p>
+            </div>
+          </div>
+          <ChevronRight size={16} className="text-muted-dim transition-transform group-hover:translate-x-0.5" />
+        </button>
+      </div>
 
       {session ? (
         <>
