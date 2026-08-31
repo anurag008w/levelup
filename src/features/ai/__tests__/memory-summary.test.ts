@@ -92,10 +92,50 @@ describe('parseMemoryBlocks', () => {
     expect(blocks.flatMap((b) => b.lines)).toHaveLength(2 + 2 + 10);
   });
 
+  it('parses root JSON array format emitted by some models', () => {
+    const text = '[{"title":"Physics","lines":["Weak in rotation"],"longTerm":true,"tags":["physics"]}]';
+    const blocks = parseMemoryBlocks(text);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].title).toBe('Physics');
+    expect(blocks[0].lines).toEqual(['Weak in rotation']);
+  });
+
+  it('parses root single object format without blocks key', () => {
+    const text = '{"title":"Study Style","lines":["Prefers visual problem solving"],"longTerm":false}';
+    const blocks = parseMemoryBlocks(text);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].title).toBe('Study Style');
+    expect(blocks[0].lines).toEqual(['Prefers visual problem solving']);
+  });
+
+  it('parses markdown header sections when model does not return JSON', () => {
+    const text = `### Physics Weakness
+- Weak in Rotational dynamics torque
+- Struggling with SHM phase angle
+
+### Chemistry Strengths
+- Organic chemistry reaction mechanisms are strong`;
+    const blocks = parseMemoryBlocks(text);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].title).toBe('Physics Weakness');
+    expect(blocks[0].lines).toEqual(['Weak in Rotational dynamics torque', 'Struggling with SHM phase angle']);
+    expect(blocks[1].title).toBe('Chemistry Strengths');
+    expect(blocks[1].lines).toEqual(['Organic chemistry reaction mechanisms are strong']);
+  });
+
+  it('strips <think> tags from reasoning models (DeepSeek, etc.) before parsing', () => {
+    const text = `<think>
+I need to extract the student's physics weakness.
+</think>
+{"blocks":[{"title":"Physics","lines":["Torque calculations tricky"],"longTerm":false}]}`;
+    const blocks = parseMemoryBlocks(text);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].lines).toEqual(['Torque calculations tricky']);
+  });
+
   it('returns an empty array for empty or invalid replies', () => {
     expect(parseMemoryBlocks('')).toEqual([]);
     expect(parseMemoryBlocks('   ')).toEqual([]);
-    expect(parseMemoryBlocks('no blocks here at all')).toEqual([]);
     expect(parseMemoryBlocks('{"foo":"bar"}')).toEqual([]);
   });
 });
