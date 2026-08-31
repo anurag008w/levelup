@@ -1723,7 +1723,7 @@ export default function ChatScreen({
               active?.messages && active.messages.length > 0
                 ? `[EXISTING CHAT HISTORY IN THIS SESSION]:\n${active.messages
                     .slice(-15)
-                    .map((m) => `${m.role === 'assistant' ? 'Misa' : 'Student'}: ${m.content}`)
+                    .map((m) => `${m.role === 'assistant' ? 'Misa' : 'User'}: ${m.content}`)
                     .join('\n')}`
                 : '',
             ]

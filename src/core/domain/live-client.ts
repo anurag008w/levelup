@@ -102,12 +102,12 @@ export class GeminiLiveClient {
       this.recentChatSummary = '';
       return;
     }
-    // Take last 12 messages, format as a short recap
-    const recent = messages.slice(-12);
+    // Take last 15 messages, format as clear conversation lines
+    const recent = messages.slice(-15);
     const lines = recent.map(m => {
-      const who = m.role === 'user' ? 'Student' : 'Misa';
-      const snippet = m.content.slice(0, 120).replace(/\n/g, ' ');
-      return `${who}: ${snippet}${m.content.length > 120 ? '...' : ''}`;
+      const who = m.role === 'user' ? 'User' : 'Misa';
+      const snippet = m.content.slice(0, 300).replace(/\n/g, ' ');
+      return `${who}: ${snippet}${m.content.length > 300 ? '...' : ''}`;
     });
     this.recentChatSummary = lines.join('\n');
   }
@@ -545,15 +545,17 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
           const timeGreeting = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
           const topicClause = activeTopic && activeTopic !== 'General' ? `Their recent target topic is "${activeTopic}".` : '';
 
-          const chatContextSnippet = this.recentChatSummary ? `Recent chat conversation context: "${this.recentChatSummary.slice(-300)}".` : '';
+          const chatContextSnippet = this.recentChatSummary
+            ? `Recent chat conversation context:\n"""\n${this.recentChatSummary.slice(-600)}\n"""\nPick up seamlessly from this conversation or ask what they're up to.`
+            : '';
 
           if (this.isIncomingCallSession) {
             this.session?.sendRealtimeInput({
-              text: `[SYSTEM EVENT: Call connected! Time of day: ${timeGreeting}. ${topicClause} ${chatContextSnippet} Speak immediately in 1 short, warm, natural Hinglish sentence as the caller checking on their study target or picking up what was being discussed. Reason: "${this.incomingCallReason || 'Study check-in'}"]`,
+              text: `[SYSTEM EVENT: Incoming call connected! Time of day: ${timeGreeting}. ${topicClause} ${chatContextSnippet} Greet warmly and naturally like a real friend on phone (e.g. "Hey! Suno, kaisa chal raha hai?"). Reason: "${this.incomingCallReason || 'Study check-in'}"]`,
             });
           } else {
             this.session?.sendRealtimeInput({
-              text: `[SYSTEM EVENT: Live voice call connected! Time of day: ${timeGreeting}. ${topicClause} ${chatContextSnippet} Greet the student dynamically in 1 short, fresh, natural Hinglish sentence acknowledging their current study/chat context and what question we are tackling.]`,
+              text: `[SYSTEM EVENT: Live voice call connected! Time of day: ${timeGreeting}. ${topicClause} ${chatContextSnippet} Greet naturally in 1 short, friendly Hinglish sentence continuing from the chat context or asking what they're working on.]`,
             });
           }
         } catch (e) {
