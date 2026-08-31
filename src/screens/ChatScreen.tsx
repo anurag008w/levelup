@@ -682,7 +682,10 @@ export default function ChatScreen({
         ]);
         return { result: res.summary };
       }
-      return { result: 'Success' };
+      // Universal fallback for all other domain tools (editMemory, deleteMemory, pinMemory, getSubject, getRange, etc.)
+      const actionObj: any = { action: name, ...args };
+      const fallbackRes = await container.chatTools.runMany([actionObj]);
+      return { result: fallbackRes.summary };
     } catch (e: any) {
       return { error: e?.message || 'Tool execution failed' };
     }
