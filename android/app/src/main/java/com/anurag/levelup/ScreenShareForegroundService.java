@@ -5,9 +5,11 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -17,8 +19,9 @@ import androidx.core.app.NotificationCompat;
  * live companion persistence.
  *
  * Runs on Android 7 to Android 16:
+ *  - Holds a PowerManager.WakeLock so CPU doesn't sleep in background
  *  - Displays a persistent notification with a tap-to-return action
- *  - Prevents the OS from killing the capture pipeline when the user
+ *  - Prevents the OS from killing the capture & audio pipeline when the user
  *    minimizes the app to view PDFs, notes, or coaching apps
  *  - Properly registers FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION on Android 10+
  */
@@ -26,6 +29,8 @@ public class ScreenShareForegroundService extends Service {
 
     public static final String CHANNEL_ID = "misa_screenshare_channel";
     public static final int NOTIF_ID = 7421;
+
+    private PowerManager.WakeLock wakeLock;
 
     @Override
     public void onCreate() {
@@ -35,6 +40,17 @@ public class ScreenShareForegroundService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Acquire WakeLock so background WebSocket / WebAudio streaming stays active
+        if (wakeLock == null) {
+            try {
+                PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (powerManager != null) {
+                    wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "levelup:misa_live_wakelock");
+                    wakeLock.acquire(4 * 60 * 60 * 1000L); // 4 hours maximum timeout
+                }
+            } catch (Exception ignored) {}
+        }
+
         // Intent to return to MainActivity when user taps the notification
         Intent launchIntent = new Intent(this, MainActivity.class);
         launchIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
@@ -62,6 +78,17 @@ public class ScreenShareForegroundService extends Service {
         }
 
         return START_NOT_STICKY;
+    }
+
+    @Override
+    public void onDestroy() {
+        if (wakeLock != null && wakeLock.isHeld()) {
+            try {
+                wakeLock.release();
+            } catch (Exception ignored) {}
+            wakeLock = null;
+        }
+        super.onDestroy();
     }
 
     @Nullable
