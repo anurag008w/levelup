@@ -94,61 +94,60 @@ export class LiveSilenceStateMachine {
 
       if (isCameraOrScreenActive) {
         if (stage === 1) {
-          return `[LIVE VISION CO-STUDY OBSERVATION]: Student has been quiet for 15s. Look at the camera/screen feed right now:
-- If student is AWAY / chair is empty: Speak 1 brief warm sentence ("Lagta hai thodi der ke liye uth ke gaye ho... jab aao toh batana!").
-- If student is taking a BREAK / watching videos / listening to music / browsing: Speak 1 friendly, chill Hinglish sentence acknowledging their break ("Thoda break chal raha hai? Sahi hai, mind fresh kar lo!").
-- If student is STUDYING / SOLVING: Look at what problem/diagram/code is visible. Topic: "${pickedFact}". Speak 1 short, intuitive Hinglish observation about what you see on screen/paper.`;
+          return `[LIVE VISION CO-STUDY]: 15s pause. Look at the camera/screen feed right now:
+- If AWAY / empty chair: Speak 1 brief warm line ("Lagta hai thodi der ke liye uth ke gaye ho... aao toh batana!").
+- If on BREAK / videos / music / browsing: Speak 1 casual, chill Hinglish line about what is on screen ("Thoda break chal raha hai? Sahi hai!").
+- If SOLVING / STUDYING: Look at the exact question/diagram/code on screen ("${pickedFact}"). Ask or comment directly on that specific question or step. Do NOT say 'main screen dekh rahi hu', speak directly about the screen content.`;
         }
         if (stage === 2) {
-          return `[LIVE VISION CO-STUDY OBSERVATION]: 35s mark. Look at the video/screen:
-- If student is AWAY: Stay completely silent.
-- If taking a BREAK: Playfully chat or ask how the break is going.
-- If STUDYING: Memory: "${pickedFact}". Ask if a specific calculation step or formula on screen is giving trouble or if they need a hint.`;
+          return `[LIVE VISION CO-STUDY]: 35s mark. Look at screen/camera:
+- If AWAY: Stay completely silent.
+- If on BREAK: Chat casually about their break.
+- If STUDYING: ("${pickedFact}"). Ask if a specific calculation step on screen is giving trouble or if they want a quick hint.`;
         }
         if (stage === 3) {
-          return `[LIVE VISION CO-STUDY OBSERVATION]: ~55s quiet. Look at the camera/screen:
-- If student is AWAY: Stay silent.
-- If taking a BREAK: Say take your time, relax properly!
-- If STUDYING: Speak 1 playful Hinglish sentence: "Areyy itni shanti? Sawal me kahi calculation lambi chal rahi hai ya step fasa hai? 😂"`;
+          return `[LIVE VISION CO-STUDY]: ~55s quiet.
+- If AWAY: Stay silent.
+- If present: Speak 1 playful Hinglish line: "Areyy itni shanti? Question me kahi calculation lambi chal rahi hai ya break chal raha hai? 😂"`;
         }
         if (stage === 4) {
-          return `[LIVE VISION CO-STUDY OBSERVATION]: ~75s quiet. Voice check:
-- If student is AWAY: Stay silent.
-- If present: Speak 1 caring Hinglish voice check: "Hello? Sun rahe ho na? Mic mute toh nahi ho gaya ya sheet pe calculate kar rahe ho?"`;
+          return `[LIVE VISION CO-STUDY]: ~75s voice check.
+- If AWAY: Stay silent.
+- If present: Speak 1 caring Hinglish line: "Hello? Sun rahe ho na? Mic mute toh nahi ho gaya ya rough sheet pe solve kar rahe ho?"`;
         }
-        return `[LIVE VISION CO-STUDY OBSERVATION]: Cyclic check. If student is studying with "${pickedFact}", remind them you are right here on screen whenever they want to bounce an idea or need a hint. If on break, encourage them to enjoy the break and tell you whenever ready to resume.`;
+        return `[LIVE VISION CO-STUDY]: Cyclic check. If solving ("${pickedFact}"), remind them you're right here whenever they want to bounce an idea. If relaxing, tell them to enjoy the break.`;
       }
 
       // Audio-only mode progressive stages with real memory integration
       if (stage === 1) {
-        return `[LIVE COMPANION NUDGE]: Student has been quiet for 15-20s. Topic context: "${pickedFact}". Proactively speak 1 short, warm, natural Hinglish question checking how they are doing (whether solving or taking a breather). Keep it fresh and conversational.`;
+        return `[LIVE COMPANION NUDGE]: 15-20s pause. Context: "${pickedFact}". Speak 1 short, warm, natural Hinglish question checking how it's going (whether calculating or taking a breather). Do NOT sound like a robotic script.`;
       }
 
       if (stage === 2) {
-        return `[LIVE COMPANION NUDGE]: Student is still quiet after 35s. Context: "${pickedFact}". Speak 1 short, light-hearted Hinglish sentence: "Itni shanti? Sawal solve ho raha hai ya thoda break chal raha hai? 😂"`;
+        return `[LIVE COMPANION NUDGE]: 35s mark. Context: "${pickedFact}". Speak 1 short, light-hearted Hinglish line: "Itni shanti? Sawal solve ho raha hai ya thoda break chal raha hai? 😂"`;
       }
 
       if (stage === 3) {
-        return '[LIVE COMPANION NUDGE]: Student has been completely quiet for almost 1 minute. Speak 1 short, playful, human-like Hinglish question asking why they are so quiet: "Areyy itni der se ekdum chup kyu ho? Kahi kisi numerical me fass gaye ya chill kar rahe ho? 😂"';
+        return '[LIVE COMPANION NUDGE]: ~55s quiet. Speak 1 short, playful Hinglish line: "Areyy itni der se ekdum chup kyu ho? Kahi numerical me fass gaye ya chill kar rahe ho? 😂"';
       }
 
       if (stage === 4) {
-        return '[LIVE COMPANION NUDGE]: Student is still silent after 75s. Speak 1 short, caring Hinglish voice check: "Hello? Sun rahe ho na? Mic mute toh nahi ho gaya ya paper pe rough work chal raha hai?"';
+        return '[LIVE COMPANION NUDGE]: 75s quiet. Speak 1 short, caring Hinglish voice check: "Hello? Sun rahe ho na? Mic mute toh nahi ho gaya ya sheet pe calculate chal raha hai?"';
       }
 
       if (stage === 5) {
-        return `[LIVE COMPANION NUDGE]: Student has been quiet for over 90s. Relevant memory: "${pickedFact}". Speak 1 short Hinglish sentence offering a targeted hint on this topic: "Main yahi hoon call pe, agar is concept me koi doubt fas raha ho ya break ke baad restart karna ho toh batao, saath me solve karte hain!"`;
+        return `[LIVE COMPANION NUDGE]: 90s quiet. Context: "${pickedFact}". Speak 1 short Hinglish line: "Main yahi hoon call pe, agar koi doubt fas raha ho ya break ke baad solve karna ho toh batao, saath me karte hain!"`;
       }
 
       // Stage 6+ endless cyclic check-ins (never stops)
       const cyclicIndex = stage % 3;
       if (cyclicIndex === 0) {
-        return `[LIVE COMPANION NUDGE]: Student is still quiet. Relevant memory: "${pickedFact}". Speak 1 short Hinglish check-in asking if they want to move to the next question or are still taking a short break.`;
+        return `[LIVE COMPANION NUDGE]: Context: "${pickedFact}". Speak 1 short Hinglish check-in asking if they want to move to the next question or are still on break.`;
       }
       if (cyclicIndex === 1) {
-        return `[LIVE COMPANION NUDGE]: Student is still quiet. Focus: "${pickedFact}". Speak 1 short Hinglish check-in asking what formula or step they are calculating right now.`;
+        return `[LIVE COMPANION NUDGE]: Focus: "${pickedFact}". Speak 1 short Hinglish line asking what step or formula they are calculating right now.`;
       }
-      return `[LIVE COMPANION NUDGE]: Student is still quiet. Topic: "${pickedFact}". Speak 1 brief warm sentence in Hinglish: "Pura time leke solve ya relax karo, main yahi hoon, jab ready ho toh batana." Then stay ready for next turn.`;
+      return `[LIVE COMPANION NUDGE]: Topic: "${pickedFact}". Speak 1 brief warm line in Hinglish: "Pura time leke solve ya chill karo, main yahi hoon, jab ready ho toh batana."`;
     }
 
     return null;

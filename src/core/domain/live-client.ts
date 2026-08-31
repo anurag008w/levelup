@@ -796,9 +796,23 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   /** Start streaming camera frames (Front or Back lens). */
   async startCameraStream(lens: LiveCameraLens): Promise<MediaStream> {
-    return this.visionStreamer.startCamera(lens, this.config.videoFps, (jpegBase64) => {
+    const stream = await this.visionStreamer.startCamera(lens, this.config.videoFps, (jpegBase64) => {
       this.sendVideoFrame(jpegBase64);
     });
+
+    if (stream && this.session) {
+      setTimeout(() => {
+        try {
+          this.session?.sendRealtimeInput({
+            text: `[Camera is on. Look at the camera feed right now and speak 1 short, natural Hinglish line directly about what you see (e.g. textbook, notebook, desk, or empty chair). Do NOT use robotic greeting scripts.]`,
+          });
+        } catch (e) {
+          console.warn('[GeminiLive] Failed to send camera start prompt:', e);
+        }
+      }, 700);
+    }
+
+    return stream;
   }
 
   /** Flip between Front and Back camera. */
@@ -810,9 +824,23 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   /** Start streaming Desktop Screen Share. */
   async startScreenStream(onEnded?: () => void): Promise<MediaStream | null> {
-    return this.visionStreamer.startScreenShare(this.config.screenFps, (jpegBase64) => {
+    const stream = await this.visionStreamer.startScreenShare(this.config.screenFps, (jpegBase64) => {
       this.sendVideoFrame(jpegBase64);
     }, onEnded);
+
+    if (stream && this.session) {
+      setTimeout(() => {
+        try {
+          this.session?.sendRealtimeInput({
+            text: `[Screen share is on. Look at what is open on the screen right now and comment or ask directly about what you see in 1 short, natural, friendly Hinglish sentence (e.g. specific question, YouTube video, notes, or app). Do NOT say 'main screen dekh rahi hu', speak directly about the screen content.]`,
+          });
+        } catch (e) {
+          console.warn('[GeminiLive] Failed to send screen start prompt:', e);
+        }
+      }, 700);
+    }
+
+    return stream;
   }
 
   /** Stop camera or screen video stream. */
