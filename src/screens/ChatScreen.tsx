@@ -36,7 +36,7 @@ import type { StudyResource, VaultSubject } from '../core/domain/study-vault';
 import { formatFileSize } from '../core/domain/study-vault';
 import { getVaultFileBlob } from '../infra/storage/vault-db';
 import type { ChatAttachment, ChatMessage, ChatPreferences, ChatSession, ChatToolCallRecord } from '../core/domain/chat';
-import type { ChatToolMeta } from '../core/domain/chat-tools';
+import { TOOL_LABELS, type ChatToolMeta } from '../core/domain/chat-tools';
 import type { ArchivedConversation } from '../core/domain/chat-transcript';
 import { isAbortError, type ModelInfo } from '../core/domain/llm';
 import { defaultChatPrefs, globalChatPrefsFromSettings } from '../core/domain/chat';
@@ -2023,51 +2023,6 @@ function ToolBadge({ tool }: { tool: string }) {
     </div>
   );
 }
-
-const TOOL_LABELS: Record<string, string> = {
-  getPlan: 'Plan dekha',
-  getRange: 'Range dekhi',
-  getContext: 'Journey status dekha',
-  listPlanners: 'Planners dekhe',
-  getSubject: 'Subject detail dekha',
-  getPlanner: 'Planner detail dekha',
-  getTest: 'Test detail dekha',
-  getTests: 'Tests dekhe',
-  getRoutine: 'Routine dekhi',
-  getDay: 'Day detail dekha',
-  addTask: 'Task add kiya',
-  bulkAddTasks: 'Tasks add kiye',
-  removeTask: 'Task hata diya',
-  bulkRemoveTasks: 'Tasks hata diye',
-  setDayMode: 'Din mode badla',
-  editTask: 'Task edit kiya',
-  markDone: 'Task done kiya',
-  bulkMarkDone: 'Tasks done kiye',
-  getAllTasks: 'Tasks dekhe',
-  getTaskBank: 'Task bank dekha',
-  editAnyTask: 'Task bank edit kiya',
-  deleteAnyTask: 'Task bank delete kiya',
-  createBlock: 'Block banaya',
-  deleteBlock: 'Block delete kiya',
-  activateBlock: 'Block activate kiya',
-  editBlock: 'Block edit kiya',
-  listBlocks: 'Blocks dekhe',
-  extendBlock: 'Block extend kiya',
-  websearch: 'Web search hua',
-  webSearch: 'Web search hua',
-  getTime: 'Time & Date dekha',
-  saveCustomMemory: 'Memory me save kiya',
-  searchChatHistory: 'Purani chats search ki',
-  listChatSessions: 'Chat sessions dekhe',
-  getChatSession: 'Chat transcript dekha',
-  searchMemory: 'Memory search ki',
-  readMemory: 'Memory dekhi',
-  addMemory: 'Memory me save kiya',
-  editMemory: 'Memory edit ki',
-  deleteMemory: 'Memory delete ki',
-  pinMemory: 'Memory pin ki',
-  unpinMemory: 'Memory unpin ki',
-};
 
 /* =====================================================================
    Attachments

@@ -21,7 +21,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import type { ChatMessage, ChatToolCallRecord } from '../../core/domain/chat';
-import type { ChatToolMeta } from '../../core/domain/chat-tools';
+import { TOOL_LABELS, type ChatToolMeta } from '../../core/domain/chat-tools';
 import type {
   LiveAudioRoute,
   LiveCameraLens,
@@ -34,41 +34,6 @@ import { GeminiLiveClient } from '../../core/domain/live-client';
 import { haptic, hapticError } from '../../lib/haptics';
 import ChatMarkdown from '../ChatMarkdown';
 import LiveSettingsModal from './LiveSettingsModal';
-
-const TOOL_LABELS: Record<string, string> = {
-  getPlan: 'Plan dekha',
-  getRange: 'Range dekhi',
-  getContext: 'Journey status dekha',
-  listPlanners: 'Planners dekhe',
-  getSubject: 'Subject detail dekha',
-  getPlanner: 'Planner detail dekha',
-  getTest: 'Test detail dekha',
-  getTests: 'Tests dekhe',
-  getRoutine: 'Routine dekhi',
-  getDay: 'Day detail dekha',
-  addTask: 'Task add kiya',
-  bulkAddTasks: 'Tasks add kiye',
-  removeTask: 'Task hata diya',
-  bulkRemoveTasks: 'Tasks hata diye',
-  setDayMode: 'Din mode badla',
-  editTask: 'Task edit kiya',
-  markDone: 'Task done kiya',
-  bulkMarkDone: 'Tasks done kiye',
-  getAllTasks: 'Tasks dekhe',
-  getTaskBank: 'Task bank dekha',
-  editAnyTask: 'Task bank edit kiya',
-  deleteAnyTask: 'Task bank delete kiya',
-  createBlock: 'Block banaya',
-  deleteBlock: 'Block delete kiya',
-  activateBlock: 'Block activate kiya',
-  editBlock: 'Block edit kiya',
-  listBlocks: 'Blocks dekhe',
-  extendBlock: 'Block extend kiya',
-  websearch: 'Web search hua',
-  webSearch: 'Web search hua',
-  getTime: 'Time & Date dekha',
-  saveCustomMemory: 'Memory me save kiya',
-};
 
 function ThinkingBlock({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
@@ -441,12 +406,36 @@ export default function LiveCompanionOverlay({
           }
         } else if (onExecuteTool) {
           const res = await onExecuteTool(toolId, { query: cleanPrompt, day: 1 });
+          let displayMsg = '';
+          if (res && typeof res === 'object') {
+            displayMsg =
+              res.summary ||
+              res.result ||
+              res.plan ||
+              res.searchResult ||
+              res.context ||
+              res.tests ||
+              res.routine ||
+              res.todos ||
+              res.vaultResources ||
+              res.chatSearchResults ||
+              res.chatSessions ||
+              res.chatTranscript ||
+              res.memorySearchResults ||
+              res.memory ||
+              (res.currentTime ? `Current Time: ${res.currentTime}, Date: ${res.currentDate || ''}` : '') ||
+              'Tool executed';
+          } else if (typeof res === 'string') {
+            displayMsg = res;
+          } else {
+            displayMsg = 'Tool executed';
+          }
           toolCalls.push({
             action: toolId,
-            ok: true,
-            message: res?.summary || res?.result || res?.plan || 'Tool executed',
+            ok: !res?.error,
+            message: displayMsg,
           });
-          toolContextInjection += `\n[TOOL @${toolId} RESULT]:\n${JSON.stringify(res)}\n`;
+          toolContextInjection += `\n[TOOL @${toolId} RESULT]:\n${displayMsg}\n`;
         }
       }
 
