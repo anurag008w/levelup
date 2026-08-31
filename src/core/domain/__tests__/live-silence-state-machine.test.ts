@@ -44,7 +44,7 @@ describe('LiveSilenceStateMachine', () => {
     expect(fsm.getStreakCount()).toBe(1);
   });
 
-  it('progresses to stage 2 check-in when silence continues and resets on speech', () => {
+  it('progresses to stage 2 and stage 3 ("chup kyu ho") when silence continues and resets on speech', () => {
     const now = Date.now();
     fsm.evaluate({ silenceDurationSec: 16, isCameraOrScreenActive: false }, now);
     expect(fsm.getStreakCount()).toBe(1);
@@ -53,6 +53,12 @@ describe('LiveSilenceStateMachine', () => {
     const res2 = fsm.evaluate({ silenceDurationSec: 20, isCameraOrScreenActive: false }, now + 18000);
     expect(res2).not.toBeNull();
     expect(fsm.getStreakCount()).toBe(2);
+
+    // After another 18s cooldown, stage 3 ("chup kyu ho") check-in
+    const res3 = fsm.evaluate({ silenceDurationSec: 20, isCameraOrScreenActive: false }, now + 36000);
+    expect(res3).not.toBeNull();
+    expect(res3).toContain('chup kyu ho');
+    expect(fsm.getStreakCount()).toBe(3);
 
     // Speech resets streak
     fsm.onSpeechActivity();

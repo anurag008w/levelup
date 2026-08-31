@@ -879,10 +879,26 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         const activeTopic = rel.commitments[0]?.topic || rel.currentSubject || 'General Problem Solving';
         const topicMemoryContext = `${activeTopic} (${rel.currentGoal || 'JEE 2027'})`;
 
+        // Extract real durable memories and commitments
+        const memoryFactList: string[] = [];
+        if (rel.commitments.length > 0) {
+          rel.commitments.forEach(c => memoryFactList.push(`Goal commitment: ${c.topic} (${c.subject})`));
+        }
+        if (rel.durableMemories.length > 0) {
+          rel.durableMemories.forEach(m => memoryFactList.push(m.fact));
+        }
+        if (rel.pendingPromises.length > 0) {
+          rel.pendingPromises.forEach(p => memoryFactList.push(`User promise: ${p.userPromise}`));
+        }
+        if (rel.currentProblemArea) {
+          memoryFactList.push(`Struggling area: ${rel.currentProblemArea}`);
+        }
+
         const promptText = this.silenceStateMachine.evaluate({
           silenceDurationSec,
           isCameraOrScreenActive: isCameraOrScreen,
           topicMemoryContext,
+          memoryFactList,
         });
 
         if (promptText) {

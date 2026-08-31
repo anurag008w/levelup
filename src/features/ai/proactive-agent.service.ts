@@ -278,6 +278,92 @@ class ProactiveAgentService {
 
     // Check cold-start triggers on first launch
     this.checkColdStartOnboarding();
+
+    // ─── ACTIVE INACTIVITY & SPONTANEOUS CALL POLLING LOOP ─────────────────────
+    // Runs every 3 minutes while app is open (Web + Android foreground).
+    // Native background delivery is handled by scheduled LocalNotifications above.
+    setInterval(() => {
+      this.checkInactivityAndFire();
+    }, 3 * 60 * 1000); // every 3 minutes
+
+    // Run once immediately on startup too (in case app was opened after long absence)
+    setTimeout(() => {
+      this.checkInactivityAndFire();
+    }, 5000);
+  }
+
+  /**
+   * Checks inactivity tiers and spontaneous call windows.
+   * Called every 3 minutes while app is in foreground.
+   */
+  private checkInactivityAndFire(): void {
+    if (!this.prefs.enabled) return;
+    if (this.isQuietTime()) return;
+
+    const now = Date.now();
+    const inactiveSince = now - this.lastUserChatTimestamp;
+    const activeSince = now - this.lastActiveTimestamp;
+
+    // 30-min active grace period: user is using app actively, don't interrupt
+    if (activeSince < this.prefs.activeGraceMinutes * 60 * 1000 && this.lastUserChatTimestamp > 0) return;
+
+    // ── Inactivity Check-ins ──────────────────────────────────────────────────
+    // Only fire if we haven't already scheduled a pending trigger recently
+    const hasPending = this.pendingTriggers.some((t) => t.scheduledTime > now - 30 * 60 * 1000);
+    if (hasPending) return;
+
+    const relState = relationshipManager.getState();
+
+    if (this.lastUserChatTimestamp > 0 && inactiveSince >= 96 * 3600 * 1000) {
+      // 96h inactivity: fresh restart message
+      const msg = pickVariedTemplate('inactivity_96h', relState.recentSentMessages);
+      this.injectMessageIntoChat(msg);
+      relationshipManager.recordProactiveSent('inactivity_96h', msg);
+      this.lastUserChatTimestamp = now - 48 * 3600 * 1000; // reset to prevent re-fire immediately
+
+    } else if (this.lastUserChatTimestamp > 0 && inactiveSince >= 48 * 3600 * 1000) {
+      // 48h inactivity
+      const msg = pickVariedTemplate('inactivity_48h', relState.recentSentMessages);
+      this.injectMessageIntoChat(msg);
+      relationshipManager.recordProactiveSent('inactivity_48h', msg);
+
+    } else if (this.lastUserChatTimestamp > 0 && inactiveSince >= 24 * 3600 * 1000) {
+      // 24h inactivity
+      const msg = pickVariedTemplate('inactivity_24h', relState.recentSentMessages);
+      this.injectMessageIntoChat(msg);
+      relationshipManager.recordProactiveSent('inactivity_24h', msg);
+
+    } else if (this.lastUserChatTimestamp === 0) {
+      // Cold start — never chatted: show a welcome nudge after a short delay
+      const msg = 'Hey! JEE ki taiyari start karte hain? Koi bhi question ya topic puch sakte ho! 🎯';
+      if (!relState.recentSentMessages.includes(msg)) {
+        this.injectMessageIntoChat(msg);
+        relationshipManager.recordProactiveSent('cold_start', msg);
+      }
+    }
+
+    // ── Spontaneous Call Window ───────────────────────────────────────────────
+    // Fire spontaneous call if: calls enabled, enough time since last call, and
+    // user has chatted in last 7 days (relationship exists)
+    const minCallInterval = this.prefs.callFrequency === 'rare' ? 4 * 24 * 3600 * 1000 : 2 * 24 * 3600 * 1000;
+    const sevenDays = 7 * 24 * 3600 * 1000;
+    const callReady = this.prefs.callsEnabled
+      && now - this.lastCallTimestamp > minCallInterval
+      && now - this.lastCallDeclinedTimestamp > 3 * 24 * 3600 * 1000
+      && this.lastUserChatTimestamp > 0
+      && now - this.lastUserChatTimestamp < sevenDays
+      && !this.isQuietTime();
+
+    if (callReady) {
+      // Weighted random: 15% chance per 3-minute tick (~1 chance per ~20 min window)
+      if (Math.random() < 0.15) {
+        const commitments = relState.commitments.filter((c) => c.state === 'PLANNED');
+        const reason = commitments.length > 0
+          ? `${commitments[0].topic} commitment check-in`
+          : 'Study check-in';
+        this.triggerIncomingCall(reason);
+      }
+    }
   }
 
   /** Record any user activity in app (resets 30-min anti-distraction shield) */
