@@ -492,10 +492,37 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         output = { error: err?.message || 'Failed to execute tool' };
       }
 
+      let displayMessage = '';
+      if (output?.error) {
+        displayMessage = `Error: ${output.error}`;
+      } else if (typeof output === 'string') {
+        displayMessage = output;
+      } else if (output && typeof output === 'object') {
+        displayMessage =
+          output.summary ||
+          output.result ||
+          output.plan ||
+          output.searchResult ||
+          output.context ||
+          output.tests ||
+          output.routine ||
+          output.todos ||
+          output.vaultResources ||
+          output.chatSearchResults ||
+          output.chatSessions ||
+          output.chatTranscript ||
+          output.memorySearchResults ||
+          output.memory ||
+          (output.currentTime ? `Current Time: ${output.currentTime}, Date: ${output.currentDate || ''}` : '') ||
+          JSON.stringify(output, null, 2);
+      } else {
+        displayMessage = 'Tool executed';
+      }
+
       this.pendingToolCalls.push({
         action: fc.name,
         ok: !output?.error,
-        message: output?.searchResult || output?.result || output?.summary || output?.plan || (output?.error ? `Error: ${output.error}` : 'Tool executed'),
+        message: displayMessage,
       });
 
       functionResponses.push({
