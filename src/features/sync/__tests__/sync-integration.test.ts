@@ -117,7 +117,10 @@ describe('sync integration — user lifecycle', () => {
     ({ app, server } = await freshContainer());
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    try {
+      app?.syncCoordinator?.detach();
+    } catch {}
     vi.resetModules();
     localStorage.clear();
   });

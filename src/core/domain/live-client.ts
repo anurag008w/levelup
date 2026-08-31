@@ -110,14 +110,14 @@ export class GeminiLiveClient {
     this.framesSentCount = 0;
 
     const now = new Date();
-    const timeZone = 'Asia/Kolkata';
-    const timeString = now.toLocaleTimeString('en-IN', {
+    const timeZone = this.config.timeZone || deviceTimeZone() || 'Asia/Kolkata';
+    const timeString = now.toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
       hour12: true,
       timeZone,
     });
-    const dateString = now.toLocaleDateString('en-IN', {
+    const dateString = now.toLocaleDateString('en-US', {
       weekday: 'long',
       day: 'numeric',
       month: 'long',
@@ -130,7 +130,7 @@ export class GeminiLiveClient {
       this.systemPrompt,
       `[LIVE REALTIME CLOCK & CONTEXT]
 - Current Local Date: ${dateString}
-- Current Local Time: ${timeString} (IST / ${timeZone})
+- Current Local Time: ${timeString} (${timeZone})
 - Current ISO Time: ${now.toISOString()}
 Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.) or what date it is, state this exact time and date.`,
       this.memoryContext ? `\n=== USER CONTEXT & RECOLLECTIONS ===\n${this.memoryContext}\n========================` : '',
