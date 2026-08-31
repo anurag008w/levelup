@@ -73,6 +73,11 @@ export class GeminiLiveClient {
     this.audioStreamer.setPlaybackSpeed(speed);
   }
 
+  setIncomingCallContext(isIncomingCall: boolean, reason = ''): void {
+    this.isIncomingCallSession = isIncomingCall;
+    this.incomingCallReason = reason;
+  }
+
   getConfig(): LiveSettingsConfig {
     return this.config;
   }
@@ -503,6 +508,23 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.setStatus('connected');
       this.startKeepAliveAndSilenceObserver();
       void setNativeAudioRoute(this.config.defaultAudioRoute);
+
+      // Proactively greet student immediately upon voice connection
+      setTimeout(() => {
+        try {
+          if (this.isIncomingCallSession) {
+            this.session?.sendRealtimeInput({
+              text: `[SYSTEM EVENT: Call connected! The student just answered your phone call. Speak immediately in 1 short, warm, natural Hinglish sentence as the caller asking how their study target is going. Reason: "${this.incomingCallReason || 'Study check-in'}"]`,
+            });
+          } else {
+            this.session?.sendRealtimeInput({
+              text: `[SYSTEM EVENT: Live voice session started with the student. Greet them immediately in 1 short, cheerful, friendly Hinglish sentence and ask what topic or question we are tackling today.]`,
+            });
+          }
+        } catch (e) {
+          console.warn('[GeminiLive] Initial connection greeting prompt error:', e);
+        }
+      }, 300);
     } catch (err: any) {
       this.setStatus('error');
       const msg = err?.message || 'Failed to establish Gemini Live connection';
@@ -858,6 +880,8 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.session = null;
     }
     this.setStatus('idle');
+    this.isIncomingCallSession = false;
+    this.incomingCallReason = '';
   }
 
   /** Static helper to fetch available Live-compatible models from Gemini API or configured gateway. */

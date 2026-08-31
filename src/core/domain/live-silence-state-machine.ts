@@ -47,49 +47,49 @@ export class LiveSilenceStateMachine {
       return null;
     }
 
-    // Cooldown between check-ins (min 120s between spoken check-ins)
-    if (now - this.lastCheckInAt < 120000) {
+    // Cooldown between check-ins (min 60s between spoken check-ins)
+    if (now - this.lastCheckInAt < 60000) {
       return null;
     }
 
     const { silenceDurationSec, isCameraOrScreenActive, isPenOrCursorMoving, hasErasuresOrStallSigns } = signal;
 
-    if (silenceDurationSec < 45) {
+    if (silenceDurationSec < 30) {
       this.currentState = 'FOCUS';
       return null;
     }
 
-    if (silenceDurationSec >= 45 && silenceDurationSec < 75) {
+    if (silenceDurationSec >= 30 && silenceDurationSec < 60) {
       this.currentState = 'OBSERVING';
 
       if (isPenOrCursorMoving) {
-        // Confirmed active writing/typing -> enter DEEP_FOCUS for 3 minutes
+        // Confirmed active writing/typing -> enter DEEP_FOCUS for 2 minutes
         this.currentState = 'DEEP_FOCUS';
-        this.deepFocusUntil = now + 180000;
+        this.deepFocusUntil = now + 120000;
         return null;
       }
       return null;
     }
 
-    // Silence > 75s
-    if (silenceDurationSec >= 75) {
+    // Silence >= 60s
+    if (silenceDurationSec >= 60) {
       if (isPenOrCursorMoving && !hasErasuresOrStallSigns) {
         this.currentState = 'DEEP_FOCUS';
-        this.deepFocusUntil = now + 180000;
+        this.deepFocusUntil = now + 120000;
         return null;
       }
 
       this.currentState = 'POSSIBLE_STUCK';
 
-      // Silence > 90s with stall signs -> CHECK_IN
-      if (silenceDurationSec >= 90 || hasErasuresOrStallSigns) {
+      // Silence >= 60s with stall signs or >= 75s general silence -> CHECK_IN
+      if (silenceDurationSec >= 75 || hasErasuresOrStallSigns) {
         this.currentState = 'CHECK_IN';
         this.lastCheckInAt = now;
 
         if (isCameraOrScreenActive) {
-          return '[SYSTEM EVENT: User has been quietly studying for 90s. Look at their textbook or notebook in the video frame, and speak 1 short supportive hint or observation in Hinglish.]';
+          return '[SYSTEM EVENT: User has been quietly studying for over 1 minute. Look at their textbook or notebook in the video frame, and speak 1 short supportive hint or observation in Hinglish.]';
         }
-        return '[SYSTEM EVENT: User has been quietly thinking for 90s. Speak 1 short friendly sentence in Hinglish to casually ask if they need a hint with this step.]';
+        return '[SYSTEM EVENT: User has been quietly thinking for over 1 minute. Speak 1 short friendly sentence in Hinglish to casually ask if they need a hint with this step.]';
       }
     }
 

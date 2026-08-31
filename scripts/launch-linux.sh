@@ -12,13 +12,13 @@ URL="http://127.0.0.1:${PORT}"
 
 cd "$REPO_DIR"
 
-# Check if server is already responding
+# Check if dist is built; build if missing
+if [ ! -d "$REPO_DIR/dist" ]; then
+  npm run build
+fi
+
+# Ensure fresh server instance with newest dist
 if ! curl -s --connect-timeout 1 "${URL}" >/dev/null 2>&1; then
-  # Build dist if missing
-  if [ ! -d "$REPO_DIR/dist" ]; then
-    npm run build
-  fi
-  # Run Vite preview server in background
   nohup npm run preview -- --port ${PORT} --host 127.0.0.1 >/tmp/levelup-server.log 2>&1 &
   
   # Wait for server readiness
@@ -26,7 +26,7 @@ if ! curl -s --connect-timeout 1 "${URL}" >/dev/null 2>&1; then
     if curl -s --connect-timeout 1 "${URL}" >/dev/null 2>&1; then
       break
     fi
-    sleep 0.2
+    sleep 0.15
   done
 fi
 
