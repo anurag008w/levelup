@@ -32,15 +32,15 @@ describe('sync-merge — multi-device smart merge', () => {
     const local: AppState = {
       ...emptyAppState(),
       customTodos: [
-        { id: 'todo-1', title: 'Physics HC Verma', completed: true, priority: 'high', category: 'physics', createdAt: '2026-01-01T10:00:00Z', updatedAt: '2026-01-01T12:00:00Z' },
-        { id: 'todo-2', title: 'Maths Integration', completed: false, priority: 'medium', category: 'maths', createdAt: '2026-01-01T11:00:00Z' },
+        { id: 'todo-1', title: 'Physics HC Verma', completed: true, priority: 'high', category: 'physics', createdAtISO: '2026-01-01T10:00:00Z', completedAtISO: '2026-01-01T12:00:00Z', createdBy: 'user' },
+        { id: 'todo-2', title: 'Maths Integration', completed: false, priority: 'medium', category: 'maths', createdAtISO: '2026-01-01T11:00:00Z', createdBy: 'user' },
       ],
     };
     const remote: AppState = {
       ...emptyAppState(),
       customTodos: [
-        { id: 'todo-1', title: 'Physics HC Verma', completed: false, priority: 'high', category: 'physics', createdAt: '2026-01-01T10:00:00Z' },
-        { id: 'todo-3', title: 'Chem Organic Revision', completed: true, priority: 'high', category: 'chemistry', createdAt: '2026-01-01T13:00:00Z' },
+        { id: 'todo-1', title: 'Physics HC Verma', completed: false, priority: 'high', category: 'physics', createdAtISO: '2026-01-01T10:00:00Z', createdBy: 'user' },
+        { id: 'todo-3', title: 'Chem Organic Revision', completed: true, priority: 'high', category: 'chemistry', createdAtISO: '2026-01-01T13:00:00Z', createdBy: 'user' },
       ],
     };
 
