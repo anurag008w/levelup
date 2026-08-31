@@ -109,6 +109,31 @@ const DYNAMIC_TEMPLATES: Record<string, string[]> = {
     'Notice kiya 2-3 din se continuous late night study ho rahi hai. Memory consolidate karne ke liye 6-7 hr sleep zaruri hai!',
     'Consistent late night stretch chal raha hai. Aaj thoda pehle wrap karke subah fresh mind se solve karein?',
   ],
+  inactivity_24h: [
+    'Aaj padhai kaisi chal rahi hai 🙂',
+    'Hey! Aaj ka session start kiya? Chhota task pehle utha lo!',
+    'Suno, break se wapas aaye? Ek quick 25-min sprint karein?',
+  ],
+  inactivity_48h: [
+    'Kal se kaafi quiet ho... sab theek hai na? 🙂',
+    'Hey! Thoda break theek hai, par aaj 1 topic review karke momentum wapas le aayein?',
+    'Suno, agar koi concept fasa hai to text karo, saath me solve karte hain!',
+  ],
+  inactivity_96h: [
+    'Koi baat nahi, reset karte hain — aaj ek chhota sa 15m win le lete hain!',
+    'Fresh start! Past days ko chhod ke aaj ka Day 1 banate hain! Ready ho?',
+    'No guilt, bas 1 formula sheet revise karke wapas flow me aa jao!',
+  ],
+  companion_humor: [
+    'Aaj HC Verma ko dekh ke bhaag toh nahi gaye na 😂',
+    'Physics ke sawal tumhe solve kar rahe hain ya tum unhe? 😂 Batana agar help chahiye!',
+    'Areyy itni shanti? Lagta hai integration ne behosh kar diya 😂',
+  ],
+  celebration: [
+    'Areyy ye wala target toh ho gaya 😭🔥',
+    'Superb! Ek aur concept solid lock ho gaya! 🚀',
+    'Shabaash! Consistency aisi hi banaye rakhna! 👏',
+  ],
   jee_prep: [
     'Suno, question solving chal rahi hai na? Koi calculation me doubt ho to batana!',
     'Hey! Aaj ka revision target kaisa progress kar raha hai? Batana agar koi problem fasa ho.',
@@ -343,6 +368,11 @@ class ProactiveAgentService {
       } else {
         relationshipManager.reinforceTopicSuccess(taskTitle);
       }
+      // Natural companion celebration on accomplishment
+      const celebMsg = pickVariedTemplate('celebration', relationshipManager.getState().recentSentMessages);
+      setTimeout(() => {
+        this.injectMessageIntoChat(celebMsg);
+      }, 800);
     }
   }
 
@@ -350,7 +380,17 @@ class ProactiveAgentService {
   onChatTurn(userText: string, assistantReply: string, context?: { tasksCount?: number; streak?: number }): void {
     if (!this.prefs.enabled) return;
     this.recordUserActivity();
-    relationshipManager.recordAppEngaged();
+    const { wasIgnoring, pendingPromise } = relationshipManager.recordAppEngaged();
+    if (wasIgnoring) {
+      setTimeout(() => {
+        if (pendingPromise) {
+          this.injectMessageIntoChat('Acha mil gaye aap 😭 waise kal wali baat ab bataoge? 😏');
+        } else {
+          this.injectMessageIntoChat('Acha mil gaye aap 😭 kya chal raha tha?');
+        }
+      }, 1200);
+    }
+
     this.lastUserChatTimestamp = Date.now();
 
     const lowerUser = userText.toLowerCase();
@@ -382,7 +422,17 @@ class ProactiveAgentService {
       return;
     }
 
-    // 3. Extract & Register Commitments ("kal optics karunga", "questions solve karne hain")
+    // 3. Check for conversational promises ("kal batata hu", "baad me bataunga")
+    if (
+      lowerUser.includes('kal batata') ||
+      lowerUser.includes('kal bataunga') ||
+      lowerUser.includes('baad me batata') ||
+      lowerUser.includes('baad me bataunga')
+    ) {
+      relationshipManager.addUserPromise(userText);
+    }
+
+    // 4. Extract & Register Commitments ("kal optics karunga", "questions solve karne hain")
     const hasCommitmentIntent =
       lowerUser.includes('kal ') ||
       lowerUser.includes('karega') ||

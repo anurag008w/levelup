@@ -54,6 +54,15 @@ export interface NotificationFatigueState {
   topicCooldowns: Record<string, number>; // topic -> cooldown expires timestamp
 }
 
+export interface UserPromise {
+  id: string;
+  userPromise: string;
+  topic?: string;
+  createdAt: number;
+  targetDate: string; // YYYY-MM-DD
+  isResumed: boolean;
+}
+
 export interface RelationshipState {
   currentGoal: string;
   currentSubject: SubjectArea;
@@ -62,6 +71,7 @@ export interface RelationshipState {
   lastInteractionTimestamp: number;
   lateNightStreak: number; // consecutive days of studying past 00:30 AM
   recentSentMessages: string[]; // FIFO buffer of last 20 sent proactive messages to prevent duplicates
+  wasUserIdleOrIgnoring: boolean; // Flag to greet naturally when user returns after ignoring
   boundaries: {
     dndUntilTimestamp: number;
     quietHoursStart: string;
@@ -69,6 +79,7 @@ export interface RelationshipState {
     activeGraceMinutes: number;
   };
   commitments: Commitment[];
+  pendingPromises: UserPromise[]; // e.g. "kal batata hu" -> "kal wali baat ab bataoge? 😏"
   durableMemories: DurableMemoryItem[];
   fatigue: NotificationFatigueState;
   preferredInteractionStyle: 'gentle_encouragement' | 'disciplined_accountability' | 'concise_hints';
@@ -83,6 +94,7 @@ export const DEFAULT_RELATIONSHIP_STATE: RelationshipState = {
   lastInteractionTimestamp: Date.now(),
   lateNightStreak: 0,
   recentSentMessages: [],
+  wasUserIdleOrIgnoring: false,
   boundaries: {
     dndUntilTimestamp: 0,
     quietHoursStart: '22:30',
@@ -90,6 +102,7 @@ export const DEFAULT_RELATIONSHIP_STATE: RelationshipState = {
     activeGraceMinutes: 30,
   },
   commitments: [],
+  pendingPromises: [],
   durableMemories: [],
   fatigue: {
     consecutiveDismissals: 0,
@@ -279,6 +292,7 @@ export class RelationshipManager {
     this.state.fatigue.consecutiveDismissals += 1;
     this.state.fatigue.lastDismissalTimestamp = Date.now();
     this.state.fatigue.fatigueScore = Math.min(1.0, this.state.fatigue.fatigueScore + 0.35);
+    this.state.wasUserIdleOrIgnoring = true;
 
     if (topic) {
       // 72-hour penalty cooldown on dismissed topic
@@ -287,17 +301,77 @@ export class RelationshipManager {
     this.save();
   }
 
-  recordAppEngaged(): void {
+  recordAppEngaged(): { wasIgnoring: boolean; pendingPromise?: UserPromise } {
+    const wasIgnoring = this.state.wasUserIdleOrIgnoring;
+    this.state.wasUserIdleOrIgnoring = false;
     this.state.fatigue.consecutiveDismissals = 0;
     this.state.fatigue.fatigueScore = Math.max(0, this.state.fatigue.fatigueScore - 0.4);
     this.state.lastInteractionTimestamp = Date.now();
+
+    const pendingPromise = this.getPendingPromise();
+    if (pendingPromise) {
+      this.markPromiseResumed(pendingPromise.id);
+    }
+
     this.save();
+    return { wasIgnoring, pendingPromise };
+  }
+
+  // --- Conversational Promises & Resumption (Rule 8) ---
+
+  addUserPromise(userPromise: string, topic?: string): UserPromise {
+    if (!this.state.pendingPromises) this.state.pendingPromises = [];
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const promise: UserPromise = {
+      id: `prm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      userPromise,
+      topic,
+      createdAt: Date.now(),
+      targetDate: tomorrow.toISOString().slice(0, 10),
+      isResumed: false,
+    };
+
+    this.state.pendingPromises.push(promise);
+    this.save();
+    return promise;
+  }
+
+  getPendingPromise(): UserPromise | undefined {
+    if (!this.state.pendingPromises) return undefined;
+    return this.state.pendingPromises.find((p) => !p.isResumed);
+  }
+
+  markPromiseResumed(id: string): void {
+    if (!this.state.pendingPromises) return;
+    const p = this.state.pendingPromises.find((x) => x.id === id);
+    if (p) {
+      p.isResumed = true;
+      this.save();
+    }
+  }
+
+  // --- 3-Layer Memory Synthesis (Rule 11) ---
+
+  get3LayerContext(subject?: SubjectArea, topic?: string): { recent: string; ongoing: string; longTerm: string; synthesis: string } {
+    const s = this.state;
+    const subj = subject || s.currentSubject || 'General';
+    const top = topic || s.commitments[0]?.topic || 'daily study target';
+
+    const recent = `Aap abhi ${top} kar rahe the`;
+    const ongoing = `Is week ${subj} ka syllabus complete karna hai`;
+    const longTerm = s.currentGoal || 'JEE Main & Advanced Mastery';
+    const synthesis = `${top} ka ye target ho gaya toh aapka ${subj} ka is week wala schedule bhi track pe aa jayega.`;
+
+    return { recent, ongoing, longTerm, synthesis };
   }
 
   resetForTesting(): void {
     this.state = {
       ...DEFAULT_RELATIONSHIP_STATE,
       commitments: [],
+      pendingPromises: [],
       durableMemories: [],
       fatigue: {
         consecutiveDismissals: 0,
@@ -307,6 +381,8 @@ export class RelationshipManager {
         proactiveDate: new Date().toISOString().slice(0, 10),
         topicCooldowns: {},
       },
+      recentSentMessages: [],
+      wasUserIdleOrIgnoring: false,
     };
     this.save();
   }

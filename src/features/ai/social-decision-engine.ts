@@ -29,13 +29,118 @@ export interface ProactiveCandidate {
   isCall?: boolean;
 }
 
+export type MessageStrength =
+  | 'light'
+  | 'concerned'
+  | 'accountability'
+  | 'fresh_start'
+  | 'celebration'
+  | 'frustrated_reassurance';
+
+export interface SevenQuestionsEvaluation {
+  q1_whatIsUserDoing: string;
+  q2_isUserBusyOrFocused: boolean;
+  q3_didSpeakRecently: boolean;
+  q4_didUserIgnoreRecently: boolean;
+  q5_hasGenuinelyUsefulReason: boolean;
+  q6_isNaturalTime: boolean;
+  q7_action: 'SAY_NOTHING' | 'SEND_MESSAGE' | 'START_CALL';
+  strength: MessageStrength;
+  verdictReason: string;
+}
+
 export interface DecisionResult {
   allow: boolean;
   reason: string;
   priorityScore: number;
+  evaluation?: SevenQuestionsEvaluation;
 }
 
 export class SocialDecisionEngine {
+  /**
+   * Misa's 7 Internal Questions Check (Golden Human Rule)
+   * 1. User abhi kya kar raha hai?
+   * 2. Kya user busy/focused hai?
+   * 3. Maine recently message/call kiya tha?
+   * 4. User ne mujhe recently ignore/decline kiya?
+   * 5. Kya mere paas genuinely useful reason hai?
+   * 6. Kya abhi iska natural time hai?
+   * 7. Message better hai ya call?
+   */
+  evaluateSevenQuestions(
+    candidate: ProactiveCandidate,
+    relationship: RelationshipState,
+    lastActiveTimestamp: number,
+    now: number = Date.now()
+  ): SevenQuestionsEvaluation {
+    const isQuiet = this.isWithinQuietHours(
+      relationship.boundaries.quietHoursStart,
+      relationship.boundaries.quietHoursEnd,
+      now
+    );
+    const isDND = now < relationship.boundaries.dndUntilTimestamp;
+    const graceMs = (relationship.boundaries.activeGraceMinutes || 30) * 60 * 1000;
+    const isBusyOrFocused = now - lastActiveTimestamp < graceMs;
+    const didSpeakRecently = now - relationship.lastInteractionTimestamp < 45 * 60 * 1000;
+    const didUserIgnoreRecently = relationship.fatigue.consecutiveDismissals >= 2;
+    const hasGenuinelyUsefulReason = candidate.urgency >= 0.5 || !!candidate.topic;
+    const isNaturalTime = !isQuiet && !isDND;
+
+    // Determine strength
+    let strength: MessageStrength = 'light';
+    const inactivityHours = (now - lastActiveTimestamp) / (3600 * 1000);
+    if (inactivityHours >= 96) strength = 'fresh_start';
+    else if (inactivityHours >= 48) strength = 'concerned';
+    else if (candidate.type === 'commitment_followup') strength = 'accountability';
+    else if (candidate.type === 'milestone') strength = 'celebration';
+
+    if (isDND || isQuiet || isBusyOrFocused || !hasGenuinelyUsefulReason) {
+      return {
+        q1_whatIsUserDoing: isBusyOrFocused ? 'Active in app / studying' : isQuiet ? 'Sleeping / Quiet Hours' : 'Idle',
+        q2_isUserBusyOrFocused: isBusyOrFocused,
+        q3_didSpeakRecently: didSpeakRecently,
+        q4_didUserIgnoreRecently: didUserIgnoreRecently,
+        q5_hasGenuinelyUsefulReason: hasGenuinelyUsefulReason,
+        q6_isNaturalTime: isNaturalTime,
+        q7_action: 'SAY_NOTHING',
+        strength,
+        verdictReason: isDND ? 'DND Shield' : isQuiet ? 'Quiet Hours' : isBusyOrFocused ? 'Active grace period' : 'No useful reason',
+      };
+    }
+
+    if (candidate.type === 'live_call' || candidate.isCall) {
+      return {
+        q1_whatIsUserDoing: 'Idle student ready for voice check-in',
+        q2_isUserBusyOrFocused: false,
+        q3_didSpeakRecently: didSpeakRecently,
+        q4_didUserIgnoreRecently: didUserIgnoreRecently,
+        q5_hasGenuinelyUsefulReason: true,
+        q6_isNaturalTime: true,
+        q7_action: didUserIgnoreRecently ? 'SEND_MESSAGE' : 'START_CALL',
+        strength: 'accountability',
+        verdictReason: 'Call candidate approved by 7-question filter',
+      };
+    }
+
+    return {
+      q1_whatIsUserDoing: 'Away from app / break',
+      q2_isUserBusyOrFocused: false,
+      q3_didSpeakRecently: didSpeakRecently,
+      q4_didUserIgnoreRecently: didUserIgnoreRecently,
+      q5_hasGenuinelyUsefulReason: true,
+      q6_isNaturalTime: true,
+      q7_action: 'SEND_MESSAGE',
+      strength,
+      verdictReason: 'Sensible moment for gentle check-in',
+    };
+  }
+
+  /** Natural Timing Window (±10-20 min jitter so Misa doesn't feel like a rigid alarm clock) */
+  getNaturalTimingWindow(baseTimeMs: number): number {
+    const jitterMinutes = Math.floor(Math.random() * 21) - 10; // -10 to +10 min
+    return baseTimeMs + jitterMinutes * 60 * 1000;
+  }
+
   /**
    * Evaluates if Misa should speak right now for a candidate action.
    */

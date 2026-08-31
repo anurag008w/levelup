@@ -1340,6 +1340,9 @@ export default function ChatScreen({
   // Refresh the ref with the latest closures on every render — the ref object
   // itself stays the same, so memoized MessageBubble instances never re-render
   // just because these identities changed.
+  const handleStartLiveCallRef = useRef(handleStartLiveCall);
+  handleStartLiveCallRef.current = handleStartLiveCall;
+
   actionsRef.current = {
     onMenu: openMenu,
     onCopy: (m) => void copyMessage(m),
@@ -1349,12 +1352,12 @@ export default function ChatScreen({
     onDownload: downloadMessage,
     onShare: (m) => shareMessage(m),
     onConfirmAction: confirmAction,
-    onStartLiveCall: () => void handleStartLiveCall(),
+    onStartLiveCall: () => void handleStartLiveCallRef.current(),
   };
 
   useEffect(() => {
     const onStartLiveCallEvent = (_e: Event) => {
-      void handleStartLiveCall();
+      void handleStartLiveCallRef.current();
     };
     window.addEventListener('levelup:start-live-call', onStartLiveCallEvent);
     return () => window.removeEventListener('levelup:start-live-call', onStartLiveCallEvent);
