@@ -573,16 +573,24 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         displayMessage = 'Tool executed';
       }
 
+      const isOk = output?.ok !== false && !output?.error;
+      const cleanResponse = typeof output === 'object' && output !== null ? output : { result: String(output) };
+      const responsePayload = {
+        ok: isOk,
+        status: isOk ? 'success' : 'failed',
+        ...cleanResponse,
+      };
+
       this.pendingToolCalls.push({
         action: fc.name,
-        ok: !output?.error,
+        ok: isOk,
         message: displayMessage,
       });
 
       functionResponses.push({
         id: fc.id || fc.name,
         name: fc.name,
-        response: { output },
+        response: { output: responsePayload },
       });
     }
 

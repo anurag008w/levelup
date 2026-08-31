@@ -539,17 +539,17 @@ export default function ChatScreen({
             if (resp.ok) {
               const data = await resp.json();
               const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-              if (text) return { searchResult: text };
+              if (text) return { ok: true, status: 'completed', searchResult: text, summary: text };
             }
           } catch {
             // Ignored
           }
         }
-        return { searchResult: `No live search results found for query: ${query}` };
+        return { ok: false, status: 'no_results', searchResult: `No live search results found for query: ${query}`, summary: `No live search results found for query: ${query}` };
       }
       if (name === 'getPlan') {
         const res = await container.chatTools.runMany([{ action: 'getPlan', day: Number(args.day) || 1 }]);
-        return { plan: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', plan: res.summary, summary: res.summary, result: res.summary };
       }
       if (name === 'addTask') {
         const res = await container.chatTools.runMany([
@@ -560,7 +560,7 @@ export default function ChatScreen({
             durationMin: Number(args.durationMin) || 30,
           },
         ]);
-        return { result: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', requiresConfirmation: res.requiresConfirmation, result: res.summary, summary: res.summary };
       }
       if (name === 'markDone') {
         const res = await container.chatTools.runMany([
@@ -570,7 +570,7 @@ export default function ChatScreen({
             taskId: String(args.taskId || ''),
           },
         ]);
-        return { result: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', requiresConfirmation: res.requiresConfirmation, result: res.summary, summary: res.summary };
       }
       if (name === 'editTask') {
         const res = await container.chatTools.runMany([
@@ -582,11 +582,11 @@ export default function ChatScreen({
             durationMin: args.durationMin !== undefined ? Number(args.durationMin) : undefined,
           },
         ]);
-        return { result: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', requiresConfirmation: res.requiresConfirmation, result: res.summary, summary: res.summary };
       }
       if (name === 'getContext') {
         const res = await container.chatTools.runMany([{ action: 'getContext' }]);
-        return { context: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', context: res.summary, summary: res.summary, result: res.summary };
       }
       if (name === 'saveCustomMemory') {
         const cur = container.store.get();
@@ -598,15 +598,15 @@ export default function ChatScreen({
           longTerm: true,
         });
         container.store.save(updated);
-        return { result: 'Memory saved into persistent recollections.' };
+        return { ok: true, status: 'completed', result: 'Memory saved into persistent recollections.', summary: 'Memory saved into persistent recollections.' };
       }
       if (name === 'getTests') {
         const res = await container.chatTools.runMany([{ action: 'getTests' }]);
-        return { tests: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', tests: res.summary, summary: res.summary, result: res.summary };
       }
       if (name === 'getRoutine') {
         const res = await container.chatTools.runMany([{ action: 'getRoutine', day: args.day ? String(args.day) : undefined }]);
-        return { routine: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', routine: res.summary, summary: res.summary, result: res.summary };
       }
       // Custom To-Dos & Study Vault tools
       if (name === 'addTodo') {
@@ -619,7 +619,7 @@ export default function ChatScreen({
             category: (args.category as any) || 'general',
           },
         ]);
-        return { result: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', requiresConfirmation: res.requiresConfirmation, result: res.summary, summary: res.summary };
       }
       if (name === 'editTodo') {
         const res = await container.chatTools.runMany([
@@ -634,7 +634,7 @@ export default function ChatScreen({
             completed: args.completed !== undefined ? Boolean(args.completed) : undefined,
           },
         ]);
-        return { result: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', requiresConfirmation: res.requiresConfirmation, result: res.summary, summary: res.summary };
       }
       if (name === 'reorderTodos') {
         const res = await container.chatTools.runMany([
@@ -645,7 +645,7 @@ export default function ChatScreen({
             position: (args.position as any) || undefined,
           },
         ]);
-        return { result: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', requiresConfirmation: res.requiresConfirmation, result: res.summary, summary: res.summary };
       }
       if (name === 'listTodos') {
         const res = await container.chatTools.runMany([
@@ -657,7 +657,7 @@ export default function ChatScreen({
             category: (args.category as any) || undefined,
           },
         ]);
-        return { todos: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', todos: res.summary, summary: res.summary, result: res.summary };
       }
       if (name === 'toggleTodo') {
         const res = await container.chatTools.runMany([
@@ -668,7 +668,7 @@ export default function ChatScreen({
             completed: args.completed !== undefined ? Boolean(args.completed) : undefined,
           },
         ]);
-        return { result: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', requiresConfirmation: res.requiresConfirmation, result: res.summary, summary: res.summary };
       }
       if (name === 'deleteTodo') {
         const res = await container.chatTools.runMany([
@@ -678,7 +678,7 @@ export default function ChatScreen({
             title: args.title ? String(args.title) : undefined,
           },
         ]);
-        return { result: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', requiresConfirmation: res.requiresConfirmation, result: res.summary, summary: res.summary };
       }
       if (name === 'listVaultResources') {
         const res = await container.chatTools.runMany([
@@ -687,7 +687,7 @@ export default function ChatScreen({
             subject: args.subject ? String(args.subject) : undefined,
           },
         ]);
-        return { vaultResources: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', vaultResources: res.summary, summary: res.summary, result: res.summary };
       }
       if (name === 'searchChatHistory') {
         const res = await container.chatTools.runMany([
@@ -699,7 +699,7 @@ export default function ChatScreen({
             toDate: args.toDate ? String(args.toDate) : undefined,
           },
         ]);
-        return { chatSearchResults: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', chatSearchResults: res.summary, summary: res.summary, result: res.summary };
       }
       if (name === 'listChatSessions') {
         const res = await container.chatTools.runMany([
@@ -707,7 +707,7 @@ export default function ChatScreen({
             action: 'listChatSessions',
           },
         ]);
-        return { chatSessions: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', chatSessions: res.summary, summary: res.summary, result: res.summary };
       }
       if (name === 'getChatSession') {
         const res = await container.chatTools.runMany([
@@ -716,7 +716,7 @@ export default function ChatScreen({
             sessionId: String(args.sessionId || ''),
           },
         ]);
-        return { chatTranscript: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', chatTranscript: res.summary, summary: res.summary, result: res.summary };
       }
       if (name === 'searchMemory') {
         const res = await container.chatTools.runMany([
@@ -725,7 +725,7 @@ export default function ChatScreen({
             query: String(args.query || ''),
           },
         ]);
-        return { memorySearchResults: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', memorySearchResults: res.summary, summary: res.summary, result: res.summary };
       }
       if (name === 'readMemory') {
         const res = await container.chatTools.runMany([
@@ -733,7 +733,7 @@ export default function ChatScreen({
             action: 'readMemory',
           },
         ]);
-        return { memory: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', memory: res.summary, summary: res.summary, result: res.summary };
       }
       if (name === 'addMemory') {
         const res = await container.chatTools.runMany([
@@ -742,14 +742,14 @@ export default function ChatScreen({
             content: String(args.content || ''),
           },
         ]);
-        return { result: res.summary };
+        return { ok: res.ok, status: res.ok ? 'completed' : 'failed', requiresConfirmation: res.requiresConfirmation, result: res.summary, summary: res.summary };
       }
       // Universal fallback for all other domain tools (editMemory, deleteMemory, pinMemory, getSubject, getRange, etc.)
       const actionObj: any = { action: name, ...args };
       const fallbackRes = await container.chatTools.runMany([actionObj]);
-      return { result: fallbackRes.summary };
+      return { ok: fallbackRes.ok, status: fallbackRes.ok ? 'completed' : 'failed', requiresConfirmation: fallbackRes.requiresConfirmation, result: fallbackRes.summary, summary: fallbackRes.summary };
     } catch (e: any) {
-      return { error: e?.message || 'Tool execution failed' };
+      return { ok: false, status: 'error', error: e?.message || 'Tool execution failed' };
     }
   };
 
@@ -1866,6 +1866,7 @@ const MessageBubble = memo(function MessageBubble({
   }, [revealed, thinking, reveal, scrollRef]);
 
   const visibleBubbleTexts = reveal ? bubbleTexts.slice(0, revealed) : bubbleTexts;
+  const isFullyRevealed = !reveal || (!thinking && revealed >= bubbleTexts.length);
 
   function triggerMenu(clientX: number, clientY: number) {
     haptic(20);
@@ -1963,24 +1964,6 @@ const MessageBubble = memo(function MessageBubble({
                 </div>
               </div>
             ))}
-          {message.pendingConfirmation && (
-            <div className="flex gap-2 pl-1">
-              <button
-                type="button"
-                className="rounded-full bg-red-600 px-4 py-1.5 text-[12.5px] font-medium text-white active:opacity-70"
-                onClick={() => actions.onConfirmAction(message, true)}
-              >
-                Haan, karo
-              </button>
-              <button
-                type="button"
-                className="rounded-full border border-white/15 px-4 py-1.5 text-[12.5px] font-medium text-muted active:opacity-70"
-                onClick={() => actions.onConfirmAction(message, false)}
-              >
-                Nahi, rehne do
-              </button>
-            </div>
-          )}
           {reveal && thinking && (
             <div className="bubble-ai flex items-center gap-2.5 rounded-2xl rounded-bl-md px-4 py-3">
               <span className="typing-dots" aria-hidden="true">
@@ -1988,6 +1971,30 @@ const MessageBubble = memo(function MessageBubble({
                 <span />
                 <span />
               </span>
+            </div>
+          )}
+          {message.pendingConfirmation && isFullyRevealed && (
+            <div className="flex gap-2 pl-1 pt-1">
+              <button
+                type="button"
+                className="rounded-full bg-red-600 px-4 py-1.5 text-[12.5px] font-medium text-white shadow-md active:opacity-70"
+                onClick={() => {
+                  haptic();
+                  actions.onConfirmAction(message, true);
+                }}
+              >
+                Haan, karo
+              </button>
+              <button
+                type="button"
+                className="rounded-full border border-white/15 bg-surface-2 px-4 py-1.5 text-[12.5px] font-medium text-muted hover:text-text active:opacity-70"
+                onClick={() => {
+                  haptic();
+                  actions.onConfirmAction(message, false);
+                }}
+              >
+                Nahi, rehne do
+              </button>
             </div>
           )}
           {/* Copy / Regenerate / Download live in the long-press (or
