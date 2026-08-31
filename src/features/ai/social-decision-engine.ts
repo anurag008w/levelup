@@ -2,11 +2,12 @@
  * Misa Central Social Decision Engine ("Kya mujhe abhi bolna chahiye?")
  *
  * Evaluates candidate proactive actions against social boundaries, active grace
- * periods, DND windows, topic cooldowns, and notification fatigue before
- * calculating importance scores and selecting the single highest-value action.
+ * periods, DND windows, granular topic cooldowns, and unified communication pressure
+ * before calculating importance scores and selecting the single highest-value action.
  */
 
 import type { RelationshipState, SubjectArea } from './relationship-state';
+import type { UserActivityState } from '../../core/domain/activity-signal';
 
 export interface ProactiveCandidate {
   id: string;
@@ -17,7 +18,9 @@ export interface ProactiveCandidate {
     | 'check_in'
     | 'struggle_reinforce'
     | 'live_call'
-    | 'cold_start';
+    | 'cold_start'
+    | 'session_followup';
+  intent?: 'reminder' | 'doubt_followup' | 'urgent_check' | 'recap' | 'general';
   topic?: string;
   subject?: SubjectArea;
   urgency: number; // 0.0 to 1.0
@@ -27,6 +30,7 @@ export interface ProactiveCandidate {
   userPreference?: number; // 0.0 to 1.0 (default 1.0)
   offlineText: string;
   isCall?: boolean;
+  isInsideActiveSession?: boolean;
 }
 
 export type MessageStrength =
@@ -71,7 +75,8 @@ export class SocialDecisionEngine {
     candidate: ProactiveCandidate,
     relationship: RelationshipState,
     lastActiveTimestamp: number,
-    now: number = Date.now()
+    now: number = Date.now(),
+    userActivityState: UserActivityState = 'IDLE'
   ): SevenQuestionsEvaluation {
     const isQuiet = this.isWithinQuietHours(
       relationship.boundaries.quietHoursStart,
@@ -80,7 +85,11 @@ export class SocialDecisionEngine {
     );
     const isDND = now < relationship.boundaries.dndUntilTimestamp;
     const graceMs = (relationship.boundaries.activeGraceMinutes || 30) * 60 * 1000;
-    const isBusyOrFocused = now - lastActiveTimestamp < graceMs;
+    const isBusyOrFocused = (now - lastActiveTimestamp < graceMs && !candidate.isInsideActiveSession) ||
+      userActivityState === 'DEEP_STUDY' ||
+      userActivityState === 'SOLVING' ||
+      userActivityState === 'WRITING';
+
     const didSpeakRecently = now - relationship.lastInteractionTimestamp < 45 * 60 * 1000;
     const didUserIgnoreRecently = relationship.fatigue.consecutiveDismissals >= 2;
     const hasGenuinelyUsefulReason = candidate.urgency >= 0.5 || !!candidate.topic;
@@ -96,7 +105,7 @@ export class SocialDecisionEngine {
 
     if (isDND || isQuiet || isBusyOrFocused || !hasGenuinelyUsefulReason) {
       return {
-        q1_whatIsUserDoing: isBusyOrFocused ? 'Active in app / studying' : isQuiet ? 'Sleeping / Quiet Hours' : 'Idle',
+        q1_whatIsUserDoing: isBusyOrFocused ? 'Active / focused solving' : isQuiet ? 'Sleeping / Quiet Hours' : 'Idle',
         q2_isUserBusyOrFocused: isBusyOrFocused,
         q3_didSpeakRecently: didSpeakRecently,
         q4_didUserIgnoreRecently: didUserIgnoreRecently,
@@ -104,7 +113,7 @@ export class SocialDecisionEngine {
         q6_isNaturalTime: isNaturalTime,
         q7_action: 'SAY_NOTHING',
         strength,
-        verdictReason: isDND ? 'DND Shield' : isQuiet ? 'Quiet Hours' : isBusyOrFocused ? 'Active grace period' : 'No useful reason',
+        verdictReason: isDND ? 'DND Shield' : isQuiet ? 'Quiet Hours' : isBusyOrFocused ? 'Active focus / grace period' : 'No useful reason',
       };
     }
 
@@ -148,43 +157,60 @@ export class SocialDecisionEngine {
     candidate: ProactiveCandidate,
     relationship: RelationshipState,
     lastActiveTimestamp: number,
-    now: number = Date.now()
+    now: number = Date.now(),
+    userActivityState: UserActivityState = 'IDLE'
   ): DecisionResult {
     // 1. DND Shield check (always first — explicit user request)
     if (now < relationship.boundaries.dndUntilTimestamp) {
       return { allow: false, reason: 'DND Shield active', priorityScore: 0 };
     }
 
-    // 2. Active In-App Grace Period (Anti-Distraction Shield — checked before quiet hours
-    //    so in-app activity reason surfaces correctly)
+    // 2. In-Session vs Global Active Grace Period:
+    // If the candidate is an in-session follow-up within the active chat, allow it.
+    // Otherwise, global background notifications are strictly suppressed during the 30-min grace period.
     const graceMs = (relationship.boundaries.activeGraceMinutes || 30) * 60 * 1000;
-    if (now - lastActiveTimestamp < graceMs) {
+    if (now - lastActiveTimestamp < graceMs && !candidate.isInsideActiveSession) {
       return { allow: false, reason: 'User was active in app recently (within grace period)', priorityScore: 0 };
     }
 
-    // 3. Same-Topic Cooldown (no repeating topic within 48h)
+    // 3. User is actively in DEEP_STUDY or SOLVING (suppress spontaneous interruptions)
+    if ((userActivityState === 'DEEP_STUDY' || userActivityState === 'SOLVING' || userActivityState === 'WRITING') && !candidate.isInsideActiveSession) {
+      return { allow: false, reason: `User is in ${userActivityState} mode (focus protected)`, priorityScore: 0 };
+    }
+
+    // 4. Granular Topic Cooldown
+    // Instead of blocking every event with the same topic, check granular key ${topic}:${intent}:${type}
     if (candidate.topic) {
-      const cooldownEnd = relationship.fatigue.topicCooldowns[candidate.topic.toLowerCase()] || 0;
-      if (now < cooldownEnd) {
+      const granularKey = `${candidate.topic.toLowerCase()}:${candidate.intent || 'general'}:${candidate.type}`;
+      const generalKey = candidate.topic.toLowerCase();
+
+      const granularCooldown = relationship.fatigue.topicCooldowns[granularKey] || 0;
+      const generalCooldown = relationship.fatigue.topicCooldowns[generalKey] || 0;
+
+      // Urgent actions (urgency >= 0.85) can bypass general reminders if granular intent is different
+      const isUrgent = candidate.urgency >= 0.85;
+      if (now < granularCooldown) {
+        return { allow: false, reason: `Topic '${candidate.topic}' specific intent is on cooldown`, priorityScore: 0 };
+      }
+      if (now < generalCooldown && !isUrgent) {
         return { allow: false, reason: `Topic '${candidate.topic}' is on cooldown`, priorityScore: 0 };
       }
     }
 
-    // 4. Quiet Hours check (after grace/cooldown so those reasons surface correctly in tests)
+    // 5. Quiet Hours check
     if (this.isWithinQuietHours(relationship.boundaries.quietHoursStart, relationship.boundaries.quietHoursEnd, now)) {
       return { allow: false, reason: 'Quiet Hours active (Night time)', priorityScore: 0 };
     }
 
-    // 5. Daily Proactive Budget (max 3 per day)
+    // 6. Daily Proactive Budget (max 3 per day for non-call and non-in-session actions)
     const today = new Date(now).toISOString().slice(0, 10);
     const todayCount = relationship.fatigue.proactiveDate === today ? relationship.fatigue.todayProactiveCount : 0;
-    if (todayCount >= 3 && candidate.type !== 'live_call') {
+    if (todayCount >= 3 && candidate.type !== 'live_call' && !candidate.isInsideActiveSession) {
       return { allow: false, reason: 'Daily proactive budget reached (max 3/day)', priorityScore: 0 };
     }
 
-    // 6. Notification Fatigue Threshold (back off if 3+ consecutive dismissals)
-    if (relationship.fatigue.consecutiveDismissals >= 3 && candidate.type !== 'live_call') {
-      // Allow only high-urgency commitment followups
+    // 7. Notification Fatigue Threshold (back off if 3+ consecutive dismissals)
+    if (relationship.fatigue.consecutiveDismissals >= 3 && candidate.type !== 'live_call' && !candidate.isInsideActiveSession) {
       if (candidate.urgency < 0.85) {
         return { allow: false, reason: 'User recently dismissed multiple notifications (Fatigue penalty)', priorityScore: 0 };
       }
@@ -213,6 +239,7 @@ export class SocialDecisionEngine {
     if (candidate.type === 'commitment_followup') typeBoost = 1.4;
     else if (candidate.type === 'struggle_reinforce') typeBoost = 1.25;
     else if (candidate.type === 'live_call') typeBoost = 1.35;
+    else if (candidate.type === 'session_followup') typeBoost = 1.2;
     else if (candidate.type === 'milestone') typeBoost = 1.15;
 
     return Math.round(rawScore * typeBoost * 1000) / 1000;
@@ -225,14 +252,15 @@ export class SocialDecisionEngine {
     candidates: ProactiveCandidate[],
     relationship: RelationshipState,
     lastActiveTimestamp: number,
-    now: number = Date.now()
+    now: number = Date.now(),
+    userActivityState: UserActivityState = 'IDLE'
   ): { candidate: ProactiveCandidate; score: number } | null {
     if (!candidates || candidates.length === 0) return null;
 
     const approved: Array<{ candidate: ProactiveCandidate; score: number }> = [];
 
     for (const candidate of candidates) {
-      const decision = this.shouldSpeak(candidate, relationship, lastActiveTimestamp, now);
+      const decision = this.shouldSpeak(candidate, relationship, lastActiveTimestamp, now, userActivityState);
       if (decision.allow) {
         approved.push({ candidate, score: decision.priorityScore });
       }
@@ -240,7 +268,6 @@ export class SocialDecisionEngine {
 
     if (approved.length === 0) return null;
 
-    // Sort descending by priority score
     approved.sort((a, b) => b.score - a.score);
     return approved[0];
   }

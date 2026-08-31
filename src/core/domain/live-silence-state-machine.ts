@@ -1,32 +1,42 @@
 /**
- * Live Co-Study Silence State Machine (Silence ≠ Needing Help)
+ * Canonical Live Co-Study Silence State Machine (Silence ≠ Needing Help)
  *
- * Prevents Misa from annoying or interrupting the student during deep focus.
- * Integrates silence duration, camera/screen observation, and activity hints.
+ * Canonical Timeline:
+ * - 0–20s:   FOCUS -> Completely mute.
+ * - 20–60s:  OBSERVING -> Monitor voice/vision/activity. No interruption.
+ * - 60–120s: POSSIBLE_STUCK -> Speak only if stuck confidence is high.
+ * - 120–180s: GENTLE_CHECK_IN -> One brief relevant check-in if appropriate.
+ * - 180s+:   BACK_OFF / QUIET_COMPANION -> Stop repeatedly interrupting.
+ *
+ * Adaptive Extensions:
+ * - Active writing, scrolling, cursor motion, or calculations automatically extend quiet mode.
+ * - User verbal cues ("solving hu", "wait", "soch raha hu") trigger immediate 120s DEEP_FOCUS.
+ * - Away state (empty desk / chair) suppresses repeated callouts.
+ * - Any user speech resets silence counters.
  */
 
-export type SilenceState =
-  | 'FOCUS'          // 0s - 45s: Student is in normal focus flow. Mute.
-  | 'OBSERVING'      // 45s - 75s: Inspecting vision frame without voice.
-  | 'DEEP_FOCUS'     // Active writing / solving confirmed. Extended mute (180s).
-  | 'POSSIBLE_STUCK' // Stalled for >75s, blank work or erasures.
-  | 'CHECK_IN'       // Ready to offer 1 concise hint.
-  | 'USER_CONTINUES';// Resumed solving.
+import {
+  evaluateActivitySignal,
+  type RawActivityInputs,
+  type EvaluatedActivitySignal,
+} from './activity-signal';
 
-export interface SilenceSignal {
-  silenceDurationSec: number;
-  isCameraOrScreenActive: boolean;
-  isPenOrCursorMoving?: boolean;
-  hasErasuresOrStallSigns?: boolean;
-  topicMemoryContext?: string;
-  memoryFactList?: string[];
-}
+export type SilenceState =
+  | 'FOCUS'
+  | 'OBSERVING'
+  | 'DEEP_FOCUS'
+  | 'POSSIBLE_STUCK'
+  | 'GENTLE_CHECK_IN'
+  | 'BACK_OFF';
+
+export type SilenceSignal = RawActivityInputs;
 
 export class LiveSilenceStateMachine {
   private currentState: SilenceState = 'FOCUS';
   private deepFocusUntil: number = 0;
   private lastCheckInAt: number = 0;
   private silenceStreakCount: number = 0;
+  private lastEvaluatedSignal: EvaluatedActivitySignal | null = null;
 
   getState(): SilenceState {
     return this.currentState;
@@ -34,6 +44,10 @@ export class LiveSilenceStateMachine {
 
   getStreakCount(): number {
     return this.silenceStreakCount;
+  }
+
+  getLastSignal(): EvaluatedActivitySignal | null {
+    return this.lastEvaluatedSignal;
   }
 
   /**
@@ -46,140 +60,128 @@ export class LiveSilenceStateMachine {
 
   /**
    * Evaluates the current silence signal and transitions the state machine.
-   * Proactively triggers every 15-20s of quiet thinking during live co-study,
-   * progressing through natural multi-stage conversational nudges enriched with real durable memories.
+   * Returns a verbal prompt string ONLY when an adaptive threshold is crossed
+   * and stuck-confidence warrants a gentle voice intervention.
    */
   evaluate(signal: SilenceSignal, now: number = Date.now()): string | null {
-    // If user is in confirmed DEEP_FOCUS, stay silent until cooldown expires
+    const evaluated = evaluateActivitySignal(signal);
+    this.lastEvaluatedSignal = evaluated;
+
+    const {
+      silenceDurationSec,
+      isCameraOrScreenActive,
+      topicMemoryContext,
+      memoryFactList = [],
+    } = signal;
+
+    // 1. Explicit verbal quiet request ("solving hu", "wait", "soch raha hu")
+    if (evaluated.isExtendedQuietRequested) {
+      this.currentState = 'DEEP_FOCUS';
+      this.deepFocusUntil = now + evaluated.quietExtensionDurationMs;
+      return null;
+    }
+
+    // 2. If user is inside an active DEEP_FOCUS window, remain silent
     if (now < this.deepFocusUntil) {
       this.currentState = 'DEEP_FOCUS';
       return null;
     }
 
-    // Cooldown between spoken check-ins (15-20s between proactive nudges)
-    if (now - this.lastCheckInAt < 15000) {
+    // 3. User is actively solving/writing -> automatically extend quiet window by 45s
+    if (evaluated.studyActivityScore >= 0.4 && !evaluated.stuckConfidence) {
+      this.currentState = 'DEEP_FOCUS';
+      this.deepFocusUntil = now + 45000;
       return null;
     }
 
-    const { silenceDurationSec, isCameraOrScreenActive, isPenOrCursorMoving, hasErasuresOrStallSigns, topicMemoryContext, memoryFactList = [] } = signal;
+    // 4. User is away -> stay silent, do not harass empty desk
+    if (evaluated.awayConfidence >= 0.7) {
+      this.currentState = 'OBSERVING';
+      return null;
+    }
 
-    if (silenceDurationSec < 10) {
+    // 5. Cooldown between spoken check-ins (min 20s between interventions)
+    if (now - this.lastCheckInAt < 20000) {
+      return null;
+    }
+
+    // Pick a memory fact if available for context
+    const pickedFact =
+      memoryFactList.length > 0
+        ? memoryFactList[Math.floor(Math.random() * memoryFactList.length)]
+        : topicMemoryContext || 'Current Problem';
+
+    // ── CANONICAL TIMELINE ───────────────────────────────────────────────────
+
+    // 0–20s: FOCUS -> Strictly mute
+    if (silenceDurationSec < 20) {
       this.currentState = 'FOCUS';
       return null;
     }
 
-    if (silenceDurationSec >= 10 && silenceDurationSec < 15) {
+    // 20–60s: OBSERVING -> Monitor vision/voice signals without verbal interruption
+    if (silenceDurationSec >= 20 && silenceDurationSec < 60) {
       this.currentState = 'OBSERVING';
+      return null;
+    }
 
-      if (isPenOrCursorMoving && !hasErasuresOrStallSigns) {
-        // Confirmed active writing/typing -> enter DEEP_FOCUS for 60 seconds
-        this.currentState = 'DEEP_FOCUS';
-        this.deepFocusUntil = now + 60000;
+    // 60–120s: POSSIBLE_STUCK -> Speak only if stuck confidence >= 0.4 or clear stall signs
+    if (silenceDurationSec >= 60 && silenceDurationSec < 120) {
+      this.currentState = 'POSSIBLE_STUCK';
+
+      // If user is solving smoothly or reading, continue silence
+      if (evaluated.studyActivityScore >= 0.35 && evaluated.stuckConfidence < 0.3) {
         return null;
+      }
+
+      // Check-in only if stuck confidence is present or first time reaching 60s
+      if (this.silenceStreakCount === 0) {
+        this.silenceStreakCount = 1;
+        this.lastCheckInAt = now;
+
+        if (isCameraOrScreenActive) {
+          return `[LIVE VISION CO-STUDY]: Student paused at 60s mark. Context: "${pickedFact}". Look at what is on screen right now:
+- If watching video / casual break: Speak 1 brief chill Hinglish line acknowledging the break.
+- If solving: Ask 1 short, intuitive question about the specific step on screen (e.g. calculation or formula). Do NOT say generic helper phrases.`;
+        }
+
+        return `[LIVE COMPANION NUDGE]: Student has been thinking quietly for ~1 minute. Topic: "${pickedFact}". Speak 1 short, warm Hinglish question checking how the step is coming along: "Kya kar rahe ho? Kaisa chal raha hai calculation?"`;
       }
       return null;
     }
 
-    // Silence >= 15s (15-20s proactive cycle)
-    if (silenceDurationSec >= 15) {
-      this.currentState = 'CHECK_IN';
-      this.lastCheckInAt = now;
-      this.silenceStreakCount += 1;
-      const stage = this.silenceStreakCount;
+    // 120–180s: GENTLE_CHECK_IN -> One brief relevant check-in if appropriate
+    if (silenceDurationSec >= 120 && silenceDurationSec < 180) {
+      this.currentState = 'GENTLE_CHECK_IN';
 
-      // Pick a random memory fact if available
-      const pickedFact = memoryFactList.length > 0
-        ? memoryFactList[Math.floor(Math.random() * memoryFactList.length)]
-        : topicMemoryContext || 'Current Problem';
+      if (this.silenceStreakCount === 1) {
+        this.silenceStreakCount = 2;
+        this.lastCheckInAt = now;
 
-      if (isCameraOrScreenActive) {
-        if (stage === 1) {
-          return `[LIVE VISION CO-STUDY]: 15s pause. Look at the camera/screen feed right now:
-- If AWAY / empty chair: Speak 1 brief warm line ("Lagta hai thodi der ke liye uth ke gaye ho... aao toh batana!").
-- If on BREAK / videos / music / browsing: Speak 1 casual, chill Hinglish line about what is on screen ("Thoda break chal raha hai? Sahi hai!").
-- If SOLVING / STUDYING: Look at the exact question/diagram/code on screen ("${pickedFact}"). Ask or comment directly on that specific question or step. Do NOT say 'main screen dekh rahi hu', speak directly about the screen content.`;
+        if (isCameraOrScreenActive) {
+          return `[LIVE VISION CO-STUDY]: 2 minutes quiet. Look at the screen/desk:
+- If studying ("${pickedFact}"): Ask if a specific calculation step is stuck or if they want a quick hint.
+- If present but quiet: Speak 1 playful Hinglish line: "Areyy suno na, itni der se ekdum chup ho! Mujhse baat kyu nahi kar rahe? 😂"`;
         }
-        if (stage === 2) {
-          return `[LIVE VISION CO-STUDY]: 35s mark. Look at screen/camera:
-- If AWAY: Stay completely silent.
-- If on BREAK: Chat casually about their break or video.
-- If STUDYING: ("${pickedFact}"). Ask if a specific calculation step on screen is giving trouble or if they want a quick hint.`;
-        }
-        if (stage === 3) {
-          return `[LIVE VISION CO-STUDY]: ~55s quiet.
-- If AWAY: Stay silent.
-- If present: Speak 1 playful Hinglish line: "Areyy suno na, itni der se ekdum chup kyu ho? Mujhse baat kyu nahi kar rahe? 😂"`;
-        }
-        if (stage === 4) {
-          return `[LIVE VISION CO-STUDY]: ~75s voice check.
-- If AWAY: Stay silent.
-- If present: Speak 1 caring Hinglish line: "Hellooo? Sun rahe ho na? Mic mute toh nahi ho gaya ya rough sheet pe calculate chal raha hai?"`;
-        }
-        if (stage === 5) {
-          return `[LIVE VISION CO-STUDY]: 95s mark. Topic: "${pickedFact}". Speak 1 short Hinglish line offering a step or hint on what's visible on screen.`;
-        }
-        if (stage === 6) {
-          return `[LIVE VISION CO-STUDY]: Student has been silent through multiple nudges (~2 minutes). Speak 1 funny/playful Hinglish line calling out the silence: "Areyy yaar, screen toh share ki hai par bol kuch nahi rahe ho! 😂 Bilkul hi ignore kar diya kya? Kahi fass gaye ya chill mode on hai?"`;
-        }
-        if (stage === 7) {
-          return `[LIVE VISION CO-STUDY]: Over 2.5 minutes of continuous silence. Speak 1 gentle understanding line: "Accha koi baat nahi, lagta hai full focus me busy ho ya thoda break le rahe ho. Main yahi hoon, jab bolna ho tab bata dena."`;
-        }
-        // Stage 8+ rich non-repeating cycle for live vision
-        const vCycle = stage % 5;
-        if (vCycle === 0) return `[LIVE VISION CO-STUDY]: Context: "${pickedFact}". Speak 1 short Hinglish line asking if they want to move to the next question or are still looking at this one.`;
-        if (vCycle === 1) return `[LIVE VISION CO-STUDY]: Speak 1 brief Hinglish check-in: "Paani waani peena ho toh pe lo, main yahi desk pe ready hoon."`;
-        if (vCycle === 2) return `[LIVE VISION CO-STUDY]: Speak 1 brief warm line: "Kuch naya step try kar rahe ho? Batao kaisa chal raha hai."`;
-        if (vCycle === 3) return `[LIVE VISION CO-STUDY]: Speak 1 short line: "Koi formula cross-check karna ho toh batana, saath me dekh lenge!"`;
-        return `[LIVE VISION CO-STUDY]: Topic: "${pickedFact}". Speak 1 brief warm line: "Aaram se solve karo, main yahi quiet companionship de rahi hoon."`;
+
+        return `[LIVE COMPANION NUDGE]: ~2 minutes silence. Context: "${pickedFact}". Speak 1 short, caring Hinglish line: "Suno, agar question me kahi calculation ya formula fasa ho toh batao, saath me dekhte hain!"`;
+      }
+      return null;
+    }
+
+    // 180s+: BACK_OFF / QUIET_COMPANION -> Stop repeatedly interrupting
+    if (silenceDurationSec >= 180) {
+      this.currentState = 'BACK_OFF';
+
+      // Give 1 final respectful back-off line if reached stage 3, then stay quiet
+      if (this.silenceStreakCount === 2) {
+        this.silenceStreakCount = 3;
+        this.lastCheckInAt = now;
+        return `[LIVE COMPANION QUIET BACK-OFF]: Over 3 minutes quiet. Speak 1 gentle understanding line: "Accha koi baat nahi, lagta hai full focus me busy ho ya thoda break le rahe ho. Main yahi hoon, jab bhi baat karni ho bas bol dena." Then remain quiet companion.`;
       }
 
-      // Audio-only mode progressive stages with real memory integration
-      if (stage === 1) {
-        return `[LIVE COMPANION NUDGE]: 15-20s pause. Context: "${pickedFact}". Speak 1 short, warm, natural Hinglish question: "Kya kar rahe ho? Kaisa chal raha hai?" (whether calculating or taking a breather). Do NOT sound like a robotic script.`;
-      }
-
-      if (stage === 2) {
-        return `[LIVE COMPANION NUDGE]: 35s mark. Context: "${pickedFact}". Speak 1 short, light-hearted Hinglish line: "Itni shanti? Sawal solve ho raha hai ya thoda break chal raha hai? 😂"`;
-      }
-
-      if (stage === 3) {
-        return '[LIVE COMPANION NUDGE]: ~55s quiet. Speak 1 short, playful Hinglish line: "Areyy suno na, itni der se ekdum chup kyu ho? Mujhse baat kyu nahi kar rahe? 😂"';
-      }
-
-      if (stage === 4) {
-        return '[LIVE COMPANION NUDGE]: 75s quiet. Speak 1 short, caring Hinglish voice check: "Hellooo? Sun rahe ho na? Mic mute toh nahi ho gaya ya sheet pe calculate chal raha hai?"';
-      }
-
-      if (stage === 5) {
-        return `[LIVE COMPANION NUDGE]: 95s quiet. Context: "${pickedFact}". Speak 1 short Hinglish line: "Suno, agar question me kahi doubt fas raha ho toh batao, saath me solve karte hain!"`;
-      }
-
-      if (stage === 6) {
-        return `[LIVE COMPANION NUDGE]: Ignored 5-6 times (~2 minutes silence). Speak 1 funny/caring Hinglish line calling out being ignored: "Areyy yaar, itni der se bula rahi hoon, bilkul hi ignore kar diya kya? 😂 Naraz ho ya deep concentration me ho?"`;
-      }
-
-      if (stage === 7) {
-        return `[LIVE COMPANION NUDGE]: Over 2.5 minutes of continuous silence. Speak 1 gentle understanding line: "Accha koi baat nahi, lagta hai full concentration me ho ya break pe ho. Main yahi hoon call pe, jab bhi baat karni ho bas bol dena."`;
-      }
-
-      // Stage 8+ rich 6-step non-repeating cycle
-      const cyclicIndex = stage % 6;
-      if (cyclicIndex === 0) {
-        return `[LIVE COMPANION NUDGE]: Context: "${pickedFact}". Speak 1 short Hinglish check-in asking if they want to move to the next question or need a quick hint.`;
-      }
-      if (cyclicIndex === 1) {
-        return `[LIVE COMPANION NUDGE]: Speak 1 brief caring check-in: "Paani waani peena hai ya stretch karna hai? Thoda aaram le lo agar thak gaye ho."`;
-      }
-      if (cyclicIndex === 2) {
-        return `[LIVE COMPANION NUDGE]: Speak 1 short warm line: "Kuch progress hui? Kaisa chal raha hai calculation?"`;
-      }
-      if (cyclicIndex === 3) {
-        return `[LIVE COMPANION NUDGE]: Speak 1 brief line: "Main yahi live call pe hoon, koi idea bounce karna ho toh batao!"`;
-      }
-      if (cyclicIndex === 4) {
-        return `[LIVE COMPANION NUDGE]: Focus: "${pickedFact}". Speak 1 short Hinglish line asking what step they are on right now.`;
-      }
-      return `[LIVE COMPANION NUDGE]: Topic: "${pickedFact}". Speak 1 brief warm line in Hinglish: "Aaram se solve ya chill karo, main yahi quiet companionship de rahi hoon, jab ready ho toh batana."`;
+      // Beyond 3 check-ins: Stay quiet companion (do not spam)
+      return null;
     }
 
     return null;
@@ -190,5 +192,6 @@ export class LiveSilenceStateMachine {
     this.deepFocusUntil = 0;
     this.lastCheckInAt = 0;
     this.silenceStreakCount = 0;
+    this.lastEvaluatedSignal = null;
   }
 }

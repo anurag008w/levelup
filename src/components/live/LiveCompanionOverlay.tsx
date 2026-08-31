@@ -123,6 +123,7 @@ interface LiveCompanionOverlayProps {
   onClose: (transcripts: LiveTranscriptItem[]) => void;
   apiKey: string;
   systemPrompt: string;
+  userPersona?: string;
   memoryContext: string;
   initialMicStream: MediaStream;
   initialCameraStream?: MediaStream;
@@ -139,6 +140,7 @@ export default function LiveCompanionOverlay({
   onClose,
   apiKey,
   systemPrompt,
+  userPersona = '',
   memoryContext,
   initialMicStream,
   initialCameraStream,
@@ -203,7 +205,7 @@ export default function LiveCompanionOverlay({
       },
     });
 
-    liveClient.setPrompts(systemPrompt, memoryContext);
+    liveClient.setPrompts(systemPrompt, memoryContext, userPersona);
     liveClient.setRecentChatHistory(initialMessages);
     clientRef.current = liveClient;
     let cancelled = false;

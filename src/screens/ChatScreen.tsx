@@ -1722,6 +1722,7 @@ export default function ChatScreen({
           onClose={handleLiveOverlayClose}
           apiKey={getGeminiLiveApiKey()}
           systemPrompt={active?.prefs.systemPrompt || ''}
+          userPersona={active?.prefs.userPersona || ''}
           memoryContext={
             [
               container.store.get().memory.entries.length > 0

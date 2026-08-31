@@ -35,6 +35,7 @@ export class GeminiLiveClient {
 
   private config: LiveSettingsConfig;
   private systemPrompt = '';
+  private userPersona = '';
   private memoryContext = '';
   private recentChatSummary = '';
 
@@ -91,9 +92,10 @@ export class GeminiLiveClient {
     await this.startVoiceStreaming(micStream);
   }
 
-  setPrompts(systemPrompt: string, memoryContext = ''): void {
+  setPrompts(systemPrompt: string, memoryContext = '', userPersona = ''): void {
     this.systemPrompt = systemPrompt;
     this.memoryContext = memoryContext;
+    this.userPersona = userPersona;
   }
 
   /** Call before connect() to give the live session recent chat history as context */
@@ -168,6 +170,7 @@ export class GeminiLiveClient {
     const fullSystemInstruction = [
       MISA_IDENTITY_GUARD,
       this.systemPrompt,
+      this.userPersona ? `[USER PERSONA & CUSTOM INSTRUCTIONS]\n${this.userPersona}` : '',
       this.isIncomingCallSession
         ? `[INCOMING CALL CONTEXT]\n- You initiated this incoming voice call to check in on the student (${this.incomingCallReason}).\n- The student just picked up the call!\n- Greet them warmly and naturally (like a real friend/study partner who called on phone, e.g. "Hey! Suno, kaisa chal raha hai target?").\n- Do NOT use robotic canned scripts.\n- When the conversation naturally concludes or student says bye/padhta hu, call the 'endLiveCall' tool to hang up.`
         : '',
@@ -578,8 +581,10 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       void this.handleToolCalls(data.toolCall.functionCalls);
     }
 
-    // 2. Interruption handling
+    // 2. Interruption handling (Measured VAD -> Flush Latency)
     if (data.serverContent?.interrupted) {
+      const interruptionLatencyMs = this.lastUserVoiceTime > 0 ? Date.now() - this.lastUserVoiceTime : 0;
+      console.info(`[GeminiLive] Interruption handled (measured latency: ${interruptionLatencyMs}ms)`);
       this.audioStreamer.flushPlayback();
       this.setStatus('listening');
       if (this.currentAssistantMessage) {
