@@ -204,6 +204,7 @@ export default function LiveCompanionOverlay({
     });
 
     liveClient.setPrompts(systemPrompt, memoryContext);
+    liveClient.setRecentChatHistory(initialMessages);
     clientRef.current = liveClient;
     let cancelled = false;
 

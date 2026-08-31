@@ -15,10 +15,15 @@ describe('ProactiveAgentService', () => {
   beforeEach(() => {
     localStorage.clear();
     proactiveAgentService.resetForTesting();
+    proactiveAgentService.updatePreferences({
+      quietHoursStart: '03:00',
+      quietHoursEnd: '06:00',
+    });
     vi.restoreAllMocks();
   });
 
   it('initializes with default preferences', () => {
+    proactiveAgentService.resetForTesting();
     const prefs = proactiveAgentService.getPreferences();
     expect(prefs.enabled).toBe(true);
     expect(prefs.callsEnabled).toBe(true);

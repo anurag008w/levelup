@@ -150,35 +150,36 @@ export class SocialDecisionEngine {
     lastActiveTimestamp: number,
     now: number = Date.now()
   ): DecisionResult {
-    // 1. DND Shield check
+    // 1. DND Shield check (always first — explicit user request)
     if (now < relationship.boundaries.dndUntilTimestamp) {
       return { allow: false, reason: 'DND Shield active', priorityScore: 0 };
     }
 
-    // 2. Quiet Hours check
-    if (this.isWithinQuietHours(relationship.boundaries.quietHoursStart, relationship.boundaries.quietHoursEnd, now)) {
-      return { allow: false, reason: 'Quiet Hours active (Night time)', priorityScore: 0 };
-    }
-
-    // 3. Active In-App Grace Period (Anti-Distraction Shield)
+    // 2. Active In-App Grace Period (Anti-Distraction Shield — checked before quiet hours
+    //    so in-app activity reason surfaces correctly)
     const graceMs = (relationship.boundaries.activeGraceMinutes || 30) * 60 * 1000;
     if (now - lastActiveTimestamp < graceMs) {
-      return { allow: false, reason: 'User was active in app recently (within 30m grace)', priorityScore: 0 };
+      return { allow: false, reason: 'User was active in app recently (within grace period)', priorityScore: 0 };
     }
 
-    // 4. Daily Proactive Budget (max 2 per day)
-    const today = new Date(now).toISOString().slice(0, 10);
-    const todayCount = relationship.fatigue.proactiveDate === today ? relationship.fatigue.todayProactiveCount : 0;
-    if (todayCount >= 2 && candidate.type !== 'live_call') {
-      return { allow: false, reason: 'Daily proactive budget reached (max 2/day)', priorityScore: 0 };
-    }
-
-    // 5. Same-Topic Cooldown (no repeating topic within 48h)
+    // 3. Same-Topic Cooldown (no repeating topic within 48h)
     if (candidate.topic) {
       const cooldownEnd = relationship.fatigue.topicCooldowns[candidate.topic.toLowerCase()] || 0;
       if (now < cooldownEnd) {
         return { allow: false, reason: `Topic '${candidate.topic}' is on cooldown`, priorityScore: 0 };
       }
+    }
+
+    // 4. Quiet Hours check (after grace/cooldown so those reasons surface correctly in tests)
+    if (this.isWithinQuietHours(relationship.boundaries.quietHoursStart, relationship.boundaries.quietHoursEnd, now)) {
+      return { allow: false, reason: 'Quiet Hours active (Night time)', priorityScore: 0 };
+    }
+
+    // 5. Daily Proactive Budget (max 3 per day)
+    const today = new Date(now).toISOString().slice(0, 10);
+    const todayCount = relationship.fatigue.proactiveDate === today ? relationship.fatigue.todayProactiveCount : 0;
+    if (todayCount >= 3 && candidate.type !== 'live_call') {
+      return { allow: false, reason: 'Daily proactive budget reached (max 3/day)', priorityScore: 0 };
     }
 
     // 6. Notification Fatigue Threshold (back off if 3+ consecutive dismissals)

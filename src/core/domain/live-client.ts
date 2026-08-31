@@ -36,13 +36,13 @@ export class GeminiLiveClient {
   private config: LiveSettingsConfig;
   private systemPrompt = '';
   private memoryContext = '';
+  private recentChatSummary = '';
 
   private transcripts: LiveTranscriptItem[] = [];
   private pendingToolCalls: ChatToolCallRecord[] = [];
   private currentAssistantMessage = '';
   private framesSentCount = 0;
   private connectStartTime = Date.now();
-  private lastLiveActivityTime = Date.now();
   private lastUserVoiceTime = 0;
   private lastTurnFinishedTime = 0;
   private keepAliveTimer: any = null;
@@ -96,6 +96,22 @@ export class GeminiLiveClient {
     this.memoryContext = memoryContext;
   }
 
+  /** Call before connect() to give the live session recent chat history as context */
+  setRecentChatHistory(messages: Array<{ role: 'user' | 'assistant'; content: string }>): void {
+    if (!messages || messages.length === 0) {
+      this.recentChatSummary = '';
+      return;
+    }
+    // Take last 12 messages, format as a short recap
+    const recent = messages.slice(-12);
+    const lines = recent.map(m => {
+      const who = m.role === 'user' ? 'Student' : 'Misa';
+      const snippet = m.content.slice(0, 120).replace(/\n/g, ' ');
+      return `${who}: ${snippet}${m.content.length > 120 ? '...' : ''}`;
+    });
+    this.recentChatSummary = lines.join('\n');
+  }
+
   getStatus(): LiveSessionStatus {
     return this.status;
   }
@@ -124,7 +140,6 @@ export class GeminiLiveClient {
     this.setStatus('connecting');
     this.connectStartTime = Date.now();
     this.framesSentCount = 0;
-    this.lastLiveActivityTime = Date.now();
 
     if (incomingCallMeta?.isIncomingCall) {
       this.isIncomingCallSession = true;
@@ -161,6 +176,9 @@ export class GeminiLiveClient {
 - Current Local Time: ${timeString} (${timeZone})
 - Current ISO Time: ${now.toISOString()}
 Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.) or what date it is, state this exact time and date.`,
+      this.recentChatSummary
+        ? `\n=== RECENT CHAT MESSAGES CONTEXT ===\nThese are recent messages from the text chat with the student right before this live voice call started. Refer naturally to what was being discussed, do not act like a stranger or ask what to do if they already mentioned it:\n${this.recentChatSummary}\n====================================`
+        : '',
       this.memoryContext ? `\n=== USER CONTEXT & RECOLLECTIONS ===\n${this.memoryContext}\n========================` : '',
       ROMAN_SCRIPT_RULE,
       (() => {
@@ -490,7 +508,6 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
             this.startKeepAliveAndSilenceObserver();
           },
           onmessage: (data: any) => {
-            this.lastLiveActivityTime = Date.now();
             this.handleServerMessage(data);
           },
           onerror: (err: any) => {
@@ -521,13 +538,15 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
           const timeGreeting = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
           const topicClause = activeTopic && activeTopic !== 'General' ? `Their recent target topic is "${activeTopic}".` : '';
 
+          const chatContextSnippet = this.recentChatSummary ? `Recent chat conversation context: "${this.recentChatSummary.slice(-300)}".` : '';
+
           if (this.isIncomingCallSession) {
             this.session?.sendRealtimeInput({
-              text: `[SYSTEM EVENT: Call connected! Time of day: ${timeGreeting}. ${topicClause} Speak immediately in 1 short, warm, natural Hinglish sentence as the caller checking on their study target. Reason: "${this.incomingCallReason || 'Study check-in'}"]`,
+              text: `[SYSTEM EVENT: Call connected! Time of day: ${timeGreeting}. ${topicClause} ${chatContextSnippet} Speak immediately in 1 short, warm, natural Hinglish sentence as the caller checking on their study target or picking up what was being discussed. Reason: "${this.incomingCallReason || 'Study check-in'}"]`,
             });
           } else {
             this.session?.sendRealtimeInput({
-              text: `[SYSTEM EVENT: Live voice session connected! Time of day: ${timeGreeting}. ${topicClause} Greet the student dynamically in 1 short, fresh, natural Hinglish sentence referencing their study context or time of day, and ask what question we are tackling.]`,
+              text: `[SYSTEM EVENT: Live voice call connected! Time of day: ${timeGreeting}. ${topicClause} ${chatContextSnippet} Greet the student dynamically in 1 short, fresh, natural Hinglish sentence acknowledging their current study/chat context and what question we are tackling.]`,
             });
           }
         } catch (e) {
@@ -734,7 +753,8 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       },
       (inputLevel) => {
         this.isUserTalkingOverThreshold = inputLevel > 0.25;
-        if (inputLevel > 0.12) {
+        // Only register user speech activity if assistant is NOT actively speaking (prevents speaker echo from resetting silence streaks)
+        if (inputLevel > 0.14 && this.status !== 'speaking') {
           this.lastUserVoiceTime = Date.now();
           this.silenceStateMachine.onSpeechActivity();
         }
@@ -840,7 +860,6 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   }
 
   private startKeepAliveAndSilenceObserver(): void {
-    this.lastLiveActivityTime = Date.now();
     this.lastTurnFinishedTime = Date.now();
     if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
     if (this.silenceObserverTimer) clearInterval(this.silenceObserverTimer);
@@ -866,10 +885,10 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       if (!this.session || this.status === 'speaking' || this.status === 'thinking') return;
       if (this.status !== 'connected' && this.status !== 'listening') return;
 
+      // Calculate silence elapsed strictly from the moment either user or assistant stopped speaking
       const lastActivityAnchor = Math.max(
         this.lastTurnFinishedTime || 0,
-        this.lastUserVoiceTime || 0,
-        this.lastLiveActivityTime || 0
+        this.lastUserVoiceTime || 0
       );
       const silenceDurationSec = (Date.now() - lastActivityAnchor) / 1000;
 
@@ -902,7 +921,6 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         });
 
         if (promptText) {
-          this.lastLiveActivityTime = Date.now();
           this.lastTurnFinishedTime = Date.now(); // reset anchor for next progressive stage
           this.session.sendRealtimeInput({ text: promptText });
         }

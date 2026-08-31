@@ -35,8 +35,8 @@ export const DEFAULT_PROACTIVE_PREFS: ProactivePreferences = {
   enabled: true,
   callsEnabled: true,
   callFrequency: 'balanced',
-  quietHoursStart: '22:30',
-  quietHoursEnd: '07:30',
+  quietHoursStart: '01:00',  // JEE students study till midnight — don't cut off at 10:30pm
+  quietHoursEnd: '07:00',
   ringtonePreset: 'soft_chime',
   activeGraceMinutes: 30,
 };
@@ -158,6 +158,8 @@ class ProactiveAgentService {
   private dndUntilTimestamp = 0;
   private pendingTriggers: ProactiveTrigger[] = [];
   private debounceTimer: any = null;
+  private sessionIdleTimer: any = null; // 5-min in-session follow-up timer
+  private lastSessionTopic = ''; // topic of last chat turn for follow-up context
   private incomingCallListeners: Set<IncomingCallListener> = new Set();
   private messageInjectionListeners: Set<MessageInjectionListener> = new Set();
   private isInitialized = false;
@@ -592,6 +594,45 @@ class ProactiveAgentService {
     this.debounceTimer = setTimeout(() => {
       this.sealSessionTrigger(userText, assistantReply, context);
     }, 4000);
+
+    // 7. In-Session Follow-Up Idle Timer (5 minutes)
+    // If the student goes quiet for 5 min after a chat turn, Misa checks in naturally.
+    if (this.sessionIdleTimer) {
+      clearTimeout(this.sessionIdleTimer);
+    }
+
+    // Capture topic for follow-up context
+    const topicForFollowUp = lowerUser.includes('optics') ? 'Optics'
+      : lowerUser.includes('rotat') || lowerUser.includes('torque') ? 'Rotation'
+      : lowerUser.includes('organic') || lowerUser.includes('reaction') ? 'Organic Chemistry'
+      : lowerUser.includes('thermo') ? 'Thermodynamics'
+      : lowerUser.includes('calculus') || lowerUser.includes('integrat') ? 'Calculus'
+      : lowerUser.includes('doubt') || lowerUser.includes('nahi samajh') ? 'the doubt you had'
+      : null;
+    this.lastSessionTopic = topicForFollowUp || this.lastSessionTopic;
+
+    this.sessionIdleTimer = setTimeout(() => {
+      if (this.isQuietTime()) return;
+      // Only if user hasn't chatted again in last 5 min
+      if (Date.now() - this.lastUserChatTimestamp < 4.5 * 60 * 1000) return;
+
+      const rel = relationshipManager.getState();
+      const topic = this.lastSessionTopic || rel.commitments[0]?.topic || rel.currentSubject || null;
+      const followUpMessages = topic ? [
+        `Ek kaam aur batao — ${topic} ka jo section chal raha tha, koi step clear nahi tha kya? 😊`,
+        `Hey, ${topic} wala part kaisa raha? Kuch aur sambhalna ho toh batao! 🎯`,
+        `Suno, ${topic} me koi formula ya concept dobara dekhna ho toh batao, saath me kar lete hain 💪`,
+      ] : [
+        'Koi aur question chal raha hai? Batao, saath me solve karte hain! 😊',
+        'Hey, padhai kaisi chal rahi hai? Koi concept fasa hua ho toh batao! 🎯',
+        'Suno, agar koi doubt hai toh abhi puch lo — main available hoon! 💪',
+      ];
+      const sentMsgs = rel.recentSentMessages;
+      const available = followUpMessages.filter(m => !sentMsgs.includes(m));
+      const msg = available[Math.floor(Math.random() * available.length)] || followUpMessages[0];
+      this.injectMessageIntoChat(msg);
+      relationshipManager.recordProactiveSent('session_followup', msg);
+    }, 5 * 60 * 1000); // 5 minutes
   }
 
   /** Evaluates final session intent and sets a SINGLE, highest-priority trigger */

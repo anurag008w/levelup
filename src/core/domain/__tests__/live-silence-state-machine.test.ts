@@ -38,7 +38,7 @@ describe('LiveSilenceStateMachine', () => {
       topicMemoryContext: 'Ray Optics',
     });
     expect(res).not.toBeNull();
-    expect(res).toContain('SYSTEM EVENT');
+    expect(res).toContain('LIVE COMPANION NUDGE');
     expect(res).toContain('Ray Optics');
     expect(fsm.getState()).toBe('CHECK_IN');
     expect(fsm.getStreakCount()).toBe(1);

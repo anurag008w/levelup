@@ -58,7 +58,7 @@ describe('SocialDecisionEngine', () => {
 
     const decision = socialDecisionEngine.shouldSpeak(candidate, mockState, lastActive);
     expect(decision.allow).toBe(false);
-    expect(decision.reason).toContain('grace');
+    expect(decision.reason.toLowerCase()).toContain('grace');
   });
 
   it('blocks proactive action when same topic is in cooldown', () => {
@@ -76,7 +76,7 @@ describe('SocialDecisionEngine', () => {
 
     const decision = socialDecisionEngine.shouldSpeak(candidate, mockState, Date.now() - 45 * 60 * 1000);
     expect(decision.allow).toBe(false);
-    expect(decision.reason).toContain('cooldown');
+    expect(decision.reason.toLowerCase()).toContain('cooldown');
   });
 
   it('evaluates priority score based on urgency, relevance, confidence and freshness', () => {
@@ -130,11 +130,16 @@ describe('SocialDecisionEngine', () => {
       },
     ];
 
+    // Use 14:00 IST (daytime) as mock now so quiet hours don't interfere
+    const daytimeNow = new Date();
+    daytimeNow.setHours(14, 0, 0, 0);
+    const mockNow = daytimeNow.getTime();
+
     const best = socialDecisionEngine.selectBestCandidate(
       candidates,
       mockState,
-      Date.now() - 50 * 60 * 1000,
-      Date.now()
+      mockNow - 50 * 60 * 1000,
+      mockNow
     );
 
     expect(best).not.toBeNull();
