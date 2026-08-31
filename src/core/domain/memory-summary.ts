@@ -66,13 +66,14 @@ export function parseMemoryBlocks(text: string): MemoryBlock[] {
     if (mdBlocks.length > 0) return mdBlocks;
   }
 
-  // 4. Clean bullet list fallback (- point \n - point)
-  const bulletLines = trimmed
-    .split('\n')
-    .map((l) => stripListMarker(l))
-    .filter((l) => l.length > 0 && !l.startsWith('```') && !l.startsWith('{') && !l.startsWith('}'));
-  if (bulletLines.length > 0 && bulletLines.some((l) => l.length > 5)) {
-    return splitIntoBlocks(bulletLines, { longTerm: false, tags: [] });
+  // 4. Bullet list fallback (only when lines actually carry list markers like - x, * x, 1. x)
+  const rawLines = trimmed.split('\n').map((l) => l.trim()).filter(Boolean);
+  const listLines = rawLines.filter((l) => /^(?:[-*+]|\d+[.)])\s+/.test(l));
+  if (listLines.length > 0 && listLines.length >= Math.ceil(rawLines.length * 0.4)) {
+    const cleaned = listLines.map((l) => stripListMarker(l)).filter((l) => l.length > 0);
+    if (cleaned.length > 0) {
+      return splitIntoBlocks(cleaned, { longTerm: false, tags: [] });
+    }
   }
 
   return [];
