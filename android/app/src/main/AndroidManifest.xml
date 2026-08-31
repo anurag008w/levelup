@@ -87,6 +87,9 @@
          AI replies continue rahein. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- In-app APK Update & System Package Installer (Android 8.0+ / API 26 to Android 15+) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Misa Live: Real-time Audio, Camera and Speaker Routing Permissions (Android 7 to Android 15+) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />

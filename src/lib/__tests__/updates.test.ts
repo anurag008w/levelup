@@ -3,21 +3,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   checkForUpdates,
   compareVersions,
+  deleteDownloadedApk,
+  downloadApkFile,
+  getDownloadedApkInfo,
   installUpdate,
   isUpdateAvailable,
+  launchInstaller,
   parseVersion,
   pickApkAsset,
   releaseFromApi,
   resolveCurrentVersion,
+  shareDownloadedApk,
 } from '../updates';
 
-const { httpGetMock, isNativeMock, writeFileMock, appendFileMock, deleteFileMock, startActivityMock } = vi.hoisted(() => ({
+const { httpGetMock, isNativeMock, writeFileMock, appendFileMock, deleteFileMock, statMock, getUriMock, startActivityMock, shareMock } = vi.hoisted(() => ({
   httpGetMock: vi.fn(),
   isNativeMock: vi.fn(() => true),
   writeFileMock: vi.fn(),
   appendFileMock: vi.fn(),
   deleteFileMock: vi.fn(),
+  statMock: vi.fn(),
+  getUriMock: vi.fn(),
   startActivityMock: vi.fn(),
+  shareMock: vi.fn(),
 }));
 
 vi.mock('@capacitor/core', () => ({
@@ -35,6 +43,14 @@ vi.mock('@capacitor/filesystem', () => ({
     writeFile: (...args: unknown[]) => writeFileMock(...args),
     appendFile: (...args: unknown[]) => appendFileMock(...args),
     deleteFile: (...args: unknown[]) => deleteFileMock(...args),
+    stat: (...args: unknown[]) => statMock(...args),
+    getUri: (...args: unknown[]) => getUriMock(...args),
+  },
+}));
+
+vi.mock('@capacitor/share', () => ({
+  Share: {
+    share: (...args: unknown[]) => shareMock(...args),
   },
 }));
 
@@ -382,5 +398,78 @@ describe('installUpdate', () => {
     expect(deleteFileMock).toHaveBeenCalled();
     expect(writeFileMock).toHaveBeenCalledWith(expect.objectContaining({ data: 'd2hvbGUtYXBr', directory: 'CACHE' }));
     expect(startActivityMock).toHaveBeenCalled();
+  });
+});
+
+describe('downloadApkFile & launchInstaller', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    isNativeMock.mockReturnValue(true);
+  });
+
+  it('downloadApkFile downloads without calling startActivity', async () => {
+    httpGetMock.mockResolvedValue({ status: 200, data: 'YXBrLWRhdGE=', headers: {}, url: 'u' });
+    writeFileMock.mockResolvedValue({ uri: 'file:///cache/updates/levelup.apk' });
+
+    const res = await downloadApkFile('https://x/app.apk');
+    expect(res.ok).toBe(true);
+    expect(writeFileMock).toHaveBeenCalled();
+    expect(startActivityMock).not.toHaveBeenCalled();
+  });
+
+  it('launchInstaller invokes intent with correct flags and data', async () => {
+    startActivityMock.mockResolvedValue({});
+    const res = await launchInstaller();
+    expect(res.ok).toBe(true);
+    expect(startActivityMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'VIEW',
+        data: 'content://com.anurag.levelup.fileprovider/updates/levelup.apk',
+        type: 'application/vnd.android.package-archive',
+      }),
+    );
+  });
+
+  it('launchInstaller falls back to unknown sources settings if view intent fails', async () => {
+    startActivityMock
+      .mockRejectedValueOnce(new Error('Permission denied'))
+      .mockResolvedValueOnce({});
+
+    const res = await launchInstaller();
+    expect(res.ok).toBe(false);
+    expect(startActivityMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'MANAGE_UNKNOWN_APP_SOURCES',
+        data: 'package:com.anurag.levelup',
+      }),
+    );
+  });
+
+  it('getDownloadedApkInfo returns exists true when stat succeeds', async () => {
+    statMock.mockResolvedValue({ type: 'file', size: 12345678 });
+    const info = await getDownloadedApkInfo();
+    expect(info.exists).toBe(true);
+    expect(info.size).toBe(12345678);
+  });
+
+  it('getDownloadedApkInfo returns exists false when stat throws', async () => {
+    statMock.mockRejectedValue(new Error('File not found'));
+    const info = await getDownloadedApkInfo();
+    expect(info.exists).toBe(false);
+  });
+
+  it('deleteDownloadedApk removes the cached file', async () => {
+    deleteFileMock.mockResolvedValue({});
+    await deleteDownloadedApk();
+    expect(deleteFileMock).toHaveBeenCalledWith(expect.objectContaining({ path: 'updates/levelup.apk', directory: 'CACHE' }));
+  });
+
+  it('shareDownloadedApk shares the file uri', async () => {
+    getUriMock.mockResolvedValue({ uri: 'file:///cache/updates/levelup.apk' });
+    shareMock.mockResolvedValue({ activityType: 'com.android.share' });
+
+    const res = await shareDownloadedApk();
+    expect(res.ok).toBe(true);
+    expect(shareMock).toHaveBeenCalledWith(expect.objectContaining({ url: 'file:///cache/updates/levelup.apk' }));
   });
 });

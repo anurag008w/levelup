@@ -2,6 +2,7 @@ import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { ActivityAction, IntentLauncher } from '@capgo/capacitor-intent-launcher';
+import { Share } from '@capacitor/share';
 
 const GITHUB_REPO = 'anurag008w/levelup';
 const APP_PACKAGE = 'com.anurag.levelup';
@@ -310,35 +311,46 @@ async function downloadChunked(
   }
 }
 
+const FLAG_ACTIVITY_CLEAR_TOP = 0x04000000;
+
 /** Launches the Android package installer on the freshly written APK. */
-async function launchInstaller(): Promise<InstallResult> {
+export async function launchInstaller(): Promise<InstallResult> {
   const contentUri = `content://${APP_PACKAGE}.fileprovider/${UPDATE_DIR}/${APK_FILE}`;
   try {
     await IntentLauncher.startActivityAsync({
       action: ActivityAction.VIEW,
       data: contentUri,
       type: APK_MIME,
-      flags: FLAG_GRANT_READ_URI_PERMISSION | FLAG_ACTIVITY_NEW_TASK,
+      flags: FLAG_GRANT_READ_URI_PERMISSION | FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_CLEAR_TOP,
     });
-    return { ok: true, message: 'APK installer khul gaya — "Install" par tap karo.' };
+    return { ok: true, message: 'APK installer khul gaya — "Install" ya "Update" par tap karo.' };
   } catch {
     try {
-      await IntentLauncher.startActivityAsync({ action: ActivityAction.MANAGE_UNKNOWN_APP_SOURCES });
+      await IntentLauncher.startActivityAsync({
+        action: ActivityAction.MANAGE_UNKNOWN_APP_SOURCES,
+        data: `package:${APP_PACKAGE}`,
+      });
+      return {
+        ok: false,
+        message:
+          'Settings open ho gayi hai. LevelUp ke liye "Allow from this source" on karo, fir wapas aakar "Install" par tap karo.',
+      };
     } catch {
       // settings screen bhi nahi khula — sirf message dikha do
     }
     return {
       ok: false,
       message:
-        'Installer khul nahi paya. Phone settings me is app ke liye "Install unknown apps" allow karo, phir dobara try karo.',
+        'Installer khul nahi paya. Phone settings me is app ke liye "Install unknown apps" allow karo, ya fir "Save / Share" se APK ko open karo.',
     };
   }
 }
 
-export async function installUpdate(apkUrl: string, options?: InstallUpdateOptions): Promise<InstallResult> {
+/** Downloads the APK file to cache without auto-launching the installer. */
+export async function downloadApkFile(apkUrl: string, options?: InstallUpdateOptions): Promise<InstallResult> {
   if (!Capacitor.isNativePlatform()) {
     window.open(apkUrl, '_blank');
-    return { ok: true, message: 'Browser me APK download link khul gaya — wahan se install karo.' };
+    return { ok: true, message: 'Browser me APK download shuru ho gaya.' };
   }
 
   const { totalBytes: knownTotal, onProgress } = options ?? {};
@@ -355,7 +367,7 @@ export async function installUpdate(apkUrl: string, options?: InstallUpdateOptio
       if (totalBytes != null && totalBytes > 0) {
         try {
           await downloadChunked(apkUrl, totalBytes, onProgress);
-          return await launchInstaller();
+          return { ok: true, message: `APK download complete (${UPDATE_DIR}/${APK_FILE}). Ab aap kabhi bhi "Install" par tap kar sakte ho.` };
         } catch {
           // ranged path fail — partial file ko hata ke whole download fallback
           try {
@@ -367,7 +379,7 @@ export async function installUpdate(apkUrl: string, options?: InstallUpdateOptio
       }
     }
 
-    // Whole download (single request, no progress) — default path.
+    // Whole download (single request, no progress) — fallback path.
     const base64 = await downloadWhole(apkUrl);
     await Filesystem.writeFile({
       path: `${UPDATE_DIR}/${APK_FILE}`,
@@ -375,8 +387,63 @@ export async function installUpdate(apkUrl: string, options?: InstallUpdateOptio
       directory: Directory.Cache,
       recursive: true,
     });
-    return await launchInstaller();
+    return { ok: true, message: `APK download complete (${UPDATE_DIR}/${APK_FILE}). Ab aap kabhi bhi "Install" par tap kar sakte ho.` };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/** Checks if an APK is currently downloaded and cached in the app. */
+export async function getDownloadedApkInfo(): Promise<{ exists: boolean; size?: number; path: string }> {
+  const relPath = `${UPDATE_DIR}/${APK_FILE}`;
+  if (!Capacitor.isNativePlatform()) return { exists: false, path: relPath };
+  try {
+    const stat = await Filesystem.stat({
+      directory: Directory.Cache,
+      path: relPath,
+    });
+    return { exists: stat.type === 'file' || typeof stat.size === 'number', size: stat.size, path: relPath };
+  } catch {
+    return { exists: false, path: relPath };
+  }
+}
+
+/** Deletes the cached APK file. */
+export async function deleteDownloadedApk(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    await Filesystem.deleteFile({ path: `${UPDATE_DIR}/${APK_FILE}`, directory: Directory.Cache });
+  } catch {}
+}
+
+/** Opens native share dialog to save APK to Downloads or share to other apps. */
+export async function shareDownloadedApk(): Promise<{ ok: boolean; message?: string }> {
+  if (!Capacitor.isNativePlatform()) return { ok: false, message: 'Only available on Android.' };
+  try {
+    const uriRes = await Filesystem.getUri({
+      directory: Directory.Cache,
+      path: `${UPDATE_DIR}/${APK_FILE}`,
+    });
+    await Share.share({
+      title: 'LevelUp Update APK',
+      text: 'LevelUp Android Update APK',
+      url: uriRes.uri,
+      dialogTitle: 'Save to Downloads or Share LevelUp APK',
+    });
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, message: e?.message || 'Share cancelled or failed' };
+  }
+}
+
+/** Downloads and immediately launches the installer (1-click flow). */
+export async function installUpdate(apkUrl: string, options?: InstallUpdateOptions): Promise<InstallResult> {
+  if (!Capacitor.isNativePlatform()) {
+    window.open(apkUrl, '_blank');
+    return { ok: true, message: 'Browser me APK download link khul gaya — wahan se install karo.' };
+  }
+
+  const dl = await downloadApkFile(apkUrl, options);
+  if (!dl.ok) return dl;
+  return await launchInstaller();
 }
