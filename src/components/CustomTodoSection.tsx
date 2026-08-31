@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import {
+  ArrowUpDown,
   Check,
-  ChevronDown,
-  ChevronUp,
   Clock,
+  GripVertical,
   ListTodo,
   Pencil,
   Plus,
@@ -55,17 +55,23 @@ export default function CustomTodoSection({
 }: CustomTodoSectionProps) {
   const [filter, setFilter] = useState<'all' | 'pending' | 'completed'>('all');
   const [showAddForm, setShowAddForm] = useState(false);
+  const [isArrangeMode, setIsArrangeMode] = useState(false);
+
+  // Add Form State
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<TodoPriority>('medium');
   const [category, setCategory] = useState<TodoCategory>('general');
   const [duration, setDuration] = useState<number>(30);
 
-  // Edit State
-  const [editingId, setEditingId] = useState<string | null>(null);
+  // Edit Modal State
+  const [editingTodo, setEditingTodo] = useState<CustomTodoTask | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editPriority, setEditPriority] = useState<TodoPriority>('medium');
   const [editCategory, setEditCategory] = useState<TodoCategory>('general');
   const [editDuration, setEditDuration] = useState<number>(30);
+
+  // Drag Reorder state for arrange mode
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
 
   const sortedTodos = sortCustomTodos(todos);
   const completedTodos = sortedTodos.filter((t) => t.completed);
@@ -76,7 +82,7 @@ export default function CustomTodoSection({
     return true;
   });
 
-  function handleSubmit() {
+  function handleAddSubmit() {
     if (!title.trim()) {
       flash('Pehle To-Do title bharein.');
       return;
@@ -94,43 +100,45 @@ export default function CustomTodoSection({
   }
 
   function startEdit(t: CustomTodoTask) {
-    setEditingId(t.id);
+    haptic();
+    setEditingTodo(t);
     setEditTitle(t.title);
     setEditPriority(t.priority || 'medium');
     setEditCategory(t.category || 'general');
     setEditDuration(t.estimatedMinutes || 30);
   }
 
-  function saveEdit(id: string) {
-    if (!editTitle.trim()) return;
+  function saveEdit() {
+    if (!editingTodo || !editTitle.trim()) return;
     haptic();
-    onEdit(id, {
+    onEdit(editingTodo.id, {
       title: editTitle.trim(),
       priority: editPriority,
       category: editCategory,
       estimatedMinutes: editDuration,
     });
-    setEditingId(null);
-    setEditTitle('');
+    setEditingTodo(null);
     flash('To-Do update ho gaya.');
   }
 
-  function handleMove(id: string, direction: 'up' | 'down') {
+  function moveItem(fromIndex: number, toIndex: number) {
+    if (toIndex < 0 || toIndex >= sortedTodos.length) return;
     const list = [...sortedTodos];
-    const idx = list.findIndex((t) => t.id === id);
-    if (idx === -1) return;
-    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-    if (targetIdx < 0 || targetIdx >= list.length) return;
-
-    const item = list.splice(idx, 1)[0];
-    list.splice(targetIdx, 0, item);
+    const [moved] = list.splice(fromIndex, 1);
+    list.splice(toIndex, 0, moved);
     const updated = list.map((t, i) => ({ ...t, order: i }));
     onReorder?.(updated);
-    haptic(5);
+    haptic(8);
   }
+
+  const handleLongPressTrigger = useCallback(() => {
+    haptic(30);
+    setIsArrangeMode(true);
+  }, []);
 
   return (
     <div className="mb-6 space-y-3">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <SectionHeader
           icon={<ListTodo size={14} color="var(--color-l)" />}
@@ -138,16 +146,53 @@ export default function CustomTodoSection({
           title={isStandalone ? 'Daily To-Dos & Tasks' : 'Custom To-Dos'}
           meta={`${completedTodos.length}/${todos.length} done`}
         />
-        <button
-          type="button"
-          onClick={() => setShowAddForm((v) => !v)}
-          className="btn btn-ghost min-h-8 gap-1 px-2.5 text-xs font-semibold text-l"
-          aria-label={showAddForm ? 'Close add form' : 'Add custom to-do'}
-        >
-          {showAddForm ? <X size={14} /> : <Plus size={14} />}
-          {showAddForm ? 'Cancel' : 'Add To-Do'}
-        </button>
+        <div className="flex items-center gap-1.5">
+          {!isArrangeMode && todos.length > 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                haptic();
+                setIsArrangeMode(true);
+              }}
+              className="btn btn-ghost min-h-8 gap-1 px-2 text-xs font-semibold text-muted hover:text-text"
+              aria-label="Arrange tasks"
+            >
+              <ArrowUpDown size={13} />
+              Arrange
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowAddForm((v) => !v)}
+            className="btn btn-ghost min-h-8 gap-1 px-2.5 text-xs font-semibold text-l"
+            aria-label={showAddForm ? 'Close add form' : 'Add custom to-do'}
+          >
+            {showAddForm ? <X size={14} /> : <Plus size={14} />}
+            {showAddForm ? 'Cancel' : 'Add To-Do'}
+          </button>
+        </div>
       </div>
+
+      {/* Arrange Mode Banner */}
+      {isArrangeMode && (
+        <div className="flex items-center justify-between rounded-xl border border-l/40 bg-l/15 p-3 fade-in">
+          <div className="flex items-center gap-2">
+            <GripVertical size={16} className="text-light" />
+            <p className="font-display text-xs font-bold text-light">Arrange Mode: Tasks ko drag ya move karein</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              haptic();
+              setIsArrangeMode(false);
+              flash('Tasks ka order save ho gaya.');
+            }}
+            className="btn btn-primary px-3 py-1.5 text-xs font-bold gap-1 shadow-md"
+          >
+            <Check size={13} strokeWidth={3} /> Done
+          </button>
+        </div>
+      )}
 
       {/* Quick Add Form */}
       {showAddForm && (
@@ -166,7 +211,7 @@ export default function CustomTodoSection({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') handleSubmit();
+              if (e.key === 'Enter') handleAddSubmit();
             }}
             autoFocus
           />
@@ -174,7 +219,7 @@ export default function CustomTodoSection({
           <div className="space-y-2 text-xs">
             {/* Priority */}
             <div>
-              <span className="block text-[11px] font-semibold text-muted mb-1.5 uppercase tracking-wider">Priority (High tasks stay on top)</span>
+              <span className="block text-[11px] font-semibold text-muted mb-1.5 uppercase tracking-wider">Priority (High tasks on top)</span>
               <div className="flex flex-wrap gap-1.5">
                 {PRIORITIES.map((p) => {
                   const active = priority === p.id;
@@ -251,7 +296,7 @@ export default function CustomTodoSection({
 
           <button
             type="button"
-            onClick={handleSubmit}
+            onClick={handleAddSubmit}
             className="btn btn-primary w-full min-h-10 text-xs font-bold gap-1.5 mt-2"
           >
             <Plus size={15} /> Save to today's list
@@ -260,7 +305,7 @@ export default function CustomTodoSection({
       )}
 
       {/* Filter Chips */}
-      {todos.length > 0 && (
+      {!isArrangeMode && todos.length > 0 && (
         <div className="flex items-center gap-1.5 text-xs">
           {(['all', 'pending', 'completed'] as const).map((tab) => {
             const count = tab === 'all' ? todos.length : tab === 'pending' ? pendingTodos.length : completedTodos.length;
@@ -286,6 +331,13 @@ export default function CustomTodoSection({
         </div>
       )}
 
+      {/* Helper text about swipe gestures */}
+      {!isArrangeMode && filtered.length > 0 && (
+        <p className="text-[10px] text-muted text-center italic">
+          Tip: Slide right to delete · Slide left to edit · Long press to arrange
+        </p>
+      )}
+
       {/* To-Do Items List */}
       <div className="space-y-2">
         {filtered.length === 0 ? (
@@ -297,220 +349,416 @@ export default function CustomTodoSection({
             </p>
           </div>
         ) : (
-          filtered.map((t, index) => {
-            const prioMeta = PRIORITIES.find((p) => p.id === t.priority) || PRIORITIES[1];
-            const catMeta = CATEGORIES.find((c) => c.id === t.category) || CATEGORIES[4];
-            const isEditing = editingId === t.id;
+          filtered.map((t, index) => (
+            <SwipeableTodoCard
+              key={t.id}
+              task={t}
+              index={index}
+              totalCount={filtered.length}
+              isArrangeMode={isArrangeMode}
+              onToggle={() => onToggle(t.id)}
+              onDelete={() => onDelete(t.id)}
+              onEdit={() => startEdit(t)}
+              onMove={moveItem}
+              onLongPress={handleLongPressTrigger}
+              onDragStart={() => setDraggedIndex(index)}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (draggedIndex !== null && draggedIndex !== index) {
+                  moveItem(draggedIndex, index);
+                  setDraggedIndex(index);
+                }
+              }}
+              onDragEnd={() => setDraggedIndex(null)}
+            />
+          ))
+        )}
+      </div>
 
-            return (
-              <div
-                key={t.id}
-                className={`card relative flex items-start gap-2.5 p-3.5 transition-all ${
-                  t.completed ? 'opacity-65 bg-panel/35' : 'bg-panel/85 hover:border-border-strong'
-                }`}
+      {/* Edit Modal Dialog */}
+      {editingTodo && (
+        <div className="modal-backdrop fade-in" style={{ zIndex: 100 }} onClick={() => setEditingTodo(null)}>
+          <div
+            className="modal-card max-w-md w-full p-4.5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Edit To-Do"
+          >
+            <div className="flex items-center justify-between border-b border-border/40 pb-3">
+              <div className="flex items-center gap-2">
+                <Pencil size={16} className="text-l" />
+                <p className="font-display text-base font-bold text-text">Edit To-Do Task</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingTodo(null)}
+                className="icon-btn text-muted hover:text-text"
+                aria-label="Close modal"
               >
-                {/* Checkbox button */}
-                <button
-                  type="button"
-                  onClick={() => onToggle(t.id)}
-                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-all ${
-                    t.completed
-                      ? 'border-success bg-success text-bg'
-                      : 'border-border hover:border-l hover:bg-l/10 text-transparent'
-                  }`}
-                  aria-label={t.completed ? `Mark ${t.title} as pending` : `Mark ${t.title} as completed`}
-                >
-                  <Check size={13} strokeWidth={3} />
-                </button>
+                <X size={16} />
+              </button>
+            </div>
 
-                {/* Content */}
-                <div className="min-w-0 flex-1">
-                  {isEditing ? (
-                    <div className="space-y-2.5 pt-0.5">
-                      <input
-                        type="text"
-                        className="field w-full text-xs font-semibold"
-                        value={editTitle}
-                        onChange={(e) => setEditTitle(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveEdit(t.id);
-                          if (e.key === 'Escape') setEditingId(null);
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-[11px] font-semibold text-muted mb-1.5 uppercase tracking-wider">
+                  Task Title
+                </label>
+                <input
+                  type="text"
+                  className="field w-full text-sm font-semibold"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveEdit();
+                    if (e.key === 'Escape') setEditingTodo(null);
+                  }}
+                  autoFocus
+                />
+              </div>
+
+              {/* Edit Priority */}
+              <div>
+                <label className="block text-[11px] font-semibold text-muted mb-1.5 uppercase tracking-wider">
+                  Priority
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {PRIORITIES.map((p) => {
+                    const active = editPriority === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          haptic(4);
+                          setEditPriority(p.id);
                         }}
-                        autoFocus
-                      />
-
-                      {/* Edit Priority */}
-                      <div className="flex flex-wrap gap-1.5 text-[11px]">
-                        {PRIORITIES.map((p) => (
-                          <button
-                            key={p.id}
-                            type="button"
-                            onClick={() => {
-                              haptic(4);
-                              setEditPriority(p.id);
-                            }}
-                            className={`flex items-center gap-1 rounded-md border px-2 py-0.5 font-medium transition-all ${
-                              editPriority === p.id ? p.bg : 'border-border/50 bg-white/5 text-muted'
-                            }`}
-                          >
-                            <span className={`h-1.5 w-1.5 rounded-full ${p.dot}`} />
-                            {p.label}
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* Edit Category */}
-                      <div className="flex flex-wrap gap-1.5 text-[11px]">
-                        {CATEGORIES.map((c) => (
-                          <button
-                            key={c.id}
-                            type="button"
-                            onClick={() => {
-                              haptic(4);
-                              setEditCategory(c.id);
-                            }}
-                            className={`rounded-md border px-2 py-0.5 font-medium transition-all ${
-                              editCategory === c.id ? c.color : 'border-border/50 bg-white/5 text-muted'
-                            }`}
-                          >
-                            {c.label}
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* Edit Duration */}
-                      <div className="flex flex-wrap gap-1 text-[10px]">
-                        {DURATIONS.map((d) => (
-                          <button
-                            key={d}
-                            type="button"
-                            onClick={() => {
-                              haptic(4);
-                              setEditDuration(d);
-                            }}
-                            className={`rounded-md border px-2 py-0.5 transition-all ${
-                              editDuration === d ? 'border-l bg-l/15 text-light font-bold' : 'border-border/50 bg-white/5 text-muted'
-                            }`}
-                          >
-                            {d}m
-                          </button>
-                        ))}
-                      </div>
-
-                      <div className="flex items-center gap-1.5 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => saveEdit(t.id)}
-                          className="btn btn-primary px-3 py-1 text-xs font-bold"
-                        >
-                          Save
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditingId(null)}
-                          className="btn btn-ghost px-2.5 py-1 text-xs text-muted"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <p
-                        className={`text-sm font-semibold leading-snug break-words ${
-                          t.completed ? 'line-through text-muted' : 'text-text'
+                        className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-all ${
+                          active ? p.bg : 'border-border/60 bg-white/5 text-muted hover:border-border'
                         }`}
                       >
-                        {t.title}
-                      </p>
-
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px]">
-                        {/* Priority */}
-                        <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-semibold ${prioMeta.bg}`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${prioMeta.dot}`} />
-                          {prioMeta.label}
-                        </span>
-
-                        {/* Category */}
-                        {t.category && (
-                          <span className={`inline-flex items-center rounded-md border px-1.5 py-0.5 font-medium ${catMeta.color}`}>
-                            {catMeta.label}
-                          </span>
-                        )}
-
-                        {/* Duration */}
-                        {t.estimatedMinutes && (
-                          <span className="inline-flex items-center gap-1 rounded-md bg-white/5 px-1.5 py-0.5 text-muted">
-                            <Clock size={10} /> {t.estimatedMinutes}m
-                          </span>
-                        )}
-
-                        {/* AI tag */}
-                        {t.createdBy === 'ai' && (
-                          <span className="inline-flex items-center gap-1 rounded-md bg-l/15 px-1.5 py-0.5 font-semibold text-l">
-                            <Sparkles size={10} /> Misa
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                        <span className={`h-1.5 w-1.5 rounded-full ${p.dot}`} />
+                        {p.label}
+                      </button>
+                    );
+                  })}
                 </div>
-
-                {/* Actions & Reorder buttons */}
-                {!isEditing && (
-                  <div className="flex shrink-0 items-center gap-0.5">
-                    {/* Move Up */}
-                    <button
-                      type="button"
-                      disabled={index === 0}
-                      onClick={() => handleMove(t.id, 'up')}
-                      className={`icon-btn p-1 ${index === 0 ? 'opacity-20 cursor-not-allowed' : 'text-muted hover:text-text'}`}
-                      aria-label="Move task up"
-                      title="Move up"
-                    >
-                      <ChevronUp size={14} />
-                    </button>
-                    {/* Move Down */}
-                    <button
-                      type="button"
-                      disabled={index === filtered.length - 1}
-                      onClick={() => handleMove(t.id, 'down')}
-                      className={`icon-btn p-1 ${index === filtered.length - 1 ? 'opacity-20 cursor-not-allowed' : 'text-muted hover:text-text'}`}
-                      aria-label="Move task down"
-                      title="Move down"
-                    >
-                      <ChevronDown size={14} />
-                    </button>
-                    {/* Edit */}
-                    <button
-                      type="button"
-                      onClick={() => startEdit(t)}
-                      className="icon-btn p-1 text-muted hover:text-text"
-                      aria-label="Edit To-Do"
-                      title="Edit"
-                    >
-                      <Pencil size={13} />
-                    </button>
-                    {/* Delete */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (confirm(`"${t.title}" ko delete karna hai?`)) {
-                          onDelete(t.id);
-                        }
-                      }}
-                      className="icon-btn p-1 text-muted hover:text-danger"
-                      aria-label="Delete To-Do"
-                      title="Delete"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                )}
               </div>
-            );
-          })
-        )}
+
+              {/* Edit Category */}
+              <div>
+                <label className="block text-[11px] font-semibold text-muted mb-1.5 uppercase tracking-wider">
+                  Subject / Category
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {CATEGORIES.map((c) => {
+                    const active = editCategory === c.id;
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          haptic(4);
+                          setEditCategory(c.id);
+                        }}
+                        className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-all ${
+                          active ? c.color : 'border-border/60 bg-white/5 text-muted hover:border-border'
+                        }`}
+                      >
+                        {c.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Edit Duration */}
+              <div>
+                <label className="block text-[11px] font-semibold text-muted mb-1.5 uppercase tracking-wider">
+                  Duration (Minutes)
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {DURATIONS.map((d) => {
+                    const active = editDuration === d;
+                    return (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => {
+                          haptic(4);
+                          setEditDuration(d);
+                        }}
+                        className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-all ${
+                          active ? 'border-l bg-l/15 text-light font-bold' : 'border-border/60 bg-white/5 text-muted hover:border-border'
+                        }`}
+                      >
+                        {d} min
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2 border-t border-border/40">
+              <button
+                type="button"
+                onClick={saveEdit}
+                className="btn btn-primary flex-1 py-2 text-xs font-bold gap-1"
+              >
+                <Check size={14} strokeWidth={3} /> Save Changes
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingTodo(null)}
+                className="btn btn-ghost px-4 py-2 text-xs text-muted"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// -------------------------------------------------------------
+// Swipeable Card Component with Gesture Detection & Clean View
+// -------------------------------------------------------------
+function SwipeableTodoCard({
+  task,
+  index,
+  totalCount,
+  isArrangeMode,
+  onToggle,
+  onDelete,
+  onEdit,
+  onMove,
+  onLongPress,
+  onDragStart,
+  onDragOver,
+  onDragEnd,
+}: {
+  task: CustomTodoTask;
+  index: number;
+  totalCount: number;
+  isArrangeMode: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+  onEdit: () => void;
+  onMove: (from: number, to: number) => void;
+  onLongPress: () => void;
+  onDragStart: () => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
+}) {
+  const prioMeta = PRIORITIES.find((p) => p.id === task.priority) || PRIORITIES[1];
+  const catMeta = CATEGORIES.find((c) => c.id === task.category) || CATEGORIES[4];
+
+  const [offsetX, setOffsetX] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+
+  const startXRef = useRef(0);
+  const startYRef = useRef(0);
+  const isHorizontalRef = useRef<boolean | null>(null);
+  const holdTimerRef = useRef<number | null>(null);
+
+  function clearHoldTimer() {
+    if (holdTimerRef.current) {
+      window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+  }
+
+  function handleTouchStart(e: React.TouchEvent) {
+    if (isArrangeMode) return;
+    const touch = e.touches[0];
+    startXRef.current = touch.clientX;
+    startYRef.current = touch.clientY;
+    isHorizontalRef.current = null;
+    setIsSwiping(true);
+
+    clearHoldTimer();
+    holdTimerRef.current = window.setTimeout(() => {
+      onLongPress();
+      clearHoldTimer();
+    }, 450);
+  }
+
+  function handleTouchMove(e: React.TouchEvent) {
+    if (isArrangeMode) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - startXRef.current;
+    const dy = touch.clientY - startYRef.current;
+
+    // Detect direction on first significant movement
+    if (isHorizontalRef.current === null) {
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+        if (Math.abs(dx) > Math.abs(dy)) {
+          isHorizontalRef.current = true;
+          clearHoldTimer();
+        } else {
+          isHorizontalRef.current = false;
+          clearHoldTimer();
+        }
+      }
+    }
+
+    if (isHorizontalRef.current) {
+      // Dampen resistance past 110px
+      const dampened = Math.sign(dx) * Math.min(130, Math.abs(dx) * 0.85);
+      setOffsetX(dampened);
+    }
+  }
+
+  function handleTouchEnd() {
+    clearHoldTimer();
+    setIsSwiping(false);
+
+    if (offsetX > 70) {
+      // Swiped Right -> Delete
+      haptic(20);
+      onDelete();
+    } else if (offsetX < -70) {
+      // Swiped Left -> Edit
+      haptic(15);
+      onEdit();
+    }
+    setOffsetX(0);
+  }
+
+  if (isArrangeMode) {
+    return (
+      <div
+        draggable
+        onDragStart={onDragStart}
+        onDragOver={onDragOver}
+        onDragEnd={onDragEnd}
+        className="card relative flex items-center justify-between p-3 bg-panel border-l/30 cursor-grab active:cursor-grabbing transition-all select-none"
+      >
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <GripVertical size={16} className="text-light/70 shrink-0" />
+          <span className={`text-sm font-semibold truncate ${task.completed ? 'line-through text-muted' : 'text-text'}`}>
+            {task.title}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            disabled={index === 0}
+            onClick={() => onMove(index, index - 1)}
+            className={`btn btn-ghost px-2 py-1 text-xs ${index === 0 ? 'opacity-20' : 'text-text'}`}
+            aria-label="Move Up"
+          >
+            ↑ Up
+          </button>
+          <button
+            type="button"
+            disabled={index === totalCount - 1}
+            onClick={() => onMove(index, index + 1)}
+            className={`btn btn-ghost px-2 py-1 text-xs ${index === totalCount - 1 ? 'opacity-20' : 'text-text'}`}
+            aria-label="Move Down"
+          >
+            ↓ Down
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative overflow-hidden rounded-2xl select-none">
+      {/* Background action reveals */}
+      {offsetX > 0 && (
+        <div className="absolute inset-0 flex items-center justify-start px-4 rounded-2xl bg-rose-600/20 border border-rose-500/30 text-rose-400 font-bold text-xs">
+          <div className="flex items-center gap-1.5">
+            <Trash2 size={16} />
+            <span>Slide right to Delete</span>
+          </div>
+        </div>
+      )}
+      {offsetX < 0 && (
+        <div className="absolute inset-0 flex items-center justify-end px-4 rounded-2xl bg-blue-600/20 border border-blue-500/30 text-blue-400 font-bold text-xs">
+          <div className="flex items-center gap-1.5">
+            <span>Slide left to Edit</span>
+            <Pencil size={16} />
+          </div>
+        </div>
+      )}
+
+      {/* Main Task Card */}
+      <div
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onLongPress();
+        }}
+        style={{
+          transform: `translateX(${offsetX}px)`,
+          transition: isSwiping ? 'none' : 'transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1)',
+        }}
+        className={`card relative flex items-start gap-2.5 p-3.5 transition-colors ${
+          task.completed ? 'opacity-65 bg-panel/35' : 'bg-panel/85 hover:border-border-strong'
+        }`}
+      >
+        {/* Checkbox button */}
+        <button
+          type="button"
+          onClick={onToggle}
+          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-all ${
+            task.completed
+              ? 'border-success bg-success text-bg'
+              : 'border-border hover:border-l hover:bg-l/10 text-transparent'
+          }`}
+          aria-label={task.completed ? `Mark ${task.title} as pending` : `Mark ${task.title} as completed`}
+        >
+          <Check size={13} strokeWidth={3} />
+        </button>
+
+        {/* Content */}
+        <div className="min-w-0 flex-1">
+          <p
+            className={`text-sm font-semibold leading-snug break-words ${
+              task.completed ? 'line-through text-muted' : 'text-text'
+            }`}
+          >
+            {task.title}
+          </p>
+
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px]">
+            {/* Priority */}
+            <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-semibold ${prioMeta.bg}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${prioMeta.dot}`} />
+              {prioMeta.label}
+            </span>
+
+            {/* Category */}
+            {task.category && (
+              <span className={`inline-flex items-center rounded-md border px-1.5 py-0.5 font-medium ${catMeta.color}`}>
+                {catMeta.label}
+              </span>
+            )}
+
+            {/* Duration */}
+            {task.estimatedMinutes && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-white/5 px-1.5 py-0.5 text-muted">
+                <Clock size={10} /> {task.estimatedMinutes}m
+              </span>
+            )}
+
+            {/* AI tag */}
+            {task.createdBy === 'ai' && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-l/15 px-1.5 py-0.5 font-semibold text-l">
+                <Sparkles size={10} /> Misa
+              </span>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

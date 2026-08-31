@@ -56,7 +56,12 @@ export default function TodayScreen({
   const [showCompleted, setShowCompleted] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState<{ title: string; durationMin: number } | null>(null);
+  const [editDraft, setEditDraft] = useState<{
+    title: string;
+    durationMin: number;
+    energyLevel?: EnergyLevel;
+    taskType?: TaskType;
+  } | null>(null);
   const [notice, setNotice] = useState('');
   const [confettiKey, setConfettiKey] = useState(0);
   const celebratedRef = useRef(false);
@@ -336,7 +341,12 @@ export default function TodayScreen({
 
   function startEditTask(task: PlannedTask) {
     setEditingId(task.entry.id);
-    setEditDraft({ title: task.entry.title, durationMin: task.entry.estimatedDurationMin });
+    setEditDraft({
+      title: task.entry.title,
+      durationMin: task.entry.estimatedDurationMin,
+      energyLevel: task.entry.energyLevel || 'medium',
+      taskType: task.entry.taskType || 'Beginner',
+    });
   }
 
   function saveTaskEdit(task: PlannedTask) {
@@ -352,6 +362,8 @@ export default function TodayScreen({
           ...task.entry,
           title: editDraft.title.trim(),
           estimatedDurationMin: clampInt(editDraft.durationMin, 5, 180),
+          energyLevel: editDraft.energyLevel ?? task.entry.energyLevel,
+          taskType: editDraft.taskType ?? task.entry.taskType,
           active: true,
         },
       ],
@@ -838,8 +850,8 @@ const TaskRow = memo(function TaskRow({
   dim: boolean;
   accent: string;
   editing: boolean;
-  editDraft: { title: string; durationMin: number } | null;
-  onEditDraft: (draft: { title: string; durationMin: number }) => void;
+  editDraft: { title: string; durationMin: number; energyLevel?: EnergyLevel; taskType?: TaskType } | null;
+  onEditDraft: (draft: { title: string; durationMin: number; energyLevel?: EnergyLevel; taskType?: TaskType }) => void;
   onStartEdit: () => void;
   onSaveEdit: () => void;
   onCancelEdit: () => void;
@@ -868,26 +880,62 @@ const TaskRow = memo(function TaskRow({
 
   if (editing && editDraft) {
     return (
-      <div className="card p-3.5 text-sm fade-in">
-        <div className="space-y-2.5">
-          <input className="field" aria-label="Task title" value={editDraft.title} onChange={(e) => onEditDraft({ ...editDraft, title: e.target.value })} />
-          <input
-            className="field"
-            type="number"
-            min={5}
-            max={180}
-            aria-label="Duration in minutes"
-            value={editDraft.durationMin}
-            onChange={(e) => onEditDraft({ ...editDraft, durationMin: Number(e.target.value) || 30 })}
-          />
-          <div className="flex gap-2">
-            <button className="btn btn-primary flex-1 py-2 text-sm font-bold" onClick={onSaveEdit}>
-              <Check size={15} /> Save
-            </button>
-            <button className="btn btn-ghost px-4" onClick={onCancelEdit}>
-              Cancel
-            </button>
+      <div className="card p-3.5 text-sm fade-in space-y-2.5">
+        <input
+          className="field w-full text-sm font-semibold"
+          aria-label="Task title"
+          value={editDraft.title}
+          onChange={(e) => onEditDraft({ ...editDraft, title: e.target.value })}
+          placeholder="Task title"
+          autoFocus
+        />
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          <div>
+            <label className="block text-[10px] font-semibold text-muted mb-1">Duration (min)</label>
+            <input
+              className="field w-full"
+              type="number"
+              min={5}
+              max={180}
+              aria-label="Duration in minutes"
+              value={editDraft.durationMin}
+              onChange={(e) => onEditDraft({ ...editDraft, durationMin: Number(e.target.value) || 30 })}
+            />
           </div>
+          <div>
+            <label className="block text-[10px] font-semibold text-muted mb-1">Energy</label>
+            <select
+              className="field w-full capitalize"
+              aria-label="Energy level"
+              value={editDraft.energyLevel || 'medium'}
+              onChange={(e) => onEditDraft({ ...editDraft, energyLevel: e.target.value as EnergyLevel })}
+            >
+              {ENERGY_LEVELS.map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-semibold text-muted mb-1">Type</label>
+            <select
+              className="field w-full capitalize"
+              aria-label="Task type"
+              value={editDraft.taskType || 'Beginner'}
+              onChange={(e) => onEditDraft({ ...editDraft, taskType: e.target.value as TaskType })}
+            >
+              {TASK_TYPES.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button className="btn btn-primary flex-1 py-2 text-xs font-bold gap-1" onClick={onSaveEdit}>
+            <Check size={14} /> Save Changes
+          </button>
+          <button className="btn btn-ghost px-3 py-2 text-xs" onClick={onCancelEdit}>
+            Cancel
+          </button>
         </div>
       </div>
     );
