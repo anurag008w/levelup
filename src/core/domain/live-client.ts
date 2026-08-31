@@ -770,29 +770,8 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     this.setStatus('idle');
   }
 
-  /** Static helper to fetch available Live-compatible models from Gemini API. */
-  static async fetchLiveModels(apiKey: string): Promise<string[]> {
-    if (!apiKey) throw new Error('API key is required to fetch models');
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch models (HTTP ${res.status}): ${await res.text()}`);
-    }
-    const data = await res.json();
-    const models: any[] = data?.models ?? [];
-    const liveModels = models
-      .map((m) => m.name.replace(/^models\//, ''))
-      .filter((name) => {
-        const lower = name.toLowerCase();
-        return (
-          lower.startsWith('gemini') ||
-          lower.includes('live') ||
-          lower.includes('realtime') ||
-          lower.includes('audio') ||
-          lower.includes('flash') ||
-          lower.includes('pro')
-        );
-      });
-
+  /** Static helper to fetch available Live-compatible models from Gemini API or configured gateway. */
+  static async fetchLiveModels(apiKey: string, baseUrl?: string, preconfiguredModels: string[] = []): Promise<string[]> {
     const defaults = [
       'gemini-3.1-flash-live-preview',
       'gemini-2.5-flash-native-audio-preview-09-2025',
@@ -801,7 +780,63 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       'gemini-2.0-flash-exp',
       'gemini-2.0-flash-realtime-exp',
     ];
-    const merged = Array.from(new Set([...liveModels, ...defaults]));
+
+    if (!apiKey && preconfiguredModels.length > 0) {
+      return Array.from(new Set([...preconfiguredModels, ...defaults]));
+    }
+
+    if (!apiKey) throw new Error('API key is required to fetch models');
+
+    let rawModels: string[] = [];
+
+    // 1. Try custom provider baseUrl if provided
+    if (baseUrl && !baseUrl.includes('generativelanguage.googleapis.com')) {
+      const cleanBase = baseUrl.replace(/\/+$/, '');
+      try {
+        const url = `${cleanBase}/models`;
+        const res = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'x-goog-api-key': apiKey,
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
+          rawModels = list.map((m: any) => (typeof m === 'string' ? m : m.id || m.name || '')).filter(Boolean);
+        }
+      } catch {
+        // Fall back to Google API
+      }
+    }
+
+    // 2. If no custom models fetched, try Google Generative Language API
+    if (rawModels.length === 0) {
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        if (res.ok) {
+          const data = await res.json();
+          const models: any[] = data?.models ?? [];
+          rawModels = models.map((m) => m.name?.replace(/^models\//, '') || '').filter(Boolean);
+        }
+      } catch {
+        // Ignored
+      }
+    }
+
+    const liveModels = rawModels.filter((name) => {
+      const lower = name.toLowerCase();
+      return (
+        lower.startsWith('gemini') ||
+        lower.includes('live') ||
+        lower.includes('realtime') ||
+        lower.includes('audio') ||
+        lower.includes('flash') ||
+        lower.includes('pro')
+      );
+    });
+
+    const merged = Array.from(new Set([...preconfiguredModels, ...liveModels, ...defaults]));
     return merged;
   }
 

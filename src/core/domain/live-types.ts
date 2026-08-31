@@ -151,6 +151,7 @@ export interface LiveTranscriptItem {
 }
 
 export interface LiveSettingsConfig {
+  providerId?: string; // e.g. 'app-default', 'gemini', 'custom', or stored provider id
   apiKey?: string;
   model: string;
   voice: GeminiLiveVoice;

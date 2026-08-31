@@ -46,13 +46,22 @@ export default function LiveSettingsModal({
     ...config,
     model: config.model || 'gemini-3.1-flash-live-preview',
   });
-  const [selectedProviderId, setSelectedProviderId] = useState<string>('app-default');
+  const [selectedProviderId, setSelectedProviderId] = useState<string>(() => {
+    if (config.providerId) return config.providerId;
+    return 'app-default';
+  });
   const [apiKeyInput, setApiKeyInput] = useState(() => {
     if (config.apiKey) return config.apiKey;
-    if (defaultApiKey) return defaultApiKey;
-    if (hiddenDefault?.apiKey) return hiddenDefault.apiKey;
-    if (activeProv?.apiKey) return activeProv.apiKey;
-    return '';
+    const initialProv = config.providerId || 'app-default';
+    if (initialProv === 'gemini') {
+      const g = storedProviders.find((p) => p.id === 'gemini');
+      return g?.apiKey || '';
+    }
+    if (initialProv === 'app-default') {
+      return hiddenDefault?.apiKey || activeProv?.apiKey || defaultApiKey || '';
+    }
+    const p = storedProviders.find((p) => p.id === initialProv);
+    return p?.apiKey || '';
   });
   const [syncToProvider, setSyncToProvider] = useState(true);
 
@@ -74,19 +83,40 @@ export default function LiveSettingsModal({
     setSelectedProviderId(newProvId);
     if (newProvId === 'app-default') {
       const key = hiddenDefault?.apiKey || activeProv?.apiKey || defaultApiKey || '';
-      if (key) setApiKeyInput(key);
+      setApiKeyInput(key);
     } else if (newProvId === 'gemini') {
       const g = storedProviders.find((p) => p.id === 'gemini');
-      if (g?.apiKey) setApiKeyInput(g.apiKey);
-    } else if (newProvId !== 'custom') {
+      setApiKeyInput(g?.apiKey || '');
+    } else if (newProvId === 'custom') {
+      setApiKeyInput(config.apiKey || '');
+    } else {
       const p = storedProviders.find((p) => p.id === newProvId);
-      if (p?.apiKey) setApiKeyInput(p.apiKey);
+      setApiKeyInput(p?.apiKey || '');
     }
   }
 
   async function handleFetchModels() {
-    const keyToUse = apiKeyInput.trim() || defaultApiKey.trim() || hiddenDefault?.apiKey || activeProv?.apiKey || '';
-    if (!keyToUse) {
+    let keyToUse = apiKeyInput.trim();
+    let baseUrlToUse: string | undefined;
+    let preconfiguredModels: string[] = [];
+
+    if (selectedProviderId === 'app-default') {
+      baseUrlToUse = hiddenDefault?.baseUrl || activeProv?.baseUrl;
+      preconfiguredModels = hiddenDefault?.models || activeProv?.models || [];
+      if (!keyToUse) keyToUse = hiddenDefault?.apiKey || activeProv?.apiKey || defaultApiKey.trim() || '';
+    } else if (selectedProviderId === 'gemini') {
+      const g = storedProviders.find((p) => p.id === 'gemini');
+      baseUrlToUse = g?.baseUrl || 'https://generativelanguage.googleapis.com';
+      preconfiguredModels = g?.models || [];
+      if (!keyToUse) keyToUse = g?.apiKey || '';
+    } else if (selectedProviderId !== 'custom') {
+      const p = storedProviders.find((p) => p.id === selectedProviderId);
+      baseUrlToUse = p?.baseUrl;
+      preconfiguredModels = p?.models || [];
+      if (!keyToUse) keyToUse = p?.apiKey || '';
+    }
+
+    if (!keyToUse && preconfiguredModels.length === 0) {
       hapticError();
       setFetchMsg('Pehle API Key daalein ya default provider set karein.');
       return;
@@ -95,7 +125,7 @@ export default function LiveSettingsModal({
     setFetchingModels(true);
     setFetchMsg(null);
     try {
-      const models = await GeminiLiveClient.fetchLiveModels(keyToUse);
+      const models = await GeminiLiveClient.fetchLiveModels(keyToUse, baseUrlToUse, preconfiguredModels);
       setAvailableModels(models);
       setFetchMsg(`✅ ${models.length} live-compatible models mile!`);
       hapticSuccess();
@@ -132,11 +162,18 @@ export default function LiveSettingsModal({
 
     // Sync API key to App provider settings if enabled
     if (syncToProvider && cleanKey) {
-      if (selectedProviderId === 'app-default' && hiddenDefault) {
-        container.providerSettings.updateHiddenDefault({
-          ...hiddenDefault,
-          apiKey: cleanKey,
-        });
+      if (selectedProviderId === 'app-default') {
+        if (hiddenDefault) {
+          container.providerSettings.updateHiddenDefault({
+            ...hiddenDefault,
+            apiKey: cleanKey,
+          });
+        } else if (activeProv) {
+          container.providerSettings.upsertProvider({
+            ...activeProv,
+            apiKey: cleanKey,
+          });
+        }
       } else if (selectedProviderId === 'gemini') {
         const target = storedProviders.find((p) => p.id === 'gemini');
         container.providerSettings.upsertProvider({
@@ -158,8 +195,9 @@ export default function LiveSettingsModal({
       }
     }
 
-    const finalCfg = {
+    const finalCfg: LiveSettingsConfig = {
       ...currentConfig,
+      providerId: selectedProviderId,
       model: currentConfig.model || 'gemini-3.1-flash-live-preview',
       apiKey: cleanKey || undefined,
     };

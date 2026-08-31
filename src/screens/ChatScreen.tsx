@@ -398,6 +398,20 @@ export default function ChatScreen({
 
   const getGeminiLiveApiKey = (): string => {
     if (liveConfig.apiKey?.trim()) return liveConfig.apiKey.trim();
+    const provId = liveConfig.providerId || 'app-default';
+    if (provId === 'app-default') {
+      const activeProv = container.providerSettings.getActiveProvider();
+      if (activeProv?.apiKey?.trim()) return activeProv.apiKey.trim();
+      const hiddenDefault = container.providerSettings.getHiddenDefaultFull();
+      if (hiddenDefault?.apiKey?.trim()) return hiddenDefault.apiKey.trim();
+    } else if (provId === 'gemini') {
+      const geminiProv = providers.find((p) => p.id === 'gemini');
+      if (geminiProv?.apiKey?.trim()) return geminiProv.apiKey.trim();
+    } else if (provId !== 'custom') {
+      const targetProv = providers.find((p) => p.id === provId);
+      if (targetProv?.apiKey?.trim()) return targetProv.apiKey.trim();
+    }
+    // Fallback chain if specific provider has no key configured
     const geminiProv = providers.find((p) => p.id === 'gemini');
     if (geminiProv?.apiKey?.trim()) return geminiProv.apiKey.trim();
     const activeProv = container.providerSettings.getActiveProvider();
