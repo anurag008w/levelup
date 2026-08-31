@@ -13,6 +13,7 @@ import { MISA_IDENTITY_GUARD, ROMAN_SCRIPT_RULE, type ChatToolCallRecord } from 
 import { setNativeAudioRoute, resetNativeAudioRoute } from '../../lib/native-audio-route';
 import { deviceTimeZone } from '../ports/clock';
 import { LiveSilenceStateMachine } from './live-silence-state-machine';
+import { relationshipManager } from '../../features/ai/relationship-state';
 
 export interface LiveClientCallbacks {
   onStatusChange?: (status: LiveSessionStatus) => void;
@@ -40,8 +41,10 @@ export class GeminiLiveClient {
   private pendingToolCalls: ChatToolCallRecord[] = [];
   private currentAssistantMessage = '';
   private framesSentCount = 0;
-  private connectStartTime = 0;
+  private connectStartTime = Date.now();
   private lastLiveActivityTime = Date.now();
+  private lastUserVoiceTime = 0;
+  private lastTurnFinishedTime = 0;
   private keepAliveTimer: any = null;
   private silenceObserverTimer: any = null;
   private isIncomingCallSession = false;
@@ -509,16 +512,22 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.startKeepAliveAndSilenceObserver();
       void setNativeAudioRoute(this.config.defaultAudioRoute);
 
-      // Proactively greet student immediately upon voice connection
+      // Proactively greet student immediately upon voice connection with dynamic context
       setTimeout(() => {
         try {
+          const rel = relationshipManager.getState();
+          const activeTopic = rel.commitments[0]?.topic || rel.currentProblemArea || rel.currentSubject;
+          const hour = new Date().getHours();
+          const timeGreeting = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
+          const topicClause = activeTopic && activeTopic !== 'General' ? `Their recent target topic is "${activeTopic}".` : '';
+
           if (this.isIncomingCallSession) {
             this.session?.sendRealtimeInput({
-              text: `[SYSTEM EVENT: Call connected! The student just answered your phone call. Speak immediately in 1 short, warm, natural Hinglish sentence as the caller asking how their study target is going. Reason: "${this.incomingCallReason || 'Study check-in'}"]`,
+              text: `[SYSTEM EVENT: Call connected! Time of day: ${timeGreeting}. ${topicClause} Speak immediately in 1 short, warm, natural Hinglish sentence as the caller checking on their study target. Reason: "${this.incomingCallReason || 'Study check-in'}"]`,
             });
           } else {
             this.session?.sendRealtimeInput({
-              text: `[SYSTEM EVENT: Live voice session started with the student. Greet them immediately in 1 short, cheerful, friendly Hinglish sentence and ask what topic or question we are tackling today.]`,
+              text: `[SYSTEM EVENT: Live voice session connected! Time of day: ${timeGreeting}. ${topicClause} Greet the student dynamically in 1 short, fresh, natural Hinglish sentence referencing their study context or time of day, and ask what question we are tackling.]`,
             });
           }
         } catch (e) {
@@ -575,6 +584,8 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
     // 5. Real-time Input Transcription (User subtitles)
     if (data.serverContent?.inputTranscription?.text) {
+      this.lastUserVoiceTime = Date.now();
+      this.silenceStateMachine.onSpeechActivity();
       this.updateTranscript('user', data.serverContent.inputTranscription.text, false);
     }
 
@@ -582,6 +593,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     if (data.serverContent?.turnComplete) {
       this.currentAssistantMessage = '';
       this.setStatus('listening');
+      this.lastTurnFinishedTime = Date.now();
     }
   }
 
@@ -722,6 +734,10 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       },
       (inputLevel) => {
         this.isUserTalkingOverThreshold = inputLevel > 0.25;
+        if (inputLevel > 0.12) {
+          this.lastUserVoiceTime = Date.now();
+          this.silenceStateMachine.onSpeechActivity();
+        }
         if (inputLevel > 0.08 && this.status === 'connected') {
           this.setStatus('listening');
         }
@@ -765,27 +781,33 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     });
   }
 
-  /** Start screen sharing stream. */
+  /** Start streaming Desktop Screen Share. */
   async startScreenStream(onEnded?: () => void): Promise<MediaStream | null> {
     return this.visionStreamer.startScreenShare(this.config.screenFps, (jpegBase64) => {
       this.sendVideoFrame(jpegBase64);
     }, onEnded);
   }
 
+  /** Stop camera or screen video stream. */
   stopVision(): void {
+    this.visionStreamer.stop();
+  }
+
+  stopVisionStream(): void {
     this.visionStreamer.stop();
   }
 
   private sendVideoFrame(jpegBase64: string): void {
     if (!this.session) return;
     try {
-      this.framesSentCount++;
+      this.framesSentCount += 1;
       this.session.sendRealtimeInput({
         video: {
           data: jpegBase64,
           mimeType: 'image/jpeg',
         },
       });
+      this.updateStats(0, 0);
     } catch (e) {
       console.warn('[GeminiLive] Failed to send video frame:', e);
     }
@@ -819,6 +841,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   private startKeepAliveAndSilenceObserver(): void {
     this.lastLiveActivityTime = Date.now();
+    this.lastTurnFinishedTime = Date.now();
     if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
     if (this.silenceObserverTimer) clearInterval(this.silenceObserverTimer);
 
@@ -838,24 +861,39 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       }
     }, 20000);
 
-    // 2. Silence Proactive Companion Observer with State Machine
+    // 2. Silence Proactive Companion Observer with State Machine (every 2.5s)
     this.silenceObserverTimer = setInterval(() => {
-      if (!this.session || (this.status !== 'connected' && this.status !== 'listening')) return;
-      const silenceDurationSec = (Date.now() - this.lastLiveActivityTime) / 1000;
+      if (!this.session || this.status === 'speaking' || this.status === 'thinking') return;
+      if (this.status !== 'connected' && this.status !== 'listening') return;
+
+      const lastActivityAnchor = Math.max(
+        this.lastTurnFinishedTime || 0,
+        this.lastUserVoiceTime || 0,
+        this.lastLiveActivityTime || 0
+      );
+      const silenceDurationSec = (Date.now() - lastActivityAnchor) / 1000;
+
       try {
         const isCameraOrScreen = this.visionStreamer.getIsCameraActive() || this.visionStreamer.getIsScreenSharing();
+        const rel = relationshipManager.getState();
+        const activeTopic = rel.commitments[0]?.topic || rel.currentSubject || 'General Problem Solving';
+        const topicMemoryContext = `${activeTopic} (${rel.currentGoal || 'JEE 2027'})`;
+
         const promptText = this.silenceStateMachine.evaluate({
           silenceDurationSec,
           isCameraOrScreenActive: isCameraOrScreen,
+          topicMemoryContext,
         });
+
         if (promptText) {
           this.lastLiveActivityTime = Date.now();
+          this.lastTurnFinishedTime = Date.now(); // reset anchor for next progressive stage
           this.session.sendRealtimeInput({ text: promptText });
         }
       } catch (e) {
         console.warn('[GeminiLive] Silence state machine error:', e);
       }
-    }, 5000);
+    }, 2500);
   }
 
   disconnect(): void {

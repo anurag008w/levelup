@@ -18,15 +18,21 @@ export interface SilenceSignal {
   isCameraOrScreenActive: boolean;
   isPenOrCursorMoving?: boolean;
   hasErasuresOrStallSigns?: boolean;
+  topicMemoryContext?: string;
 }
 
 export class LiveSilenceStateMachine {
   private currentState: SilenceState = 'FOCUS';
   private deepFocusUntil: number = 0;
   private lastCheckInAt: number = 0;
+  private silenceStreakCount: number = 0;
 
   getState(): SilenceState {
     return this.currentState;
+  }
+
+  getStreakCount(): number {
+    return this.silenceStreakCount;
   }
 
   /**
@@ -34,11 +40,13 @@ export class LiveSilenceStateMachine {
    */
   onSpeechActivity(): void {
     this.currentState = 'FOCUS';
+    this.silenceStreakCount = 0;
   }
 
   /**
    * Evaluates the current silence signal and transitions the state machine.
-   * Returns a verbal check-in prompt string IF AND ONLY IF state transitions to CHECK_IN.
+   * Proactively triggers every 15-20s of quiet thinking during live co-study,
+   * progressing through natural multi-stage conversational nudges.
    */
   evaluate(signal: SilenceSignal, now: number = Date.now()): string | null {
     // If user is in confirmed DEEP_FOCUS, stay silent until cooldown expires
@@ -47,50 +55,62 @@ export class LiveSilenceStateMachine {
       return null;
     }
 
-    // Cooldown between check-ins (min 60s between spoken check-ins)
-    if (now - this.lastCheckInAt < 60000) {
+    // Cooldown between spoken check-ins (15-20s between proactive nudges)
+    if (now - this.lastCheckInAt < 16000) {
       return null;
     }
 
-    const { silenceDurationSec, isCameraOrScreenActive, isPenOrCursorMoving, hasErasuresOrStallSigns } = signal;
+    const { silenceDurationSec, isCameraOrScreenActive, isPenOrCursorMoving, hasErasuresOrStallSigns, topicMemoryContext } = signal;
 
-    if (silenceDurationSec < 30) {
+    if (silenceDurationSec < 10) {
       this.currentState = 'FOCUS';
       return null;
     }
 
-    if (silenceDurationSec >= 30 && silenceDurationSec < 60) {
+    if (silenceDurationSec >= 10 && silenceDurationSec < 15) {
       this.currentState = 'OBSERVING';
 
-      if (isPenOrCursorMoving) {
-        // Confirmed active writing/typing -> enter DEEP_FOCUS for 2 minutes
+      if (isPenOrCursorMoving && !hasErasuresOrStallSigns) {
+        // Confirmed active writing/typing -> enter DEEP_FOCUS for 60 seconds
         this.currentState = 'DEEP_FOCUS';
-        this.deepFocusUntil = now + 120000;
+        this.deepFocusUntil = now + 60000;
         return null;
       }
       return null;
     }
 
-    // Silence >= 60s
-    if (silenceDurationSec >= 60) {
-      if (isPenOrCursorMoving && !hasErasuresOrStallSigns) {
-        this.currentState = 'DEEP_FOCUS';
-        this.deepFocusUntil = now + 120000;
-        return null;
-      }
+    // Silence >= 15s (15-20s proactive cycle)
+    if (silenceDurationSec >= 15) {
+      this.currentState = 'CHECK_IN';
+      this.lastCheckInAt = now;
+      this.silenceStreakCount += 1;
+      const stage = this.silenceStreakCount;
 
-      this.currentState = 'POSSIBLE_STUCK';
-
-      // Silence >= 60s with stall signs or >= 75s general silence -> CHECK_IN
-      if (silenceDurationSec >= 75 || hasErasuresOrStallSigns) {
-        this.currentState = 'CHECK_IN';
-        this.lastCheckInAt = now;
-
-        if (isCameraOrScreenActive) {
-          return '[SYSTEM EVENT: User has been quietly studying for over 1 minute. Look at their textbook or notebook in the video frame, and speak 1 short supportive hint or observation in Hinglish.]';
+      if (isCameraOrScreenActive) {
+        if (stage === 1) {
+          return '[SYSTEM EVENT: Student has been quiet for 15-20s. Look at what they are writing or what is visible on screen/desk right now in the video feed, and speak 1 short, helpful Hinglish observation or question.]';
         }
-        return '[SYSTEM EVENT: User has been quietly thinking for over 1 minute. Speak 1 short friendly sentence in Hinglish to casually ask if they need a hint with this step.]';
+        if (stage === 2) {
+          return '[SYSTEM EVENT: Student is still quietly working on the problem in the camera/screen. Speak 1 short Hinglish hint or ask if a specific formula is giving trouble.]';
+        }
+        return '[SYSTEM EVENT: Student is deeply concentrating on the desk. Speak 1 brief encouraging sentence in Hinglish reminding them you are right here on call whenever they need a hint.]';
       }
+
+      if (stage === 1) {
+        if (topicMemoryContext) {
+          return `[SYSTEM EVENT: Student has been quiet for 15-20s. Topic context: "${topicMemoryContext}". Proactively speak 1 short, warm Hinglish question or prompt to check how this calculation/problem is progressing.]`;
+        }
+        return '[SYSTEM EVENT: Student has been quiet for 15-20s. Proactively speak 1 short, friendly Hinglish sentence asking how the current step is going.]';
+      }
+
+      if (stage === 2) {
+        if (topicMemoryContext) {
+          return `[SYSTEM EVENT: Student is still quiet after 35s. Topic: "${topicMemoryContext}". Speak 1 short, light-hearted Hinglish sentence asking if they got stuck on a concept or want to do the next step together.]`;
+        }
+        return '[SYSTEM EVENT: Student is still quiet after 35s. Speak 1 short, humorous Hinglish sentence asking if calculation got intense or if they need a hint.]';
+      }
+
+      return '[SYSTEM EVENT: Student is quietly focusing. Speak 1 brief warm sentence in Hinglish saying "Pura time leke solve karo, main yahi hoon, jab answer aaye toh batana." Then stay quietly observant.]';
     }
 
     return null;
@@ -100,5 +120,6 @@ export class LiveSilenceStateMachine {
     this.currentState = 'FOCUS';
     this.deepFocusUntil = 0;
     this.lastCheckInAt = 0;
+    this.silenceStreakCount = 0;
   }
 }

@@ -209,16 +209,16 @@ export default function LiveCompanionOverlay({
 
     (async () => {
       try {
-        await liveClient.connect(apiKey);
+        await Promise.all([
+          liveClient.connect(apiKey),
+          liveClient.startVoiceStreaming(initialMicStream),
+        ]);
+
         if (cancelled) {
           liveClient.disconnect();
           return;
         }
-        await liveClient.startVoiceStreaming(initialMicStream);
-        if (cancelled) {
-          liveClient.disconnect();
-          return;
-        }
+
         if (initialCameraStream) {
           const stream = await liveClient.startCameraStream('environment');
           if (cancelled) {
