@@ -167,13 +167,21 @@ export default function TodayScreen({
     }));
   }
 
-  function handleEditCustomTodo(id: string, newTitle: string) {
+  function handleEditCustomTodo(id: string, updated: Partial<CustomTodoTask> | string) {
     haptic();
+    const patch = typeof updated === 'string' ? { title: updated } : updated;
     update((s) => ({
       ...s,
       customTodos: (s.customTodos ?? []).map((t) =>
-        t.id === id ? { ...t, title: newTitle } : t,
+        t.id === id ? { ...t, ...patch } : t,
       ),
+    }));
+  }
+
+  function handleReorderCustomTodo(newTodos: CustomTodoTask[]) {
+    update((s) => ({
+      ...s,
+      customTodos: newTodos,
     }));
   }
 
@@ -264,6 +272,7 @@ export default function TodayScreen({
           onDelete={handleDeleteCustomTodo}
           onEdit={handleEditCustomTodo}
           onAdd={handleAddCustomTodo}
+          onReorder={handleReorderCustomTodo}
           flash={flash}
           isStandalone={true}
         />
@@ -658,6 +667,7 @@ export default function TodayScreen({
         onDelete={handleDeleteCustomTodo}
         onEdit={handleEditCustomTodo}
         onAdd={handleAddCustomTodo}
+        onReorder={handleReorderCustomTodo}
         flash={flash}
         isStandalone={false}
       />

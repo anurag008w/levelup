@@ -554,6 +554,18 @@ export default function ChatScreen({
         ]);
         return { result: res.summary };
       }
+      if (name === 'editTask') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'editTask',
+            day: Number(args.day) || 1,
+            taskId: String(args.taskId || ''),
+            title: args.title ? String(args.title) : undefined,
+            durationMin: args.durationMin !== undefined ? Number(args.durationMin) : undefined,
+          },
+        ]);
+        return { result: res.summary };
+      }
       if (name === 'getContext') {
         const res = await container.chatTools.runMany([{ action: 'getContext' }]);
         return { context: res.summary };
@@ -587,6 +599,32 @@ export default function ChatScreen({
             priority: (args.priority as any) || 'medium',
             estimatedMinutes: Number(args.estimatedMinutes) || 30,
             category: (args.category as any) || 'general',
+          },
+        ]);
+        return { result: res.summary };
+      }
+      if (name === 'editTodo') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'editTodo',
+            todoId: args.todoId ? String(args.todoId) : undefined,
+            title: args.title ? String(args.title) : undefined,
+            newTitle: args.newTitle ? String(args.newTitle) : undefined,
+            priority: (args.priority as any) || undefined,
+            estimatedMinutes: args.estimatedMinutes !== undefined ? Number(args.estimatedMinutes) : undefined,
+            category: (args.category as any) || undefined,
+            completed: args.completed !== undefined ? Boolean(args.completed) : undefined,
+          },
+        ]);
+        return { result: res.summary };
+      }
+      if (name === 'reorderTodos') {
+        const res = await container.chatTools.runMany([
+          {
+            action: 'reorderTodos',
+            todoId: args.todoId ? String(args.todoId) : undefined,
+            title: args.title ? String(args.title) : undefined,
+            position: (args.position as any) || undefined,
           },
         ]);
         return { result: res.summary };

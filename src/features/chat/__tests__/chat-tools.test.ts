@@ -2344,5 +2344,79 @@ describe('notification reply flow', () => {
       expect(multiRes.summary).toContain('Rotation is weak');
       expect(multiRes.summary).toContain('Gauss Law');
     });
+
+    it('handles addTodo, editTodo, reorderTodos, toggleTodo, and deleteTodo seamlessly', async () => {
+      const store = makeStore();
+      const { tools } = makeTools(store, () => mockSessions);
+
+      // 1. Add low and high priority todos
+      const add1 = await tools.run({
+        action: 'addTodo',
+        title: 'Formula revision',
+        priority: 'low',
+        estimatedMinutes: 20,
+        category: 'revision',
+      });
+      expect(add1.ok).toBe(true);
+
+      const add2 = await tools.run({
+        action: 'addTodo',
+        title: 'HC Verma Mechanics 15 questions',
+        priority: 'high',
+        estimatedMinutes: 60,
+        category: 'physics',
+      });
+      expect(add2.ok).toBe(true);
+
+      const todos = store.get().customTodos ?? [];
+      expect(todos).toHaveLength(2);
+
+      // 2. Edit a todo (change title, priority to high, duration to 90m)
+      const editRes = await tools.run({
+        action: 'editTodo',
+        title: 'Formula revision',
+        newTitle: 'Complete Formula Sheet Revision',
+        priority: 'high',
+        estimatedMinutes: 90,
+        category: 'physics',
+      });
+      expect(editRes.ok).toBe(true);
+      expect(editRes.summary).toContain('Complete Formula Sheet Revision');
+      expect(editRes.summary).toContain('HIGH');
+
+      const updatedTodos = store.get().customTodos ?? [];
+      const edited = updatedTodos.find((t) => t.title === 'Complete Formula Sheet Revision');
+      expect(edited).toBeDefined();
+      expect(edited?.estimatedMinutes).toBe(90);
+      expect(edited?.priority).toBe('high');
+
+      // 3. Reorder todos (move to top)
+      const reorderRes = await tools.run({
+        action: 'reorderTodos',
+        title: 'HC Verma',
+        position: 'top',
+      });
+      expect(reorderRes.ok).toBe(true);
+      expect(reorderRes.summary).toContain('position 1');
+
+      // 4. Toggle todo to completed -> automatically moves to bottom
+      const toggleRes = await tools.run({
+        action: 'toggleTodo',
+        title: 'HC Verma',
+        completed: true,
+      });
+      expect(toggleRes.ok).toBe(true);
+      expect(toggleRes.summary).toContain('COMPLETED');
+      expect(store.get().customTodos?.find((t) => t.title.includes('HC Verma'))?.completed).toBe(true);
+
+      // 5. Delete todo
+      const delRes = await tools.run({
+        action: 'deleteTodo',
+        title: 'HC Verma',
+      });
+      expect(delRes.ok).toBe(true);
+      expect(store.get().customTodos).toHaveLength(1);
+    });
   });
 });
+

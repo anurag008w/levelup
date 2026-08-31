@@ -198,6 +198,34 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         },
       },
       {
+        name: 'editTodo',
+        description: 'Edit a student To-Do: update title, priority (high, medium, low), duration (minutes), category, or completed status.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            title: { type: 'STRING', description: 'Current title or substring of the todo to edit' },
+            newTitle: { type: 'STRING', description: 'New updated title for the todo' },
+            priority: { type: 'STRING', description: 'high, medium, or low' },
+            estimatedMinutes: { type: 'INTEGER', description: 'Updated duration in minutes' },
+            category: { type: 'STRING', description: 'physics, chemistry, maths, general, or revision' },
+            completed: { type: 'BOOLEAN', description: 'true for completed, false for pending' },
+          },
+          required: ['title'],
+        },
+      },
+      {
+        name: 'reorderTodos',
+        description: 'Reorder student To-Dos: shift a task to top, bottom, up, or down.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            title: { type: 'STRING', description: 'Title or substring of the todo to move' },
+            position: { type: 'STRING', description: 'top, bottom, up, or down' },
+          },
+          required: ['title', 'position'],
+        },
+      },
+      {
         name: 'toggleTodo',
         description: 'Mark a To-Do as completed or pending.',
         parameters: {
@@ -364,6 +392,20 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
                 properties: {
                   day: { type: 'INTEGER', description: 'Day number (1 to 90)' },
                   taskId: { type: 'STRING', description: 'The task id from plan' },
+                },
+                required: ['day', 'taskId'],
+              },
+            },
+            {
+              name: 'editTask',
+              description: 'Edit a 90-day study task for a day (title, duration in minutes).',
+              parameters: {
+                type: 'OBJECT',
+                properties: {
+                  day: { type: 'INTEGER', description: 'Day number (1 to 90)' },
+                  taskId: { type: 'STRING', description: 'The task id from plan' },
+                  title: { type: 'STRING', description: 'New title of the task' },
+                  durationMin: { type: 'INTEGER', description: 'New duration in minutes' },
                 },
                 required: ['day', 'taskId'],
               },

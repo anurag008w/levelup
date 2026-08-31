@@ -104,6 +104,24 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
     completed: z.boolean().optional(),
   }),
   z.object({
+    action: z.literal('editTodo'),
+    todoId: z.string().optional(),
+    title: z.string().optional(),
+    newTitle: z.string().min(1).max(300).optional(),
+    priority: z.enum(['high', 'medium', 'low']).optional(),
+    estimatedMinutes: z.number().int().min(1).max(600).optional(),
+    category: z.enum(['physics', 'chemistry', 'maths', 'general', 'revision']).optional(),
+    completed: z.boolean().optional(),
+    order: z.number().int().min(0).optional(),
+  }),
+  z.object({
+    action: z.literal('reorderTodos'),
+    todoId: z.string().optional(),
+    title: z.string().optional(),
+    position: z.enum(['top', 'bottom', 'up', 'down']).or(z.number().int()).optional(),
+    todoIds: z.array(z.string().min(1)).min(1).optional(),
+  }),
+  z.object({
     action: z.literal('deleteTodo'),
     todoId: z.string().optional(),
     title: z.string().optional(),
@@ -309,6 +327,8 @@ When the user asks to add/complete/list/delete tasks, search chats, read/save me
 
 AVAILABLE TOOLS:
 - addTodo — Add a task to student's To-Do list: {"action":"addTodo","title":"Electrostatics 20 Questions","priority":"high","estimatedMinutes":45,"category":"physics"}
+- editTodo — Edit a To-Do task: {"action":"editTodo","title":"Electrostatics 20 Questions","priority":"high","estimatedMinutes":60,"category":"physics"}
+- reorderTodos — Move To-Do up/down/top/bottom: {"action":"reorderTodos","title":"Electrostatics 20 Questions","position":"top"}
 - listTodos — View active/pending/completed tasks: {"action":"listTodos","filter":"pending"}
 - toggleTodo — Mark a task done or undone: {"action":"toggleTodo","title":"Electrostatics 20 Questions","completed":true}
 - deleteTodo — Remove a task from the list: {"action":"deleteTodo","title":"Electrostatics 20 Questions"}
@@ -393,6 +413,8 @@ export const CHAT_TOOL_CATALOG: ChatToolMeta[] = [
   { id: 'getDay', label: 'Day detail', description: 'Uploaded planner se ek din ka poora detail (classes + tests + lectures).', example: '{"action":"getDay","date":"2026-07-05"}', readOnly: true },
   // Custom To-Dos & Tasks
   { id: 'addTodo', label: 'Add To-Do', description: 'Student ki daily To-Do list me naya task add karo.', example: '{"action":"addTodo","title":"Physics Electrostatics Revision","priority":"high","estimatedMinutes":45,"category":"physics"}' },
+  { id: 'editTodo', label: 'Edit To-Do', description: 'To-Do ka title, priority (high/med/low), duration (min), category ya position badlo.', example: '{"action":"editTodo","title":"Physics Electrostatics Revision","priority":"high","estimatedMinutes":60}' },
+  { id: 'reorderTodos', label: 'Reorder To-Dos', description: 'To-Do list me task ko upar/niche ya custom order me lagao.', example: '{"action":"reorderTodos","title":"Physics Electrostatics Revision","position":"top"}' },
   { id: 'listTodos', label: 'List To-Dos', description: 'Student ke active ya pending to-dos dekho.', example: '{"action":"listTodos","filter":"pending"}', readOnly: true },
   { id: 'toggleTodo', label: 'Toggle To-Do', description: 'To-Do ko complete/uncomplete mark karo.', example: '{"action":"toggleTodo","title":"Physics Electrostatics Revision","completed":true}' },
   { id: 'deleteTodo', label: 'Delete To-Do', description: 'To-Do list se task delete karo.', example: '{"action":"deleteTodo","title":"Physics Electrostatics Revision"}' },
@@ -519,6 +541,8 @@ export const TOOL_LABELS: Record<string, string> = {
   listBlocks: 'Blocks dekhe',
   extendBlock: 'Block extend kiya',
   addTodo: 'To-do add kiya',
+  editTodo: 'To-do edit kiya',
+  reorderTodos: 'To-dos reorder kiye',
   listTodos: 'To-dos dekhe',
   toggleTodo: 'To-do status badla',
   deleteTodo: 'To-do delete kiya',

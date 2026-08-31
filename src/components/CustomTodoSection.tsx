@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import {
   Check,
+  ChevronDown,
+  ChevronUp,
   Clock,
   ListTodo,
   Pencil,
@@ -10,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import type { CustomTodoTask, TodoCategory, TodoPriority } from '../types';
+import { sortCustomTodos } from '../core/domain/todo-tasks';
 import SectionHeader from './ui/SectionHeader';
 import { haptic } from '../lib/haptics';
 
@@ -17,8 +20,9 @@ interface CustomTodoSectionProps {
   todos: CustomTodoTask[];
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
-  onEdit: (id: string, newTitle: string) => void;
+  onEdit: (id: string, updated: Partial<CustomTodoTask> | string) => void;
   onAdd: (todo: { title: string; priority: TodoPriority; category: TodoCategory; estimatedMinutes: number }) => void;
+  onReorder?: (newTodos: CustomTodoTask[]) => void;
   flash: (msg: string) => void;
   isStandalone?: boolean;
 }
@@ -45,6 +49,7 @@ export default function CustomTodoSection({
   onDelete,
   onEdit,
   onAdd,
+  onReorder,
   flash,
   isStandalone = false,
 }: CustomTodoSectionProps) {
@@ -54,12 +59,18 @@ export default function CustomTodoSection({
   const [priority, setPriority] = useState<TodoPriority>('medium');
   const [category, setCategory] = useState<TodoCategory>('general');
   const [duration, setDuration] = useState<number>(30);
+
+  // Edit State
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
+  const [editPriority, setEditPriority] = useState<TodoPriority>('medium');
+  const [editCategory, setEditCategory] = useState<TodoCategory>('general');
+  const [editDuration, setEditDuration] = useState<number>(30);
 
-  const completedTodos = todos.filter((t) => t.completed);
-  const pendingTodos = todos.filter((t) => !t.completed);
-  const filtered = todos.filter((t) => {
+  const sortedTodos = sortCustomTodos(todos);
+  const completedTodos = sortedTodos.filter((t) => t.completed);
+  const pendingTodos = sortedTodos.filter((t) => !t.completed);
+  const filtered = sortedTodos.filter((t) => {
     if (filter === 'pending') return !t.completed;
     if (filter === 'completed') return t.completed;
     return true;
@@ -85,15 +96,37 @@ export default function CustomTodoSection({
   function startEdit(t: CustomTodoTask) {
     setEditingId(t.id);
     setEditTitle(t.title);
+    setEditPriority(t.priority || 'medium');
+    setEditCategory(t.category || 'general');
+    setEditDuration(t.estimatedMinutes || 30);
   }
 
   function saveEdit(id: string) {
     if (!editTitle.trim()) return;
     haptic();
-    onEdit(id, editTitle.trim());
+    onEdit(id, {
+      title: editTitle.trim(),
+      priority: editPriority,
+      category: editCategory,
+      estimatedMinutes: editDuration,
+    });
     setEditingId(null);
     setEditTitle('');
     flash('To-Do update ho gaya.');
+  }
+
+  function handleMove(id: string, direction: 'up' | 'down') {
+    const list = [...sortedTodos];
+    const idx = list.findIndex((t) => t.id === id);
+    if (idx === -1) return;
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= list.length) return;
+
+    const item = list.splice(idx, 1)[0];
+    list.splice(targetIdx, 0, item);
+    const updated = list.map((t, i) => ({ ...t, order: i }));
+    onReorder?.(updated);
+    haptic(5);
   }
 
   return (
@@ -141,7 +174,7 @@ export default function CustomTodoSection({
           <div className="space-y-2 text-xs">
             {/* Priority */}
             <div>
-              <span className="block text-[11px] font-semibold text-muted mb-1.5 uppercase tracking-wider">Priority</span>
+              <span className="block text-[11px] font-semibold text-muted mb-1.5 uppercase tracking-wider">Priority (High tasks stay on top)</span>
               <div className="flex flex-wrap gap-1.5">
                 {PRIORITIES.map((p) => {
                   const active = priority === p.id;
@@ -192,7 +225,7 @@ export default function CustomTodoSection({
 
             {/* Duration */}
             <div>
-              <span className="block text-[11px] font-semibold text-muted mb-1.5 uppercase tracking-wider">Estimated Time</span>
+              <span className="block text-[11px] font-semibold text-muted mb-1.5 uppercase tracking-wider">Estimated Time (Longer tasks on top)</span>
               <div className="flex flex-wrap gap-1.5">
                 {DURATIONS.map((d) => {
                   const active = duration === d;
@@ -264,7 +297,7 @@ export default function CustomTodoSection({
             </p>
           </div>
         ) : (
-          filtered.map((t) => {
+          filtered.map((t, index) => {
             const prioMeta = PRIORITIES.find((p) => p.id === t.priority) || PRIORITIES[1];
             const catMeta = CATEGORIES.find((c) => c.id === t.category) || CATEGORIES[4];
             const isEditing = editingId === t.id;
@@ -272,8 +305,8 @@ export default function CustomTodoSection({
             return (
               <div
                 key={t.id}
-                className={`card relative flex items-start gap-3 p-3.5 transition-all ${
-                  t.completed ? 'opacity-70 bg-panel/40' : 'bg-panel/85 hover:border-border-strong'
+                className={`card relative flex items-start gap-2.5 p-3.5 transition-all ${
+                  t.completed ? 'opacity-65 bg-panel/35' : 'bg-panel/85 hover:border-border-strong'
                 }`}
               >
                 {/* Checkbox button */}
@@ -293,10 +326,10 @@ export default function CustomTodoSection({
                 {/* Content */}
                 <div className="min-w-0 flex-1">
                   {isEditing ? (
-                    <div className="flex items-center gap-2">
+                    <div className="space-y-2.5 pt-0.5">
                       <input
                         type="text"
-                        className="field w-full text-xs"
+                        className="field w-full text-xs font-semibold"
                         value={editTitle}
                         onChange={(e) => setEditTitle(e.target.value)}
                         onKeyDown={(e) => {
@@ -305,21 +338,81 @@ export default function CustomTodoSection({
                         }}
                         autoFocus
                       />
-                      <button
-                        type="button"
-                        onClick={() => saveEdit(t.id)}
-                        className="btn btn-primary px-2 py-1 text-xs"
-                      >
-                        Save
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingId(null)}
-                        className="icon-btn"
-                        aria-label="Cancel edit"
-                      >
-                        <X size={14} />
-                      </button>
+
+                      {/* Edit Priority */}
+                      <div className="flex flex-wrap gap-1.5 text-[11px]">
+                        {PRIORITIES.map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => {
+                              haptic(4);
+                              setEditPriority(p.id);
+                            }}
+                            className={`flex items-center gap-1 rounded-md border px-2 py-0.5 font-medium transition-all ${
+                              editPriority === p.id ? p.bg : 'border-border/50 bg-white/5 text-muted'
+                            }`}
+                          >
+                            <span className={`h-1.5 w-1.5 rounded-full ${p.dot}`} />
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Edit Category */}
+                      <div className="flex flex-wrap gap-1.5 text-[11px]">
+                        {CATEGORIES.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => {
+                              haptic(4);
+                              setEditCategory(c.id);
+                            }}
+                            className={`rounded-md border px-2 py-0.5 font-medium transition-all ${
+                              editCategory === c.id ? c.color : 'border-border/50 bg-white/5 text-muted'
+                            }`}
+                          >
+                            {c.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Edit Duration */}
+                      <div className="flex flex-wrap gap-1 text-[10px]">
+                        {DURATIONS.map((d) => (
+                          <button
+                            key={d}
+                            type="button"
+                            onClick={() => {
+                              haptic(4);
+                              setEditDuration(d);
+                            }}
+                            className={`rounded-md border px-2 py-0.5 transition-all ${
+                              editDuration === d ? 'border-l bg-l/15 text-light font-bold' : 'border-border/50 bg-white/5 text-muted'
+                            }`}
+                          >
+                            {d}m
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex items-center gap-1.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => saveEdit(t.id)}
+                          className="btn btn-primary px-3 py-1 text-xs font-bold"
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingId(null)}
+                          className="btn btn-ghost px-2.5 py-1 text-xs text-muted"
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div>
@@ -331,7 +424,7 @@ export default function CustomTodoSection({
                         {t.title}
                       </p>
 
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px]">
                         {/* Priority */}
                         <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-semibold ${prioMeta.bg}`}>
                           <span className={`h-1.5 w-1.5 rounded-full ${prioMeta.dot}`} />
@@ -363,18 +456,42 @@ export default function CustomTodoSection({
                   )}
                 </div>
 
-                {/* Actions */}
+                {/* Actions & Reorder buttons */}
                 {!isEditing && (
-                  <div className="flex shrink-0 items-center gap-1">
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    {/* Move Up */}
+                    <button
+                      type="button"
+                      disabled={index === 0}
+                      onClick={() => handleMove(t.id, 'up')}
+                      className={`icon-btn p-1 ${index === 0 ? 'opacity-20 cursor-not-allowed' : 'text-muted hover:text-text'}`}
+                      aria-label="Move task up"
+                      title="Move up"
+                    >
+                      <ChevronUp size={14} />
+                    </button>
+                    {/* Move Down */}
+                    <button
+                      type="button"
+                      disabled={index === filtered.length - 1}
+                      onClick={() => handleMove(t.id, 'down')}
+                      className={`icon-btn p-1 ${index === filtered.length - 1 ? 'opacity-20 cursor-not-allowed' : 'text-muted hover:text-text'}`}
+                      aria-label="Move task down"
+                      title="Move down"
+                    >
+                      <ChevronDown size={14} />
+                    </button>
+                    {/* Edit */}
                     <button
                       type="button"
                       onClick={() => startEdit(t)}
-                      className="icon-btn text-muted hover:text-text"
+                      className="icon-btn p-1 text-muted hover:text-text"
                       aria-label="Edit To-Do"
                       title="Edit"
                     >
                       <Pencil size={13} />
                     </button>
+                    {/* Delete */}
                     <button
                       type="button"
                       onClick={() => {
@@ -382,7 +499,7 @@ export default function CustomTodoSection({
                           onDelete(t.id);
                         }
                       }}
-                      className="icon-btn text-muted hover:text-danger"
+                      className="icon-btn p-1 text-muted hover:text-danger"
                       aria-label="Delete To-Do"
                       title="Delete"
                     >

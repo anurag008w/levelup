@@ -1,4 +1,4 @@
-import type { CustomTodoTask } from '../../core/domain/todo-tasks';
+import { sortCustomTodos, type CustomTodoTask } from '../../core/domain/todo-tasks';
 import type { ChatSession } from '../../core/domain/chat';
 import { defaultPostJourney, type AppState, type CustomPhase, type PostJourneyState } from '../../core/domain/state';
 import type { Difficulty, EnergyLevel, JeeRelevance, PhaseId, TaskBankEntry, TaskType, ThinkingSkill } from '../../core/domain/task-bank';
@@ -542,6 +542,10 @@ export class ChatToolsService {
         // Custom To-Dos & Vault
         case 'addTodo':
           return this.addTodo(state, action);
+        case 'editTodo':
+          return this.editTodo(state, action);
+        case 'reorderTodos':
+          return this.reorderTodos(state, action);
         case 'listTodos':
           return this.listTodos(state, action);
         case 'toggleTodo':
@@ -662,6 +666,100 @@ export class ChatToolsService {
     return {
       ok: true,
       summary: `To-Do "${title}" add ho gaya.\nPriority: ${newTodo.priority.toUpperCase()} | Est: ${newTodo.estimatedMinutes} min | Category: ${newTodo.category}`,
+    };
+  }
+
+  private editTodo(state: AppState, action: Extract<ChatToolAction, { action: 'editTodo' }>): ChatToolResult {
+    const todos = state.customTodos ?? [];
+    const target = todos.find(
+      (t) => (action.todoId && t.id === action.todoId) || (action.title && t.title.toLowerCase().includes(action.title.toLowerCase())),
+    );
+
+    if (!target) {
+      return { ok: false, summary: `To-Do "${action.title || action.todoId || ''}" nahi mila.` };
+    }
+
+    const updatedTodo: CustomTodoTask = {
+      ...target,
+      title: action.newTitle?.trim() ? action.newTitle.trim() : (action.title && !action.todoId ? target.title : action.newTitle?.trim() || target.title),
+      priority: action.priority ?? target.priority,
+      category: action.category ?? target.category,
+      estimatedMinutes: action.estimatedMinutes ?? target.estimatedMinutes,
+      completed: action.completed !== undefined ? action.completed : target.completed,
+      completedAtISO: action.completed === true ? (target.completedAtISO || new Date().toISOString()) : action.completed === false ? undefined : target.completedAtISO,
+      order: action.order !== undefined ? action.order : target.order,
+    };
+
+    const nextState: AppState = {
+      ...state,
+      customTodos: todos.map((t) => (t.id === target.id ? updatedTodo : t)),
+    };
+    this.store.save(nextState);
+
+    return {
+      ok: true,
+      summary: `To-Do "${updatedTodo.title}" update ho gaya.\nPriority: ${updatedTodo.priority.toUpperCase()} | Est: ${updatedTodo.estimatedMinutes} min | Category: ${updatedTodo.category || 'general'} | Status: ${updatedTodo.completed ? 'COMPLETED' : 'PENDING'}`,
+    };
+  }
+
+  private reorderTodos(state: AppState, action: Extract<ChatToolAction, { action: 'reorderTodos' }>): ChatToolResult {
+    const todos = [...(state.customTodos ?? [])];
+    if (todos.length === 0) {
+      return { ok: false, summary: 'Koi To-Do nahi hai reorder karne ke liye.' };
+    }
+
+    // 1. Full list reorder by IDs
+    if (action.todoIds && action.todoIds.length > 0) {
+      const idMap = new Map(todos.map((t) => [t.id, t]));
+      const ordered: CustomTodoTask[] = [];
+      action.todoIds.forEach((id, idx) => {
+        const t = idMap.get(id);
+        if (t) {
+          ordered.push({ ...t, order: idx });
+          idMap.delete(id);
+        }
+      });
+      idMap.forEach((t) => {
+        ordered.push({ ...t, order: ordered.length });
+      });
+
+      this.store.save({ ...state, customTodos: ordered });
+      return { ok: true, summary: 'To-Dos list ko naye sequence me reorder kar diya gaya.' };
+    }
+
+    // 2. Single item move: top / bottom / up / down / index
+    const target = todos.find(
+      (t) => (action.todoId && t.id === action.todoId) || (action.title && t.title.toLowerCase().includes(action.title.toLowerCase())),
+    );
+    if (!target) {
+      return { ok: false, summary: `To-Do "${action.title || action.todoId || ''}" nahi mila.` };
+    }
+
+    const sorted = sortCustomTodos(todos);
+    const currPos = sorted.findIndex((t) => t.id === target.id);
+    let targetPos = currPos;
+
+    if (action.position === 'top') {
+      targetPos = 0;
+    } else if (action.position === 'bottom') {
+      targetPos = sorted.length - 1;
+    } else if (action.position === 'up') {
+      targetPos = Math.max(0, currPos - 1);
+    } else if (action.position === 'down') {
+      targetPos = Math.min(sorted.length - 1, currPos + 1);
+    } else if (typeof action.position === 'number') {
+      targetPos = Math.max(0, Math.min(sorted.length - 1, action.position));
+    }
+
+    const item = sorted.splice(currPos, 1)[0];
+    sorted.splice(targetPos, 0, item);
+
+    const nextTodos = sorted.map((t, idx) => ({ ...t, order: idx }));
+    this.store.save({ ...state, customTodos: nextTodos });
+
+    return {
+      ok: true,
+      summary: `To-Do "${item.title}" ko position ${targetPos + 1} (${action.position || 'new position'}) par shift kar diya gaya.`,
     };
   }
 
