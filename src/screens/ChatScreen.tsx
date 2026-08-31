@@ -171,7 +171,7 @@ export default function ChatScreen({
 
   const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? null, [sessions, activeId]);
   // User-pickable AI tools for the "@" composer picker (filtered dynamically by 90-day track setting).
-  const toolCatalog = useMemo(() => container.chat.listTools(), [sessions, activeId, showSettings]);
+  const toolCatalog = useMemo(() => container.chat.listTools(), []);
   const filteredTools = useMemo(() => {
     if (toolQuery === null) return [];
     const q = toolQuery.toLowerCase().trim();

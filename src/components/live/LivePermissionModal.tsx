@@ -34,7 +34,7 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed }: Live
       setSavedMicStream(stream);
       setMicGranted(true);
       hapticSuccess();
-    } catch (err) {
+    } catch {
       hapticError();
       setErrorMsg('Microphone access denied. Please allow microphone in your device settings.');
     } finally {
@@ -54,7 +54,7 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed }: Live
       setSavedCamStream(stream);
       setCameraGranted(true);
       hapticSuccess();
-    } catch (err) {
+    } catch {
       hapticError();
       setErrorMsg('Camera access denied or unavailable.');
     } finally {

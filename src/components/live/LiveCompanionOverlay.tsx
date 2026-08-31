@@ -246,6 +246,7 @@ export default function LiveCompanionOverlay({
         clientRef.current = null;
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, apiKey]);
 
   // Dynamically update audio playback speed on the active live client
