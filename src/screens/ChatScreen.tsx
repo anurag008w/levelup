@@ -40,6 +40,7 @@ import { TOOL_LABELS, type ChatToolMeta } from '../core/domain/chat-tools';
 import type { ArchivedConversation } from '../core/domain/chat-transcript';
 import { isAbortError, type ModelInfo } from '../core/domain/llm';
 import { defaultChatPrefs, globalChatPrefsFromSettings } from '../core/domain/chat';
+import { deviceTimeZone } from '../core/ports/clock';
 import { container } from '../di/container';
 import { redoLastAiAction, undoLastAiAction } from '../core/domain/ai-actions';
 import ChatMarkdown from '../components/ChatMarkdown';
@@ -450,10 +451,12 @@ export default function ChatScreen({
   const handleExecuteLiveTool = async (name: string, args: Record<string, unknown>): Promise<any> => {
     try {
       if (name === 'getTime') {
+        const state = container.store.get();
+        const timeZone = state.timeZone ?? deviceTimeZone();
         const now = new Date();
-        const time = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
-        const date = now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' });
-        return { currentTime: time, currentDate: date, timeZone: 'Asia/Kolkata' };
+        const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone });
+        const date = now.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone });
+        return { currentTime: time, currentDate: date, timeZone };
       }
       if (name === 'webSearch') {
         const query = String(args.query || '');
@@ -1630,7 +1633,11 @@ export default function ChatScreen({
           initialCameraStream={liveCamStream || undefined}
           initialMessages={active?.messages || []}
           toolCatalog={toolCatalog}
-          config={{ ...liveConfig, enable90DayTrack: container.store.get().enable90DayTrack !== false }}
+          config={{
+            ...liveConfig,
+            enable90DayTrack: container.store.get().enable90DayTrack !== false,
+            timeZone: container.store.get().timeZone ?? deviceTimeZone(),
+          }}
           onUpdateConfig={handleUpdateLiveConfig}
           onExecuteTool={handleExecuteLiveTool}
           onTranscriptUpdate={handleLiveTranscriptUpdate}

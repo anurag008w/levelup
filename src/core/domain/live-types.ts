@@ -160,6 +160,7 @@ export interface LiveSettingsConfig {
   defaultAudioRoute: LiveAudioRoute;
   videoFps: number;
   screenFps: number;
+  timeZone?: string;
 }
 
 export const DEFAULT_LIVE_SETTINGS: LiveSettingsConfig = {

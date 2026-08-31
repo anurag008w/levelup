@@ -543,7 +543,7 @@ export class ChatService {
         // bypass fast-path so the model generates the full batch of actions.
         const inScope = (a: ChatToolAction) => toolScope.length === 0 || toolScope.includes(a.action);
         const isMultiPart = /(?:aur|and|plus|bhi|phir|also|,)/i.test(text);
-        const plannerAction = this.tools.plannerActionFor(text, isoDate(this.clock.now(), deviceTimeZone()));
+        const plannerAction = this.tools.plannerActionFor(text, isoDate(this.clock.now(), this.resolveTimeZone()));
         const contextAction = plannerAction ? null : this.tools.contextActionFor(text);
         const fastAction = !isMultiPart && (plannerAction && inScope(plannerAction) ? plannerAction : contextAction && inScope(contextAction) ? contextAction : null);
         let actions: ChatToolAction[] | null = toolScope.length <= 1 && fastAction ? [fastAction] : null;
@@ -1058,10 +1058,15 @@ export class ChatService {
     return request;
   }
 
+  private resolveTimeZone(): string {
+    const state = this.store ? this.store.get() : null;
+    return state?.timeZone ?? deviceTimeZone();
+  }
+
   /** Today's date + weekday so the planner hop can resolve relative dates like
    *  "aaj"/"kal"/"is week" to concrete "from"/"to" values for getTests/getSubject. */
   private plannerDateContext(): string {
-    const tz = deviceTimeZone();
+    const tz = this.resolveTimeZone();
     const now = this.clock.now();
     const iso = isoDate(now, tz);
     let weekday = '';
@@ -1071,7 +1076,7 @@ export class ChatService {
       weekday = '';
     }
     return (
-      `Today is ${weekday ? `${weekday}, ` : ''}${iso} (the user's local date). ` +
+      `Today is ${weekday ? `${weekday}, ` : ''}${iso} (the user's local date in timezone ${tz}). ` +
       `When the user says "aaj" that is ${iso}; "kal" is the next day (${isoAddDays(iso, 1)}); ` +
       `"parso" is two days ahead (${isoAddDays(iso, 2)}); "is week" is the current week. ` +
       `Pass exact dates as "from"/"to" (YYYY-MM-DD, inclusive) in getTests/getSubject, ` +
@@ -1274,11 +1279,12 @@ export class ChatService {
     }
 
     const history: LLMMessage[] = [];
+    const tz = this.resolveTimeZone();
     for (const m of session.messages.slice(-this.historyLength())) {
       // If message has attachments, convert to ContentPart array
       if (m.attachments && m.attachments.length > 0) {
         const parts: ContentPart[] = [];
-        if (m.content) parts.push({ type: 'text', text: `${formatMsgTime(m.createdAt)} ${m.content}` });
+        if (m.content) parts.push({ type: 'text', text: `${formatMsgTime(m.createdAt, tz)} ${m.content}` });
         for (const att of m.attachments) {
           if (att.kind === 'image') {
             // Convert blob URL to data URL for LLM. The blob dies on app
@@ -1322,7 +1328,7 @@ export class ChatService {
       } else {
         history.push({
           role: m.role,
-          content: `${formatMsgTime(m.createdAt)} ${m.content}`,
+          content: `${formatMsgTime(m.createdAt, tz)} ${m.content}`,
         });
       }
     }
@@ -2069,11 +2075,11 @@ function deriveTitle(text: string): string {
 }
 
 /** Local clock time of a message, e.g. "[05:42 PM]". Lets the model know when each message was sent. */
-function formatMsgTime(iso: string): string {
+function formatMsgTime(iso: string, timeZone?: string): string {
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return '[time unknown]';
-    return `[${d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}]`;
+    return `[${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone })}]`;
   } catch {
     return '[time unknown]';
   }
