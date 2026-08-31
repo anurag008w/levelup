@@ -140,14 +140,12 @@ public class ScreenSharePlugin extends Plugin {
         minFrameIntervalMs = 1000L / Math.max(1, Math.min(captureFps, 30));
 
         try {
-            // 1. Start foreground service on Android 10+ (required BEFORE getMediaProjection on Android 14+)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                Intent svcIntent = new Intent(getContext(), ScreenShareForegroundService.class);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    getContext().startForegroundService(svcIntent);
-                } else {
-                    getContext().startService(svcIntent);
-                }
+            // 1. Start foreground service on all Android versions (Android 7 to 16+)
+            Intent svcIntent = new Intent(getContext(), ScreenShareForegroundService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                getContext().startForegroundService(svcIntent);
+            } else {
+                getContext().startService(svcIntent);
             }
 
             // 2. Create background capture thread
@@ -306,11 +304,9 @@ public class ScreenSharePlugin extends Plugin {
         }
         captureHandler = null;
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                Intent svcIntent = new Intent(getContext(), ScreenShareForegroundService.class);
-                getContext().stopService(svcIntent);
-            } catch (Exception ignored) {}
-        }
+        try {
+            Intent svcIntent = new Intent(getContext(), ScreenShareForegroundService.class);
+            getContext().stopService(svcIntent);
+        } catch (Exception ignored) {}
     }
 }
