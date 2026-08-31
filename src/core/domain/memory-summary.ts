@@ -31,24 +31,51 @@ Rules:
 7. "longTerm": true ONLY for facts the coach must never forget (goals, preferences, strengths/weaknesses, exam targets, commitments). STRICT and RARE — at most 2 longTerm blocks per run. When in doubt keep "longTerm": false; the student can always pin a block later. longTerm blocks are pinned into long-term memory.
 8. Skip greetings, small talk and generic encouragement. Do not output empty blocks.`;
 
-/** Parses a model reply into memory blocks — JSON first, plain "----" blocks as fallback. */
+/** Parses a model reply into memory blocks — JSON first, markdown/plain blocks as fallback. */
 export function parseMemoryBlocks(text: string): MemoryBlock[] {
-  const trimmed = (text ?? '').trim();
+  // Strip reasoning / think tags if emitted by reasoning models (DeepSeek, etc.)
+  let trimmed = (text ?? '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
   if (!trimmed) return [];
 
-  const parsed = tryJsonObject(trimmed);
-  if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) && 'blocks' in parsed) {
-    const raw = (parsed as { blocks?: unknown }).blocks;
-    if (Array.isArray(raw)) {
-      const blocks = parseJsonBlocks(raw);
+  // 1. Try robust JSON extraction (object or array, with or without markdown fences)
+  const parsed = tryJsonAny(trimmed);
+  if (parsed !== null) {
+    if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+      if ('blocks' in parsed && Array.isArray((parsed as { blocks?: unknown }).blocks)) {
+        const blocks = parseJsonBlocks((parsed as { blocks: unknown[] }).blocks);
+        if (blocks.length > 0) return blocks;
+      } else if ('lines' in parsed && Array.isArray((parsed as { lines?: unknown }).lines)) {
+        const blocks = parseJsonBlocks([parsed]);
+        if (blocks.length > 0) return blocks;
+      }
+    } else if (Array.isArray(parsed)) {
+      const blocks = parseJsonBlocks(parsed);
       if (blocks.length > 0) return blocks;
     }
   }
 
-  // Plain-text fallback only when the reply actually uses "----" block
-  // separators — a random prose reply is NOT treated as memory.
-  if (!/^\s*-{3,}\s*$/m.test(trimmed)) return [];
-  return parsePlainBlocks(trimmed);
+  // 2. Plain-text split on "----" block separators
+  if (/^\s*-{3,}\s*$/m.test(trimmed)) {
+    const plainBlocks = parsePlainBlocks(trimmed);
+    if (plainBlocks.length > 0) return plainBlocks;
+  }
+
+  // 3. Markdown headers fallback (### Category \n - bullet points)
+  if (/^#{1,4}\s+/m.test(trimmed)) {
+    const mdBlocks = parseMarkdownHeaderBlocks(trimmed);
+    if (mdBlocks.length > 0) return mdBlocks;
+  }
+
+  // 4. Clean bullet list fallback (- point \n - point)
+  const bulletLines = trimmed
+    .split('\n')
+    .map((l) => stripListMarker(l))
+    .filter((l) => l.length > 0 && !l.startsWith('```') && !l.startsWith('{') && !l.startsWith('}'));
+  if (bulletLines.length > 0 && bulletLines.some((l) => l.length > 5)) {
+    return splitIntoBlocks(bulletLines, { longTerm: false, tags: [] });
+  }
+
+  return [];
 }
 
 /** Max memory points a single block may carry (matches the prompt rule). */
@@ -112,6 +139,30 @@ function parsePlainBlocks(text: string): MemoryBlock[] {
   return out;
 }
 
+/** Fallback: Markdown header sections (### Heading \n - Item 1 \n - Item 2). */
+function parseMarkdownHeaderBlocks(text: string): MemoryBlock[] {
+  const sections = text.split(/(?=^#{1,4}\s+)/m);
+  const out: MemoryBlock[] = [];
+  for (const sec of sections) {
+    if (out.length >= MAX_BLOCKS) break;
+    const trimmed = sec.trim();
+    if (!trimmed) continue;
+    const headerMatch = trimmed.match(/^#{1,4}\s+(.+)$/m);
+    const title = headerMatch ? headerMatch[1].replace(/[*_~`]/g, '').trim() : undefined;
+    const body = trimmed.replace(/^#{1,4}\s+.+$/m, '').trim();
+    const lines = body
+      .split('\n')
+      .map((l) => stripListMarker(l))
+      .filter((l) => l.length > 0 && !l.startsWith('#'));
+    if (lines.length === 0) continue;
+    for (const block of splitIntoBlocks(lines, { title, longTerm: false, tags: [] })) {
+      if (out.length >= MAX_BLOCKS) break;
+      out.push(block);
+    }
+  }
+  return out;
+}
+
 /**
  * Splits a block's lines into as many compact blocks as needed — NEVER drops a
  * point. The model is told to keep blocks <= MAX_BLOCK_LINES and separate
@@ -131,21 +182,33 @@ function splitIntoBlocks(
   return blocks;
 }
 
-function tryJsonObject(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) return null;
+function tryJsonAny(text: string): unknown {
+  const clean = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
   try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return null;
+    return JSON.parse(clean);
+  } catch {}
+
+  const objStart = clean.indexOf('{');
+  const objEnd = clean.lastIndexOf('}');
+  if (objStart !== -1 && objEnd > objStart) {
+    try {
+      return JSON.parse(clean.slice(objStart, objEnd + 1));
+    } catch {}
   }
+
+  const arrStart = clean.indexOf('[');
+  const arrEnd = clean.lastIndexOf(']');
+  if (arrStart !== -1 && arrEnd > arrStart) {
+    try {
+      return JSON.parse(clean.slice(arrStart, arrEnd + 1));
+    } catch {}
+  }
+
+  return null;
 }
 
 function toStrArray(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
-  // All lines are kept — overflow is split into extra blocks by splitIntoBlocks
-  // instead of being dropped, so no student point is ever lost.
   return v
     .map((x) => (typeof x === 'string' ? x.trim() : ''))
     .filter((x): x is string => x.length > 0)
