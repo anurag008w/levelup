@@ -93,6 +93,8 @@ class FakeSyncServer implements HttpClient {
 async function freshContainer() {
   vi.resetModules();
   localStorage.clear();
+  const { reloadPersistentStore } = await import('../../../infra/storage/local-storage');
+  await reloadPersistentStore();
   const server = new FakeSyncServer();
   const { createContainer } = await import('../../../di/container');
   const app = createContainer(server, { syncDebounceMs: 5 });
