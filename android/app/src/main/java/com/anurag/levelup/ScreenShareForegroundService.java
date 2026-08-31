@@ -3,6 +3,7 @@ package com.anurag.levelup;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.os.Build;
@@ -12,17 +13,19 @@ import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
 /**
- * Minimal foreground service required by Android 10+ (API 29+) for
- * MediaProjection screen capture. Without this, Android kills the
- * projection token after a few seconds when the app is not visible.
+ * Foreground service for MediaProjection screen capture and background
+ * live companion persistence.
  *
- * This service runs only while a Misa Live screen share is active and
- * stops itself when the share ends (ScreenSharePlugin calls stopService).
+ * Runs on Android 7 to Android 16:
+ *  - Displays a persistent notification with a tap-to-return action
+ *  - Prevents the OS from killing the capture pipeline when the user
+ *    minimizes the app to view PDFs, notes, or coaching apps
+ *  - Properly registers FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION on Android 10+
  */
 public class ScreenShareForegroundService extends Service {
 
-    private static final String CHANNEL_ID = "misa_screenshare_channel";
-    private static final int NOTIF_ID = 7421;
+    public static final String CHANNEL_ID = "misa_screenshare_channel";
+    public static final int NOTIF_ID = 7421;
 
     @Override
     public void onCreate() {
@@ -32,10 +35,20 @@ public class ScreenShareForegroundService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Intent to return to MainActivity when user taps the notification
+        Intent launchIntent = new Intent(this, MainActivity.class);
+        launchIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        int pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            pendingFlags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, launchIntent, pendingFlags);
+
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Misa Live — Screen Share Active")
             .setContentText("Screen share is running for Misa AI. Tap to return to app.")
             .setSmallIcon(android.R.drawable.ic_menu_view)
+            .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setSilent(true)
             .setOngoing(true)
