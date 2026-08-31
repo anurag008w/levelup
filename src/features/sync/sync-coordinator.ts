@@ -1,24 +1,25 @@
 // SyncCoordinator — orchestrates when the app pushes to / pulls from the
-// server. Owns the debounce, the online/offline listener and the fresh-install
-// recovery, so the UI just has to call attach()/detach() on login/logout.
+// server. Owns the debounce, the online/offline listener, auto-focus reconciler,
+// and fresh-install / multi-device recovery, so the UI just has to call
+// attach()/detach() on login/logout.
 //
-// Lifecycle:
-//   attach(session)  → after login. Pulls server data when the local store is
-//                      fresh (empty install), then starts marking dirty scopes.
-//   detach()         → before logout. Stops scheduling (wipe is caller-owned).
-//   markDirty(scope) → called by the storage wrappers on every mutation.
-//
-// Scopes: `state` covers the whole AppState (plan, tasks, logs, memory,
-// profile, aiSettings incl. providers) — the server stores it under
-// data/sync/<user>/state.json. `chat` covers chat sessions under chat.json.
+// Multi-Device Resiliency (Plan 1):
+//   - On window focus or tab visibility change: checks /sync/status.
+//   - If server copy is newer (e.g. edited on mobile), pulls and merges
+//     non-destructively (mergeAppState / mergeChatSessions).
+//   - On login attach: merges cloud data with local store so neither device's
+//     data is wiped.
 
 import type { AuthSession } from '../../lib/auth';
 import type { AppState } from '../../core/domain/state';
 import type { ChatSession } from '../../core/domain/chat';
 import { SyncService, stateSyncPayload, type SyncScope, type SyncScopeState } from './sync.service';
+import { mergeAppState, mergeChatSessions } from './sync-merge';
 
 /** Push coalescing window — mutations within this span ride one request. */
 const PUSH_DEBOUNCE_MS = 2_000;
+/** Periodic background check interval (60s). */
+const POLL_INTERVAL_MS = 60_000;
 
 export class SyncCoordinator {
   private readonly sync: SyncService;
@@ -31,14 +32,13 @@ export class SyncCoordinator {
   private session: AuthSession | null = null;
   private dirty = new Set<SyncScope>();
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
   private inFlight = false;
-  /** True while restoring server data — suppress dirty so a pull never pushes back. */
+  /** True while restoring / merging server data — suppress dirty so a pull never pushes back. */
   private restoring = false;
   /**
-   * True once the initial reconcile (pull on fresh install / seed for existing
-   * users) has run for the current session. Attaching offline defers it; the
-   * first time the connection comes back we run it so server data isn't missed.
-   * skipInitialSync (full data wipe) marks it done immediately — nothing to pull.
+   * True once the initial reconcile (pull on fresh install / merge / seed for existing
+   * users) has run for the current session.
    */
   private initialSyncDone = false;
   private online = !(typeof navigator !== 'undefined' && navigator.onLine === false);
@@ -64,6 +64,12 @@ export class SyncCoordinator {
     if (typeof window !== 'undefined') {
       window.addEventListener('online', () => this.handleOnline());
       window.addEventListener('offline', () => this.handleOffline());
+      window.addEventListener('focus', () => void this.reconcileIfStale());
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') void this.reconcileIfStale();
+        });
+      }
     }
   }
 
@@ -93,13 +99,12 @@ export class SyncCoordinator {
     return this.session !== null;
   }
 
-  /** Attach after login. Restores from server on a fresh install; seeds the
-   *  server with existing local data otherwise. Pass `skipInitialSync: true`
-   *  after a full data wipe so the (just-deleted) server copy isn't pulled back. */
+  /** Attach after login. Reconciles with server data cleanly. */
   attach(session: AuthSession, opts: { skipInitialSync?: boolean } = {}): void {
     this.session = session;
     this.dirty.clear();
     this.scopeStates.clear();
+    this.startPollTimer();
     if (opts.skipInitialSync) {
       // Full data wipe — the server copy was just deleted; never pull it back.
       this.initialSyncDone = true;
@@ -113,13 +118,24 @@ export class SyncCoordinator {
 
   detach(): void {
     if (this.timer) clearTimeout(this.timer);
+    if (this.pollTimer) clearInterval(this.pollTimer);
     this.timer = null;
+    this.pollTimer = null;
     this.session = null;
     this.dirty.clear();
     this.inFlight = false;
     this.initialSyncDone = false;
     this.scopeStates.clear();
     this.emit();
+  }
+
+  private startPollTimer(): void {
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = setInterval(() => {
+      if (this.session && this.online && !this.restoring && !this.inFlight) {
+        void this.reconcileIfStale();
+      }
+    }, POLL_INTERVAL_MS);
   }
 
   /** The active login session, or null when logged out. */
@@ -145,16 +161,61 @@ export class SyncCoordinator {
   async syncNow(): Promise<void> {
     if (!this.session) return;
     if (this.inFlight) return;
-    // Force online status refresh on manual user trigger
     this.online = typeof navigator === 'undefined' || navigator.onLine !== false;
+    // First reconcile if stale from other device, then push
+    await this.reconcileIfStale();
     this.dirty.add('state');
     this.dirty.add('chat');
     await this.flush();
-    // Server ko bhi turant GitHub push karne ko bolo (admin users) —
-    // normal flow me server apne 180s loop pe push karta hai.
     const session = this.session;
     if (session?.isSuperAdmin) {
       await this.sync.forceServerPush(session);
+    }
+  }
+
+  /**
+   * Automatically pulls and merges remote updates if another device (e.g. phone or Linux)
+   * pushed newer changes.
+   */
+  async reconcileIfStale(): Promise<void> {
+    if (!this.session || !this.online || this.restoring || this.inFlight) return;
+    const session = this.session;
+    try {
+      const stateStatus = await this.sync.status(session, 'state');
+      const curStateSync = this.getScopeState('state');
+      if (stateStatus.exists && stateStatus.updatedAt && stateStatus.updatedAt > (curStateSync.lastSyncedAt || '')) {
+        const remoteState = await this.sync.pull(session, 'state');
+        if (remoteState?.state) {
+          this.restoring = true;
+          try {
+            const merged = mergeAppState(this.getState(), remoteState.state as AppState);
+            this.replaceState(merged);
+            this.setScopeState('state', { state: 'online', lastSyncedAt: remoteState.updatedAt, lastError: null });
+          } finally {
+            this.restoring = false;
+          }
+        }
+      }
+
+      const chatStatus = await this.sync.status(session, 'chat');
+      const curChatSync = this.getScopeState('chat');
+      if (chatStatus.exists && chatStatus.updatedAt && chatStatus.updatedAt > (curChatSync.lastSyncedAt || '')) {
+        const remoteChat = await this.sync.pull(session, 'chat');
+        const remoteSessions = (remoteChat?.state as { sessions?: ChatSession[] })?.sessions;
+        if (Array.isArray(remoteSessions)) {
+          this.restoring = true;
+          try {
+            const merged = mergeChatSessions(this.getChatSessions(), remoteSessions);
+            this.replaceStore(merged);
+            this.setScopeState('chat', { state: 'online', lastSyncedAt: remoteChat.updatedAt, lastError: null });
+          } finally {
+            this.restoring = false;
+          }
+        }
+      }
+      this.emit();
+    } catch {
+      // Best-effort background reconcile
     }
   }
 
@@ -167,8 +228,6 @@ export class SyncCoordinator {
   }
 
   private async flush(): Promise<void> {
-    // If we went offline between markDirty and the debounce timer firing,
-    // don't waste a request — the reconnect handler will flush.
     if (!this.session || this.inFlight || this.dirty.size === 0 || !this.online) return;
     this.inFlight = true;
     const session = this.session;
@@ -212,17 +271,54 @@ export class SyncCoordinator {
   }
 
   /**
-   * On login (attach): reconcile local vs server.
-   *  - Fresh install (no meaningful local data) → pull the server copy down.
-   *  - Existing user (has local data) → seed the server with what we have, so
-   *    a long-time user's backup appears even before the first edit.
+   * On login (attach): reconcile local vs server non-destructively.
    */
   private async initialSync(session: AuthSession): Promise<void> {
-    if (!this.hasMeaningfulData()) {
+    const scopes = await this.sync.scopes(session);
+    const hasRemote = scopes.length > 0;
+    const hasLocal = this.hasMeaningfulData();
+
+    if (!hasRemote) {
+      // Server is empty: seed server with existing local data
+      if (hasLocal) {
+        await this.seedServer(session);
+      }
+      return;
+    }
+
+    if (!hasLocal) {
+      // Local is fresh/empty: pull everything down
       await this.pullAll(session);
       return;
     }
-    await this.seedServer(session);
+
+    // Both local and server have data: perform non-destructive smart merge!
+    this.restoring = true;
+    try {
+      for (const scope of scopes) {
+        const remote = await this.sync.pull(session, scope);
+        if (!remote) continue;
+        if (scope === 'chat') {
+          const store = remote.state as { sessions?: ChatSession[] } | undefined;
+          const remoteSessions = Array.isArray(store?.sessions) ? store.sessions : [];
+          const merged = mergeChatSessions(this.getChatSessions(), remoteSessions);
+          this.replaceStore(merged);
+          this.setScopeState('chat', { state: 'online', lastSyncedAt: remote.updatedAt, lastError: null });
+        } else {
+          const merged = mergeAppState(this.getState(), remote.state as AppState);
+          this.replaceState(merged);
+          this.setScopeState('state', { state: 'online', lastSyncedAt: remote.updatedAt, lastError: null });
+        }
+      }
+    } finally {
+      this.restoring = false;
+    }
+    this.emit();
+
+    // Push the unified merge back to cloud
+    this.dirty.add('state');
+    this.dirty.add('chat');
+    void this.flush();
   }
 
   /** True when the local state carries actual user progress (not an empty shell). */
@@ -236,6 +332,8 @@ export class SyncCoordinator {
     if ((state.clearedLevels ?? []).length > 0) return true;
     if ((state.weeklyReviews ?? []).length > 0) return true;
     if ((state.monthlyAssessments ?? []).length > 0) return true;
+    if ((state.customTodos ?? []).length > 0) return true;
+    if ((state.studyVault ?? []).length > 0) return true;
     return false;
   }
 
@@ -263,11 +361,7 @@ export class SyncCoordinator {
     this.emit();
   }
 
-  /**
-   * Existing user: push local data up once so the server has a backup. This is
-   * push-authoritative — the server never overwrites the app, so seeding is
-   * always safe (worst case the server ends up with this device's data).
-   */
+  /** Existing user: push local data up once so the server has a backup. */
   private async seedServer(session: AuthSession): Promise<void> {
     const now = new Date().toISOString();
     const stateRes = await this.sync.push(session, 'state', stateSyncPayload(this.getState()), now);
@@ -291,12 +385,6 @@ export class SyncCoordinator {
   private handleOnline(): void {
     this.online = true;
     if (!this.session) return;
-    // Attach offline → initialSync was deferred. Now that we're back online:
-    //  - dirty edits exist → push-authoritative wins; flush them, never pull
-    //    over local changes made while offline.
-    //  - no edits → run the deferred initialSync so a fresh install still pulls
-    //    its server backup (and an existing user seeds).
-    // skipInitialSync marks this done, so nothing pulls after a full wipe.
     if (!this.initialSyncDone) {
       this.initialSyncDone = true;
       if (this.dirty.size === 0) {
@@ -306,6 +394,8 @@ export class SyncCoordinator {
     }
     if (this.dirty.size > 0) {
       void this.flush();
+    } else {
+      void this.reconcileIfStale();
     }
   }
 
