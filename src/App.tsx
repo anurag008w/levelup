@@ -14,6 +14,8 @@ import { setChatTabActive } from './lib/notifications';
 import { getNotificationPermission } from './lib/notifications';
 import { getBackgroundPermissionStatus } from './lib/background-permission';
 import ScreenSkeleton from './components/ScreenSkeleton';
+import { IncomingCallModal } from './components/live/IncomingCallModal';
+import { proactiveAgentService, type IncomingCallEvent } from './features/ai/proactive-agent.service';
 
 const LevelsScreen = lazy(() => import('./screens/LevelsScreen'));
 const ProgressScreen = lazy(() => import('./screens/ProgressScreen'));
@@ -82,6 +84,30 @@ export default function App() {
   // agar permissions missing hain aur user ne pehle "no" nahi bola, popup aata
   // hai. Ek baar dismiss karne pe hamesha ke liye band (localStorage flag).
   const [showPermissionOnboarding, setShowPermissionOnboarding] = useState(false);
+  const [incomingCall, setIncomingCall] = useState<IncomingCallEvent | null>(null);
+
+  useEffect(() => {
+    void proactiveAgentService.init();
+    const unsubscribe = proactiveAgentService.onIncomingCall((callEvent) => {
+      setIncomingCall(callEvent);
+    });
+    return unsubscribe;
+  }, []);
+
+  const handleAcceptCall = (callEvent: IncomingCallEvent) => {
+    setIncomingCall(null);
+    setChatVisited(true);
+    setTab('chat');
+    window.dispatchEvent(
+      new CustomEvent('levelup:start-live-call', {
+        detail: { reason: callEvent.reason, isIncomingCall: true },
+      })
+    );
+  };
+
+  const handleDeclineCall = (_callEvent: IncomingCallEvent) => {
+    setIncomingCall(null);
+  };
 
   useEffect(() => {
     if (tab === 'chat') setChatVisited(true);
@@ -326,6 +352,11 @@ export default function App() {
         }}
       />
       {showPermissionOnboarding && <PermissionOnboarding onDone={handlePermissionOnboardingDone} />}
+      <IncomingCallModal
+        callEvent={incomingCall}
+        onAccept={handleAcceptCall}
+        onDecline={handleDeclineCall}
+      />
     </div>
   );
 }

@@ -12,6 +12,7 @@ import { VisionStreamer } from './vision-streamer';
 import { MISA_IDENTITY_GUARD, ROMAN_SCRIPT_RULE, type ChatToolCallRecord } from './chat';
 import { setNativeAudioRoute, resetNativeAudioRoute } from '../../lib/native-audio-route';
 import { deviceTimeZone } from '../ports/clock';
+import { LiveSilenceStateMachine } from './live-silence-state-machine';
 
 export interface LiveClientCallbacks {
   onStatusChange?: (status: LiveSessionStatus) => void;
@@ -28,6 +29,7 @@ export class GeminiLiveClient {
   private status: LiveSessionStatus = 'idle';
   private audioStreamer: AudioStreamer;
   private visionStreamer: VisionStreamer;
+  private silenceStateMachine = new LiveSilenceStateMachine();
   private callbacks: LiveClientCallbacks = {};
 
   private config: LiveSettingsConfig;
@@ -39,6 +41,11 @@ export class GeminiLiveClient {
   private currentAssistantMessage = '';
   private framesSentCount = 0;
   private connectStartTime = 0;
+  private lastLiveActivityTime = Date.now();
+  private keepAliveTimer: any = null;
+  private silenceObserverTimer: any = null;
+  private isIncomingCallSession = false;
+  private incomingCallReason = '';
 
   constructor(config: LiveSettingsConfig, callbacks: LiveClientCallbacks = {}) {
     this.config = config;
@@ -101,7 +108,7 @@ export class GeminiLiveClient {
   }
 
   /** Connect to the Gemini Live API via official Google GenAI SDK. */
-  async connect(apiKey: string): Promise<void> {
+  async connect(apiKey: string, incomingCallMeta?: { isIncomingCall?: boolean; reason?: string }): Promise<void> {
     if (!apiKey) {
       throw new Error('Google Gemini API Key is required for Live Voice.');
     }
@@ -109,6 +116,15 @@ export class GeminiLiveClient {
     this.setStatus('connecting');
     this.connectStartTime = Date.now();
     this.framesSentCount = 0;
+    this.lastLiveActivityTime = Date.now();
+
+    if (incomingCallMeta?.isIncomingCall) {
+      this.isIncomingCallSession = true;
+      this.incomingCallReason = incomingCallMeta.reason || 'Study check-in';
+    } else {
+      this.isIncomingCallSession = false;
+      this.incomingCallReason = '';
+    }
 
     const now = new Date();
     const timeZone = this.config.timeZone || deviceTimeZone() || 'Asia/Kolkata';
@@ -129,6 +145,9 @@ export class GeminiLiveClient {
     const fullSystemInstruction = [
       MISA_IDENTITY_GUARD,
       this.systemPrompt,
+      this.isIncomingCallSession
+        ? `[INCOMING CALL CONTEXT]\n- You initiated this incoming voice call to check in on the student (${this.incomingCallReason}).\n- The student just picked up the call!\n- Greet them warmly and naturally (like a real friend/study partner who called on phone, e.g. "Hey! Suno, kaisa chal raha hai target?").\n- Do NOT use robotic canned scripts.\n- When the conversation naturally concludes or student says bye/padhta hu, call the 'endLiveCall' tool to hang up.`
+        : '',
       `[LIVE REALTIME CLOCK & CONTEXT]
 - Current Local Date: ${dateString}
 - Current Local Time: ${timeString} (${timeZone})
@@ -416,6 +435,16 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
             },
           ]
         : []),
+      {
+        name: 'endLiveCall',
+        description: 'End and disconnect the current live voice call gracefully when the conversation is finished or user asks to hang up / bye.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            reason: { type: 'STRING', description: 'Reason for ending the call (e.g. study session concluded)' },
+          },
+        },
+      },
     ];
 
     const toolDeclarations = allToolDeclarations;
@@ -450,8 +479,10 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         callbacks: {
           onopen: () => {
             this.setStatus('connected');
+            this.startKeepAliveAndSilenceObserver();
           },
           onmessage: (data: any) => {
+            this.lastLiveActivityTime = Date.now();
             this.handleServerMessage(data);
           },
           onerror: (err: any) => {
@@ -470,6 +501,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
       this.session = session;
       this.setStatus('connected');
+      this.startKeepAliveAndSilenceObserver();
       void setNativeAudioRoute(this.config.defaultAudioRoute);
     } catch (err: any) {
       this.setStatus('error');
@@ -763,7 +795,57 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     }
   }
 
+  private startKeepAliveAndSilenceObserver(): void {
+    this.lastLiveActivityTime = Date.now();
+    if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
+    if (this.silenceObserverTimer) clearInterval(this.silenceObserverTimer);
+
+    // 1. Keep-Alive Heartbeat every 20 seconds
+    this.keepAliveTimer = setInterval(() => {
+      if (this.session && this.status === 'connected') {
+        try {
+          this.session.sendRealtimeInput({
+            audio: {
+              data: 'AAAA', // minimal base64 silence
+              mimeType: 'audio/pcm;rate=16000',
+            },
+          });
+        } catch (e) {
+          console.warn('[GeminiLive] Keep-alive error:', e);
+        }
+      }
+    }, 20000);
+
+    // 2. Silence Proactive Companion Observer with State Machine
+    this.silenceObserverTimer = setInterval(() => {
+      if (!this.session || (this.status !== 'connected' && this.status !== 'listening')) return;
+      const silenceDurationSec = (Date.now() - this.lastLiveActivityTime) / 1000;
+      try {
+        const isCameraOrScreen = this.visionStreamer.getIsCameraActive() || this.visionStreamer.getIsScreenSharing();
+        const promptText = this.silenceStateMachine.evaluate({
+          silenceDurationSec,
+          isCameraOrScreenActive: isCameraOrScreen,
+        });
+        if (promptText) {
+          this.lastLiveActivityTime = Date.now();
+          this.session.sendRealtimeInput({ text: promptText });
+        }
+      } catch (e) {
+        console.warn('[GeminiLive] Silence state machine error:', e);
+      }
+    }, 5000);
+  }
+
   disconnect(): void {
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = null;
+    }
+    if (this.silenceObserverTimer) {
+      clearInterval(this.silenceObserverTimer);
+      this.silenceObserverTimer = null;
+    }
+    this.silenceStateMachine.reset();
     this.audioStreamer.stopRecording();
     this.visionStreamer.stop();
     void resetNativeAudioRoute();

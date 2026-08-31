@@ -299,8 +299,24 @@ export class ChatService {
     this.persist();
   }
 
-  /** Removes a single message (used by the message context menu). */
-  deleteMessage(sessionId: string, messageId: string): void {
+  /** Soft-deletes a single message in WhatsApp style (turns into tombstone). */
+  softDeleteMessage(sessionId: string, messageId: string): void {
+    const session = this.getSession(sessionId);
+    if (!session) return;
+    const msg = session.messages.find((m) => m.id === messageId);
+    if (!msg) return;
+    msg.isDeleted = true;
+    msg.deletedAt = this.clock.now().toISOString();
+    session.updatedAt = this.clock.now().toISOString();
+    this.persist();
+  }
+
+  /** Removes a single message completely or soft-deletes it. */
+  deleteMessage(sessionId: string, messageId: string, hard = false): void {
+    if (!hard) {
+      this.softDeleteMessage(sessionId, messageId);
+      return;
+    }
     const session = this.getSession(sessionId);
     if (!session) return;
     const idx = session.messages.findIndex((m) => m.id === messageId);

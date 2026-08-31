@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useRef, useState, lazy } from 'react';
-import { AlertTriangle, Bell, BellOff, Check, ChevronRight, Database, Download, ExternalLink, Globe, KeyRound, LayoutList, ListChecks, LogIn, LogOut, Pause, PhoneCall, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Upload, Wifi, WifiOff, X } from 'lucide-react';
+import { AlertTriangle, Bell, BellOff, Check, ChevronRight, Database, Download, ExternalLink, Globe, KeyRound, LayoutList, ListChecks, LogIn, LogOut, Music, Pause, PhoneCall, PhoneIncoming, Play, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Square, Trash2, Upload, Wifi, WifiOff, X } from 'lucide-react';
 import type { AppState } from '../types';
 import type { ProviderConfig, ModelInfo } from '../core/domain/llm';
 import type { AuthSession } from '../lib/auth';
@@ -13,6 +13,8 @@ import EmptyState from '../components/ui/EmptyState';
 import AddProviderForm from '../components/AddProviderForm';
 import LiveSettingsModal from '../components/live/LiveSettingsModal';
 import { haptic } from '../lib/haptics';
+import { proactiveAgentService } from '../features/ai/proactive-agent.service';
+import { ringtonePlayer, RINGTONE_PRESETS } from '../lib/ringtone-player';
 import {
   getNotificationPermission,
   getNotificationPreference,
@@ -88,6 +90,52 @@ export default function AISettingsScreen({
   const [showPauseModal, setShowPauseModal] = useState(false);
   const [trackMessage, setTrackMessage] = useState<{ type: 'ok' | 'error' | 'info'; text: string } | null>(null);
   const today = new Date().toISOString().slice(0, 10);
+
+  // Proactive Autonomous Agent & Incoming Calls state
+  const [proactivePrefs, setProactivePrefs] = useState(() => proactiveAgentService.getPreferences());
+  const [isPlayingRingtone, setIsPlayingRingtone] = useState(false);
+  const customAudioInputRef = useRef<HTMLInputElement | null>(null);
+
+  const updateProactive = (patch: Partial<typeof proactivePrefs>) => {
+    haptic();
+    const next = { ...proactivePrefs, ...patch };
+    setProactivePrefs(next);
+    proactiveAgentService.updatePreferences(next);
+  };
+
+  const handlePreviewRingtone = () => {
+    haptic();
+    if (isPlayingRingtone) {
+      ringtonePlayer.stop();
+      setIsPlayingRingtone(false);
+    } else {
+      setIsPlayingRingtone(true);
+      ringtonePlayer.start({
+        preset: proactivePrefs.ringtonePreset,
+        customAudioUrl: proactivePrefs.customRingtoneUrl,
+      });
+      setTimeout(() => {
+        ringtonePlayer.stop();
+        setIsPlayingRingtone(false);
+      }, 4000);
+    }
+  };
+
+  const handleCustomAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const dataUrl = evt.target?.result as string;
+      if (dataUrl) {
+        updateProactive({
+          ringtonePreset: 'custom',
+          customRingtoneUrl: dataUrl,
+        });
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -503,6 +551,166 @@ export default function AISettingsScreen({
         </div>
         <ChevronRight size={18} className="text-muted" />
       </button>
+
+      {/* Misa Proactive & Incoming Calls */}
+      <div className="mb-2.5">
+        <SectionHeader
+          icon={<PhoneIncoming size={14} color="var(--color-l)" />}
+          accent="var(--color-l)"
+          title="Misa Autonomous Calls & Proactivity"
+          meta={proactivePrefs.enabled ? 'active' : 'off'}
+        />
+      </div>
+
+      <div className="card mb-4 p-4 space-y-4">
+        {/* Toggle Proactive Messages */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
+              <Sparkles size={19} />
+            </span>
+            <div className="min-w-0">
+              <p className="font-display text-[15px] font-bold">Proactive study nudges</p>
+              <p className="text-xs leading-snug text-muted">
+                Misa spontaneously checks in, follows up on your study struggles, and keeps momentum going (100% Offline & Online).
+              </p>
+            </div>
+          </div>
+          <label className="toggle mt-1 shrink-0" title="Toggle proactive messages">
+            <input
+              type="checkbox"
+              checked={proactivePrefs.enabled}
+              onChange={(e) => updateProactive({ enabled: e.target.checked })}
+            />
+            <span className="toggle-slider" />
+          </label>
+        </div>
+
+        {/* Toggle Incoming Calls */}
+        <div className="border-t border-border/60 pt-3 flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-l/10 text-l">
+              <PhoneCall size={19} />
+            </span>
+            <div className="min-w-0">
+              <p className="font-display text-[15px] font-bold">WhatsApp-style incoming live calls</p>
+              <p className="text-xs leading-snug text-muted">
+                Misa can call you live for scheduled study checks or quick verbal problem-solving (rare & spam-free).
+              </p>
+            </div>
+          </div>
+          <label className="toggle mt-1 shrink-0" title="Toggle incoming calls">
+            <input
+              type="checkbox"
+              checked={proactivePrefs.callsEnabled}
+              onChange={(e) => updateProactive({ callsEnabled: e.target.checked })}
+            />
+            <span className="toggle-slider" />
+          </label>
+        </div>
+
+        {/* Call Frequency */}
+        {proactivePrefs.callsEnabled && (
+          <div className="border-t border-border/60 pt-3 space-y-1.5">
+            <label className="text-xs font-semibold text-muted">Spontaneous calling frequency</label>
+            <select
+              value={proactivePrefs.callFrequency}
+              onChange={(e) => updateProactive({ callFrequency: e.target.value as any })}
+              className="w-full rounded-xl border border-border bg-panel px-3 py-2 text-sm font-medium text-text focus:outline-none"
+            >
+              <option value="balanced">Balanced (1 call every 2–3 days)</option>
+              <option value="rare">Rare (1 call every 4 days)</option>
+              <option value="request_only">Only when I ask ("Misa call karo")</option>
+            </select>
+          </div>
+        )}
+
+        {/* Ringtone Selector & Custom Upload */}
+        {proactivePrefs.callsEnabled && (
+          <div className="border-t border-border/60 pt-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-muted flex items-center gap-1.5">
+                <Music size={13} className="text-l" />
+                <span>Call Ringtone</span>
+              </label>
+              <button
+                type="button"
+                onClick={handlePreviewRingtone}
+                className="inline-flex items-center gap-1 text-xs font-bold text-l hover:underline focus:outline-none"
+              >
+                {isPlayingRingtone ? <Square size={11} className="fill-current" /> : <Play size={11} className="fill-current" />}
+                <span>{isPlayingRingtone ? 'Stop Preview' : 'Play Ringtone'}</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {RINGTONE_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => {
+                    if (preset.id === 'custom' && !proactivePrefs.customRingtoneUrl) {
+                      customAudioInputRef.current?.click();
+                    } else {
+                      updateProactive({ ringtonePreset: preset.id });
+                    }
+                  }}
+                  className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all ${
+                    proactivePrefs.ringtonePreset === preset.id
+                      ? 'border-l bg-l/10 text-text font-bold'
+                      : 'border-border bg-panel text-muted hover:border-border-strong'
+                  }`}
+                >
+                  <span className="text-xs font-semibold text-text">{preset.name}</span>
+                  <span className="text-[10px] text-muted line-clamp-1">{preset.description}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Custom file upload input */}
+            <input
+              ref={customAudioInputRef}
+              type="file"
+              accept="audio/*"
+              className="hidden"
+              onChange={handleCustomAudioUpload}
+            />
+
+            {proactivePrefs.ringtonePreset === 'custom' && (
+              <button
+                type="button"
+                onClick={() => customAudioInputRef.current?.click()}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-dashed border-border hover:border-l text-xs font-semibold text-muted hover:text-l transition-colors"
+              >
+                <Upload size={13} />
+                <span>{proactivePrefs.customRingtoneUrl ? 'Change custom audio file' : 'Upload custom audio file (.mp3, .wav)'}</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Quiet Hours */}
+        <div className="border-t border-border/60 pt-3 grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[11px] font-semibold text-muted">Quiet hours start (DND)</label>
+            <input
+              type="time"
+              value={proactivePrefs.quietHoursStart}
+              onChange={(e) => updateProactive({ quietHoursStart: e.target.value })}
+              className="w-full mt-1 rounded-xl border border-border bg-panel px-3 py-1.5 text-xs text-text font-mono focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-muted">Quiet hours end</label>
+            <input
+              type="time"
+              value={proactivePrefs.quietHoursEnd}
+              onChange={(e) => updateProactive({ quietHoursEnd: e.target.value })}
+              className="w-full mt-1 rounded-xl border border-border bg-panel px-3 py-1.5 text-xs text-text font-mono focus:outline-none"
+            />
+          </div>
+        </div>
+      </div>
 
       <div className="mb-2.5">
         <SectionHeader

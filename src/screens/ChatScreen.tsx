@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Archive,
+  Ban,
   Camera,
   Check,
   ChevronDown,
@@ -20,6 +21,9 @@ import {
   NotebookPen,
   Paperclip,
   PenLine,
+  Phone,
+  PhoneCall,
+  PhoneOff,
   RefreshCw,
   Search,
   Send,
@@ -43,6 +47,7 @@ import { defaultChatPrefs, globalChatPrefsFromSettings } from '../core/domain/ch
 import { deviceTimeZone } from '../core/ports/clock';
 import { container } from '../di/container';
 import { redoLastAiAction, undoLastAiAction } from '../core/domain/ai-actions';
+import { proactiveAgentService } from '../features/ai/proactive-agent.service';
 import ChatMarkdown from '../components/ChatMarkdown';
 import FileCard from '../components/FileCard';
 import FileKindBadge from '../components/FileKindBadge';
@@ -790,9 +795,9 @@ export default function ChatScreen({
     }
   };
 
-  function refresh() {
+  const refresh = useCallback(() => {
     setSessions(container.chat.listSessions());
-  }
+  }, []);
 
   /**
    * Loads the memory archive and opens the chat history sheet. Chats only enter
@@ -1054,7 +1059,13 @@ export default function ChatScreen({
       refresh();
       // Only the message we just generated gets the reveal effect; reopening
       // an old chat must never replay it.
-      if (sent && lastAssistantId) setRevealId(lastAssistantId);
+      if (sent && lastAssistantId) {
+        setRevealId(lastAssistantId);
+        const finalAssistant = active?.messages.find((m) => m.id === lastAssistantId);
+        proactiveAgentService.onChatTurn(text, finalAssistant?.content || '', {
+          tasksCount: container.store.get().customTodos?.length || 0,
+        });
+      }
     }
   }
 
@@ -1338,7 +1349,35 @@ export default function ChatScreen({
     onDownload: downloadMessage,
     onShare: (m) => shareMessage(m),
     onConfirmAction: confirmAction,
+    onStartLiveCall: () => void handleStartLiveCall(),
   };
+
+  useEffect(() => {
+    const onStartLiveCallEvent = (_e: Event) => {
+      void handleStartLiveCall();
+    };
+    window.addEventListener('levelup:start-live-call', onStartLiveCallEvent);
+    return () => window.removeEventListener('levelup:start-live-call', onStartLiveCallEvent);
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = proactiveAgentService.onMessageInjection((injected) => {
+      if (!active) return;
+      const msg: ChatMessage = {
+        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        role: injected.role,
+        content: injected.text,
+        createdAt: new Date().toISOString(),
+        isProactive: injected.isProactive,
+        isCallEvent: injected.isCallEvent,
+        callStatus: injected.callStatus as any,
+      };
+      container.chat.appendMessage(active.id, msg);
+      refresh();
+      haptic();
+    });
+    return unsubscribe;
+  }, [active, refresh]);
 
   return (
     <div className="chat-shell fade-up">
@@ -1764,9 +1803,74 @@ interface MessageActions {
   onDownload: (m: ChatMessage) => void;
   onShare: (m: ChatMessage) => void;
   onConfirmAction: (m: ChatMessage, confirmed: boolean) => void;
+  onStartLiveCall?: (reason?: string) => void;
 }
 
-const MessageBubble = memo(function MessageBubble({
+function DeletedBubble({ isUser }: { isUser: boolean }) {
+  return (
+    <div className={`flex w-full mb-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl border border-white/5 bg-white/5 text-xs italic text-slate-400 select-none">
+        <Ban size={13} className="opacity-70 text-slate-400" />
+        <span>This message was deleted</span>
+      </div>
+    </div>
+  );
+}
+
+function CallEventCard({ message, actions }: { message: ChatMessage; actions: MessageActions }) {
+  const isAccepted = message.callStatus === 'accepted';
+  return (
+    <div className="flex w-full justify-center my-3">
+      <div className="w-full max-w-sm flex items-center justify-between gap-3 px-4 py-2.5 rounded-2xl border border-white/10 bg-panel/90 backdrop-blur-md shadow-md text-xs">
+        <div className="flex items-center gap-2.5">
+          <div className={`p-2 rounded-full ${isAccepted ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+            {isAccepted ? <PhoneCall size={15} /> : <PhoneOff size={15} />}
+          </div>
+          <div>
+            <p className="font-semibold text-slate-200">{message.content}</p>
+            <p className="text-[10px] text-slate-400">
+              {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              {message.callDurationSec ? ` · ${Math.floor(message.callDurationSec / 60)}m ${message.callDurationSec % 60}s` : ''}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            if (actions?.onStartLiveCall) {
+              actions.onStartLiveCall('Callback from chat');
+            }
+          }}
+          className="px-3 py-1.5 rounded-xl bg-primary/20 hover:bg-primary/30 active:scale-95 text-primary text-xs font-semibold flex items-center gap-1.5 transition-all"
+        >
+          <Phone size={13} />
+          <span>Call Back</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const MessageBubble = memo(function MessageBubble(props: {
+  message: ChatMessage;
+  isLast: boolean;
+  showThinking?: boolean;
+  reveal?: boolean;
+  revealSchedule?: RevealSchedule | null;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  onRevealDone?: () => void;
+  actionsRef: React.RefObject<MessageActions>;
+}) {
+  if (props.message.isDeleted) {
+    return <DeletedBubble isUser={props.message.role === 'user'} />;
+  }
+  if (props.message.isCallEvent) {
+    return <CallEventCard message={props.message} actions={props.actionsRef.current} />;
+  }
+  return <StandardMessageBubble {...props} />;
+});
+
+const StandardMessageBubble = memo(function StandardMessageBubble({
   message,
   isLast: _isLast,
   showThinking,
@@ -1790,6 +1894,7 @@ const MessageBubble = memo(function MessageBubble({
   // (e.g. typing in the composer).
   const actions = actionsRef.current;
   const isUser = message.role === 'user';
+
   const holdTimer = useRef<number | null>(null);
   const firedRef = useRef(false);
   const doc = useMemo(() => (isUser ? null : detectFileDoc(message.content)), [isUser, message.content]);

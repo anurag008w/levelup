@@ -35,6 +35,18 @@ export interface ChatMessage {
   stopped?: boolean;
   /** Attachments for this message (images, PDFs, etc.) */
   attachments?: ChatAttachment[];
+  /** True when this message was initiated autonomously by Misa. */
+  isProactive?: boolean;
+  /** True when this message represents an incoming/missed/declined live call event. */
+  isCallEvent?: boolean;
+  /** Status of the call event. */
+  callStatus?: 'accepted' | 'declined' | 'missed' | 'offline_attempt';
+  /** Duration of call in seconds if accepted. */
+  callDurationSec?: number;
+  /** True when retracted / deleted in WhatsApp style. */
+  isDeleted?: boolean;
+  /** Timestamp when deleted. */
+  deletedAt?: string;
   /**
    * Present when this reply is a blocked destructive/bulk action (setDayMode,
    * removeTask, bulkMarkDone, memory deletion, etc.) waiting on the user's
