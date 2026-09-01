@@ -63,6 +63,17 @@ export interface ProactiveTrigger {
   requiresOnline?: boolean;
 }
 
+/** AI tools (scheduleMessage/makeCall) se banaya gaya scheduled item. */
+export interface ScheduledProactiveMessage {
+  id: string;
+  kind: 'message' | 'call';
+  text?: string;
+  reason?: string;
+  scheduledTime: number; // epoch ms
+  topic?: string;
+  createdAt: number;
+}
+
 export interface IncomingCallEvent {
   callId: string;
   reason: string;
@@ -221,6 +232,7 @@ class ProactiveAgentService {
   private lastCallDeclinedTimestamp = 0;
   private consecutiveCallDeclines = 0;
   private dndUntilTimestamp = 0;
+  private coldStartDone = false;
   private pendingTriggers: ProactiveTrigger[] = [];
   private debounceTimer: any = null;
   private sessionIdleTimer: any = null;
@@ -230,6 +242,28 @@ class ProactiveAgentService {
 
   private incomingCallListeners: Set<IncomingCallListener> = new Set();
   private messageInjectionListeners: Set<MessageInjectionListener> = new Set();
+
+  /** Platform init guard — duplicates rokti hai (StrictMode double-mount, HMR). */
+  private platformInitialized = false;
+  private platformIntervals: ReturnType<typeof setInterval>[] = [];
+  private platformTimeout: ReturnType<typeof setTimeout> | null = null;
+  private platformActionListener: (() => void) | null = null;
+
+  /** Same-text injection dedupe — ek hi message 3 baar na aaye. */
+  private recentInjected: Map<string, number> = new Map();
+  private static readonly INJECT_DEDUPE_WINDOW_MS = 3 * 60 * 1000;
+
+  /** Memory-based spontaneous messaging — kab tak dobara mat bhejo. */
+  private nextSpontaneousAt = 0;
+  private static readonly SPONTANEOUS_MIN_GAP_MS = 45 * 60 * 1000;
+
+  /** Missed interactions (calls/messages) ki memory — human-like follow-up ke liye. */
+  private missedInteractions: Array<{ kind: 'call' | 'message'; at: number; detail: string; followedUpAt: number | null }> = [];
+  private static readonly MISSED_FOLLOWUP_GRACE_MS = 2 * 60 * 60 * 1000; // 2h ke baad puchho
+  private static readonly MISSED_FOLLOWUP_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 din tak purani yaad rakho
+
+  /** AI tools ke liye scheduled message/call store (persisted). */
+  private scheduledMessages: ScheduledProactiveMessage[] = [];
 
   constructor() {
     this.loadState();
@@ -249,7 +283,10 @@ class ProactiveAgentService {
         this.lastCallDeclinedTimestamp = parsed.lastCallDeclinedTimestamp || 0;
         this.consecutiveCallDeclines = parsed.consecutiveCallDeclines || 0;
         this.dndUntilTimestamp = parsed.dndUntilTimestamp || 0;
+        this.coldStartDone = parsed.coldStartDone || false;
         this.pendingTriggers = parsed.pendingTriggers || [];
+        this.scheduledMessages = parsed.scheduledMessages || [];
+        this.missedInteractions = parsed.missedInteractions || [];
       }
     } catch (e) {
       console.warn('[ProactiveAgent] Failed to load preferences:', e);
@@ -269,7 +306,10 @@ class ProactiveAgentService {
           lastCallDeclinedTimestamp: this.lastCallDeclinedTimestamp,
           consecutiveCallDeclines: this.consecutiveCallDeclines,
           dndUntilTimestamp: this.dndUntilTimestamp,
+          coldStartDone: this.coldStartDone,
           pendingTriggers: this.pendingTriggers,
+          scheduledMessages: this.scheduledMessages,
+          missedInteractions: this.missedInteractions,
         })
       );
     } catch (e) {
@@ -317,7 +357,29 @@ class ProactiveAgentService {
     await this.initPlatformNotifications();
   }
 
+  /**
+   * Tear down every timer/listener started by initPlatformNotifications.
+   * App unmount (StrictMode/HMR) pe cleanup — duplicate interval/listener
+   * registrations yahi se rukti hain (duplicate-message bug ka root cause).
+   */
+  destroy(): void {
+    for (const id of this.platformIntervals) {
+      clearInterval(id);
+    }
+    this.platformIntervals = [];
+    if (this.platformTimeout !== null) {
+      clearTimeout(this.platformTimeout);
+      this.platformTimeout = null;
+    }
+    this.platformActionListener?.();
+    this.platformActionListener = null;
+    this.platformInitialized = false;
+  }
+
   private async initPlatformNotifications(): Promise<void> {
+    if (this.platformInitialized) return;
+    this.platformInitialized = true;
+
     if (Capacitor.isNativePlatform()) {
       try {
         await LocalNotifications.createChannel({
@@ -335,12 +397,16 @@ class ProactiveAgentService {
           await LocalNotifications.requestPermissions();
         }
 
-        LocalNotifications.addListener('localNotificationActionPerformed', (action) => {
+        // Listener challenge: template `fallback` opacity → notification tap
+        // se message inject hota hai. Same text polling loop se bhi inject ho
+        // sakta hai — dedupe window isi liye hai (injectMessageIntoChat).
+        const handle = await LocalNotifications.addListener('localNotificationActionPerformed', (action) => {
           const extra = action.notification.extra;
           if (extra?.offlineMessage) {
             this.injectMessageIntoChat(extra.offlineMessage);
           }
         });
+        this.platformActionListener = () => void handle.remove();
       } catch (err) {
         console.warn('[ProactiveAgent] LocalNotifications setup failed:', err);
       }
@@ -349,17 +415,37 @@ class ProactiveAgentService {
     this.checkColdStartOnboarding();
 
     // Check & dispatch due scheduled triggers every 20 seconds
-    setInterval(() => {
-      this.checkAndDispatchDueTriggers();
-    }, 20000);
+    this.platformIntervals.push(
+      globalThis.setInterval(() => {
+        this.checkAndDispatchDueTriggers();
+        this.checkScheduledMessages();
+      }, 20000)
+    );
 
-    setInterval(() => {
-      this.checkInactivityAndFire();
-    }, 2 * 60 * 1000);
+    this.platformIntervals.push(
+      globalThis.setInterval(() => {
+        this.checkInactivityAndFire();
+      }, 2 * 60 * 1000)
+    );
 
-    setTimeout(() => {
+    this.platformIntervals.push(
+      globalThis.setInterval(() => {
+        void this.checkSpontaneousMemoryMessage();
+      }, 4 * 60 * 1000)
+    );
+
+    this.platformIntervals.push(
+      globalThis.setInterval(() => {
+        this.checkMissedInteractionFollowUp();
+      }, 3 * 60 * 1000)
+    );
+
+    this.platformTimeout = globalThis.setTimeout(() => {
       this.checkAndDispatchDueTriggers();
       this.checkInactivityAndFire();
+      this.checkScheduledMessages();
+      void this.checkSpontaneousMemoryMessage();
+      this.checkMissedInteractionFollowUp();
     }, 5000);
   }
 
@@ -408,6 +494,299 @@ class ProactiveAgentService {
         relationshipManager.recordProactiveSent(trig.topic || "proactive_nudge", msg);
       }
     }
+  }
+
+  /**
+   * AI tools (scheduleMessage/makeCall) ke due scheduled items dispatch karo.
+   * Same polling loop checkAndDispatchDueTriggers ke saath chalta hai.
+   */
+  private checkScheduledMessages(): void {
+    if (!this.prefs.enabled) return;
+    if (this.isQuietTime()) return;
+
+    const now = Date.now();
+    const due = this.scheduledMessages.filter((s) => s.scheduledTime <= now);
+    if (due.length === 0) return;
+
+    this.scheduledMessages = this.scheduledMessages.filter((s) => s.scheduledTime > now);
+    this.saveState();
+
+    for (const item of due) {
+      if (item.kind === 'call') {
+        this.triggerIncomingCall(item.reason || 'Misa ne schedule kiya tha');
+      } else if (item.text) {
+        const relState = relationshipManager.getState();
+        const validation = validateProactiveDelivery(
+          {
+            id: `sch_${item.id}`,
+            type: 'commitment_followup',
+            topic: item.topic,
+            urgency: 0.7,
+            relevance: 0.85,
+            confidence: 0.9,
+            freshness: 0.9,
+            offlineText: item.text,
+            isInsideActiveSession: this.isUserCurrentlyInChat,
+          },
+          relState,
+          {
+            lastActiveTimestamp: this.lastActiveTimestamp,
+            isInsideActiveSession: this.isUserCurrentlyInChat,
+            recentSentMessages: relState.recentSentMessages,
+            now,
+          }
+        );
+        const msg = validation.valid ? validation.sanitizedText || item.text : item.text;
+        this.injectMessageIntoChat(msg);
+        relationshipManager.recordProactiveSent(item.topic || 'ai_scheduled', msg);
+      }
+    }
+  }
+
+  /** AI tool ke liye: future message schedule karo. Returns schedule id. */
+  scheduleMessage(text: string, scheduledTime: number, topic?: string): string {
+    const item: ScheduledProactiveMessage = {
+      id: crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      kind: 'message',
+      text,
+      topic,
+      scheduledTime,
+      createdAt: Date.now(),
+    };
+    this.scheduledMessages.push(item);
+    this.saveState();
+    return item.id;
+  }
+
+  /** AI tool ke liye: future call schedule karo (incoming-call notification). */
+  scheduleCall(reason: string, scheduledTime: number): string {
+    const item: ScheduledProactiveMessage = {
+      id: crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      kind: 'call',
+      reason,
+      scheduledTime,
+      createdAt: Date.now(),
+    };
+    this.scheduledMessages.push(item);
+    this.saveState();
+    return item.id;
+  }
+
+  /** AI tool ke liye: abhi turant call karo. */
+  makeCall(reason: string): void {
+    this.triggerIncomingCall(reason || 'Misa call kar rahi hai');
+  }
+
+  /** AI tool ke liye: cancel/delete a scheduled item by id. */
+  cancelScheduledMessage(id: string): boolean {
+    const before = this.scheduledMessages.length;
+    this.scheduledMessages = this.scheduledMessages.filter((s) => s.id !== id);
+    if (this.scheduledMessages.length !== before) {
+      this.saveState();
+      return true;
+    }
+    return false;
+  }
+
+  /** AI tool ke liye: pending scheduled items list karo. */
+  listScheduledMessages(): ScheduledProactiveMessage[] {
+    const now = Date.now();
+    return this.scheduledMessages
+      .filter((s) => s.scheduledTime > now)
+      .sort((a, b) => a.scheduledTime - b.scheduledTime);
+  }
+
+  /**
+   * Memory-based spontaneous messaging (AI-ke-bina bhi).
+   *
+   * Misa apne aap koi bhi cheez yaad karke message karti hai — "arey humne
+   * yeh toh karna tha yrr!" — bina user ke pooche. Sources (priority order):
+   *   1. pendingPromises — "kal bataoge wali baat" (sabse important)
+   *   2. commitments — active goal/target check-in
+   *   3. durableMemories — target/habit/struggle/preference facts
+   *   4. currentProblemArea / currentSubject — random topic nudge
+   * Gamble na ho — cooldown + behavior validation + fatigue guard sab lagta hai.
+   */
+  private async checkSpontaneousMemoryMessage(): Promise<void> {
+    if (!this.prefs.enabled) return;
+    if (this.isQuietTime()) return;
+
+    const now = Date.now();
+    if (now < this.nextSpontaneousAt) return;
+
+    // Deep study / solving me interrupt nahi.
+    if (this.currentActivityState === 'DEEP_STUDY' || this.currentActivityState === 'SOLVING') return;
+
+    // Active session me bhi nahi (call/overlay khula hai).
+    if (this.isUserCurrentlyInChat) return;
+
+    const relState = relationshipManager.getState();
+
+    // 30-min grace: abhi active tha toh mat bolo.
+    if (now - this.lastActiveTimestamp < this.prefs.activeGraceMinutes * 60 * 1000 && this.lastActiveTimestamp > 0) return;
+
+    // Kabhi kuch hai hi nahi yaad karne ko? Kuch bhi na ho toh koi nudge mat bhejo.
+    const hasMemorySource =
+      (relState.pendingPromises?.length ?? 0) > 0 ||
+      (relState.commitments?.length ?? 0) > 0 ||
+      (relState.durableMemories?.length ?? 0) > 0 ||
+      !!relState.currentProblemArea ||
+      (relState.currentSubject && relState.currentSubject !== 'General');
+
+    if (!hasMemorySource) return;
+
+    // Topic cooldown check (fatigue.topicCooldowns).
+    const topicCooldowns = relState.fatigue?.topicCooldowns ?? {};
+    for (const expires of Object.values(topicCooldowns)) {
+      if (now < expires) return;
+    }
+
+    // ── Source pick (genuine "kuch yaad aaya" basis) ─────────────────────
+    // Message SIRF tab aaye jab sahi wajah ho — nahi toh spam/Misa ki "cheez
+    // hua aur phir bhi message" wali feeling aati hai. Steps:
+    //   1. Promise — target date aaj ya past ho toh hi puchho.
+    //   2. Commitment — due/overdue ya check-in ka waqt ho toh hi.
+    //   3. Durables — sirf high-confidence, genuinely relevant ek baat.
+    //   4. Current problem/subject — sirf jab cooldown clear ho.
+    // None match → kuch mat bhejo (bas cooldown hatao, hamesha spam mat).
+    let sourceLabel = 'jee_prep';
+    let situation = '';
+    let offlineMsg = '';
+    let foundSource = false;
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    // 1) Promises — target date pe ya baad me think karo.
+    const duePromise = relState.pendingPromises?.find((p: any) => {
+      if (p.isResumed) return false;
+      if (!p.targetDate) return false;
+      return p.targetDate <= today; // aaj ya pehle promise hua — puchhne ka waqt
+    });
+    if (duePromise) {
+      foundSource = true;
+      sourceLabel = 'jee_prep';
+      situation = `Student ne promise kiya tha: "${duePromise.userPromise}" (target: ${duePromise.targetDate}). Wo target date aa gayi hai, isliye ab puchhna natural hai. Warm, chhota, zero-guilt reminder bhejo.`;
+      offlineMsg = `Arey, woh "${duePromise.userPromise}" wali baat — aaj uska waqt tha na? Kaisa raha? 😏`;
+    }
+
+    // 2) Commitments — deadline aayi ho / overdue ho toh check-in.
+    if (!foundSource && (relState.commitments?.length ?? 0) > 0) {
+      const commitment = relState.commitments[0];
+      // Commitment me createdAt/updatedAt hai. 3+ din purana active commitment
+      // ho toh nahi (pochne ka muhawara nahi chahiye), dobara ho toh announce.
+      const lastTouch = commitment.updatedAt || commitment.createdAt || 0;
+      const commitmentAgeDays = (now - lastTouch) / (24 * 3600 * 1000);
+      // Sirf tab puchho jab pure 1-2 din se touch nahi hua (still relevant, spam nahi).
+      const isActiveCommitment =
+        commitment.state === 'STARTED' || commitment.state === 'PLANNED' || commitment.state === 'RESUMED';
+      if (commitmentAgeDays >= 1 && commitmentAgeDays <= 7 && isActiveCommitment) {
+        foundSource = true;
+        sourceLabel = commitment.topic || 'jee_prep';
+        situation = `Student ka active commitment hai: "${commitment.sourceText}" (topic: ${commitment.topic || 'daily study'}), jo ${Math.round(commitmentAgeDays)} din se touch nahi hua. Ek warm check-in bhejo — kya target kaisa chal raha hai, problem ho toh saath karein.`;
+        offlineMsg = `Suno, "${commitment.sourceText}" — ${Math.round(commitmentAgeDays)} din ho gaye. Ab kaisa chal raha hai? Koi fasi baat ho toh batana! 💪`;
+      }
+    }
+
+    // 3) Durable memories — high-confidence, kabhi na-sent wali ek baat.
+    if (!foundSource && (relState.durableMemories?.length ?? 0) > 0) {
+      // Sirf woh memories jinme koi future-linked baat hai (target/habit/struggle)
+      // aur jo genuine lage. Skip generic/low-confidence.
+      const candidates = relState.durableMemories
+        .filter((m) => m.confidence >= 0.6 && !m.isMastered && m.category !== 'preference')
+        .sort((a, b) => (b.confidence - a.confidence) || (b.lastReinforcedAt - a.lastReinforcedAt));
+      const memory = candidates[0];
+      if (memory) {
+        foundSource = true;
+        sourceLabel = memory.topic || memory.subject || 'jee_prep';
+        situation = `Student ki ek baat yaad hai: "${memory.fact}" (category: ${memory.category}). Ye unlinked/not-mastered hai, isliye genuine laga. Ussi se juda ek natural warm chhota message bhejo.`;
+        if (memory.category === 'target') {
+          offlineMsg = `Arey, aaj ka revision target yaad aaya — "${memory.fact}" wala target aaj kaisa chal raha hai? 💪`;
+        } else if (memory.category === 'habit') {
+          offlineMsg = `Yaad aaya, tumne bataya tha "${memory.fact}" — aaj ka count kaise hai?`;
+        } else {
+          offlineMsg = `Woh "${memory.fact}" wali cheez — ab kaisa lag raha hai?`;
+        }
+      }
+    }
+
+    // 4) Current problem/subject — sirf tab jab koi aur source na ho (fallback).
+    if (!foundSource && relState.currentProblemArea) {
+      foundSource = true;
+      sourceLabel = relState.currentProblemArea;
+      situation = `Student recently "${relState.currentProblemArea}" par kaam kar raha tha. Usi se juda ek chhota natural message bhejo.`;
+      offlineMsg = `Woh "${relState.currentProblemArea}" wala doubt — kuch progress hua na?`;
+    } else if (!foundSource && relState.currentSubject && relState.currentSubject !== 'General') {
+      foundSource = true;
+      sourceLabel = relState.currentSubject;
+      situation = `Student ka current subject "${relState.currentSubject}" hai. Uss subject ke liye ek motivating chhota message bhejo.`;
+      offlineMsg = `${relState.currentSubject} ke targets kaisi chal rahi hai aaj? Ek doubt nikalte hain! 🔥`;
+    }
+
+    // Koi genuine source nahi mila — story empty. Message mat bhejo, cooldown bhi nahi
+    // band karo (agli baar dobara sources check hoga). Isse "cheez hua aur phir Misa
+    // bol rahi hai" wali feeling nahi aati — sirf tab bolegi jab kuch yaad hona bana.
+    if (!foundSource) {
+      this.nextSpontaneousAt = now + ProactiveAgentService.SPONTANEOUS_MIN_GAP_MS;
+      return;
+    }
+
+    // LLM se personalized message try karo, fallback offlineMsg/template.
+    const msg = await this.generateDynamicProactiveMessage(situation, sourceLabel).catch(() => offlineMsg);
+    const finalMsg = msg?.trim() || offlineMsg;
+
+    const validation = validateProactiveDelivery(
+      {
+        id: 'spontaneous_memory',
+        type: 'check_in',
+        topic: sourceLabel,
+        urgency: 0.55,
+        relevance: 0.8,
+        confidence: 0.85,
+        freshness: 0.9,
+        offlineText: finalMsg,
+        isInsideActiveSession: this.isUserCurrentlyInChat,
+      },
+      relState,
+      {
+        lastActiveTimestamp: this.lastActiveTimestamp,
+        isInsideActiveSession: this.isUserCurrentlyInChat,
+        recentSentMessages: relState.recentSentMessages,
+        now,
+      }
+    );
+
+    if (!validation.valid) {
+      // Invalid ho toh cooldown bhi lagao taaki baar baar retry na ho.
+      this.nextSpontaneousAt = now + ProactiveAgentService.SPONTANEOUS_MIN_GAP_MS;
+      return;
+    }
+
+    const decision = socialDecisionEngine.shouldSpeak(
+      {
+        id: 'spontaneous_memory',
+        type: 'check_in',
+        topic: sourceLabel,
+        urgency: 0.55,
+        relevance: 0.8,
+        confidence: 0.85,
+        freshness: 0.9,
+        offlineText: finalMsg,
+      },
+      relState,
+      this.lastActiveTimestamp,
+      now,
+      this.currentActivityState
+    );
+    if (!decision.allow) {
+      this.nextSpontaneousAt = now + ProactiveAgentService.SPONTANEOUS_MIN_GAP_MS;
+      return;
+    }
+
+    const text = validation.sanitizedText || finalMsg;
+    this.injectMessageIntoChat(text);
+    relationshipManager.recordProactiveSent(sourceLabel, text);
+    this.recordUserActivity();
+    this.nextSpontaneousAt = now + ProactiveAgentService.SPONTANEOUS_MIN_GAP_MS;
   }
 
   /** Dynamically synthesize personalized proactive messages using active LLM (Gemini) with persona & context. */
@@ -1006,7 +1385,13 @@ Instructions:
   }
 
   private async checkColdStartOnboarding(): Promise<void> {
-    if (this.lastUserChatTimestamp > 0) return;
+    // Ek baar schedule ho gaya (ya user ne pehle hi baat ki) toh dobara nahi.
+    // Pehle `lastUserChatTimestamp > 0` check tha jo galat tha — user ne ek
+    // baar chat kiya toh onboarding message kabhi nahi aata tha. Ab persisted
+    // flag use hota hai jo schedule hone ke baad set ho jaata hai. Idempotent:
+    // pending me ya to stored state me wahi trigger ho toh skip.
+    if (this.coldStartDone) return;
+    if (this.pendingTriggers.some((t) => t.id === 9901 || t.id === 9902)) return;
 
     const now = Date.now();
     const day1Time = new Date();
@@ -1015,14 +1400,30 @@ Instructions:
       day1Time.setDate(day1Time.getDate() + 1);
     }
 
+    // Revision target wala bhi schedule karo (user jaldi chat kare ya na kare —
+    // "aaj ka revision target" message har new user ko aana chahiye).
+    const revTime = new Date();
+    revTime.setHours(20, 0, 0, 0);
+    if (revTime.getTime() < now) {
+      revTime.setDate(revTime.getDate() + 1);
+    }
+
     const trigger: ProactiveTrigger = {
       id: 9901,
       type: 'cold_start',
       scheduledTime: day1Time.getTime(),
       offlineMessage: 'Hey! Dekha tumne LevelUp install kiya hai par abhi tak baat nahi ki. JEE prep me kya target chal raha hai — milke plan banayein?',
     };
+    const revisionTrigger: ProactiveTrigger = {
+      id: 9902,
+      type: 'cold_start',
+      scheduledTime: revTime.getTime(),
+      topic: 'jee_prep',
+      offlineMessage: 'Hey! Aaj ka revision target kaisa progress kar raha hai? Batana agar koi problem fasa ho — saath me crack karte hain! 💪',
+    };
 
-    this.pendingTriggers.push(trigger);
+    this.pendingTriggers.push(trigger, revisionTrigger);
+    this.coldStartDone = true;
     this.saveState();
 
     if (Capacitor.isNativePlatform()) {
@@ -1036,6 +1437,14 @@ Instructions:
               schedule: { at: day1Time, allowWhileIdle: true },
               channelId: 'misa_proactive_channel',
               extra: { offlineMessage: trigger.offlineMessage },
+            },
+            {
+              id: 9902,
+              title: 'Misa',
+              body: revisionTrigger.offlineMessage,
+              schedule: { at: revTime, allowWhileIdle: true },
+              channelId: 'misa_proactive_channel',
+              extra: { offlineMessage: revisionTrigger.offlineMessage },
             },
           ],
         });
@@ -1075,19 +1484,23 @@ Instructions:
   onCallAccepted(_callId: string): void {
     this.lastActiveTimestamp = Date.now();
     this.consecutiveCallDeclines = 0; // Reset decline penalty on successful call
+    this.clearMissedCallFollowUps();
     this.saveState();
   }
 
   onCallDeclined(_callId: string): void {
     this.lastCallDeclinedTimestamp = Date.now();
     this.consecutiveCallDeclines += 1;
+    this.recordMissedInteraction('call', 'Student ne call decline kiya');
     this.saveState();
     this.injectCallStatusEvent('declined');
   }
 
   onCallMissed(_callId: string): void {
+    this.recordMissedInteraction('call', 'Student ne call miss kiya');
     this.saveState();
     this.injectCallStatusEvent('missed');
+    // Turant nahi — human-like: thoda wait karke natural chalke bolo.
     setTimeout(() => {
       this.injectMessageIntoChat('Hii, suno? Padh rahe the kya? Free hoke text karna!');
     }, 90 * 1000);
@@ -1097,6 +1510,7 @@ Instructions:
    * Requirement 9: Distinguish Offline Call Attempt from Missed Call
    */
   onOfflineCallAttempt(_callId: string, reason = 'Scheduled study check-in'): void {
+    this.recordMissedInteraction('call', `Offline tha — ${reason} ke liye call nahi ho sakti thi`);
     this.saveState();
     this.injectCallStatusEvent('offline_attempt');
     setTimeout(() => {
@@ -1104,7 +1518,88 @@ Instructions:
     }, 1000);
   }
 
+  /**
+   * User ka ek message thoda der baad dekha — human-like: "kal itna late reply kyu?"
+   * Turbo chat reply hon — user ne ek lamba time baad baat ki toh yaad dila ke
+   * puchho ki kya hua. Intrusive nahi — bas ek-baar soft nudge.
+   */
+  recordMessageLateReply(lateByMs: number): void {
+    // Sirf definitely-late (default) ko track karo — 30 min ka threshold.
+    if (lateByMs < 30 * 60 * 1000) return;
+    this.recordMissedInteraction('message', `Student ne ${Math.round(lateByMs / 3600000 * 10) / 10} ghante baad message ka reply kiya`);
+  }
+
+  /** Missed interaction yaad karo — baad me human-like follow-up ke liye. */
+  private recordMissedInteraction(kind: 'call' | 'message', detail: string): void {
+    const now = Date.now();
+    this.missedInteractions.push({ kind, at: now, detail, followedUpAt: null });
+    // Purani entries prune — 7 din se purani hatao taaki list bounded rahe.
+    this.missedInteractions = this.missedInteractions.filter((m) => now - m.at < ProactiveAgentService.MISSED_FOLLOWUP_MAX_AGE_MS);
+    this.saveState();
+  }
+
+  /** Missed-call follow-up clear karo (jab user wapas aata hai / call accept hota hai). */
+  private clearMissedCallFollowUps(): void {
+    const before = this.missedInteractions.length;
+    this.missedInteractions = this.missedInteractions.filter((m) => m.kind !== 'call');
+    if (this.missedInteractions.length !== before) this.saveState();
+  }
+
+  /**
+   * Missed interactions ka human-like follow-up. Jab kuch khaas happen ho —
+   * user ek message/call miss kare aur phir thodi der baad wapas active ho —
+   * Misa natural tarah se puche: "kal tumne itna late reply kyu kiya?",
+   * "mera call miss kar diya, sab theek hai?"
+   */
+  private checkMissedInteractionFollowUp(): void {
+    if (!this.prefs.enabled) return;
+    if (this.isQuietTime()) return;
+
+    const now = Date.now();
+    const pending = this.missedInteractions.find((m) => m.followedUpAt === null);
+    if (!pending) return;
+
+    // Abhi abhi hua — puchhne ka waqt nahi (user active hai, side note nahi).
+    // Sirf tab puchho jab kuch waqt (2h+) ho gaya aur user wapas active hai.
+    if (now - pending.at < ProactiveAgentService.MISSED_FOLLOWUP_GRACE_MS) return;
+
+    // User abhi active hai (app use kar raha hai) — tab hota hai puchhna.
+    const activeRecently = this.lastActiveTimestamp > 0 && now - this.lastActiveTimestamp < 2 * 60 * 60 * 1000;
+    if (!activeRecently) return;
+
+    let followUp = '';
+    const hoursLate = Math.round((now - pending.at) / 3600000);
+    if (pending.kind === 'call') {
+      followUp = hoursLate <= 24
+        ? `Arey, abhi aaye ho? Mera call miss ho gaya tha — sab theek hai na? 😄`
+        : `Kal mera call miss ho gaya tha, tab busy the? Theek ho na? 😊`;
+    } else {
+      followUp = `Hmm, tumne ek lambe time ke baad message kiya (${pending.detail}) — sab theek hai? Lag raha tha mujhse ignore kar rahe the 😅`;
+    }
+
+    this.injectMessageIntoChat(followUp);
+    pending.followedUpAt = now;
+    this.saveState();
+  }
+
   injectMessageIntoChat(text: string): void {
+    // Dedupe window — same text ek hi baar chat me inject hota hai. Polling
+    // loop + notification tap listener dono same offlineMessage inject kar
+    // sakte hain (duplicate 3x bug ka fix). Sirf exact-same text skip hota
+    // hai taaki genuine repeated nudges abhi bhi aayein.
+    const now = Date.now();
+    const lastInjectedAt = this.recentInjected.get(text);
+    if (lastInjectedAt !== undefined && now - lastInjectedAt < ProactiveAgentService.INJECT_DEDUPE_WINDOW_MS) {
+      return;
+    }
+    this.recentInjected.set(text, now);
+    // Map ko bounded rakho — 1-hour se purane entries hata do.
+    if (this.recentInjected.size > 50) {
+      for (const [key, at] of this.recentInjected) {
+        if (now - at > 60 * 60 * 1000) this.recentInjected.delete(key);
+      }
+    }
+
     for (const listener of this.messageInjectionListeners) {
       listener({ role: 'assistant', text, isProactive: true });
     }
