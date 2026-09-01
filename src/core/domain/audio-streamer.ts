@@ -6,6 +6,8 @@
 // - Real-time Audio Analyser for audio reactive UI waves and visualizer orb
 
 export class AudioStreamer {
+  // Do not let bursty network delivery turn into seconds of stale speech.
+  private static readonly MAX_PLAYBACK_BACKLOG_SECONDS = 1.25;
   private audioContext: AudioContext | null = null;
   private micStream: MediaStream | null = null;
   private inputSource: MediaStreamAudioSourceNode | null = null;
@@ -67,7 +69,10 @@ export class AudioStreamer {
     onInputLevel?: (level: number) => void,
     onOutputLevel?: (level: number) => void,
   ): Promise<void> {
-    this.stopRecording();
+    // The caller owns the MediaStream. Reconnects must detach nodes without
+    // stopping the microphone tracks, otherwise the replacement session gets
+    // a permanently ended stream.
+    this.stopRecording(false);
     this.micStream = stream;
     this.onAudioChunk = onChunk;
     this.onInputLevel = onInputLevel;
@@ -83,9 +88,9 @@ export class AudioStreamer {
     this.inputAnalyser.fftSize = 256;
     this.inputSource.connect(this.inputAnalyser);
 
-    // Use 4096 buffer size for optimal network transmission (~85ms at 48kHz)
-    // Avoids flooding WebSocket with 24 msgs/sec which causes high latency & packet loss
-    const bufferSize = 4096;
+    // ~43ms at 48kHz: substantially better turn-taking latency than 4096 while
+    // still keeping message rate manageable for the Live WebSocket.
+    const bufferSize = 2048;
     this.scriptProcessor = ctx.createScriptProcessor(bufferSize, 1, 1);
 
     this.scriptProcessor.onaudioprocess = (e) => {
@@ -159,6 +164,11 @@ export class AudioStreamer {
     // If audio buffer underruns or starting initial speech, buffer with 60ms lead to avoid audio chop/jitter.
     if (this.nextPlayTime < now) {
       this.nextPlayTime = now + 0.060;
+    } else if (this.nextPlayTime - now > AudioStreamer.MAX_PLAYBACK_BACKLOG_SECONDS) {
+      // Old model audio is no longer conversationally useful. Dropping it is
+      // preferable to making the user wait through a stale playback queue.
+      this.flushPlayback();
+      this.nextPlayTime = now + 0.030;
     }
 
     source.start(this.nextPlayTime);
@@ -215,7 +225,7 @@ export class AudioStreamer {
     }, 80);
   }
 
-  stopRecording(): void {
+  stopRecording(stopTracks = false): void {
     this.isRecording = false;
     if (this.levelInterval !== null) {
       clearInterval(this.levelInterval);
@@ -229,15 +239,15 @@ export class AudioStreamer {
       this.inputSource.disconnect();
       this.inputSource = null;
     }
-    if (this.micStream) {
+    if (this.micStream && stopTracks) {
       this.micStream.getTracks().forEach((t) => t.stop());
-      this.micStream = null;
     }
+    this.micStream = null;
     this.flushPlayback();
   }
 
   close(): void {
-    this.stopRecording();
+    this.stopRecording(true);
     if (this.audioContext && this.audioContext.state !== 'closed') {
       void this.audioContext.close();
       this.audioContext = null;

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GeminiLiveClient } from '../live-client';
+import { AudioStreamer } from '../audio-streamer';
 import { proactiveAgentService } from '../../../features/ai/proactive-agent.service';
 import type { LiveSettingsConfig } from '../live-types';
 
@@ -88,5 +89,36 @@ describe('Live Call Mode & Interruption Hardening', () => {
         mimeType: 'audio/pcm;rate=16000',
       },
     });
+  });
+
+  it('4. A hung connection attempt rejects instead of leaving the client in Connecting', async () => {
+    vi.useFakeTimers();
+    const client = new GeminiLiveClient(mockConfig);
+    const attempt = ++(client as any).connectionAttempt;
+    const pending = (client as any).withConnectionTimeout(new Promise(() => {}), attempt);
+    const rejection = expect(pending).rejects.toThrow('connection timed out');
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await rejection;
+    vi.useRealTimers();
+  });
+
+  it('5. Model availability errors give the user a precise recovery action', () => {
+    const client = new GeminiLiveClient(mockConfig);
+    expect((client as any).toConnectionErrorMessage(new Error('Model not found')))
+      .toContain('Live-compatible model');
+  });
+
+  it('6. Reconnect cleanup detaches WebAudio without ending the caller-owned microphone', () => {
+    const streamer = new AudioStreamer();
+    const stop = vi.fn();
+    (streamer as any).micStream = { getTracks: () => [{ stop }] };
+
+    streamer.stopRecording();
+    expect(stop).not.toHaveBeenCalled();
+
+    (streamer as any).micStream = { getTracks: () => [{ stop }] };
+    streamer.close();
+    expect(stop).toHaveBeenCalledOnce();
   });
 });

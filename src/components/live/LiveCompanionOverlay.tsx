@@ -182,15 +182,16 @@ export default function LiveCompanionOverlay({
   const [callDurationSeconds, setCallDurationSeconds] = useState(0);
 
   useEffect(() => {
-    if (!isOpen) {
-      setCallDurationSeconds(0);
+    const isLive = status === 'connected' || status === 'listening' || status === 'speaking' || status === 'thinking';
+    if (!isOpen || !isLive) {
+      if (!isOpen || status === 'connecting' || status === 'error') setCallDurationSeconds(0);
       return;
     }
     const timer = setInterval(() => {
       setCallDurationSeconds((prev) => prev + 1);
     }, 1000);
     return () => clearInterval(timer);
-  }, [isOpen]);
+  }, [isOpen, status]);
 
   const formatDuration = (totalSec: number) => {
     const mins = Math.floor(totalSec / 60);
@@ -206,7 +207,10 @@ export default function LiveCompanionOverlay({
     if (!isOpen) return;
 
     const liveClient = new GeminiLiveClient(config, {
-      onStatusChange: (newStatus) => setStatus(newStatus),
+      onStatusChange: (newStatus) => {
+        setStatus(newStatus);
+        if (newStatus === 'connected') setErrorMessage(null);
+      },
       onTranscriptUpdate: (newTranscripts) => {
         setTranscripts(newTranscripts);
         onTranscriptUpdate?.(newTranscripts);
@@ -222,6 +226,7 @@ export default function LiveCompanionOverlay({
       },
       onError: (err) => {
         hapticError();
+        setStatus('error');
         setErrorMessage(err);
       },
     });
@@ -260,6 +265,7 @@ export default function LiveCompanionOverlay({
       } catch (err: any) {
         if (!cancelled) {
           hapticError();
+          setStatus('error');
           setErrorMessage(err?.message || 'Connection to Gemini Live failed');
         }
       }

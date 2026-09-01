@@ -10,7 +10,7 @@ import type {
 import { AudioStreamer } from './audio-streamer';
 import { VisionStreamer } from './vision-streamer';
 import { MISA_IDENTITY_GUARD, ROMAN_SCRIPT_RULE, type ChatToolCallRecord } from './chat';
-import { setNativeAudioRoute, resetNativeAudioRoute } from '../../lib/native-audio-route';
+import { setNativeAudioRoute, resetNativeAudioRoute, requestNativeCallAudioFocus } from '../../lib/native-audio-route';
 import { deviceTimeZone } from '../ports/clock';
 import { LiveSilenceStateMachine } from './live-silence-state-machine';
 import { relationshipManager } from '../../features/ai/relationship-state';
@@ -27,6 +27,8 @@ export interface LiveClientCallbacks {
 }
 
 export class GeminiLiveClient {
+  /** A hung SDK/WebSocket handshake must never leave the call UI in Connecting. */
+  private static readonly CONNECTION_TIMEOUT_MS = 15_000;
   private session: any = null;
   private status: LiveSessionStatus = 'idle';
   private audioStreamer: AudioStreamer;
@@ -88,7 +90,9 @@ export class GeminiLiveClient {
   }
 
   async reconnectWithNewConfig(apiKey: string, micStream: MediaStream): Promise<void> {
-    this.disconnect();
+    // Preserve the media stream until the replacement session is established.
+    // Calling a full disconnect here used to erase it before reconnect could restore it.
+    this.disconnect(true);
     await this.connect(apiKey);
     await this.startVoiceStreaming(micStream);
   }
@@ -139,8 +143,12 @@ export class GeminiLiveClient {
     if (!apiKey) {
       throw new Error('Google Gemini API Key is required for Live Voice.');
     }
-    this.disconnect();
+    // Invalidate callbacks from the old socket before closing it; some SDKs invoke
+    // onclose synchronously and must not start a competing reconnect.
+    const connectionAttempt = ++this.connectionAttempt;
+    this.disconnect(true);
     this.isUserExplicitlyClosed = false;
+    this.activeApiKey = apiKey;
     this.setStatus('connecting');
     this.connectStartTime = Date.now();
     this.framesSentCount = 0;
@@ -742,7 +750,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
     try {
       const ai = new GoogleGenAI({ apiKey });
-      const session = await ai.live.connect({
+      const session = await this.withConnectionTimeout(ai.live.connect({
         model: this.config.model,
         config: {
           responseModalities: [Modality.AUDIO],
@@ -769,6 +777,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         },
         callbacks: {
           onopen: () => {
+            if (!this.isActiveAttempt(connectionAttempt)) return;
             this.setStatus('connected');
             this.startKeepAliveAndSilenceObserver();
           },
@@ -776,16 +785,22 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
             this.handleServerMessage(data);
           },
           onerror: (err: any) => {
+            if (!this.isActiveAttempt(connectionAttempt)) return;
             console.error('[GeminiLive] SDK Error:', err);
-            if (this.status !== 'idle' && this.reconnectAttempts < this.maxReconnectAttempts) {
+            const msg = this.toConnectionErrorMessage(err);
+            if (this.isModelAvailabilityError(err)) {
+              this.connectionAttempt += 1;
+              this.setStatus('error');
+              if (this.callbacks.onError) this.callbacks.onError(msg);
+            } else if (this.status !== 'idle' && this.reconnectAttempts < this.maxReconnectAttempts) {
               void this.handleAutoReconnect();
             } else {
               this.setStatus('error');
-              const msg = err?.message || 'Gemini Live connection error. Please verify your API key and network.';
               if (this.callbacks.onError) this.callbacks.onError(msg);
             }
           },
           onclose: () => {
+            if (!this.isActiveAttempt(connectionAttempt)) return;
             console.info('[GeminiLive] WebSocket onclose. Status:', this.status);
             if (this.status !== 'idle' && this.reconnectAttempts < this.maxReconnectAttempts) {
               void this.handleAutoReconnect();
@@ -794,12 +809,18 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
             }
           },
         },
-      });
+      }), connectionAttempt);
+
+      if (!this.isActiveAttempt(connectionAttempt)) {
+        session?.close?.();
+        throw new Error('Gemini Live connection was cancelled.');
+      }
 
       this.session = session;
       this.setStatus('connected');
       this.startKeepAliveAndSilenceObserver();
       void setNativeAudioRoute(this.config.defaultAudioRoute);
+      void requestNativeCallAudioFocus();
 
       // Greet student upon connection
       setTimeout(() => {
@@ -834,8 +855,13 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         }
       }, 300);
     } catch (err: any) {
+      if (!this.isActiveAttempt(connectionAttempt)) {
+        throw err;
+      }
+      // Ignore a late SDK resolution/open event after a rejected or timed-out handshake.
+      this.connectionAttempt += 1;
       this.setStatus('error');
-      const msg = err?.message || 'Failed to establish Gemini Live connection';
+      const msg = this.toConnectionErrorMessage(err);
       if (this.callbacks.onError) this.callbacks.onError(msg);
       throw new Error(msg);
     }
@@ -1092,6 +1118,41 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private visibilityHandler: (() => void) | null = null;
   private lastWsActivity = Date.now(); // timestamp of last message received from server
   private wsWatchdogTimer: any = null; // fires if server goes completely silent for >30s
+  private connectionAttempt = 0;
+
+  private isActiveAttempt(attempt: number): boolean {
+    return attempt === this.connectionAttempt && !this.isUserExplicitlyClosed;
+  }
+
+  private async withConnectionTimeout<T>(connection: Promise<T>, attempt: number): Promise<T> {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    try {
+      return await Promise.race([
+        connection,
+        new Promise<T>((_, reject) => {
+          timeout = setTimeout(() => {
+            if (this.isActiveAttempt(attempt)) {
+              reject(new Error(`Gemini Live connection timed out after ${GeminiLiveClient.CONNECTION_TIMEOUT_MS / 1000} seconds. Check your network, API key, and selected model.`));
+            }
+          }, GeminiLiveClient.CONNECTION_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
+  private toConnectionErrorMessage(error: any): string {
+    const message = String(error?.message || 'Failed to establish Gemini Live connection');
+    if (this.isModelAvailabilityError(error)) {
+      return `Selected Live model “${this.config.model}” is unavailable. Choose another Live-compatible model and try again.`;
+    }
+    return message;
+  }
+
+  private isModelAvailabilityError(error: any): boolean {
+    return /model|not found|unsupported/i.test(String(error?.message || ''));
+  }
 
   /** Start recording user voice & streaming audio chunks. */
   async startVoiceStreaming(mediaStream: MediaStream): Promise<void> {
@@ -1422,12 +1483,17 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     }
   }
 
-  disconnect(): void {
-    this.isUserExplicitlyClosed = true;
+  disconnect(preserveReconnectState = false): void {
+    if (!preserveReconnectState) {
+      this.connectionAttempt += 1;
+      this.isUserExplicitlyClosed = true;
+    }
     this.isReconnecting = false;
-    this.reconnectAttempts = 999;
-    this.currentMediaStream = null;
-    this.activeApiKey = null;
+    if (!preserveReconnectState) {
+      this.reconnectAttempts = 999;
+      this.currentMediaStream = null;
+      this.activeApiKey = null;
+    }
     if (this.keepAliveTimer) {
       clearInterval(this.keepAliveTimer);
       this.keepAliveTimer = null;
@@ -1456,9 +1522,11 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       }
       this.session = null;
     }
-    this.setStatus('idle');
-    this.isIncomingCallSession = false;
-    this.incomingCallReason = '';
+    this.setStatus(preserveReconnectState ? 'disconnected' : 'idle');
+    if (!preserveReconnectState) {
+      this.isIncomingCallSession = false;
+      this.incomingCallReason = '';
+    }
   }
 
   /** Static helper to fetch available Live-compatible models from Gemini API or configured gateway. */

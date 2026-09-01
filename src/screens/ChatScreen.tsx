@@ -787,6 +787,11 @@ export default function ChatScreen({
 
   const handleLiveOverlayClose = (transcripts: LiveTranscriptItem[]) => {
     setShowLiveOverlay(false);
+    // Streams are acquired by this screen, so explicitly release hardware on
+    // a user hang-up. The live client intentionally preserves tracks while it
+    // reconnects, but an ended call must not leave the microphone/camera live.
+    liveMicStream?.getTracks().forEach((track) => track.stop());
+    liveCamStream?.getTracks().forEach((track) => track.stop());
     setLiveMicStream(null);
     setLiveCamStream(null);
     const targetSessionId = liveCallSessionIdRef.current || active?.id;
