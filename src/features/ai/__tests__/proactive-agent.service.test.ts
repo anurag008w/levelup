@@ -46,6 +46,15 @@ describe('ProactiveAgentService Production Hardening', () => {
       injected.push(msg);
     });
 
+    // Is test ka intent "in-session follow-up context" hai — quiet-hours ka
+    // test nahi. neutral window (00:00-00:00 => hamesha not-in-quiet) lagao
+    // taaki ye test din/raat kisi bhi waqt chaale (03:00-06:00 default se
+    // raat ko flaky ho jaata tha).
+    proactiveAgentService.updatePreferences({
+      quietHoursStart: '00:00',
+      quietHoursEnd: '00:00',
+    });
+
     proactiveAgentService.setInChatSession(true);
     proactiveAgentService.onChatTurn('Optics ke formula me doubt hai', 'Check Snell law');
 

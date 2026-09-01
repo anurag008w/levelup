@@ -9,7 +9,16 @@ export class AudioStreamer {
   // Do not let bursty network delivery turn into seconds of stale speech.
   // 2.5s (up from 1.25s): a short network burst no longer snips mid-word —
   // the queue is purged only when the backlog is genuinely stale.
-  private static readonly MAX_PLAYBACK_BACKLOG_SECONDS = 2.5;
+  // A single long model reply can stream a lot of audio much faster than
+  // real-time playback. Previously 2.5s: whenever the queued backlog grew past
+  // that (i.e. any answer longer than ~2.5s of speech), the WHOLE queue was
+  // flushed/dropped — so long spoken answers got cut after a couple of words /
+  // sentences ("bada para aata hai par voice me bas kuch hi words"). That
+  // suppression only made sense for genuinely stale audio, which is already
+  // purged on every turn boundary / interruption via explicit flushPlayback()
+  // calls. Bump the window high enough (60s) to cover any legitimately long
+  // spoken reply without cutting it mid-sentence.
+  private static readonly MAX_PLAYBACK_BACKLOG_SECONDS = 60;
   private audioContext: AudioContext | null = null;
   private micStream: MediaStream | null = null;
   private inputSource: MediaStreamAudioSourceNode | null = null;
@@ -246,10 +255,10 @@ export class AudioStreamer {
     if (this.nextPlayTime < now) {
       this.nextPlayTime = now + 0.060;
     } else if (this.nextPlayTime - now > AudioStreamer.MAX_PLAYBACK_BACKLOG_SECONDS) {
-      // Old model audio is no longer conversationally useful. Dropping it is
-      // preferable to making the user wait through a stale playback queue.
-      // Replacing stale queued model audio is not a completed assistant turn.
-      // Suppress the playback-ended callback until the replacement drains.
+      // Only defensive purge for genuinely stale queued audio (now 60s — so an
+      // ordinary long reply streams-to-play seamlessly instead of being cut).
+      // Turn interruptions are already handled by explicit flushPlayback() calls
+      // at each boundary, so we don't aggressively drop long replies here.
       this.flushPlayback(false);
       this.nextPlayTime = now + 0.030;
     }

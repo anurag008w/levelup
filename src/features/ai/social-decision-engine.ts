@@ -276,11 +276,13 @@ export class SocialDecisionEngine {
     const d = new Date(now);
     const currentMins = d.getHours() * 60 + d.getMinutes();
 
-    const [sh, sm] = (start || '22:30').split(':').map(Number);
-    const [eh, em] = (end || '07:30').split(':').map(Number);
+    // NOTE: `(sh || 22)` type defaulting would corrupt "00:xx" times (0 hour is
+    // falsy → becomes 22:30). Parse exactly; only use defaults when value missing.
+    const [sh, sm] = (start ?? '22:30').split(':').map(Number);
+    const [eh, em] = (end ?? '07:30').split(':').map(Number);
 
-    const startMins = (sh || 22) * 60 + (sm || 30);
-    const endMins = (eh || 7) * 60 + (em || 30);
+    const startMins = (Number.isFinite(sh) ? sh : 22) * 60 + (Number.isFinite(sm) ? sm : 30);
+    const endMins = (Number.isFinite(eh) ? eh : 7) * 60 + (Number.isFinite(em) ? em : 30);
 
     if (startMins > endMins) {
       // Overnight (e.g. 22:30 -> 07:30)

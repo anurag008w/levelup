@@ -1350,6 +1350,10 @@ Instructions:
               id: triggerId,
               title: 'Misa',
               body: offlineMessage,
+              // largeBody — Android me pura text big-text style me dikhata hai
+              // (expand pe poora message, kabhi truncated/adhua nahi). Notification
+              // text kisi bhi lambai me full visible.
+              largeBody: offlineMessage,
               schedule: { at: new Date(scheduledTime), allowWhileIdle: true },
               channelId: 'misa_proactive_channel',
               extra: { offlineMessage, topic },
@@ -1479,6 +1483,9 @@ Instructions:
               id: 9901,
               title: 'Misa',
               body: trigger.offlineMessage,
+              // big-text style: pura message expand pe poori tarah dikhe, chahe
+              // kitna bhi lamba ho (Android default truncation ko avoid karta hai).
+              largeBody: trigger.offlineMessage,
               schedule: { at: day1Time, allowWhileIdle: true },
               channelId: 'misa_proactive_channel',
               extra: { offlineMessage: trigger.offlineMessage },
@@ -1487,6 +1494,8 @@ Instructions:
               id: 9902,
               title: 'Misa',
               body: revisionTrigger.offlineMessage,
+              // big-text style: pura message expand pe poora dikhe — cut nahi hoga.
+              largeBody: revisionTrigger.offlineMessage,
               schedule: { at: revTime, allowWhileIdle: true },
               channelId: 'misa_proactive_channel',
               extra: { offlineMessage: revisionTrigger.offlineMessage },
