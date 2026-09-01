@@ -10,6 +10,9 @@
     <string name="notif_channel_live_call_desc">Shown only while Misa Live has an active call</string>
     <string name="notif_live_call_title">Misa Live call active</string>
     <string name="notif_live_call_text">Misa is ready while you use other apps.</string>
+    <string name="notif_live_reply_label">Reply</string>
+    <string name="notif_live_reply_hint">Message Misa</string>
+    <string name="notif_live_reply_misa">Misa</string>
 
     <!-- Screen share foreground service labels. -->
     <string name="notif_channel_screenshare_name">Misa Live Screen Share</string>

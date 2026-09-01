@@ -38,7 +38,13 @@ import { proactiveAgentService } from '../../features/ai/proactive-agent.service
 import { haptic, hapticError } from '../../lib/haptics';
 import ChatMarkdown from '../ChatMarkdown';
 import LiveSettingsModal from './LiveSettingsModal';
-import { startLiveCompanionService, stopLiveCompanionService } from '../../lib/live-companion-service';
+import {
+  startLiveCompanionService,
+  stopLiveCompanionService,
+  disconnectLiveCompanionService,
+  updateLiveCompanionNotification,
+  onLiveCompanionNotificationReply,
+} from '../../lib/live-companion-service';
 
 // The call belongs to this module-level runtime, not to a particular overlay
 // instance. Navigation/minimising may unmount the observer without hanging up.
@@ -221,6 +227,12 @@ export default function LiveCompanionOverlay({
       onTranscriptUpdate: (newTranscripts) => {
         setTranscripts(newTranscripts);
         onTranscriptUpdate?.(newTranscripts);
+        // Mirror a lightweight view of the conversation into the live-call
+        // notification so the user can reply from the shade (WhatsApp-style).
+        const history = newTranscripts
+          .slice(-12)
+          .map((t) => `${t.role === 'assistant' ? 'A:' : 'U:'}${(t.text || '').replace(/\n+/g, ' ').slice(0, 160)}`);
+        if (history.length > 0) void updateLiveCompanionNotification(history);
       },
       onStatsUpdate: (newStats) => setStats(newStats),
       onExecuteTool: onExecuteTool ? (name, args) => onExecuteTool(name, args) : undefined,
@@ -529,10 +541,26 @@ export default function LiveCompanionOverlay({
     haptic();
     const currentTranscripts = clientRef.current?.getTranscripts() || transcripts;
     clientRef.current?.disconnect();
+    void disconnectLiveCompanionService();
     void stopLiveCompanionService();
     activeLiveClient = null;
     onClose(currentTranscripts);
   }
+
+  // Quick-reply from the live-call notification: type in the shade, and the
+  // message lands straight in the Gemini Live session (and shows in the in-app
+  // chat) exactly as if it had been typed in the call UI.
+  useEffect(() => {
+    if (!isOpen) return;
+    return onLiveCompanionNotificationReply((text) => {
+      const msg = (text || '').trim();
+      if (!msg) return;
+      // Barge-in flush + send, mirroring an in-app chat message.
+      if (clientRef.current) {
+        clientRef.current.sendTextMessage(msg, msg);
+      }
+    });
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

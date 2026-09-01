@@ -76,6 +76,12 @@
             android:exported="false" />
         <service android:name=".LiveCompanionForegroundService"
             android:foregroundServiceType="microphone|mediaPlayback" android:exported="false" />
+
+        <!-- Quick-reply from the Misa Live call notification. The receiver hands
+             the typed message to the running Gemini Live session via the plugin. -->
+        <receiver
+            android:name=".LiveCompanionReplyReceiver"
+            android:exported="false" />
     </application>
 
     <!-- Permissions -->

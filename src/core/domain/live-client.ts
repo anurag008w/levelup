@@ -52,6 +52,8 @@ export class GeminiLiveClient {
   private silenceObserverTimer: any = null;
   private isIncomingCallSession = false;
   private incomingCallReason = '';
+  /** Barge-in debounce — analyser ticks jab se ~200ms tak user speech dikh rahi hai. */
+  private userInterruptStreakStartedAt = 0;
 
   constructor(config: LiveSettingsConfig, callbacks: LiveClientCallbacks = {}) {
     this.config = config;
@@ -132,13 +134,35 @@ export class GeminiLiveClient {
 
   /** App lifecycle is an explicit runtime signal, not a visibility heuristic.
    * We keep the call logically alive in background and let close/error events
-   * decide reconnecting; foreground never blindly creates a second session. */
+   * decide reconnecting; foreground never blindly creates a second session.
+   *
+   * CRITICAL (backlog fix): mic input continues in background so the user
+   * can still talk to Misa.  However MODEL AUDIO REPLAY is discarded while
+   * backgrounded — otherwise every sentence the model speaks piles up and
+   * blasts all at once when the app is reopened (the "background me bola woh
+   * sab ke answers" bug).  Transcript / text output is unaffected. */
   setBackgroundActive(background: boolean): void {
-    if (this.isUserExplicitlyClosed || !this.session) return;
+    if (this.isUserExplicitlyClosed) return;
+
     if (background) {
+      // 1) Flush already-queued model audio so it does not blast on foreground.
+      this.audioStreamer.flushPlayback();
+      // 2) Mark background-active — `playAudioChunk` will discard incoming
+      //    model audio while this flag is true.
+      this.audioBackgroundActive = true;
       this.setStatus('background-active');
     } else if (this.status === 'background-active') {
+      this.audioBackgroundActive = false;
+      this.audioStreamer.setMuted(this.manuallyMuted || this.audioFocusPaused);
       this.setStatus('listening');
+      if (this.session) {
+        // Tell the model that mic input was live while we were away — it should
+        // NOT respond to any speech that happened during that window, only from
+        // this point forward.
+        this.session.sendRealtimeInput({
+          text: '[SYSTEM EVENT: The app just returned from background. Microphone input was captured live during the background period. Do NOT reply to or repeat anything heard while the app was backgrounded — that window is closed. Continue fresh from now.]',
+        });
+      }
     }
   }
 
@@ -928,7 +952,12 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
             this.measuredResponseLatencyMs = Date.now() - this.pendingResponseSince;
             this.pendingResponseSince = 0;
           }
-          this.audioStreamer.playAudioChunk(part.inlineData.data);
+          // Model audio is DISCARDED while backgrounded so replies don't pile
+          // up and blast all at once when the app is reopened. Text/transcript
+          // output is unaffected — it still flows to the notification.
+          if (!this.audioBackgroundActive) {
+            this.audioStreamer.playAudioChunk(part.inlineData.data);
+          }
         }
         if (part.text) {
           this.currentAssistantMessage += part.text;
@@ -1153,6 +1182,8 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private connectionAttempt = 0;
   private manuallyMuted = false;
   private audioFocusPaused = false;
+  /** When true, model audio replay is discarded to prevent backlog blast. */
+  private audioBackgroundActive = false;
   private pendingResponseSince = 0;
   private measuredResponseLatencyMs = 0;
 
@@ -1216,15 +1247,23 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         this.sendAudioChunk(pcm16Base64, rmsLevel);
       },
       (inputLevel) => {
-        this.isUserTalkingOverThreshold = inputLevel > 0.035;
+        const talking = inputLevel > 0.035;
+        this.isUserTalkingOverThreshold = talking;
         // Register user speech activity
-        if (inputLevel > 0.035) {
+        if (talking) {
+          if (!this.userInterruptStreakStartedAt) this.userInterruptStreakStartedAt = Date.now();
           this.lastUserVoiceTime = Date.now();
           this.silenceStateMachine.onSpeechActivity();
-          if (this.status === 'speaking') {
+          // Barge-in debounce: ek hi 80ms analyser spike (room echo, keyboard,
+          // door) Misa ki voice nahi kaat sakta. Sustained user speech
+          // (>=200ms) hone par hi playback flush hota hai — voice cutting fix.
+          if (this.status === 'speaking' && Date.now() - this.userInterruptStreakStartedAt >= 200) {
+            this.userInterruptStreakStartedAt = Date.now();
             this.audioStreamer.flushPlayback();
             this.setStatus('listening');
           }
+        } else {
+          this.userInterruptStreakStartedAt = 0;
         }
         if (inputLevel > 0.025 && this.status === 'connected') {
           this.setStatus('listening');
@@ -1240,13 +1279,21 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private sendAudioChunk(pcm16Base64: string, rmsLevel = 0): void {
     if (!this.session) return;
 
+    const now = Date.now();
     const isSpeech = rmsLevel > 0.018 || this.isUserTalkingOverThreshold;
 
-    // Instant barge-in: If user speaks while assistant is speaking, halt assistant audio immediately
-    if (this.status === 'speaking' && isSpeech) {
+    // Barge-in debounce (shared with the analyser path): a single transient
+    // chunk (room echo, keyboard, cough) must not snip the assistant's voice.
+    // Only SUSTAINED user speech (>=200ms) flushes playback.
+    if (isSpeech && !this.userInterruptStreakStartedAt) this.userInterruptStreakStartedAt = now;
+    const sustainedSpeech =
+      isSpeech && this.userInterruptStreakStartedAt > 0 && now - this.userInterruptStreakStartedAt >= 200;
+
+    if (this.status === 'speaking' && sustainedSpeech) {
+      this.userInterruptStreakStartedAt = now;
       this.audioStreamer.flushPlayback();
       this.setStatus('listening');
-      this.lastUserVoiceTime = Date.now();
+      this.lastUserVoiceTime = now;
       this.silenceStateMachine.onSpeechActivity();
       while (this.audioPreRollBuffer.length > 0) {
         const bufferedChunk = this.audioPreRollBuffer.shift();
@@ -1271,13 +1318,16 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.audioPreRollBuffer.shift();
     }
 
-    // Only skip acoustic room echo silence when assistant is actively speaking and user hasn't spoken
-    if (this.status === 'speaking' && !isSpeech) {
+    // Skip acoustic room echo silence ONLY after a real pause. A 220ms
+    // hang-time bridges syllable/breath gaps so the user's soft interjections
+    // are never snipped mid-word; echo suppression still kicks in once the
+    // user has actually stopped talking.
+    if (this.status === 'speaking' && !isSpeech && now - this.lastUserVoiceTime > 220) {
       return;
     }
 
     if (isSpeech) {
-      this.lastUserVoiceTime = Date.now();
+      this.lastUserVoiceTime = now;
       this.silenceStateMachine.onSpeechActivity();
     }
 
@@ -1482,7 +1532,9 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
     if (this.silenceObserverTimer) { clearInterval(this.silenceObserverTimer); this.silenceObserverTimer = null; }
 
-    // Exponential backoff capped at 3s (800ms → 1.6s → 2.4s → 3s → 3s …)
+    // Exponential backoff (750ms → 1.5s → 3s → 6s → 12s → capped 20s) +
+    // jitter — a real network blip gets several chances, but a down link
+    // can't spin forever.
     const delay = Math.min(20_000, 750 * 2 ** (this.reconnectAttempts - 1)) + Math.floor(Math.random() * 400);
     await new Promise((r) => setTimeout(r, delay));
 

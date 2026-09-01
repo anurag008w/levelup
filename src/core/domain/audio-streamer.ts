@@ -7,7 +7,9 @@
 
 export class AudioStreamer {
   // Do not let bursty network delivery turn into seconds of stale speech.
-  private static readonly MAX_PLAYBACK_BACKLOG_SECONDS = 1.25;
+  // 2.5s (up from 1.25s): a short network burst no longer snips mid-word —
+  // the queue is purged only when the backlog is genuinely stale.
+  private static readonly MAX_PLAYBACK_BACKLOG_SECONDS = 2.5;
   private audioContext: AudioContext | null = null;
   private micStream: MediaStream | null = null;
   private inputSource: MediaStreamAudioSourceNode | null = null;
