@@ -60,6 +60,21 @@ import { isNativePlatform, notifyAiReply, onNotificationAction, registerNotifica
 let setup = false;
 
 /**
+ * Live-call notification "chat" session marker. Live call ke notifications
+ * yahi sessionId use karte hain (same trick as chat): `notifyAiReply` ke
+ * `extra.sessionId` me jaata hai, aur jab user notification se reply karta
+ * hai to `onNotificationAction` yahan pahunchta hai — chat.send ki jagah
+ * live-call reply handler ko route hota hai (overlay register karta hai).
+ */
+export const LIVE_CALL_SESSION_ID = 'live-call';
+
+/** Live overlay apna reply handler yahan register karta hai. */
+let liveReplyHandler: ((text: string) => void) | null = null;
+export function setLiveCallReplyHandler(handler: ((text: string) => void) | null): void {
+  liveReplyHandler = handler;
+}
+
+/**
  * Reply events ka duplicate guard. Stock Activity-launch flow me reply ek
  * baar aata hai, par cold-start edge cases me same reply do baar aa sakta
  * hai (BridgeActivity.onCreate ka onNewIntent(getIntent()) + OS ka alag
@@ -109,6 +124,30 @@ export function setupNotificationActions(): void {
   trackAppState();
   void registerNotificationActions();
   void onNotificationAction(({ actionId, inputValue, sessionId }) => {
+    // Live-call notifications: reply goes straight into the Gemini Live
+    // session (same Activity-launch + minimize trick as chat, so the reply
+    // reliably reaches the WebView), tap just opens the app.
+    if (sessionId === LIVE_CALL_SESSION_ID) {
+      if (actionId === 'reply' && inputValue && inputValue.trim()) {
+        const text = inputValue.trim();
+        if (isDuplicateReply(sessionId, text)) return;
+        void (async () => {
+          const deliver = liveReplyHandler ? () => liveReplyHandler!(text) : () => {};
+          try {
+            deliver();
+            // 600ms grace — WebView me JS callback dispatch hone ka mauka,
+            // phir turant minimize (user shade me hai, app khula nahi rehna).
+            await new Promise((resolve) => setTimeout(resolve, REPLY_GRACE_MS));
+            await minimizeIfNative();
+          } catch {
+            // no-op
+          }
+        })();
+      }
+      // tap/open → app Activity khud launch ho jaata hai (PendingIntent) —
+      // live overlay usi client se text message bhej deta hai
+      return;
+    }
     if (!sessionId) return;
 
     if (actionId === 'tap' || actionId === 'open') {

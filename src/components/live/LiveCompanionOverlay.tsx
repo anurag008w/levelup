@@ -41,10 +41,11 @@ import LiveSettingsModal from './LiveSettingsModal';
 import {
   startLiveCompanionService,
   stopLiveCompanionService,
-  disconnectLiveCompanionService,
-  updateLiveCompanionNotification,
-  onLiveCompanionNotificationReply,
+  enterPictureInPicture,
+  onPiPModeChanged,
 } from '../../lib/live-companion-service';
+import { setLiveCallReplyHandler, LIVE_CALL_SESSION_ID } from '../../lib/notification-actions';
+import { notifyAiReply, type NotificationBubble } from '../../lib/notifications';
 
 // The call belongs to this module-level runtime, not to a particular overlay
 // instance. Navigation/minimising may unmount the observer without hanging up.
@@ -227,12 +228,21 @@ export default function LiveCompanionOverlay({
       onTranscriptUpdate: (newTranscripts) => {
         setTranscripts(newTranscripts);
         onTranscriptUpdate?.(newTranscripts);
-        // Mirror a lightweight view of the conversation into the live-call
-        // notification so the user can reply from the shade (WhatsApp-style).
-        const history = newTranscripts
-          .slice(-12)
-          .map((t) => `${t.role === 'assistant' ? 'A:' : 'U:'}${(t.text || '').replace(/\n+/g, ' ').slice(0, 160)}`);
-        if (history.length > 0) void updateLiveCompanionNotification(history);
+        // Notification chat trick: sirf assistant ka latest message notification
+        // me dikhao (WhatsApp style). Har update pe notification bhejna spam hai
+        // — sirf last assistant text bhejo.
+        const lastAssistant = [...newTranscripts].reverse().find((t) => t.role === 'assistant');
+        if (lastAssistant?.text) {
+          const bodyText = lastAssistant.text.replace(/\n+/g, ' ').slice(0, 200);
+          const messages: NotificationBubble[] = newTranscripts.slice(-20).map((t) => ({
+            text: (t.text || '').replace(/\n+/g, ' ').slice(0, 200),
+            at: t.timestamp ? new Date(t.timestamp).getTime() : Date.now(),
+            sender: t.role === 'assistant' ? 'ai' : 'user',
+          }));
+          // force=true: PiP mode me appActive still true hota hai, force
+          // bypasses the chatTabActive skip so notification aati hai.
+          void notifyAiReply('Misa Live', bodyText, LIVE_CALL_SESSION_ID, 0, true, bodyText, messages);
+        }
       },
       onStatsUpdate: (newStats) => setStats(newStats),
       onExecuteTool: onExecuteTool ? (name, args) => onExecuteTool(name, args) : undefined,
@@ -300,14 +310,36 @@ export default function LiveCompanionOverlay({
 
     // Capacitor lifecycle is authoritative on Android.  This is intentionally
     // separate from browser visibilitychange and does not itself reconnect.
+    // KEY FIX: When the app goes to background during an active call, we
+    // auto-enter PiP — this keeps the AudioContext alive, so mic + WebSocket
+    // + Gemini Live audio all continue in the background (WhatsApp-style).
     let appStateListener: { remove: () => Promise<void> } | null = null;
+    let pipListener: (() => void) | null = null;
     let released = false;
     if (Capacitor.isNativePlatform()) {
       void App.addListener('appStateChange', ({ isActive }) => {
-        liveClient.setBackgroundActive(!isActive);
+        if (isActive) {
+          liveClient.setBackgroundActive(false);
+        } else {
+          // App background me ja raha hai — PiP enter karo taaki call live
+          // rahe. User ko floating window dikhega aur doosre apps use kar
+          // sakega. PiP mode me AudioContext alive rehta hai — isliye mic
+          // input aur model audio dono chalte rehte hain.
+          liveClient.setBackgroundActive(true);
+          void enterPictureInPicture();
+        }
       }).then(listener => {
         if (released) void listener.remove();
         else appStateListener = listener;
+      });
+
+      // PiP mode change listener — log karo aur future UI ke liye state track.
+      pipListener = onPiPModeChanged((inPiP) => {
+        if (inPiP) {
+          // PiP mode entered — mic + audio naturally continue (AudioContext alive).
+        } else {
+          // PiP se wapas aaya — full screen restore, normal UI.
+        }
       });
     }
 
@@ -315,6 +347,7 @@ export default function LiveCompanionOverlay({
       cancelled = true;
       released = true;
       if (appStateListener) void appStateListener.remove();
+      if (pipListener) pipListener();
       // Do not make React ownership equal call ownership. Explicit hangup is
       // the only teardown path; a remounted overlay reattaches its callbacks.
       if (clientRef.current === liveClient) {
@@ -541,7 +574,6 @@ export default function LiveCompanionOverlay({
     haptic();
     const currentTranscripts = clientRef.current?.getTranscripts() || transcripts;
     clientRef.current?.disconnect();
-    void disconnectLiveCompanionService();
     void stopLiveCompanionService();
     activeLiveClient = null;
     onClose(currentTranscripts);
@@ -552,14 +584,14 @@ export default function LiveCompanionOverlay({
   // chat) exactly as if it had been typed in the call UI.
   useEffect(() => {
     if (!isOpen) return;
-    return onLiveCompanionNotificationReply((text) => {
+    // Register the handler: when user replies from notification shade, the
+    // message routes to the active live session (same as in-app chat send).
+    setLiveCallReplyHandler((text) => {
       const msg = (text || '').trim();
       if (!msg) return;
-      // Barge-in flush + send, mirroring an in-app chat message.
-      if (clientRef.current) {
-        clientRef.current.sendTextMessage(msg, msg);
-      }
+      if (clientRef.current) clientRef.current.sendTextMessage(msg, msg);
     });
+    return () => setLiveCallReplyHandler(null);
   }, [isOpen]);
 
   if (!isOpen) return null;

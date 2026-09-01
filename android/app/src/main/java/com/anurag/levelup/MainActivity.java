@@ -1,7 +1,10 @@
 package com.anurag.levelup;
 
+import android.content.Intent;
 import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
+import android.util.Rational;
 import android.view.View;
 import android.view.Window;
 
@@ -10,10 +13,53 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.PluginCall;
+
+import android.app.PictureInPictureParams;
 
 public class MainActivity extends BridgeActivity {
     /** App ka dark background — status bar isse match karta hai (#060506). */
     private static final int STATUS_BAR_COLOR = Color.rgb(0x06, 0x05, 0x06);
+
+    /** PiP exit notification — JS side ko batata hai ki user PiP se wapas aaya. */
+    private static LiveCompanionPlugin livePlugin;
+
+    /** JS se call hota hai — Activity ko PiP mode me bhejta hai. */
+    public static void enterPictureInPicture() {
+        MainActivity activity = getInstance();
+        if (activity == null) return;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                PictureInPictureParams params = new PictureInPictureParams.Builder()
+                    .setAspectRatio(new Rational(9, 16))
+                    .build();
+                activity.enterPictureInPictureMode(params);
+            }
+        } catch (Exception ignored) { }
+    }
+
+    /** Plugin call ke through bhi PiP enter kar sakte ho — pending call store karo. */
+    private static PluginCall pendingPiPCall;
+
+    public static void enterPiPViaPlugin(LiveCompanionPlugin plugin) {
+        livePlugin = plugin;
+        enterPictureInPicture();
+    }
+
+    /**
+     * PiP mode enter/exit callback — isme koi sensitive UI hide nahi karna
+     * (live call overlay PiP me bhi dikhna chahiye). JS ko notify karte hain
+     * taaki background logic chalu ho.
+     */
+    @Override
+    public void onPictureInPictureModeChanged(boolean inPictureInPictureMode, android.content.res.Configuration newConfig) {
+        super.onPictureInPictureModeChanged(inPictureInPictureMode, newConfig);
+        // Plugin ko notify karo (agar alive hai)
+        LiveCompanionPlugin plugin = livePlugin;
+        if (plugin != null) {
+            plugin.onPiPModeChanged(inPictureInPictureMode);
+        }
+    }
 
     @Override
     public void onCreate(Bundle savedInstanceState) {

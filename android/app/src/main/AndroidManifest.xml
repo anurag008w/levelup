@@ -45,11 +45,12 @@
         android:usesCleartextTraffic="true">
 
         <activity
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density|screenLayout|pictureInPicture"
             android:name=".MainActivity"
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize"
             android:exported="true">
 
@@ -76,12 +77,6 @@
             android:exported="false" />
         <service android:name=".LiveCompanionForegroundService"
             android:foregroundServiceType="microphone|mediaPlayback" android:exported="false" />
-
-        <!-- Quick-reply from the Misa Live call notification. The receiver hands
-             the typed message to the running Gemini Live session via the plugin. -->
-        <receiver
-            android:name=".LiveCompanionReplyReceiver"
-            android:exported="false" />
     </application>
 
     <!-- Permissions -->
