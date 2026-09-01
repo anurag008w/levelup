@@ -760,12 +760,14 @@ export default function ChatScreen({
       if (name === 'scheduleMessage' || name === 'scheduleCall' || name === 'makeCall' || name === 'listScheduled' || name === 'cancelScheduled') {
         const actionObj: any = { action: name, ...args };
         const proRes = await container.chatTools.runMany([actionObj]);
-        return { ok: proRes.ok, status: proRes.ok ? 'completed' : 'failed', result: proRes.summary, summary: proRes.summary };
+        const proSummary = proRes?.summary || (proRes?.ok ? 'Ho gaya.' : 'Kuch galti hui — dobara try karo.');
+        return { ok: proRes?.ok === true, status: proRes?.ok ? 'completed' : 'failed', result: proSummary, summary: proSummary };
       }
       // Universal fallback for all other domain tools (editMemory, deleteMemory, pinMemory, getSubject, getRange, etc.)
       const actionObj: any = { action: name, ...args };
       const fallbackRes = await container.chatTools.runMany([actionObj]);
-      return { ok: fallbackRes.ok, status: fallbackRes.ok ? 'completed' : 'failed', requiresConfirmation: fallbackRes.requiresConfirmation, result: fallbackRes.summary, summary: fallbackRes.summary };
+      const fallbackSummary = fallbackRes?.summary || (fallbackRes?.ok ? 'Ho gaya.' : 'Kuch galti hui — dobara try karo.');
+      return { ok: fallbackRes?.ok === true, status: fallbackRes?.ok ? 'completed' : 'failed', requiresConfirmation: fallbackRes?.requiresConfirmation, result: fallbackSummary, summary: fallbackSummary };
     } catch (e: any) {
       return { ok: false, status: 'error', error: e?.message || 'Tool execution failed' };
     }
@@ -778,7 +780,7 @@ export default function ChatScreen({
     if (!targetSessionId) return;
 
     for (const t of transcripts) {
-      if (!t.text.trim()) continue;
+      if (!t || typeof t.text !== 'string' || !t.text.trim()) continue;
       const msg: ChatMessage = {
         id: t.id,
         role: t.role,
@@ -805,9 +807,9 @@ export default function ChatScreen({
     setLiveMicStream(null);
     setLiveCamStream(null);
     const targetSessionId = liveCallSessionIdRef.current || active?.id;
-    if (transcripts.length > 0 && targetSessionId) {
+    if (transcripts?.length > 0 && targetSessionId) {
       for (const t of transcripts) {
-        if (!t.text.trim()) continue;
+        if (!t || typeof t.text !== 'string' || !t.text.trim()) continue;
         const msg: ChatMessage = {
           id: t.id,
           role: t.role,

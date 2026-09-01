@@ -521,21 +521,21 @@ export default function LiveCompanionOverlay({
           let displayMsg = '';
           if (res && typeof res === 'object') {
             displayMsg =
-              res.summary ||
-              res.result ||
-              res.plan ||
-              res.searchResult ||
-              res.context ||
-              res.tests ||
-              res.routine ||
-              res.todos ||
-              res.vaultResources ||
-              res.chatSearchResults ||
-              res.chatSessions ||
-              res.chatTranscript ||
-              res.memorySearchResults ||
-              res.memory ||
-              (res.currentTime ? `Current Time: ${res.currentTime}, Date: ${res.currentDate || ''}` : '') ||
+              res?.summary ||
+              res?.result ||
+              res?.plan ||
+              res?.searchResult ||
+              res?.context ||
+              res?.tests ||
+              res?.routine ||
+              res?.todos ||
+              res?.vaultResources ||
+              res?.chatSearchResults ||
+              res?.chatSessions ||
+              res?.chatTranscript ||
+              res?.memorySearchResults ||
+              res?.memory ||
+              (res?.currentTime ? `Current Time: ${res.currentTime}, Date: ${res.currentDate || ''}` : '') ||
               'Tool executed';
           } else if (typeof res === 'string') {
             displayMsg = res;

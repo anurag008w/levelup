@@ -1559,6 +1559,31 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       );
       const silenceDurationSec = (Date.now() - lastActivityAnchor) / 1000;
 
+      // ── Reply-decay watchdog (Gemini Live silent-stall fix) ──────────────
+      // Gemini Live (esp. long sessions) can silently stop sending replies after
+      // a few exchanges: socket stays open, status stays 'listening', but no
+      // model audio/turn arrives. Detect "user spoke, reply never came" and give
+      // the model a gentle, real prompt text nudge so it resumes (this kicks the
+      // stalled turn). Only when the user actually said something most recently.
+      const userAwaitingReply =
+        this.lastUserVoiceTime > 0 &&
+        this.lastUserVoiceTime > this.lastTurnFinishedTime &&
+        silenceDurationSec >= 15 &&
+        (Date.now() - this.lastSilenceNudgeAt > 25000);
+      if (userAwaitingReply) {
+        this.lastSilenceNudgeAt = Date.now();
+        this.lastTurnFinishedTime = Date.now(); // reset anchor; don't spam every tick
+        try {
+          this.session.sendRealtimeInput({
+            text: '[Prompt answer: the student just said something and is waiting for your reply — respond to their message directly now.]',
+          });
+          console.info('[GeminiLive] Reply-decay nudge sent (stalled model turn)');
+        } catch (e) {
+          console.warn('[GeminiLive] Reply-decay nudge error:', e);
+        }
+        return;
+      }
+
       // Give an explicit thinker considerably more room; a single gentle prompt
       // is preferable to repetitive study nudges.
       if (silenceDurationSec >= 90 && (Date.now() - this.lastSilenceNudgeAt > 120000)) {

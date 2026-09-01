@@ -41,47 +41,60 @@ const DEFAULT_TASK_DURATION_MIN = 45;
  * (scheduleMessage / makeCall / scheduleCall / listScheduled / cancelScheduled).
  */
 function runProactiveAction(action: ChatToolAction): Promise<ChatToolResult> {
-  switch (action.action) {
-    case 'scheduleMessage': {
-      const at = Date.parse(action.scheduledAtISO);
-      if (Number.isNaN(at)) return Promise.resolve({ ok: false, summary: 'scheduleMessage: invalid scheduledAtISO timestamp' });
-      if (at <= Date.now()) return Promise.resolve({ ok: false, summary: 'scheduleMessage: time must be in the future' });
-      return getProactive().then((svc) => {
-        const id = svc.scheduleMessage(action.text, at, action.topic, action.linkedEntity);
-        return { ok: true, summary: `Message scheduled for ${new Date(at).toLocaleString()} (id ${id}). ${action.linkedEntity ? `Jab "${action.linkedEntity.value}" complete ho jaye to auto-cancel ho jayega.` : ''}` };
-      });
+  try {
+    switch (action.action) {
+      case 'scheduleMessage': {
+        const at = Date.parse(action.scheduledAtISO as string);
+        if (Number.isNaN(at)) return Promise.resolve({ ok: false, summary: 'scheduleMessage: valid scheduledAtISO timestamp chahiye (e.g. ISO format).' });
+        if (at <= Date.now()) return Promise.resolve({ ok: false, summary: 'scheduleMessage: time must be in the future' });
+        return getProactive().then((svc) => {
+          const id = svc.scheduleMessage(action.text, at, action.topic, action.linkedEntity);
+          return { ok: true, summary: `Message scheduled for ${new Date(at).toLocaleString()} (id ${id}). ${action.linkedEntity ? `Jab "${action.linkedEntity.value}" complete ho jaye to auto-cancel ho jayega.` : ''}` };
+        });
+      }
+      case 'scheduleCall': {
+        const at = Date.parse(action.scheduledAtISO as string);
+        if (Number.isNaN(at)) return Promise.resolve({ ok: false, summary: 'scheduleCall: valid scheduledAtISO timestamp chahiye (e.g. ISO format).' });
+        if (at <= Date.now()) return Promise.resolve({ ok: false, summary: 'scheduleCall: time must be in the future' });
+        return getProactive().then((svc) => {
+          const id = svc.scheduleCall(action.reason, at);
+          return { ok: true, summary: `Call scheduled for ${new Date(at).toLocaleString()} (id ${id}).` };
+        });
+      }
+      case 'makeCall': {
+        return getProactive().then((svc) => {
+          try {
+            svc.makeCall(action.reason);
+          } catch (e: any) {
+            // makeCall internal failure ko bhi graceful summary me convert kar do —
+            // live call tool path kabhi throw/reject nahi hona chahiye.
+            return { ok: false, summary: `makeCall init fail: ${e?.message || 'unknown error'}` };
+          }
+          return { ok: true, summary: 'Call shuru ki ja rahi hai abhi. IncomingCall popup dikhega.' };
+        });
+      }
+      case 'listScheduled': {
+        return getProactive().then((svc) => {
+          const list = svc.listScheduledMessages();
+          if (list.length === 0) return { ok: true, summary: 'No scheduled messages/calls pending.' };
+          const lines = list.map((s) => `${s.id}: ${s.kind} — ${s.text || s.reason || ''} (${new Date(s.scheduledTime).toLocaleString()})`);
+          return { ok: true, summary: `Scheduled:\n${lines.join('\n')}` };
+        });
+      }
+      case 'cancelScheduled': {
+        return getProactive().then((svc) => {
+          const ok = svc.cancelScheduledMessage(action.id);
+          return { ok: ok === true, summary: ok ? `Scheduled item ${action.id} cancelled.` : `Scheduled item ${action.id} nahi mila.` };
+        });
+      }
+      default:
+        return Promise.resolve({ ok: false, summary: 'unknown proactive action' });
     }
-    case 'scheduleCall': {
-      const at = Date.parse(action.scheduledAtISO);
-      if (Number.isNaN(at)) return Promise.resolve({ ok: false, summary: 'scheduleCall: invalid scheduledAtISO timestamp' });
-      if (at <= Date.now()) return Promise.resolve({ ok: false, summary: 'scheduleCall: time must be in the future' });
-      return getProactive().then((svc) => {
-        const id = svc.scheduleCall(action.reason, at);
-        return { ok: true, summary: `Call scheduled for ${new Date(at).toLocaleString()} (id ${id}).` };
-      });
-    }
-    case 'makeCall': {
-      return getProactive().then((svc) => {
-        svc.makeCall(action.reason);
-        return { ok: true, summary: 'Call shuru ki ja rahi hai abhi. IncomingCall popup dikhega.' };
-      });
-    }
-    case 'listScheduled': {
-      return getProactive().then((svc) => {
-        const list = svc.listScheduledMessages();
-        if (list.length === 0) return { ok: true, summary: 'No scheduled messages/calls pending.' };
-        const lines = list.map((s) => `${s.id}: ${s.kind} — ${s.text || s.reason || ''} (${new Date(s.scheduledTime).toLocaleString()})`);
-        return { ok: true, summary: `Scheduled:\n${lines.join('\n')}` };
-      });
-    }
-    case 'cancelScheduled': {
-      return getProactive().then((svc) => {
-        const ok = svc.cancelScheduledMessage(action.id);
-        return { ok, summary: ok ? `Scheduled item ${action.id} cancelled.` : `Scheduled item ${action.id} nahi mila.` };
-      });
-    }
-    default:
-      return Promise.resolve({ ok: false, summary: 'unknown proactive action' });
+  } catch (e: any) {
+    // Proactive tool hamesha settle hoke ek readable { ok, summary } summary
+    // return kare — live call render path me kabhi undefined summary na aaye,
+    // warna AI ko "reading summary" undefined lagega.
+    return Promise.resolve({ ok: false, summary: `proactive ${action.action} error: ${e?.message || 'unknown'}` });
   }
 }
 
