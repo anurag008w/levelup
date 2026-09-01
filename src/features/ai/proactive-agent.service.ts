@@ -15,7 +15,7 @@
 
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
-import type { RingtonePresetId } from '../../lib/ringtone-player';
+import { ringtonePlayer, type RingtonePresetId } from '../../lib/ringtone-player';
 import { relationshipManager, type SubjectArea } from './relationship-state';
 import { socialDecisionEngine, type ProactiveCandidate } from './social-decision-engine';
 import { validateProactiveDelivery } from './behavior-validator';
@@ -282,6 +282,15 @@ class ProactiveAgentService {
 
   updatePreferences(patch: Partial<ProactivePreferences>): void {
     this.prefs = { ...this.prefs, ...patch };
+    if (patch.enabled === false) {
+      void this.cancelAllPendingTriggers();
+      ringtonePlayer.stop();
+      this.pendingTriggers = [];
+    }
+    if (patch.callsEnabled === false) {
+      this.pendingTriggers = this.pendingTriggers.filter((t) => t.type !== 'incoming_call');
+      ringtonePlayer.stop();
+    }
     if (patch.quietHoursStart || patch.quietHoursEnd || patch.activeGraceMinutes) {
       relationshipManager.update((s) => {
         if (patch.quietHoursStart) s.boundaries.quietHoursStart = patch.quietHoursStart;

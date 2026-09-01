@@ -140,6 +140,7 @@ export class GeminiLiveClient {
       throw new Error('Google Gemini API Key is required for Live Voice.');
     }
     this.disconnect();
+    this.isUserExplicitlyClosed = false;
     this.setStatus('connecting');
     this.connectStartTime = Date.now();
     this.framesSentCount = 0;
@@ -764,7 +765,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
           systemInstruction: {
             parts: [{ text: fullSystemInstruction }],
           },
-          tools: [{ functionDeclarations: allToolDeclarations as any }],
+          ...(isProactiveEnabled ? { tools: [{ functionDeclarations: allToolDeclarations as any }] } : {}),
         },
         callbacks: {
           onopen: () => {
@@ -776,12 +777,19 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
           },
           onerror: (err: any) => {
             console.error('[GeminiLive] SDK Error:', err);
-            this.setStatus('error');
-            const msg = err?.message || 'Gemini Live connection error. Please verify your API key and network.';
-            if (this.callbacks.onError) this.callbacks.onError(msg);
+            if (this.status !== 'idle' && this.reconnectAttempts < this.maxReconnectAttempts) {
+              void this.handleAutoReconnect();
+            } else {
+              this.setStatus('error');
+              const msg = err?.message || 'Gemini Live connection error. Please verify your API key and network.';
+              if (this.callbacks.onError) this.callbacks.onError(msg);
+            }
           },
           onclose: () => {
-            if (this.status !== 'idle' && this.status !== 'error') {
+            console.info('[GeminiLive] WebSocket onclose. Status:', this.status);
+            if (this.status !== 'idle' && this.reconnectAttempts < this.maxReconnectAttempts) {
+              void this.handleAutoReconnect();
+            } else if (this.status !== 'idle') {
               this.setStatus('disconnected');
             }
           },
@@ -1074,9 +1082,22 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private activeAssistantTurnId: string | null = null;
   private activeUserTurnId: string | null = null;
   private lastSilenceNudgeAt = 0;
+  private isReconnecting = false;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 4;
+  private currentMediaStream: MediaStream | null = null;
+  private activeApiKey: string | null = null;
+  private isUserExplicitlyClosed = false;
 
   /** Start recording user voice & streaming audio chunks. */
   async startVoiceStreaming(mediaStream: MediaStream): Promise<void> {
+    this.currentMediaStream = mediaStream;
+    this.audioStreamer.setOnPlaybackEnded(() => {
+      if (this.status === 'speaking') {
+        this.setStatus('listening');
+        this.lastTurnFinishedTime = Date.now();
+      }
+    });
     await this.audioStreamer.startRecording(
       mediaStream,
       (pcm16Base64, rmsLevel = 0) => {
@@ -1107,16 +1128,14 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private sendAudioChunk(pcm16Base64: string, rmsLevel = 0): void {
     if (!this.session) return;
 
-    const isSpeech = rmsLevel > 0.03 || this.isUserTalkingOverThreshold;
+    const isSpeech = rmsLevel > 0.018 || this.isUserTalkingOverThreshold;
 
     // Instant barge-in: If user speaks while assistant is speaking, halt assistant audio immediately
-    // so user is never talked over and their audio is preserved.
     if (this.status === 'speaking' && isSpeech) {
       this.audioStreamer.flushPlayback();
       this.setStatus('listening');
       this.lastUserVoiceTime = Date.now();
       this.silenceStateMachine.onSpeechActivity();
-      // Flush buffered pre-roll chunks so the initial phonemes are not lost
       while (this.audioPreRollBuffer.length > 0) {
         const bufferedChunk = this.audioPreRollBuffer.shift();
         if (bufferedChunk) {
@@ -1140,10 +1159,14 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.audioPreRollBuffer.shift();
     }
 
-    // Only skip acoustic room echo silence when assistant is actively speaking and user hasn't spoken,
-    // but ALWAYS send whenever user is talking or assistant is listening!
+    // Only skip acoustic room echo silence when assistant is actively speaking and user hasn't spoken
     if (this.status === 'speaking' && !isSpeech) {
       return;
+    }
+
+    if (isSpeech) {
+      this.lastUserVoiceTime = Date.now();
+      this.silenceStateMachine.onSpeechActivity();
     }
 
     try {
@@ -1263,21 +1286,23 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
     if (this.silenceObserverTimer) clearInterval(this.silenceObserverTimer);
 
-    // 1. Keep-Alive Heartbeat every 20 seconds
+    // 1. Keep-Alive Heartbeat every 15 seconds (keeps WebSocket active during quiet study)
     this.keepAliveTimer = setInterval(() => {
-      if (this.session && this.status === 'connected') {
-        try {
-          this.session.sendRealtimeInput({
-            audio: {
-              data: 'AAAA', // minimal base64 silence
-              mimeType: 'audio/pcm;rate=16000',
-            },
-          });
-        } catch (e) {
-          console.warn('[GeminiLive] Keep-alive error:', e);
+      if (this.session && (this.status === 'listening' || this.status === 'connected')) {
+        if (Date.now() - this.lastUserVoiceTime > 10000) {
+          try {
+            this.session.sendRealtimeInput({
+              audio: {
+                data: 'AAAAAAAAAAAAAAAA', // Valid 16-bit PCM silence (12 zero bytes = 6 samples)
+                mimeType: 'audio/pcm;rate=16000',
+              },
+            });
+          } catch (e) {
+            console.warn('[GeminiLive] Keep-alive error:', e);
+          }
         }
       }
-    }, 20000);
+    }, 15000);
 
     // 2. Silence Proactive Companion Observer with State Machine (every 2.5s)
     // 2. Silence Observer (checks every 2.5s)
@@ -1314,7 +1339,63 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     }, 2500);
   }
 
+  private async handleAutoReconnect(): Promise<void> {
+    if (this.isReconnecting || this.isUserExplicitlyClosed) return;
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.warn('[GeminiLive] Max reconnect attempts reached.');
+      this.setStatus('disconnected');
+      return;
+    }
+
+    this.isReconnecting = true;
+    this.reconnectAttempts += 1;
+    console.info(`[GeminiLive] Attempting auto-reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+    this.setStatus('connecting');
+
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = null;
+    }
+    if (this.silenceObserverTimer) {
+      clearInterval(this.silenceObserverTimer);
+      this.silenceObserverTimer = null;
+    }
+
+    const delay = Math.min(3000, 800 * this.reconnectAttempts);
+    await new Promise((r) => setTimeout(r, delay));
+
+    if (this.isUserExplicitlyClosed) {
+      this.isReconnecting = false;
+      return;
+    }
+
+    try {
+      if (!this.activeApiKey) throw new Error('No active API key');
+      await this.connect(this.activeApiKey, {
+        isIncomingCall: this.isIncomingCallSession,
+        reason: this.incomingCallReason,
+      });
+      if (this.currentMediaStream) {
+        await this.startVoiceStreaming(this.currentMediaStream);
+      }
+      this.reconnectAttempts = 0;
+      this.isReconnecting = false;
+      console.info('[GeminiLive] Successfully reconnected session!');
+    } catch (e) {
+      console.warn('[GeminiLive] Reconnect attempt failed:', e);
+      this.isReconnecting = false;
+      if (!this.isUserExplicitlyClosed) {
+        void this.handleAutoReconnect();
+      }
+    }
+  }
+
   disconnect(): void {
+    this.isUserExplicitlyClosed = true;
+    this.isReconnecting = false;
+    this.reconnectAttempts = 999;
+    this.currentMediaStream = null;
+    this.activeApiKey = null;
     if (this.keepAliveTimer) {
       clearInterval(this.keepAliveTimer);
       this.keepAliveTimer = null;

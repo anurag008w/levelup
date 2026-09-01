@@ -23,6 +23,11 @@ export class AudioStreamer {
   private nextPlayTime = 0;
   private activeSources: AudioBufferSourceNode[] = [];
   private levelInterval: number | null = null;
+  private onPlaybackEnded?: () => void;
+
+  setOnPlaybackEnded(cb?: () => void): void {
+    this.onPlaybackEnded = cb;
+  }
 
   constructor() {}
 
@@ -78,8 +83,9 @@ export class AudioStreamer {
     this.inputAnalyser.fftSize = 256;
     this.inputSource.connect(this.inputAnalyser);
 
-    // Use 2048 buffer size for ultra-low latency capture (~42ms)
-    const bufferSize = 2048;
+    // Use 4096 buffer size for optimal network transmission (~85ms at 48kHz)
+    // Avoids flooding WebSocket with 24 msgs/sec which causes high latency & packet loss
+    const bufferSize = 4096;
     this.scriptProcessor = ctx.createScriptProcessor(bufferSize, 1, 1);
 
     this.scriptProcessor.onaudioprocess = (e) => {
@@ -150,9 +156,9 @@ export class AudioStreamer {
 
     // Seamless continuous playback:
     // If consecutive chunks stream in continuously (nextPlayTime >= now), schedule seamlessly with 0ms gap.
-    // If audio buffer underruns or starting initial speech, buffer with minimal 20ms lead.
+    // If audio buffer underruns or starting initial speech, buffer with 60ms lead to avoid audio chop/jitter.
     if (this.nextPlayTime < now) {
-      this.nextPlayTime = now + 0.020;
+      this.nextPlayTime = now + 0.060;
     }
 
     source.start(this.nextPlayTime);
@@ -164,8 +170,9 @@ export class AudioStreamer {
       if (idx !== -1) {
         this.activeSources.splice(idx, 1);
       }
-      if (this.activeSources.length === 0 && ctx.currentTime >= this.nextPlayTime) {
+      if (this.activeSources.length === 0) {
         this.nextPlayTime = 0;
+        this.onPlaybackEnded?.();
       }
     };
   }
@@ -182,6 +189,7 @@ export class AudioStreamer {
     }
     this.activeSources = [];
     this.nextPlayTime = 0;
+    this.onPlaybackEnded?.();
   }
 
   private startLevelMonitoring(): void {
