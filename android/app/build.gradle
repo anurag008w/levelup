@@ -4,6 +4,7 @@ android {
     namespace = "com.anurag.levelup"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
+        // Stable / Production applicationId — AUTHORITATIVE. Do not change.
         applicationId "com.anurag.levelup"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
@@ -18,6 +19,24 @@ android {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    // Build variants: LevelUp (Stable) + LevelUp Beta.
+    // Alag applicationId = dono ek hi phone pe saath install ho sakte hain,
+    // alag app sandbox milta hai, aur uninstall/update kabhi cross nahi hota.
+    // Shared source code src/main + variant resources src/{stable,beta}/res.
+    flavorDimensions "edition"
+    productFlavors {
+        stable {
+            dimension "edition"
+            // applicationId defaultConfig se inherit karta hai = com.anurag.levelup
+        }
+        beta {
+            dimension "edition"
+            // ".beta" suffix Stable se alag applicationId banata hai.
+            applicationId "com.anurag.levelup.beta"
+            // Beta versionName hamesha "-beta" suffix ke saath distinguish hota hai.
+            versionNameSuffix "-beta"
         }
     }
     buildTypes {

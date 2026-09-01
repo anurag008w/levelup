@@ -3,9 +3,9 @@ import { App } from '@capacitor/app';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { ActivityAction, IntentLauncher } from '@capgo/capacitor-intent-launcher';
 import { Share } from '@capacitor/share';
+import { getAppName, resolveAppId } from './app-packaging';
 
 const GITHUB_REPO = 'anurag008w/levelup';
-const APP_PACKAGE = 'com.anurag.levelup';
 const APK_MIME = 'application/vnd.android.package-archive';
 const UPDATE_DIR = 'updates';
 const APK_FILE = 'levelup.apk';
@@ -315,7 +315,10 @@ const FLAG_ACTIVITY_CLEAR_TOP = 0x04000000;
 
 /** Launches the Android package installer on the freshly written APK. */
 export async function launchInstaller(): Promise<InstallResult> {
-  const contentUri = `content://${APP_PACKAGE}.fileprovider/${UPDATE_DIR}/${APK_FILE}`;
+  // Per-flavor package id — Beta points at com.anurag.levelup.beta so the
+  // FileProvider authority and the package: intents hit the installed build.
+  const appId = await resolveAppId();
+  const contentUri = `content://${appId}.fileprovider/${UPDATE_DIR}/${APK_FILE}`;
   try {
     await IntentLauncher.startActivityAsync({
       action: ActivityAction.VIEW,
@@ -328,7 +331,7 @@ export async function launchInstaller(): Promise<InstallResult> {
     try {
       await IntentLauncher.startActivityAsync({
         action: ActivityAction.MANAGE_UNKNOWN_APP_SOURCES,
-        data: `package:${APP_PACKAGE}`,
+        data: `package:${appId}`,
       });
       return {
         ok: false,
@@ -420,15 +423,16 @@ export async function deleteDownloadedApk(): Promise<void> {
 export async function shareDownloadedApk(): Promise<{ ok: boolean; message?: string }> {
   if (!Capacitor.isNativePlatform()) return { ok: false, message: 'Only available on Android.' };
   try {
+    await resolveAppId(); // prime the per-flavor identity for correct app name
     const uriRes = await Filesystem.getUri({
       directory: Directory.Cache,
       path: `${UPDATE_DIR}/${APK_FILE}`,
     });
     await Share.share({
-      title: 'LevelUp Update APK',
-      text: 'LevelUp Android Update APK',
+      title: `${getAppName()} Update APK`,
+      text: `${getAppName()} Android Update APK`,
       url: uriRes.uri,
-      dialogTitle: 'Save to Downloads or Share LevelUp APK',
+      dialogTitle: `Save to Downloads or Share ${getAppName()} APK`,
     });
     return { ok: true };
   } catch (e: any) {

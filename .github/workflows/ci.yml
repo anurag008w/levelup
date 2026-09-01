@@ -95,13 +95,20 @@ jobs:
       - name: Sync Capacitor Android project
         run: npx cap sync android
 
-      - name: Android unit tests and debug APK
+      - name: Android unit tests and debug APKs (Stable + Beta)
         working-directory: android
-        run: ./gradlew test assembleDebug --no-daemon
+        run: ./gradlew test assembleStableDebug assembleBetaDebug --no-daemon
 
-      - name: Upload APK artifact
+      - name: Upload Stable debug APK
         uses: actions/upload-artifact@v7
         with:
-          name: human-os-debug-apk-${{ github.ref_name }}
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: levelup-stable-debug-apk
+          path: android/app/build/outputs/apk/stable/debug/app-stable-debug.apk
+          retention-days: 5
+
+      - name: Upload Beta debug APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: levelup-beta-debug-apk
+          path: android/app/build/outputs/apk/beta/debug/app-beta-debug.apk
           retention-days: 5

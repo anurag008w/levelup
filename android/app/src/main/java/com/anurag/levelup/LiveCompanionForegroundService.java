@@ -14,8 +14,9 @@ public class LiveCompanionForegroundService extends Service {
     static final int ID = 7422;
     @Override public void onCreate() { super.onCreate();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel c = new NotificationChannel(CHANNEL, "Misa Live call", NotificationManager.IMPORTANCE_LOW);
-            c.setDescription("Shown only while Misa Live has an active call");
+            NotificationChannel c = new NotificationChannel(CHANNEL,
+                getString(R.string.notif_channel_live_call_name), NotificationManager.IMPORTANCE_LOW);
+            c.setDescription(getString(R.string.notif_channel_live_call_desc));
             getSystemService(NotificationManager.class).createNotificationChannel(c);
         }
     }
@@ -23,8 +24,9 @@ public class LiveCompanionForegroundService extends Service {
         Intent launch = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         int pf = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
         Notification n = new NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now).setContentTitle("Misa Live call active")
-            .setContentText("Misa is ready while you use other apps.").setOngoing(true).setSilent(true)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentTitle(getString(R.string.notif_live_call_title))
+            .setContentText(getString(R.string.notif_live_call_text)).setOngoing(true).setSilent(true)
             .setContentIntent(PendingIntent.getActivity(this, 0, launch, pf)).build();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(ID, n,
             android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE | android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);

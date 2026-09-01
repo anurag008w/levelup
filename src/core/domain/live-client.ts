@@ -47,7 +47,6 @@ export class GeminiLiveClient {
   private pendingToolCalls: ChatToolCallRecord[] = [];
   private currentAssistantMessage = '';
   private framesSentCount = 0;
-  private connectStartTime = Date.now();
   private lastUserVoiceTime = 0;
   private lastTurnFinishedTime = 0;
   private silenceObserverTimer: any = null;
@@ -162,7 +161,6 @@ export class GeminiLiveClient {
     this.isUserExplicitlyClosed = false;
     this.activeApiKey = apiKey;
     this.setStatus('connecting');
-    this.connectStartTime = Date.now();
     this.framesSentCount = 0;
 
     if (incomingCallMeta?.isIncomingCall) {
