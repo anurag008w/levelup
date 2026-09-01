@@ -135,6 +135,7 @@ export type LiveSessionStatus =
   | 'connecting'
   | 'reconnecting'
   | 'background-active'
+  | 'background-pip-active'
   | 'connected'
   | 'listening'
   | 'speaking'

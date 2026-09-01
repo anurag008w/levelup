@@ -199,7 +199,7 @@ export default function LiveCompanionOverlay({
   const [callDurationSeconds, setCallDurationSeconds] = useState(0);
 
   useEffect(() => {
-    const isLive = status === 'connected' || status === 'listening' || status === 'speaking' || status === 'thinking';
+    const isLive = status === 'connected' || status === 'listening' || status === 'speaking' || status === 'thinking' || status === 'background-pip-active';
     if (!isOpen || !isLive) {
       if (!isOpen || status === 'connecting' || status === 'error') setCallDurationSeconds(0);
       return;
@@ -325,10 +325,10 @@ export default function LiveCompanionOverlay({
           liveClient.setBackgroundActive(false);
         } else {
           // App background me ja raha hai — PiP enter karo taaki call live
-          // rahe. User ko floating window dikhega aur doosre apps use kar
-          // sakega. PiP mode me AudioContext alive rehta hai — isliye mic
-          // input aur model audio dono chalte rehte hain.
-          liveClient.setBackgroundActive(true);
+          // rahe. PiP mode me user abhi bhi "call me" hota hai, isliye model
+          // audio CONTINUE hota hai (WhatsApp-style) — `keepAudioPlaying=true`.
+          // Sirf jab PiP nahi ho sakta (fully hidden) tab audio discard hota.
+          liveClient.setBackgroundActive(true, true);
           void enterPictureInPicture();
         }
       }).then(listener => {
@@ -651,7 +651,7 @@ export default function LiveCompanionOverlay({
           <div className="flex items-center gap-2 rounded-full border border-white/10 bg-card/80 px-3 py-1 text-xs backdrop-blur">
             <span
               className={`h-2 w-2 rounded-full ${
-                status === 'connected'
+                status === 'connected' || status === 'background-pip-active'
                   ? 'bg-emerald-400 animate-pulse'
                   : status === 'reconnecting' || status === 'background-active'
                   ? 'bg-amber-400 animate-pulse'
@@ -665,7 +665,7 @@ export default function LiveCompanionOverlay({
               }`}
             />
             <span className="font-semibold capitalize text-text">
-              {status === 'thinking' ? 'Thinking' : status === 'reconnecting' ? 'Reconnecting' : status === 'background-active' ? 'Audio paused' : status}
+              {status === 'thinking' ? 'Thinking' : status === 'reconnecting' ? 'Reconnecting' : status === 'background-active' ? 'Audio paused' : status === 'background-pip-active' ? 'Live (PiP)' : status}
             </span>
             {isProactiveEnabled ? (
               <span className="font-mono text-[11px] text-emerald-400 font-medium">{formatDuration(callDurationSeconds)}</span>

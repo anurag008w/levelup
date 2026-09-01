@@ -40,6 +40,21 @@ class RingtonePlayerService {
     return this.audioCtx;
   }
 
+  /**
+   * Android WebView autoplay unlock: Web Audio ek fitratan "suspended" state me
+   * hota hai jab tak user-gesture pe AudioContext resume na ho. Android Capacitor
+   * WebView me mediaPlaybackRequiresUserGesture default OFF hai, isliye resume
+   * turant chalna chahiye — par kuch ROMs/versions pe phir bhi suspend rehta hai.
+   * User interaction (kisi bhi tap/scroll/keydown) pe turant resume karke unlock
+   * karte hain taaki agli proactive call bina gesture ke baje.
+   */
+  unlock(): void {
+    if (!this.audioCtx) return;
+    if (this.audioCtx.state === 'suspended') {
+      void this.audioCtx.resume().catch(() => {});
+    }
+  }
+
   /** Plays a single chime note with decay */
   private playSynthNote(ctx: AudioContext, masterGain: GainNode, freq: number, startTime: number, duration: number, type: OscillatorType = 'sine') {
     const osc = ctx.createOscillator();
@@ -138,6 +153,25 @@ class RingtonePlayerService {
     masterGain.connect(ctx.destination);
     this.activeGainNode = masterGain;
 
+    // Autoplay unlock: Android WebView me AudioContext bina gesture ke suspended
+    // reh sakta hai — resume karke turant play shuru karo. Agar abhi bhi
+    // suspended ho (thoda async), 300ms pe retry karo. Ye ringing ke liye kafi
+    // hota hai taaki kabhi silent na ho.
+    const ensureRunningAndPlay = () => {
+      if (!this.isPlaying) return;
+      const c = this.getAudioContext();
+      if (!c) return;
+      if (c.state === 'running') {
+        playCycle();
+      } else if (c.state === 'suspended') {
+        void c.resume().then(() => {
+          if (this.isPlaying) playCycle();
+        });
+      } else {
+        playCycle();
+      }
+    };
+
     const playCycle = () => {
       if (!this.isPlaying) return;
       const now = ctx.currentTime;
@@ -145,25 +179,25 @@ class RingtonePlayerService {
       switch (preset) {
         case 'lofi_melody':
           this.playLofiPattern(ctx, masterGain, now);
-          this.loopTimer = setTimeout(playCycle, 2600);
+          this.loopTimer = setTimeout(ensureRunningAndPlay, 2600);
           break;
         case 'classic_ring':
           this.playClassicPattern(ctx, masterGain, now);
-          this.loopTimer = setTimeout(playCycle, 2200);
+          this.loopTimer = setTimeout(ensureRunningAndPlay, 2200);
           break;
         case 'cyber_bell':
           this.playCyberBellPattern(ctx, masterGain, now);
-          this.loopTimer = setTimeout(playCycle, 2400);
+          this.loopTimer = setTimeout(ensureRunningAndPlay, 2400);
           break;
         case 'soft_chime':
         default:
           this.playSoftChimePattern(ctx, masterGain, now);
-          this.loopTimer = setTimeout(playCycle, 2400);
+          this.loopTimer = setTimeout(ensureRunningAndPlay, 2400);
           break;
       }
     };
 
-    playCycle();
+    ensureRunningAndPlay();
   }
 
   /** Preview a ringtone for 3.5 seconds and stop */

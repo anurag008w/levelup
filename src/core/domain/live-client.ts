@@ -140,18 +140,30 @@ export class GeminiLiveClient {
    * can still talk to Misa.  However MODEL AUDIO REPLAY is discarded while
    * backgrounded — otherwise every sentence the model speaks piles up and
    * blasts all at once when the app is reopened (the "background me bola woh
-   * sab ke answers" bug).  Transcript / text output is unaffected. */
-  setBackgroundActive(background: boolean): void {
+   * sab ke answers" bug).  Transcript / text output is unaffected.
+   *
+   * `keepAudioPlaying` (Picture-in-Picture mode): jab user PiP floating window
+   * me call ko dekh raha hai, wo abhi bhi "active call" me hai — model audio
+   * AAge continue hona chahiye (WhatsApp-style), backlog nahi banta kyunki
+   * immediate playback hota hai. Sirf jab PiP nahi hai (fully backgrounded,
+   * overlay nahi) tab model audio discard hota hai. */
+  setBackgroundActive(background: boolean, keepAudioPlaying = false): void {
     if (this.isUserExplicitlyClosed) return;
 
     if (background) {
+      // PiP me user abhi call dekh raha hai — audio continue karo.
+      if (keepAudioPlaying) {
+        this.audioBackgroundActive = false;
+        this.setStatus('background-pip-active');
+        return;
+      }
       // 1) Flush already-queued model audio so it does not blast on foreground.
       this.audioStreamer.flushPlayback();
       // 2) Mark background-active — `playAudioChunk` will discard incoming
       //    model audio while this flag is true.
       this.audioBackgroundActive = true;
       this.setStatus('background-active');
-    } else if (this.status === 'background-active') {
+    } else if (this.status === 'background-active' || this.status === 'background-pip-active') {
       this.audioBackgroundActive = false;
       this.audioStreamer.setMuted(this.manuallyMuted || this.audioFocusPaused);
       this.setStatus('listening');

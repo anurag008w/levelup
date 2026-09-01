@@ -50,8 +50,70 @@ export class AudioStreamer {
     return this.playbackSpeed;
   }
 
+  /**
+   * AudioContext ko running banaye (autoplay unlock). Web Audio bina user-gesture
+   * pe "suspended" hota hai — Android WebView me Capacitor default
+   * mediaPlaybackRequiresUserGesture=false, par kuch ROMs/versions phir bhi
+   * suspend reht hain. resume() ko await karke karte hain aur first call par
+   * daur baar retry, taaki live-call ka mic + speaker kabhi silent na rahe.
+   */
+  private async ensureRunning(): Promise<void> {
+    await this.getContext();
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      try {
+        await this.audioContext.resume();
+      } catch {
+        // resume fail (policy) — dom first call par chalne denge
+      }
+      // Thoda sa rollback-resume retry: kuch devices pe resume promise resolve
+      // hota hai par state 'running' nahi hota first-baar. 150ms pe dobara try.
+      if (this.audioContext && this.audioContext.state === 'suspended') {
+        await new Promise((r) => setTimeout(r, 150));
+        try {
+          await this.audioContext.resume();
+        } catch {
+          // no-op
+        }
+      }
+    }
+  }
+
+  /**
+   * AudioContext ko running banaye (autoplay unlock). Web Audio bina user-gesture
+   * pe "suspended" hota hai — Android WebView me Capacitor default
+   * mediaPlaybackRequiresUserGesture=false, par kuch ROMs/versions phir bhi
+   * suspend rehte hain. Verified (web/webview reports): kuch Android WebViews me
+   * AudioContext tab tak silent rehta hai jab tak koi HTML5 <audio> element
+   * pehle na chalaya jaye. Isliye hum ek silent <audio> element (tiny silent
+   * WAV data URI) play karke AudioContext ko unlock karte hain — versatile.
+   */
+  private htmlAudioUnlocked = false;
+  private unlockViaHtmlAudio(): void {
+    if (this.htmlAudioUnlocked || typeof window === 'undefined') return;
+    try {
+      // 20ms silent WAV — zero audible but counts as an audio-gesture playback,
+      // aur Android WebView ke audio subsystem ko wake karta hai taaki baad ke
+      // AudioContext nodes bhi reliably fire (webview verified fix).
+      const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+      const el = new Audio(silentWav);
+      el.volume = 0;
+      void el.play().then(() => {
+        this.htmlAudioUnlocked = true;
+        // Audio element ka kaam bas unlock karna hai — turant pause karo.
+        try { el.pause(); } catch {}
+        // AudioContext agar abhi bhi suspended hai toh ab resume leke karo.
+        if (this.audioContext && this.audioContext.state === 'suspended') {
+          void this.audioContext.resume();
+        }
+      }).catch(() => {});
+    } catch {
+      // no-op — fallback abhi bhi (direct resume) kaam karega
+    }
+  }
+
   /** Get or create a unified AudioContext with native DAC scheduling. */
   private getContext(): AudioContext {
+    this.unlockViaHtmlAudio();
     if (!this.audioContext || this.audioContext.state === 'closed') {
       const AudioContextClass =
         window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -85,10 +147,9 @@ export class AudioStreamer {
     this.onInputLevel = onInputLevel;
     this.onOutputLevel = onOutputLevel;
 
-    const ctx = this.getContext();
-    if (ctx.state === 'suspended') {
-      await ctx.resume();
-    }
+    // Autoplay unlock — mic streaming ke liye AudioContext ko running hone do.
+    await this.ensureRunning();
+    const ctx = this.audioContext!;
 
     this.inputSource = ctx.createMediaStreamSource(stream);
     this.inputAnalyser = ctx.createAnalyser();
@@ -137,10 +198,19 @@ export class AudioStreamer {
 
   /** Direct hardware DAC scheduling with clean linear PCM streaming. */
   playAudioChunk(pcm24kBase64: string): void {
-    const ctx = this.getContext();
+    const ctx = this.audioContext || this.getContext();
+    if (!ctx || ctx.state === 'closed') return;
+    // Autoplay-safety: agar AudioContext abhi bhi suspended ho (kuch ROMs pe
+    // first resume pending), turant continue karo. `startRecording` ne pehle
+    // hi ensureRunning kiya hai, isliye yahan usually running hota hai — hame
+    // har chunk ko async wrapper me koi race/order hazard nahi chaahiye.
     if (ctx.state === 'suspended') {
       void ctx.resume();
     }
+    this.playAudioChunkInternal(ctx, pcm24kBase64);
+  }
+
+  private playAudioChunkInternal(ctx: AudioContext, pcm24kBase64: string): void {
 
     const binary = atob(pcm24kBase64);
     const numSamples = Math.floor(binary.length / 2);

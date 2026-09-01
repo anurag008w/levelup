@@ -16,6 +16,7 @@ import { getBackgroundPermissionStatus } from './lib/background-permission';
 import ScreenSkeleton from './components/ScreenSkeleton';
 import { IncomingCallModal } from './components/live/IncomingCallModal';
 import { proactiveAgentService, type IncomingCallEvent } from './features/ai/proactive-agent.service';
+import { ringtonePlayer } from './lib/ringtone-player';
 
 function lazyRetry<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T }>
@@ -113,6 +114,26 @@ export default function App() {
   // hai. Ek baar dismiss karne pe hamesha ke liye band (localStorage flag).
   const [showPermissionOnboarding, setShowPermissionOnboarding] = useState(false);
   const [incomingCall, setIncomingCall] = useState<IncomingCallEvent | null>(null);
+
+  // Android autoplay unlock — kisi bhi user-interaction (tap/scroll/key) pe
+  // AudioContext resume karte hain taaki proactive incoming-call ringtone
+  // bina gesture ke baaj sake (Web Audio by-default suspended hota hai).
+  useEffect(() => {
+    const unlock: EventListener = () => {
+      try {
+        ringtonePlayer.unlock();
+        // Microphone bhi unlock — aage live call accept ho to voice-tap ready.
+        void navigator.mediaDevices?.getUserMedia?.({ audio: true, video: false }).then((s) => {
+          s.getTracks().forEach((t) => t.stop());
+        }).catch(() => {});
+      } catch {
+        // no-op
+      }
+    };
+    const evs = ['pointerdown', 'keydown', 'touchstart', 'scroll'] as const;
+    evs.forEach((e) => window.addEventListener(e, unlock, true));
+    return () => evs.forEach((e) => window.removeEventListener(e, unlock, true));
+  }, []);
 
   useEffect(() => {
     void proactiveAgentService.init();
