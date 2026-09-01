@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, useMemo, memo } from 'react';
+import { App } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Mic,
@@ -31,11 +33,16 @@ import type {
   LiveStreamStats,
   LiveTranscriptItem,
 } from '../../core/domain/live-types';
-import { GeminiLiveClient } from '../../core/domain/live-client';
+import { GeminiLiveClient, type LiveClientCallbacks } from '../../core/domain/live-client';
 import { proactiveAgentService } from '../../features/ai/proactive-agent.service';
 import { haptic, hapticError } from '../../lib/haptics';
 import ChatMarkdown from '../ChatMarkdown';
 import LiveSettingsModal from './LiveSettingsModal';
+import { startLiveCompanionService, stopLiveCompanionService } from '../../lib/live-companion-service';
+
+// The call belongs to this module-level runtime, not to a particular overlay
+// instance. Navigation/minimising may unmount the observer without hanging up.
+let activeLiveClient: GeminiLiveClient | null = null;
 
 function ThinkingBlock({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
@@ -206,7 +213,7 @@ export default function LiveCompanionOverlay({
   useEffect(() => {
     if (!isOpen) return;
 
-    const liveClient = new GeminiLiveClient(config, {
+    const callbacks: LiveClientCallbacks = {
       onStatusChange: (newStatus) => {
         setStatus(newStatus);
         if (newStatus === 'connected') setErrorMessage(null);
@@ -229,31 +236,33 @@ export default function LiveCompanionOverlay({
         setStatus('error');
         setErrorMessage(err);
       },
-    });
-
-    liveClient.setPrompts(systemPrompt, memoryContext, userPersona);
-    liveClient.setRecentChatHistory(initialMessages);
+    };
+    const existingClient = activeLiveClient;
+    const liveClient = existingClient || new GeminiLiveClient(config, callbacks);
+    liveClient.setCallbacks(callbacks);
+    if (!existingClient) {
+      liveClient.setPrompts(systemPrompt, memoryContext, userPersona);
+      liveClient.setRecentChatHistory(initialMessages);
+    }
     clientRef.current = liveClient;
     let cancelled = false;
 
-    (async () => {
+    if (!existingClient) (async () => {
       try {
         await liveClient.connect(apiKey);
+        await startLiveCompanionService();
         if (cancelled) {
-          liveClient.disconnect();
           return;
         }
         await liveClient.startVoiceStreaming(initialMicStream);
 
         if (cancelled) {
-          liveClient.disconnect();
           return;
         }
 
         if (initialCameraStream) {
           const stream = await liveClient.startCameraStream('environment');
           if (cancelled) {
-            liveClient.disconnect();
             return;
           }
           setIsCameraActive(true);
@@ -270,10 +279,27 @@ export default function LiveCompanionOverlay({
         }
       }
     })();
+    activeLiveClient = liveClient;
+
+    // Capacitor lifecycle is authoritative on Android.  This is intentionally
+    // separate from browser visibilitychange and does not itself reconnect.
+    let appStateListener: { remove: () => Promise<void> } | null = null;
+    let released = false;
+    if (Capacitor.isNativePlatform()) {
+      void App.addListener('appStateChange', ({ isActive }) => {
+        liveClient.setBackgroundActive(!isActive);
+      }).then(listener => {
+        if (released) void listener.remove();
+        else appStateListener = listener;
+      });
+    }
 
     return () => {
       cancelled = true;
-      liveClient.disconnect();
+      released = true;
+      if (appStateListener) void appStateListener.remove();
+      // Do not make React ownership equal call ownership. Explicit hangup is
+      // the only teardown path; a remounted overlay reattaches its callbacks.
       if (clientRef.current === liveClient) {
         clientRef.current = null;
       }
@@ -498,6 +524,8 @@ export default function LiveCompanionOverlay({
     haptic();
     const currentTranscripts = clientRef.current?.getTranscripts() || transcripts;
     clientRef.current?.disconnect();
+    void stopLiveCompanionService();
+    activeLiveClient = null;
     onClose(currentTranscripts);
   }
 
@@ -557,6 +585,8 @@ export default function LiveCompanionOverlay({
               className={`h-2 w-2 rounded-full ${
                 status === 'connected'
                   ? 'bg-emerald-400 animate-pulse'
+                  : status === 'reconnecting' || status === 'background-active'
+                  ? 'bg-amber-400 animate-pulse'
                   : status === 'speaking'
                   ? 'bg-cyan-400 animate-ping'
                   : status === 'listening'
@@ -567,7 +597,7 @@ export default function LiveCompanionOverlay({
               }`}
             />
             <span className="font-semibold capitalize text-text">
-              {status === 'thinking' ? 'Thinking' : status}
+              {status === 'thinking' ? 'Thinking' : status === 'reconnecting' ? 'Reconnecting' : status === 'background-active' ? 'Audio paused' : status}
             </span>
             {isProactiveEnabled ? (
               <span className="font-mono text-[11px] text-emerald-400 font-medium">{formatDuration(callDurationSeconds)}</span>

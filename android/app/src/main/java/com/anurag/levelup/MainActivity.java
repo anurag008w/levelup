@@ -20,6 +20,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(BackgroundPermissionPlugin.class);
         registerPlugin(AudioRoutePlugin.class);
         registerPlugin(ScreenSharePlugin.class);
+        registerPlugin(LiveCompanionPlugin.class);
         super.onCreate(savedInstanceState);
         hideStatusBar();
     }

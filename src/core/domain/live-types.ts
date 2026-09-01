@@ -133,6 +133,8 @@ export type LiveSessionStatus =
   | 'idle'
   | 'requesting-permissions'
   | 'connecting'
+  | 'reconnecting'
+  | 'background-active'
   | 'connected'
   | 'listening'
   | 'speaking'

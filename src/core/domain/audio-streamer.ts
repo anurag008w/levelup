@@ -26,6 +26,11 @@ export class AudioStreamer {
   private activeSources: AudioBufferSourceNode[] = [];
   private levelInterval: number | null = null;
   private onPlaybackEnded?: () => void;
+  private outputVolume = 1;
+
+  setOutputVolume(volume: number): void {
+    this.outputVolume = Math.max(0, Math.min(1, volume));
+  }
 
   setOnPlaybackEnded(cb?: () => void): void {
     this.onPlaybackEnded = cb;
@@ -154,7 +159,11 @@ export class AudioStreamer {
 
     const speed = this.playbackSpeed && this.playbackSpeed > 0 ? this.playbackSpeed : 1.0;
     source.playbackRate.value = speed;
-    source.connect(this.outputAnalyser!);
+    // Keep a single output chain; gain must be connected to analyser.
+    const gain = ctx.createGain();
+    gain.gain.value = this.outputVolume;
+    source.connect(gain);
+    gain.connect(this.outputAnalyser!);
 
     const playDuration = audioBuffer.duration / speed;
     const now = ctx.currentTime;
