@@ -150,7 +150,7 @@ jobs:
         if: steps.setup_signing.outputs.SIGNED == 'true'
         run: |
           cd android
-          ./gradlew assembleStableRelease --no-daemon \
+          ./gradlew assembleStableRelease assembleBetaRelease --no-daemon \
             -PversionName="${{ steps.version.outputs.VERSION_NAME }}" \
             -PversionCode="${{ steps.version.outputs.VERSION_CODE }}"
 
@@ -158,7 +158,7 @@ jobs:
         if: steps.setup_signing.outputs.SIGNED != 'true'
         run: |
           cd android
-          ./gradlew assembleStableDebug --no-daemon \
+          ./gradlew assembleStableDebug assembleBetaDebug --no-daemon \
             -PversionName="${{ steps.version.outputs.VERSION_NAME }}" \
             -PversionCode="${{ steps.version.outputs.VERSION_CODE }}"
 
@@ -169,14 +169,20 @@ jobs:
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           
           if [[ "${{ steps.setup_signing.outputs.SIGNED }}" == "true" ]]; then
-            NAME="levelup-${{ steps.version.outputs.VERSION_NAME }}-signed.apk"
-            cp android/app/build/outputs/apk/stable/release/app-stable-release.apk "release-out/${NAME}"
+            STABLE_NAME="levelup-${{ steps.version.outputs.VERSION_NAME }}-signed.apk"
+            BETA_NAME="levelup-${{ steps.version.outputs.VERSION_NAME }}-beta-signed.apk"
+            cp android/app/build/outputs/apk/stable/release/app-stable-release.apk "release-out/${STABLE_NAME}"
+            cp android/app/build/outputs/apk/beta/release/app-beta-release.apk "release-out/${BETA_NAME}"
           else
-            NAME="levelup-${{ steps.version.outputs.VERSION_NAME }}.apk"
-            cp android/app/build/outputs/apk/stable/debug/app-stable-debug.apk "release-out/${NAME}"
+            STABLE_NAME="levelup-${{ steps.version.outputs.VERSION_NAME }}.apk"
+            BETA_NAME="levelup-${{ steps.version.outputs.VERSION_NAME }}-beta.apk"
+            cp android/app/build/outputs/apk/stable/debug/app-stable-debug.apk "release-out/${STABLE_NAME}"
+            cp android/app/build/outputs/apk/beta/debug/app-beta-debug.apk "release-out/${BETA_NAME}"
           fi
-          echo "apk_path=release-out/${NAME}" >> $GITHUB_OUTPUT
-          echo "apk_name=${NAME}" >> $GITHUB_OUTPUT
+          echo "apk_path=release-out/${STABLE_NAME}" >> $GITHUB_OUTPUT
+          echo "apk_name=${STABLE_NAME}" >> $GITHUB_OUTPUT
+          echo "beta_apk_path=release-out/${BETA_NAME}" >> $GITHUB_OUTPUT
+          echo "beta_apk_name=${BETA_NAME}" >> $GITHUB_OUTPUT
 
       - name: Generate changelog
         run: |
@@ -189,6 +195,9 @@ jobs:
           Install the APK on your Android device.
 
           **Note:** Enable 'Install from unknown sources' in phone settings.
+
+          - **Stable:** `${{ steps.prepare.outputs.apk_name }}`
+          - **Beta:** `${{ steps.prepare.outputs.beta_apk_name }}` (data isolated, same tag version)
           CHANGELOG
 
           if [[ "${{ steps.setup_signing.outputs.SIGNED }}" == "true" ]]; then
@@ -210,8 +219,10 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: levelup-${{ steps.version.outputs.VERSION_NAME }}-apk
-          path: ${{ steps.prepare.outputs.apk_path }}
+          name: levelup-${{ steps.version.outputs.VERSION_NAME }}-apks
+          path: |
+            ${{ steps.prepare.outputs.apk_path }}
+            ${{ steps.prepare.outputs.beta_apk_path }}
           retention-days: 30
 
       - name: Create release
@@ -220,7 +231,9 @@ jobs:
           tag_name: ${{ steps.version.outputs.VERSION }}
           name: "LevelUp ${{ steps.version.outputs.VERSION }}"
           body_path: changelog.md
-          files: ${{ steps.prepare.outputs.apk_path }}
+          files: |
+            ${{ steps.prepare.outputs.apk_path }}
+            ${{ steps.prepare.outputs.beta_apk_path }}
 
       - name: Done
         run: |
