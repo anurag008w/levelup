@@ -3,9 +3,9 @@ import { App } from '@capacitor/app';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { ActivityAction, IntentLauncher } from '@capgo/capacitor-intent-launcher';
 import { Share } from '@capacitor/share';
+import { getAppName, isBetaApp, resolveAppId } from './app-packaging';
 
 const GITHUB_REPO = 'anurag008w/levelup';
-const APP_PACKAGE = 'com.anurag.levelup';
 const APK_MIME = 'application/vnd.android.package-archive';
 const UPDATE_DIR = 'updates';
 const APK_FILE = 'levelup.apk';
@@ -144,22 +144,36 @@ export function isUpdateAvailable(current: string, latest: string): boolean {
   return compareVersions(current, latest) < 0;
 }
 
-export function pickApkAsset(assets: { name: string; browser_download_url: string; size?: number }[]): ApkAsset | null {
-  const signed = assets.find((a) => a.name.toLowerCase().endsWith('signed.apk'));
-  const fallback = assets.find((a) => a.name.toLowerCase().endsWith('.apk'));
+/** True for Beta-flavor release asset names ("levelup-…-beta.apk"). */
+export function isBetaAssetName(name: string): boolean {
+  return /beta/i.test(name);
+}
+
+/** Asset matches the running flavor — Beta gets beta assets, Stable never does. */
+export function assetMatchesFlavor(name: string, isBeta: boolean): boolean {
+  return isBeta ? isBetaAssetName(name) : !isBetaAssetName(name);
+}
+
+export function pickApkAsset(
+  assets: { name: string; browser_download_url: string; size?: number }[],
+  isBeta = false,
+): ApkAsset | null {
+  const matching = assets.filter((a) => assetMatchesFlavor(a.name, isBeta));
+  const signed = matching.find((a) => a.name.toLowerCase().endsWith('signed.apk'));
+  const fallback = matching.find((a) => a.name.toLowerCase().endsWith('.apk'));
   const asset = signed ?? fallback;
   return asset
     ? { name: asset.name, url: asset.browser_download_url, size: typeof asset.size === 'number' ? asset.size : undefined }
     : null;
 }
 
-export function releaseFromApi(payload: Record<string, unknown>): ReleaseInfo | null {
+export function releaseFromApi(payload: Record<string, unknown>, isBeta = false): ReleaseInfo | null {
   const tagName = typeof payload.tag_name === 'string' ? payload.tag_name : '';
   if (!tagName) return null;
   const assets = Array.isArray(payload.assets)
     ? (payload.assets as { name: string; browser_download_url: string; size?: number }[])
     : [];
-  const apk = pickApkAsset(assets);
+  const apk = pickApkAsset(assets, isBeta);
   return {
     tagName,
     version: tagName.replace(/^v/i, ''),
@@ -177,6 +191,7 @@ export function releaseFromApi(payload: Record<string, unknown>): ReleaseInfo | 
 
 export async function checkForUpdates(): Promise<UpdateCheckResult> {
   const currentVersion = await getInstalledVersion();
+  const isBeta = isBetaApp();
   try {
     // GitHub's `/releases/latest` returns the most recently *published*
     // release, which is not always the highest *tag* (a backdated publish, a
@@ -194,10 +209,13 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
     }
     const payload = (await response.json()) as Record<string, unknown>[];
     const releases = payload
-      .map((item) => releaseFromApi(item))
+      .map((item) => releaseFromApi(item, isBeta))
       .filter((r): r is ReleaseInfo => r !== null && !r.draft && !r.prerelease);
+    // Beta only updates from releases that actually carry a beta APK; a
+    // release with just the stable asset is never offered to Beta users.
+    const candidates = isBeta ? releases.filter((r) => r.apkUrl != null) : releases;
     // Highest tag first — stable sort keeps ordering deterministic.
-    const latest = [...releases].sort((a, b) => compareVersions(b.version, a.version))[0] ?? null;
+    const latest = [...candidates].sort((a, b) => compareVersions(b.version, a.version))[0] ?? null;
     return {
       currentVersion,
       latest,
@@ -315,7 +333,10 @@ const FLAG_ACTIVITY_CLEAR_TOP = 0x04000000;
 
 /** Launches the Android package installer on the freshly written APK. */
 export async function launchInstaller(): Promise<InstallResult> {
-  const contentUri = `content://${APP_PACKAGE}.fileprovider/${UPDATE_DIR}/${APK_FILE}`;
+  // Per-flavor package id — Beta points at com.anurag.levelup.beta so the
+  // FileProvider authority and the package: intents hit the installed build.
+  const appId = await resolveAppId();
+  const contentUri = `content://${appId}.fileprovider/${UPDATE_DIR}/${APK_FILE}`;
   try {
     await IntentLauncher.startActivityAsync({
       action: ActivityAction.VIEW,
@@ -328,7 +349,7 @@ export async function launchInstaller(): Promise<InstallResult> {
     try {
       await IntentLauncher.startActivityAsync({
         action: ActivityAction.MANAGE_UNKNOWN_APP_SOURCES,
-        data: `package:${APP_PACKAGE}`,
+        data: `package:${appId}`,
       });
       return {
         ok: false,
@@ -420,15 +441,16 @@ export async function deleteDownloadedApk(): Promise<void> {
 export async function shareDownloadedApk(): Promise<{ ok: boolean; message?: string }> {
   if (!Capacitor.isNativePlatform()) return { ok: false, message: 'Only available on Android.' };
   try {
+    await resolveAppId(); // prime the per-flavor identity for correct app name
     const uriRes = await Filesystem.getUri({
       directory: Directory.Cache,
       path: `${UPDATE_DIR}/${APK_FILE}`,
     });
     await Share.share({
-      title: 'LevelUp Update APK',
-      text: 'LevelUp Android Update APK',
+      title: `${getAppName()} Update APK`,
+      text: `${getAppName()} Android Update APK`,
       url: uriRes.uri,
-      dialogTitle: 'Save to Downloads or Share LevelUp APK',
+      dialogTitle: `Save to Downloads or Share ${getAppName()} APK`,
     });
     return { ok: true };
   } catch (e: any) {

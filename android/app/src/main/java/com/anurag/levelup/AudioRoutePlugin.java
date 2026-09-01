@@ -6,6 +6,8 @@ import android.bluetooth.BluetoothHeadset;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.media.AudioDeviceInfo;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
 import android.media.AudioManager;
 import android.os.Build;
 import android.util.Log;
@@ -36,6 +38,12 @@ import java.util.List;
 public class AudioRoutePlugin extends Plugin {
 
     private static final String TAG = "AudioRoutePlugin";
+    private AudioFocusRequest audioFocusRequest;
+    private final AudioManager.OnAudioFocusChangeListener audioFocusListener = focusChange -> {
+        JSObject event = new JSObject();
+        event.put("focusChange", focusChange);
+        notifyListeners("audioFocusChange", event);
+    };
 
     private AudioManager audioManager() {
         return (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
@@ -55,6 +63,7 @@ public class AudioRoutePlugin extends Plugin {
         }
 
         try {
+            requestCallAudioFocus(am);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 // Android 12+ (API 31+): use setCommunicationDevice
                 setRouteApi31(am, route, call);
@@ -178,11 +187,54 @@ public class AudioRoutePlugin extends Plugin {
                 am.setBluetoothScoOn(false);
                 am.setSpeakerphoneOn(false);
                 am.setMode(AudioManager.MODE_NORMAL);
+                abandonCallAudioFocus(am);
             } catch (Exception e) {
                 Log.w(TAG, "resetRoute: " + e.getMessage());
             }
         }
         call.resolve();
+    }
+
+    @PluginMethod
+    public void requestAudioFocus(PluginCall call) {
+        AudioManager am = audioManager();
+        if (am == null) {
+            call.reject("AudioManager not available");
+            return;
+        }
+        int result = requestCallAudioFocus(am);
+        JSObject response = new JSObject();
+        boolean granted = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        response.put("granted", granted);
+        response.put("status", granted ? "granted" : result == AudioManager.AUDIOFOCUS_REQUEST_DELAYED ? "delayed" : "failed");
+        call.resolve(response);
+    }
+
+    private int requestCallAudioFocus(AudioManager am) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            AudioAttributes attributes = new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build();
+            audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                .setAudioAttributes(attributes)
+                .setOnAudioFocusChangeListener(audioFocusListener)
+                // JS owns explicit ducking, so Android must deliver CAN_DUCK.
+                .setWillPauseWhenDucked(false)
+                .build();
+            return am.requestAudioFocus(audioFocusRequest);
+        } else {
+            return am.requestAudioFocus(audioFocusListener, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
+        }
+    }
+
+    private void abandonCallAudioFocus(AudioManager am) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && audioFocusRequest != null) {
+            am.abandonAudioFocusRequest(audioFocusRequest);
+            audioFocusRequest = null;
+        } else {
+            am.abandonAudioFocus(audioFocusListener);
+        }
     }
 
     /** List currently available audio output devices. */

@@ -61,8 +61,8 @@ public class ScreenShareForegroundService extends Service {
         PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, launchIntent, pendingFlags);
 
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Misa Live — Screen Share Active")
-            .setContentText("Screen share is running for Misa AI. Tap to return to app.")
+            .setContentTitle(getString(R.string.notif_screenshare_title))
+            .setContentText(getString(R.string.notif_screenshare_text))
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -101,10 +101,10 @@ public class ScreenShareForegroundService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel chan = new NotificationChannel(
                 CHANNEL_ID,
-                "Misa Live Screen Share",
+                getString(R.string.notif_channel_screenshare_name),
                 NotificationManager.IMPORTANCE_LOW
             );
-            chan.setDescription("Active only during Misa Live screen sharing sessions");
+            chan.setDescription(getString(R.string.notif_channel_screenshare_desc));
             chan.setShowBadge(false);
             NotificationManager nm = getSystemService(NotificationManager.class);
             if (nm != null) nm.createNotificationChannel(chan);
