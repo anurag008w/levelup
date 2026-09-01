@@ -92,6 +92,9 @@ jobs:
       - uses: android-actions/setup-android@v4
       - name: Install dependencies
         run: npm ci
+      - name: Build web app
+        # cap sync koppies dist/ into the Android project — build it first.
+        run: npm run build
       - name: Sync Capacitor Android project
         run: npx cap sync android
 
