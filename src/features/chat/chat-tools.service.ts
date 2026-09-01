@@ -19,7 +19,11 @@ import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from './plan
 import { buildContextOverview } from './context-overview';
 import { contentDayForDate, dateForDayNumber } from '../habit-engine/dates';
 import { deviceTimeZone, todayISO, type Clock } from '../../core/ports/clock';
-import { proactiveAgentService } from '../ai/proactive-agent.service';
+// NOTE: proactiveAgentService ko lazy access karte hain (proactiveAgent via
+// module-level getter), NAHI top-level import. proactive-agent.service kud
+// `container` ko import karta hai jo `ChatToolsService` instantiate karta hai —
+// top-level import → circular TDZ → "ChatToolsService is not a constructor".
+// Lazy getter cycle ko totata hai aur pehli use par singleton resolve karta hai.
 
 const MIN_DAY = 1;
 // Content day cap. Generous sanity bound for AI-requested day numbers: the
@@ -42,33 +46,62 @@ function runProactiveAction(action: ChatToolAction): Promise<ChatToolResult> {
       const at = Date.parse(action.scheduledAtISO);
       if (Number.isNaN(at)) return Promise.resolve({ ok: false, summary: 'scheduleMessage: invalid scheduledAtISO timestamp' });
       if (at <= Date.now()) return Promise.resolve({ ok: false, summary: 'scheduleMessage: time must be in the future' });
-      const id = proactiveAgentService.scheduleMessage(action.text, at, action.topic, action.linkedEntity);
-      return Promise.resolve({ ok: true, summary: `Message scheduled for ${new Date(at).toLocaleString()} (id ${id}). ${action.linkedEntity ? `Jab "${action.linkedEntity.value}" complete ho jaye to auto-cancel ho jayega.` : ''}` });
+      return getProactive().then((svc) => {
+        const id = svc.scheduleMessage(action.text, at, action.topic, action.linkedEntity);
+        return { ok: true, summary: `Message scheduled for ${new Date(at).toLocaleString()} (id ${id}). ${action.linkedEntity ? `Jab "${action.linkedEntity.value}" complete ho jaye to auto-cancel ho jayega.` : ''}` };
+      });
     }
     case 'scheduleCall': {
       const at = Date.parse(action.scheduledAtISO);
       if (Number.isNaN(at)) return Promise.resolve({ ok: false, summary: 'scheduleCall: invalid scheduledAtISO timestamp' });
       if (at <= Date.now()) return Promise.resolve({ ok: false, summary: 'scheduleCall: time must be in the future' });
-      const id = proactiveAgentService.scheduleCall(action.reason, at);
-      return Promise.resolve({ ok: true, summary: `Call scheduled for ${new Date(at).toLocaleString()} (id ${id}).` });
+      return getProactive().then((svc) => {
+        const id = svc.scheduleCall(action.reason, at);
+        return { ok: true, summary: `Call scheduled for ${new Date(at).toLocaleString()} (id ${id}).` };
+      });
     }
     case 'makeCall': {
-      proactiveAgentService.makeCall(action.reason);
-      return Promise.resolve({ ok: true, summary: 'Call shuru ki ja rahi hai abhi. IncomingCall popup dikhega.' });
+      return getProactive().then((svc) => {
+        svc.makeCall(action.reason);
+        return { ok: true, summary: 'Call shuru ki ja rahi hai abhi. IncomingCall popup dikhega.' };
+      });
     }
     case 'listScheduled': {
-      const list = proactiveAgentService.listScheduledMessages();
-      if (list.length === 0) return Promise.resolve({ ok: true, summary: 'No scheduled messages/calls pending.' });
-      const lines = list.map((s) => `${s.id}: ${s.kind} — ${s.text || s.reason || ''} (${new Date(s.scheduledTime).toLocaleString()})`);
-      return Promise.resolve({ ok: true, summary: `Scheduled:\n${lines.join('\n')}` });
+      return getProactive().then((svc) => {
+        const list = svc.listScheduledMessages();
+        if (list.length === 0) return { ok: true, summary: 'No scheduled messages/calls pending.' };
+        const lines = list.map((s) => `${s.id}: ${s.kind} — ${s.text || s.reason || ''} (${new Date(s.scheduledTime).toLocaleString()})`);
+        return { ok: true, summary: `Scheduled:\n${lines.join('\n')}` };
+      });
     }
     case 'cancelScheduled': {
-      const ok = proactiveAgentService.cancelScheduledMessage(action.id);
-      return Promise.resolve({ ok, summary: ok ? `Scheduled item ${action.id} cancelled.` : `Scheduled item ${action.id} nahi mila.` });
+      return getProactive().then((svc) => {
+        const ok = svc.cancelScheduledMessage(action.id);
+        return { ok, summary: ok ? `Scheduled item ${action.id} cancelled.` : `Scheduled item ${action.id} nahi mila.` };
+      });
     }
     default:
       return Promise.resolve({ ok: false, summary: 'unknown proactive action' });
   }
+}
+
+/**
+ * Lazy proactive singleton accessor. Top-level `import { proactiveAgentService }`
+ * ek circular TDZ banata hai: chat-tools.service → proactive-agent.service →
+ * container → ChatToolsService — isse "ChatToolsService is not a constructor".
+ * Is accessor se trait ke first call par dynamic import hota hai, jab sab modules
+ * fully loaded ho chuke hote hain. Pehli call ke baad singleton cache ho jaata hai.
+ */
+let _proactivePromise: Promise<typeof import('../ai/proactive-agent.service').proactiveAgentService> | null = null;
+function getProactive(): Promise<typeof import('../ai/proactive-agent.service').proactiveAgentService> {
+  if (!_proactivePromise) {
+    // NOTE: async dynamic import, isliye callers `await getProactive()` karte hain.
+    _proactivePromise = (async () => {
+      const mod = await import('../ai/proactive-agent.service');
+      return mod.proactiveAgentService;
+    })();
+  }
+  return _proactivePromise;
 }
 
 const ACTIONS = new AiActionRegistry();
@@ -906,8 +939,10 @@ export class ChatToolsService {
 
     // To-Do complete hua — related scheduled reminder auto-cancel karo.
     if (nextCompleted) {
-      proactiveAgentService.cancelScheduledForDoneEntity('todo', target.title);
-      proactiveAgentService.cancelScheduledForDoneEntity('keyword', target.title);
+      void getProactive().then((svc) => {
+        svc.cancelScheduledForDoneEntity('todo', target.title);
+        svc.cancelScheduledForDoneEntity('keyword', target.title);
+      });
     }
 
     return {
@@ -1963,11 +1998,13 @@ export class ChatToolsService {
     // Kaam ho gaya — usse related scheduled reminder auto-cancel karo
     // ("ho gaya" wala scheduled ab dobara na bhejo) — title aur taskId dono.
     const completedTitle = this.taskBank.getById(taskId)?.title ?? '';
-    if (completedTitle) {
-      proactiveAgentService.cancelScheduledForDoneEntity('task', completedTitle);
-      proactiveAgentService.cancelScheduledForDoneEntity('keyword', completedTitle);
-    }
-    proactiveAgentService.cancelScheduledForDoneEntity('keyword', taskId);
+    void getProactive().then((svc) => {
+      if (completedTitle) {
+        svc.cancelScheduledForDoneEntity('task', completedTitle);
+        svc.cancelScheduledForDoneEntity('keyword', completedTitle);
+      }
+      svc.cancelScheduledForDoneEntity('keyword', taskId);
+    });
 
     return { ok: true, versionId: resultAction.versionId, summary: resultAction.summary };
   }
