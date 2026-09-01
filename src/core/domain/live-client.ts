@@ -762,7 +762,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
     try {
       const ai = new GoogleGenAI({ apiKey });
-      const session = await this.withConnectionTimeout(ai.live.connect({
+      const connectPromise = ai.live.connect({
         model: this.config.model,
         config: {
           responseModalities: [Modality.AUDIO],
@@ -822,7 +822,15 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
             }
           },
         },
-      }), connectionAttempt);
+      });
+      // Promise.race cannot cancel the SDK handshake. If it completes after a
+      // timeout/cancellation, close it without assigning it to this runtime.
+      void connectPromise.then((lateSession: any) => {
+        if (!this.isActiveAttempt(connectionAttempt)) {
+          try { lateSession?.close?.(); } catch { /* best effort close */ }
+        }
+      }).catch(() => undefined);
+      const session = await this.withConnectionTimeout(connectPromise, connectionAttempt);
 
       if (!this.isActiveAttempt(connectionAttempt)) {
         session?.close?.();
@@ -832,8 +840,8 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.session = session;
       this.setStatus('connected');
       this.startKeepAliveAndSilenceObserver();
-      void setNativeAudioRoute(this.config.defaultAudioRoute);
       void requestNativeCallAudioFocus();
+      void setNativeAudioRoute(this.config.defaultAudioRoute);
       void this.installAudioFocusListener();
 
       // A reconnect is a continuation, not a fresh call.  Do not duplicate the
@@ -844,6 +852,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       }
       // Greet student upon initial connection only.
       setTimeout(() => {
+        if (!this.isActiveAttempt(connectionAttempt)) return;
         try {
           const rel = relationshipManager.getState();
           const activeTopic = rel.commitments[0]?.topic || rel.currentProblemArea || rel.currentSubject;
@@ -893,7 +902,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
     // 1. Tool Calls from Gemini Live
     if (data.toolCall?.functionCalls) {
-      void this.handleToolCalls(data.toolCall.functionCalls);
+      void this.handleToolCalls(data.toolCall.functionCalls, this.connectionAttempt);
     }
 
     // 2. Interruption handling (Measured VAD -> Flush Latency)
@@ -917,6 +926,10 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.activeUserTurnId = null;
       for (const part of parts) {
         if (part.inlineData && part.inlineData.data) {
+          if (this.pendingResponseSince) {
+            this.measuredResponseLatencyMs = Date.now() - this.pendingResponseSince;
+            this.pendingResponseSince = 0;
+          }
           this.audioStreamer.playAudioChunk(part.inlineData.data);
         }
         if (part.text) {
@@ -951,10 +964,11 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     }
   }
 
-  private async handleToolCalls(functionCalls: any[]): Promise<void> {
+  private async handleToolCalls(functionCalls: any[], attempt: number): Promise<void> {
     const functionResponses: any[] = [];
     this.setStatus('thinking');
     for (const fc of functionCalls) {
+      if (!this.isActiveAttempt(attempt)) return;
       let output: any = { result: 'Success' };
       try {
         this.callbacks.onToolCall?.(fc.name, fc.args || {});
@@ -965,6 +979,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       } catch (err: any) {
         output = { error: err?.message || 'Failed to execute tool' };
       }
+      if (!this.isActiveAttempt(attempt)) return;
 
       let displayMessage = '';
       if (output?.error) {
@@ -1014,7 +1029,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       });
     }
 
-    if (this.session) {
+    if (this.session && this.isActiveAttempt(attempt)) {
       try {
         this.session.sendToolResponse({
           functionResponses,
@@ -1138,6 +1153,10 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private lastWsActivity = Date.now(); // diagnostic only; silence is not a transport failure
   private audioFocusListener: { remove: () => Promise<void> } | null = null;
   private connectionAttempt = 0;
+  private manuallyMuted = false;
+  private audioFocusPaused = false;
+  private pendingResponseSince = 0;
+  private measuredResponseLatencyMs = 0;
 
   private isActiveAttempt(attempt: number): boolean {
     return attempt === this.connectionAttempt && !this.isUserExplicitlyClosed;
@@ -1180,6 +1199,12 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   /** Start recording user voice & streaming audio chunks. */
   async startVoiceStreaming(mediaStream: MediaStream): Promise<void> {
+    // Focus is acquired before capture. This check also makes direct callers
+    // safe on native platforms when a session was restored/reconnected.
+    if (!await requestNativeCallAudioFocus()) {
+      this.setStatus('error');
+      throw new Error('Microphone cannot start because audio focus was denied.');
+    }
     this.currentMediaStream = mediaStream;
     this.audioStreamer.setOnPlaybackEnded(() => {
       if (this.status === 'speaking') {
@@ -1265,6 +1290,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
           mimeType: 'audio/pcm;rate=16000',
         },
       });
+      if (isSpeech && !this.pendingResponseSince) this.pendingResponseSince = Date.now();
     } catch (e) {
       console.warn('[GeminiLive] Failed to send audio chunk:', e);
     }
@@ -1272,12 +1298,14 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   /** Start streaming camera frames (Front or Back lens). */
   async startCameraStream(lens: LiveCameraLens): Promise<MediaStream> {
+    const attempt = this.connectionAttempt;
     const stream = await this.visionStreamer.startCamera(lens, this.config.videoFps, (jpegBase64) => {
-      this.sendVideoFrame(jpegBase64);
+      this.sendVideoFrame(jpegBase64, attempt);
     });
 
     if (stream && this.session) {
       setTimeout(() => {
+        if (!this.isActiveAttempt(attempt)) return;
         try {
           this.session?.sendRealtimeInput({
             text: `[Camera is on. Look at the camera feed right now and speak 1 short, natural Hinglish line directly about what you see (e.g. textbook, notebook, desk, or empty chair). Do NOT use robotic greeting scripts.]`,
@@ -1293,19 +1321,22 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   /** Flip between Front and Back camera. */
   async flipCamera(): Promise<MediaStream> {
+    const attempt = this.connectionAttempt;
     return this.visionStreamer.switchLens(this.config.videoFps, (jpegBase64) => {
-      this.sendVideoFrame(jpegBase64);
+      this.sendVideoFrame(jpegBase64, attempt);
     });
   }
 
   /** Start streaming Desktop Screen Share. */
   async startScreenStream(onEnded?: () => void): Promise<MediaStream | null> {
+    const attempt = this.connectionAttempt;
     const stream = await this.visionStreamer.startScreenShare(this.config.screenFps, (jpegBase64) => {
-      this.sendVideoFrame(jpegBase64);
+      this.sendVideoFrame(jpegBase64, attempt);
     }, onEnded);
 
     if (stream && this.session) {
       setTimeout(() => {
+        if (!this.isActiveAttempt(attempt)) return;
         try {
           this.session?.sendRealtimeInput({
             text: `[Screen share is on. Look at what is open on the screen right now and comment or ask directly about what you see in 1 short, natural, friendly Hinglish sentence (e.g. specific question, YouTube video, notes, or app). Do NOT say 'main screen dekh rahi hu', speak directly about the screen content.]`,
@@ -1328,8 +1359,8 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     this.visionStreamer.stop();
   }
 
-  private sendVideoFrame(jpegBase64: string): void {
-    if (!this.session) return;
+  private sendVideoFrame(jpegBase64: string, attempt = this.connectionAttempt): void {
+    if (!this.session || !this.isActiveAttempt(attempt)) return;
     try {
       this.framesSentCount += 1;
       this.session.sendRealtimeInput({
@@ -1345,7 +1376,12 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   }
 
   setMuted(muted: boolean): void {
-    this.audioStreamer.setMuted(muted);
+    this.manuallyMuted = muted;
+    this.applyMicrophoneMute();
+  }
+
+  private applyMicrophoneMute(): void {
+    this.audioStreamer.setMuted(this.manuallyMuted || this.audioFocusPaused);
   }
 
   private async installAudioFocusListener(): Promise<void> {
@@ -1354,11 +1390,13 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       // LOSS and transient loss must stop both capture and stale speech. Focus
       // regain restores capture; focus is local audio policy, not a network error.
       if (focusChange === -1 || focusChange === -2) {
-        this.audioStreamer.setMuted(true);
+        this.audioFocusPaused = true;
+        this.applyMicrophoneMute();
         this.audioStreamer.flushPlayback();
         this.setStatus('background-active');
       } else if (focusChange === 1) {
-        this.audioStreamer.setMuted(false);
+        this.audioFocusPaused = false;
+        this.applyMicrophoneMute();
         this.audioStreamer.setOutputVolume(1);
         if (this.session) this.setStatus('listening');
       } else if (focusChange === -3) {
@@ -1380,7 +1418,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private updateStats(inputVolume = 0, outputVolume = 0): void {
     if (this.callbacks.onStatsUpdate) {
       this.callbacks.onStatsUpdate({
-        latencyMs: Math.max(18, Math.min(120, Math.round((Date.now() - this.connectStartTime) % 50 + 20))),
+        latencyMs: this.measuredResponseLatencyMs,
         inputVolume,
         outputVolume,
         fps: this.visionStreamer.getIsCameraActive() || this.visionStreamer.getIsScreenSharing() ? this.config.videoFps : 0,

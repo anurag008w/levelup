@@ -121,4 +121,15 @@ describe('Live Call Mode & Interruption Hardening', () => {
     streamer.close();
     expect(stop).toHaveBeenCalledOnce();
   });
+
+  it('7. Internal backlog replacement does not report a completed assistant turn', () => {
+    const streamer = new AudioStreamer();
+    const ended = vi.fn();
+    streamer.setOnPlaybackEnded(ended);
+    (streamer as any).activeSources = [{ stop: vi.fn(), disconnect: vi.fn() }];
+
+    streamer.flushPlayback(false);
+
+    expect(ended).not.toHaveBeenCalled();
+  });
 });

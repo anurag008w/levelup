@@ -176,7 +176,9 @@ export class AudioStreamer {
     } else if (this.nextPlayTime - now > AudioStreamer.MAX_PLAYBACK_BACKLOG_SECONDS) {
       // Old model audio is no longer conversationally useful. Dropping it is
       // preferable to making the user wait through a stale playback queue.
-      this.flushPlayback();
+      // Replacing stale queued model audio is not a completed assistant turn.
+      // Suppress the playback-ended callback until the replacement drains.
+      this.flushPlayback(false);
       this.nextPlayTime = now + 0.030;
     }
 
@@ -197,7 +199,7 @@ export class AudioStreamer {
   }
 
   /** Immediately flush and stop active playback (e.g. on user interruption). */
-  flushPlayback(): void {
+  flushPlayback(notifyEnded = true): void {
     for (const source of this.activeSources) {
       try {
         source.stop();
@@ -208,7 +210,7 @@ export class AudioStreamer {
     }
     this.activeSources = [];
     this.nextPlayTime = 0;
-    this.onPlaybackEnded?.();
+    if (notifyEnded) this.onPlaybackEnded?.();
   }
 
   private startLevelMonitoring(): void {

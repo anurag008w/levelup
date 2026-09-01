@@ -273,6 +273,11 @@ export default function LiveCompanionOverlay({
         }
       } catch (err: any) {
         if (!cancelled) {
+          // A denied focus or failed capture is terminal for this attempt.
+          // Do not retain a half-connected singleton or foreground service.
+          liveClient.disconnect();
+          if (activeLiveClient === liveClient) activeLiveClient = null;
+          void stopLiveCompanionService();
           hapticError();
           setStatus('error');
           setErrorMessage(err?.message || 'Connection to Gemini Live failed');

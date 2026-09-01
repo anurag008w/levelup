@@ -202,24 +202,29 @@ public class AudioRoutePlugin extends Plugin {
             call.reject("AudioManager not available");
             return;
         }
-        requestCallAudioFocus(am);
-        call.resolve(new JSObject());
+        int result = requestCallAudioFocus(am);
+        JSObject response = new JSObject();
+        boolean granted = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        response.put("granted", granted);
+        response.put("status", granted ? "granted" : result == AudioManager.AUDIOFOCUS_REQUEST_DELAYED ? "delayed" : "failed");
+        call.resolve(response);
     }
 
-    private void requestCallAudioFocus(AudioManager am) {
+    private int requestCallAudioFocus(AudioManager am) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             AudioAttributes attributes = new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build();
-            audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
                 .setAudioAttributes(attributes)
                 .setOnAudioFocusChangeListener(audioFocusListener)
-                .setWillPauseWhenDucked(true)
+                // JS owns explicit ducking, so Android must deliver CAN_DUCK.
+                .setWillPauseWhenDucked(false)
                 .build();
-            am.requestAudioFocus(audioFocusRequest);
+            return am.requestAudioFocus(audioFocusRequest);
         } else {
-            am.requestAudioFocus(audioFocusListener, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN);
+            return am.requestAudioFocus(audioFocusListener, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
         }
     }
 

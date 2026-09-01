@@ -5,7 +5,7 @@ interface AudioRouteNative {
   setRoute(options: { route: string }): Promise<{ route: string; deviceName?: string }>;
   resetRoute(): Promise<void>;
   getAvailableRoutes(): Promise<{ speaker: boolean; earpiece: boolean; bluetooth: boolean }>;
-  requestAudioFocus(): Promise<void>;
+  requestAudioFocus(): Promise<{ granted: boolean; status: 'granted' | 'delayed' | 'failed' }>;
   addListener(eventName: 'audioFocusChange', listenerFunc: (event: { focusChange: number }) => void): Promise<PluginListenerHandle>;
 }
 
@@ -49,12 +49,14 @@ export async function resetNativeAudioRoute(): Promise<void> {
 }
 
 /** Acquire Android voice-communication focus for the duration of a Live call. */
-export async function requestNativeCallAudioFocus(): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return;
+export async function requestNativeCallAudioFocus(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return true;
   try {
-    await AudioRoute.requestAudioFocus();
+    const result = await AudioRoute.requestAudioFocus();
+    return result.granted;
   } catch (err) {
     console.warn('[AudioRoute] Failed to acquire call audio focus:', err);
+    return false;
   }
 }
 
