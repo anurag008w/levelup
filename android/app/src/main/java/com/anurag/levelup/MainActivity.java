@@ -1,6 +1,5 @@
 package com.anurag.levelup;
 
-import android.content.Intent;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
@@ -13,7 +12,6 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.getcapacitor.BridgeActivity;
-import com.getcapacitor.PluginCall;
 
 import android.app.PictureInPictureParams;
 
@@ -23,6 +21,13 @@ public class MainActivity extends BridgeActivity {
 
     /** PiP exit notification — JS side ko batata hai ki user PiP se wapas aaya. */
     private static LiveCompanionPlugin livePlugin;
+
+    /** Current Activity instance — PiP enter karne ke liye (singleTask launch mode). */
+    private static MainActivity instance;
+
+    public static MainActivity getInstance() {
+        return instance;
+    }
 
     /** JS se call hota hai — Activity ko PiP mode me bhejta hai. */
     public static void enterPictureInPicture() {
@@ -38,9 +43,7 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception ignored) { }
     }
 
-    /** Plugin call ke through bhi PiP enter kar sakte ho — pending call store karo. */
-    private static PluginCall pendingPiPCall;
-
+    /** Plugin call ke through bhi PiP enter kar sakte ho. */
     public static void enterPiPViaPlugin(LiveCompanionPlugin plugin) {
         livePlugin = plugin;
         enterPictureInPicture();
@@ -63,12 +66,19 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        instance = this;
         registerPlugin(BackgroundPermissionPlugin.class);
         registerPlugin(AudioRoutePlugin.class);
         registerPlugin(ScreenSharePlugin.class);
         registerPlugin(LiveCompanionPlugin.class);
         super.onCreate(savedInstanceState);
         hideStatusBar();
+    }
+
+    @Override
+    protected void onDestroy() {
+        instance = null;
+        super.onDestroy();
     }
 
     @Override
