@@ -263,8 +263,8 @@ export class RelationshipManager {
     this.state.fatigue.todayProactiveCount += 1;
 
     if (topic) {
-      // 48-hour cooldown on same topic
-      this.state.fatigue.topicCooldowns[topic.toLowerCase()] = Date.now() + 48 * 3600 * 1000;
+      // 4-hour cooldown on same topic (prevents spamming same topic within 4h while allowing subsequent check-ins)
+      this.state.fatigue.topicCooldowns[topic.toLowerCase()] = Date.now() + 4 * 3600 * 1000;
     }
 
     if (messageText) {

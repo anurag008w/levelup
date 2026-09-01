@@ -367,6 +367,7 @@ export default function ChatScreen({
   const [showLiveOverlay, setShowLiveOverlay] = useState(false);
   const [liveMicStream, setLiveMicStream] = useState<MediaStream | null>(null);
   const [liveCamStream, setLiveCamStream] = useState<MediaStream | null>(null);
+  const liveCallSessionIdRef = useRef<string | null>(null);
   const [liveConfig, setLiveConfig] = useState<LiveSettingsConfig>(() => {
     const liveFromStore = container.store.get()?.aiSettings?.live;
     if (liveFromStore) return liveFromStore;
@@ -449,6 +450,7 @@ export default function ChatScreen({
           video: false,
         });
         setLiveMicStream(stream);
+        liveCallSessionIdRef.current = active?.id || ensureSession().id;
         setShowLiveOverlay(true);
         return;
       } catch {
@@ -468,6 +470,7 @@ export default function ChatScreen({
     setLiveMicStream(micStream);
     setLiveCamStream(camStream || null);
     setShowLivePermission(false);
+    liveCallSessionIdRef.current = active?.id || ensureSession().id;
     setShowLiveOverlay(true);
   };
 
@@ -760,7 +763,10 @@ export default function ChatScreen({
 
   const handleLiveTranscriptUpdate = (transcripts: LiveTranscriptItem[]) => {
     if (transcripts.length === 0) return;
-    const s = ensureSession();
+    // Strictly isolate live call messages to the session where the call was initiated
+    const targetSessionId = liveCallSessionIdRef.current || active?.id;
+    if (!targetSessionId) return;
+
     for (const t of transcripts) {
       if (!t.text.trim()) continue;
       const msg: ChatMessage = {
@@ -772,27 +778,36 @@ export default function ChatScreen({
         toolCalls: t.toolCalls,
         reasoning: t.reasoning,
       };
-      container.chat.appendMessage(s.id, msg);
+      container.chat.appendMessage(targetSessionId, msg);
     }
     const all = container.chat.listSessions();
     setSessions(all);
-    if (!activeId || activeId !== s.id) {
-      setActiveId(s.id);
-    }
+    // Never hijack activeId if the user navigated to another chat during the call
   };
 
   const handleLiveOverlayClose = (transcripts: LiveTranscriptItem[]) => {
     setShowLiveOverlay(false);
     setLiveMicStream(null);
     setLiveCamStream(null);
-    if (transcripts.length > 0) {
-      handleLiveTranscriptUpdate(transcripts);
+    const targetSessionId = liveCallSessionIdRef.current || active?.id;
+    if (transcripts.length > 0 && targetSessionId) {
+      for (const t of transcripts) {
+        if (!t.text.trim()) continue;
+        const msg: ChatMessage = {
+          id: t.id,
+          role: t.role,
+          content: t.text,
+          createdAt: t.timestamp,
+          model: t.role === 'assistant' ? liveConfig.model : undefined,
+          toolCalls: t.toolCalls,
+          reasoning: t.reasoning,
+        };
+        container.chat.appendMessage(targetSessionId, msg);
+      }
     }
+    liveCallSessionIdRef.current = null;
     const all = container.chat.listSessions();
     setSessions(all);
-    if (all.length > 0 && !activeId) {
-      setActiveId(all[0].id);
-    }
   };
 
   const refresh = useCallback(() => {

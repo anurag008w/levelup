@@ -8,6 +8,7 @@ import {
   SwitchCamera,
   Monitor,
   PhoneOff,
+  PhoneCall,
   Volume2,
   Minimize2,
   Settings,
@@ -31,6 +32,7 @@ import type {
   LiveTranscriptItem,
 } from '../../core/domain/live-types';
 import { GeminiLiveClient } from '../../core/domain/live-client';
+import { proactiveAgentService } from '../../features/ai/proactive-agent.service';
 import { haptic, hapticError } from '../../lib/haptics';
 import ChatMarkdown from '../ChatMarkdown';
 import LiveSettingsModal from './LiveSettingsModal';
@@ -174,8 +176,27 @@ export default function LiveCompanionOverlay({
   const [isMinimized, setIsMinimized] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
   const [activeTool, setActiveTool] = useState<{ name: string; args: any; status: 'running' | 'done' } | null>(null);
+
+  const isProactiveEnabled = proactiveAgentService.getPreferences().enabled;
+  const [callDurationSeconds, setCallDurationSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setCallDurationSeconds(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      setCallDurationSeconds((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isOpen]);
+
+  const formatDuration = (totalSec: number) => {
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const clientRef = useRef<GeminiLiveClient | null>(null);
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
@@ -538,9 +559,13 @@ export default function LiveCompanionOverlay({
               }`}
             />
             <span className="font-semibold capitalize text-text">
-              {status === 'thinking' ? 'Thinking & Tools' : status}
+              {status === 'thinking' ? 'Thinking' : status}
             </span>
-            <span className="text-[10px] text-muted">{stats.latencyMs}ms</span>
+            {isProactiveEnabled ? (
+              <span className="font-mono text-[11px] text-emerald-400 font-medium">{formatDuration(callDurationSeconds)}</span>
+            ) : (
+              <span className="text-[10px] text-muted">{stats.latencyMs}ms</span>
+            )}
           </div>
         </div>
 
@@ -733,15 +758,25 @@ export default function LiveCompanionOverlay({
             </div>
 
             <div className="text-center space-y-1">
-              <h2 className="text-lg font-bold text-text">Misa AI</h2>
+              <div className="flex items-center justify-center gap-2">
+                <h2 className="text-lg font-bold text-text">{isProactiveEnabled ? 'Misa' : 'Misa AI'}</h2>
+                {isProactiveEnabled && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/30">
+                    <PhoneCall size={10} /> Live Call
+                  </span>
+                )}
+              </div>
+              {isProactiveEnabled && (
+                <p className="text-xs font-mono text-emerald-400/90 font-medium">{formatDuration(callDurationSeconds)}</p>
+              )}
               <p className="text-xs text-muted">
                 {status === 'thinking'
-                  ? 'Thinking & executing tools...'
+                  ? 'Thinking...'
                   : status === 'speaking'
-                  ? 'Explaining solution...'
+                  ? (isProactiveEnabled ? 'Misa speaking...' : 'Explaining solution...')
                   : status === 'listening'
-                  ? 'Listening to your voice / doubt...'
-                  : 'Ready to solve JEE problems'}
+                  ? (isProactiveEnabled ? 'Listening to you...' : 'Listening to your voice / doubt...')
+                  : (isProactiveEnabled ? 'Live Call Connected' : 'Ready to solve JEE problems')}
               </p>
             </div>
           </div>

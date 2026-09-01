@@ -14,6 +14,7 @@ import { setNativeAudioRoute, resetNativeAudioRoute } from '../../lib/native-aud
 import { deviceTimeZone } from '../ports/clock';
 import { LiveSilenceStateMachine } from './live-silence-state-machine';
 import { relationshipManager } from '../../features/ai/relationship-state';
+import { proactiveAgentService } from '../../features/ai/proactive-agent.service';
 
 export interface LiveClientCallbacks {
   onStatusChange?: (status: LiveSessionStatus) => void;
@@ -167,12 +168,19 @@ export class GeminiLiveClient {
       timeZone,
     });
 
+    const isProactiveEnabled = proactiveAgentService.getPreferences().enabled;
+
     const fullSystemInstruction = [
       MISA_IDENTITY_GUARD,
       this.systemPrompt,
       this.userPersona ? `[USER PERSONA & CUSTOM INSTRUCTIONS]\n${this.userPersona}` : '',
-      this.isIncomingCallSession
-        ? `[INCOMING CALL CONTEXT]\n- You initiated this incoming voice call to check in on the student (${this.incomingCallReason}).\n- The student just picked up the call!\n- Greet them warmly and naturally (like a real friend/study partner who called on phone, e.g. "Hey! Suno, kaisa chal raha hai target?").\n- Do NOT use robotic canned scripts.\n- When the conversation naturally concludes or student says bye/padhta hu, call the 'endLiveCall' tool to hang up.`
+      isProactiveEnabled
+        ? `[LIVE PHONE CALL MODE]
+- This is an active 1-on-1 real-time voice call between you and the student.
+- ${this.isIncomingCallSession ? `You initiated this call to check in on the student (${this.incomingCallReason || 'study check-in'}).` : 'The student called you on phone.'}
+- Speak naturally like a real human friend on a phone call. Keep spoken replies short, natural, and conversational (1-3 sentences).
+- ABSOLUTE PRIORITY RULE: When the student speaks or sends a text message to you (e.g. "haa naya hi toh hai yrr"), you MUST directly reply to what they just said! NEVER ignore their message to comment on the background screen/camera or say "Lagta hai tum coding mein bohot busy ho" or "baad mein baat karenge" when they are actively talking to you!
+- If the student speaks while you are talking, listen to what they said and respond to them directly.`
         : '',
       `[LIVE REALTIME CLOCK & CONTEXT]
 - Current Local Date: ${dateString}
@@ -195,6 +203,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       })(),
       `[MULTIMODAL SCREEN & CAMERA CO-STUDY GUIDELINES]
 - You have real-time camera and screen share video feeds from the student.
+- DO NOT ASSUME BUSY: Never dismiss the student with "Lagta hai tum busy ho" or "free hoke batana" just because code, an editor, textbook, or app is open. If they are in this live session with you or messaging you, they want your company and help! Answer their doubts and messages directly.
 - OBSERVE THE REAL SITUATION ACCURATELY:
   1. EMPTY ROOM / CHAIR EMPTY / USER AWAY: If no one is at the desk or chair is empty, do NOT talk about questions or formulas! Stay quiet or say 1 brief gentle line: "Lagta hai thodi der ke liye uth ke gaye ho... jab aao toh batana!"
   2. BREAK / ENTERTAINMENT / CASUAL BROWSING: If the screen/camera shows YouTube, music, gaming, anime, social media, eating, or relaxing: BE A CHILL FRIEND! Do NOT scold or force formula talk. Acknowledge the break warmly and casually (e.g. "Break time chal raha hai? Sahi hai, thoda mind refresh kar lo!", "Gaane sun rahe ho? Vibe sahi hai 😂").
@@ -208,282 +217,527 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     const is90Day = this.config.enable90DayTrack !== false;
 
     const allToolDeclarations = [
+      // 1. Google Web Search & Current Info
       {
-        name: 'webSearch',
-        description: 'Search Google and live web for latest JEE Main/Advanced dates, NTA notices, exam announcements, news, cutoffs, facts, and live real-time information.',
+        name: "webSearch",
+        description: "Search Google and live web for latest JEE Main/Advanced dates, NTA notices, exam announcements, news, cutoffs, syllabus updates, facts, and live real-time information.",
         parameters: {
-          type: 'OBJECT',
+          type: "OBJECT",
           properties: {
-            query: { type: 'STRING', description: 'Search query to look up on Google' },
+            query: { type: "STRING", description: "Search query to look up on Google" },
           },
-          required: ['query'],
+          required: ["query"],
         },
       },
+      // 2. Real-time Clock & Date
       {
-        name: 'getTime',
-        description: 'Get the exact current local time, date, and day in India (IST).',
+        name: "getTime",
+        description: "Get the exact current local time, date, and day in India (IST).",
         parameters: {
-          type: 'OBJECT',
+          type: "OBJECT",
           properties: {},
         },
       },
-      // Custom To-Dos & Study Vault
+      // 3. Journey Context & Overall Snapshot
       {
-        name: 'addTodo',
-        description: 'Add a new custom To-Do task for the student (title, priority, duration).',
+        name: "getContext",
+        description: "Get student complete journey status: date, day/phase/streak, today targets + progress, XP, habits, gaps, blocks, and active coaching planners.",
         parameters: {
-          type: 'OBJECT',
+          type: "OBJECT",
+          properties: {},
+        },
+      },
+      // 4. Daily Study Plan & Task Management
+      {
+        name: "getPlan",
+        description: "Get active study plan, syllabus tracker, and tasks for a specific journey day (Day 1-90).",
+        parameters: {
+          type: "OBJECT",
           properties: {
-            title: { type: 'STRING', description: 'Task title / description' },
-            priority: { type: 'STRING', description: 'high, medium, or low' },
-            estimatedMinutes: { type: 'INTEGER', description: 'Estimated minutes (e.g. 30, 45, 60)' },
-            category: { type: 'STRING', description: 'physics, chemistry, maths, or general' },
+            day: { type: "INTEGER", description: "Journey day number (1-90)" },
           },
-          required: ['title'],
+          required: ["day"],
         },
       },
       {
-        name: 'listTodos',
-        description: 'List active, pending, completed, or past To-Dos of the student (can filter by date, daysBack, or category).',
+        name: "getRange",
+        description: "Get study plans and scheduled tasks across a range of days (fromDay to toDay).",
         parameters: {
-          type: 'OBJECT',
+          type: "OBJECT",
           properties: {
-            filter: { type: 'STRING', description: 'all, pending, or completed' },
-            date: { type: 'STRING', description: 'today, yesterday, or YYYY-MM-DD' },
-            daysBack: { type: 'INTEGER', description: 'Number of past days (e.g. 10)' },
-            category: { type: 'STRING', description: 'physics, chemistry, maths, general, or revision' },
+            fromDay: { type: "INTEGER", description: "Starting day number" },
+            toDay: { type: "INTEGER", description: "Ending day number" },
+          },
+          required: ["fromDay", "toDay"],
+        },
+      },
+      {
+        name: "getAllTasks",
+        description: "View all scheduled tasks (AI generated + user added) for a specific day.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            day: { type: "INTEGER", description: "Day number (1-90)" },
+          },
+          required: ["day"],
+        },
+      },
+      {
+        name: "addTask",
+        description: "Add a new study task or target to a specific day plan.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            day: { type: "INTEGER", description: "Day number (1-90)" },
+            intent: { type: "STRING", description: "Task title, topic, or description" },
+            durationMin: { type: "INTEGER", description: "Estimated duration in minutes (default: 30)" },
+            subject: { type: "STRING", description: "Physics, Chemistry, or Mathematics" },
+            priority: { type: "STRING", description: "high, medium, or low" },
+            difficulty: { type: "INTEGER", description: "1 to 5" },
+          },
+          required: ["day", "intent"],
+        },
+      },
+      {
+        name: "bulkAddTasks",
+        description: "Add multiple tasks to a day plan simultaneously.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            day: { type: "INTEGER", description: "Day number (1-90)" },
+            intents: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "Array of task descriptions to add",
+            },
+            durationMin: { type: "INTEGER", description: "Default duration per task in minutes" },
+          },
+          required: ["day", "intents"],
+        },
+      },
+      {
+        name: "editTask",
+        description: "Edit an existing study task: update title, duration, day, priority, or difficulty.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            day: { type: "INTEGER", description: "Day number where the task currently lives" },
+            taskId: { type: "STRING", description: "ID of the task to edit" },
+            title: { type: "STRING", description: "New updated title for the task" },
+            durationMin: { type: "INTEGER", description: "New duration in minutes" },
+            dayTo: { type: "INTEGER", description: "Move task to a different day number" },
+          },
+          required: ["day", "taskId"],
+        },
+      },
+      {
+        name: "removeTask",
+        description: "Hide/remove a task from a specific day plan (bank-safe).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            day: { type: "INTEGER", description: "Day number" },
+            taskId: { type: "STRING", description: "ID of the task to remove" },
+          },
+          required: ["day", "taskId"],
+        },
+      },
+      {
+        name: "bulkRemoveTasks",
+        description: "Remove multiple tasks from a day plan.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            day: { type: "INTEGER", description: "Day number" },
+            taskIds: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "Array of task IDs to remove",
+            },
+          },
+          required: ["day", "taskIds"],
+        },
+      },
+      {
+        name: "markDone",
+        description: "Mark a study plan task as completed.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            day: { type: "INTEGER", description: "Day number" },
+            taskId: { type: "STRING", description: "ID of the task to mark done" },
+          },
+          required: ["day", "taskId"],
+        },
+      },
+      {
+        name: "bulkMarkDone",
+        description: "Mark all or multiple tasks as completed for a day.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            day: { type: "INTEGER", description: "Day number" },
+            taskIds: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "Optional array of task IDs. If omitted, marks all visible tasks done.",
+            },
+          },
+          required: ["day"],
+        },
+      },
+      {
+        name: "setDayMode",
+        description: "Set a day mode: \"study\" (normal), \"rest\" (holiday/break), or \"test\" (mock test day).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            day: { type: "INTEGER", description: "Day number" },
+            mode: { type: "STRING", description: "study, rest, or test" },
+          },
+          required: ["day", "mode"],
+        },
+      },
+      // 5. Task Bank Management
+      {
+        name: "getTaskBank",
+        description: "View the complete Master Task Bank (optionally filtered by category: physics, chemistry, maths).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            category: { type: "STRING", description: "physics, chemistry, maths, or general" },
           },
         },
       },
       {
-        name: 'editTodo',
-        description: 'Edit a student To-Do: update title, priority (high, medium, low), duration (minutes), category, or completed status.',
+        name: "editAnyTask",
+        description: "Edit any task in the master bank directly.",
         parameters: {
-          type: 'OBJECT',
+          type: "OBJECT",
           properties: {
-            title: { type: 'STRING', description: 'Current title or substring of the todo to edit' },
-            newTitle: { type: 'STRING', description: 'New updated title for the todo' },
-            priority: { type: 'STRING', description: 'high, medium, or low' },
-            estimatedMinutes: { type: 'INTEGER', description: 'Updated duration in minutes' },
-            category: { type: 'STRING', description: 'physics, chemistry, maths, general, or revision' },
-            completed: { type: 'BOOLEAN', description: 'true for completed, false for pending' },
+            taskId: { type: "STRING", description: "Task ID in the bank" },
+            title: { type: "STRING", description: "Updated title" },
+            durationMin: { type: "INTEGER", description: "Updated duration" },
+            category: { type: "STRING", description: "Category" },
           },
-          required: ['title'],
+          required: ["taskId"],
         },
       },
       {
-        name: 'reorderTodos',
-        description: 'Reorder student To-Dos: shift a task to top, bottom, up, or down.',
+        name: "deleteAnyTask",
+        description: "Delete a task permanently from the master task bank.",
         parameters: {
-          type: 'OBJECT',
+          type: "OBJECT",
           properties: {
-            title: { type: 'STRING', description: 'Title or substring of the todo to move' },
-            position: { type: 'STRING', description: 'top, bottom, up, or down' },
+            taskId: { type: "STRING", description: "Task ID to delete" },
           },
-          required: ['title', 'position'],
+          required: ["taskId"],
+        },
+      },
+      // 6. Custom To-Do & Vault Management
+      {
+        name: "addTodo",
+        description: "Add a new custom To-Do task for the student (title, priority, duration, category).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            title: { type: "STRING", description: "Task title / description" },
+            priority: { type: "STRING", description: "high, medium, or low" },
+            estimatedMinutes: { type: "INTEGER", description: "Estimated minutes (e.g. 30, 45, 60)" },
+            category: { type: "STRING", description: "physics, chemistry, maths, or general" },
+          },
+          required: ["title"],
         },
       },
       {
-        name: 'toggleTodo',
-        description: 'Mark a To-Do as completed or pending.',
+        name: "listTodos",
+        description: "List active, pending, completed, or past To-Dos of the student (filter by date, daysBack, or category).",
         parameters: {
-          type: 'OBJECT',
+          type: "OBJECT",
           properties: {
-            title: { type: 'STRING', description: 'Title or substring of the todo to complete' },
-            completed: { type: 'BOOLEAN', description: 'true for completed, false for pending' },
-          },
-          required: ['title'],
-        },
-      },
-      {
-        name: 'deleteTodo',
-        description: 'Delete a To-Do from the student list (requires user confirmation before deleting).',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            title: { type: 'STRING', description: 'Title of the todo to delete' },
-            confirmed: { type: 'BOOLEAN', description: 'true if student explicitly confirmed deletion' },
-          },
-          required: ['title'],
-        },
-      },
-      {
-        name: 'listVaultResources',
-        description: 'List uploaded PDFs, formula sheets, and notes in the Study Vault.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            subject: { type: 'STRING', description: 'physics, chemistry, maths, or formula' },
+            filter: { type: "STRING", description: "all, pending, or completed" },
+            date: { type: "STRING", description: "today, yesterday, or YYYY-MM-DD" },
+            daysBack: { type: "INTEGER", description: "Number of past days" },
+            category: { type: "STRING", description: "physics, chemistry, maths, general, or revision" },
           },
         },
       },
       {
-        name: 'getContext',
-        description: 'Get current student status: tasks, streak, and progress.',
+        name: "editTodo",
+        description: "Edit a student To-Do: update title, priority, duration, category, or completed status.",
         parameters: {
-          type: 'OBJECT',
+          type: "OBJECT",
+          properties: {
+            title: { type: "STRING", description: "Current title or substring of the todo" },
+            newTitle: { type: "STRING", description: "New updated title" },
+            priority: { type: "STRING", description: "high, medium, or low" },
+            estimatedMinutes: { type: "INTEGER", description: "Updated duration in minutes" },
+            category: { type: "STRING", description: "physics, chemistry, maths, general, or revision" },
+            completed: { type: "BOOLEAN", description: "true for completed, false for pending" },
+          },
+        },
+      },
+      {
+        name: "reorderTodos",
+        description: "Reorder student To-Dos: shift a task to top, bottom, up, or down.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            title: { type: "STRING", description: "Title of the todo to move" },
+            position: { type: "STRING", description: "top, bottom, up, or down" },
+          },
+          required: ["title", "position"],
+        },
+      },
+      {
+        name: "toggleTodo",
+        description: "Mark a To-Do as completed or pending.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            title: { type: "STRING", description: "Title or substring of the todo to toggle" },
+            completed: { type: "BOOLEAN", description: "true for completed, false for pending" },
+          },
+          required: ["title"],
+        },
+      },
+      {
+        name: "deleteTodo",
+        description: "Delete a student To-Do.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            title: { type: "STRING", description: "Title of the todo to delete" },
+          },
+          required: ["title"],
+        },
+      },
+      {
+        name: "listVaultResources",
+        description: "List uploaded PDFs, formula sheets, and notes in the Study Vault.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            subject: { type: "STRING", description: "physics, chemistry, maths, or formula" },
+          },
+        },
+      },
+      // 7. Custom Study Blocks
+      {
+        name: "listBlocks",
+        description: "List all custom study blocks created for the journey.",
+        parameters: {
+          type: "OBJECT",
           properties: {},
         },
       },
       {
-        name: 'searchChatHistory',
-        description: 'Search past chat conversations and messages by topic/keyword, date, or query with full context.',
+        name: "createBlock",
+        description: "Create a new custom study block for focused preparation.",
         parameters: {
-          type: 'OBJECT',
+          type: "OBJECT",
           properties: {
-            query: { type: 'STRING', description: 'Keyword, topic or sentence to search in past chats' },
-            date: { type: 'STRING', description: 'Specific calendar date (YYYY-MM-DD)' },
-            fromDate: { type: 'STRING', description: 'Start date (YYYY-MM-DD)' },
-            toDate: { type: 'STRING', description: 'End date (YYYY-MM-DD)' },
+            name: { type: "STRING", description: "Name of the block (e.g. Mechanics Mastery)" },
+            description: { type: "STRING", description: "Description or goals of the block" },
+            days: { type: "INTEGER", description: "Duration in days" },
+            difficulty: { type: "STRING", description: "easy, medium, hard, extreme" },
+          },
+          required: ["name"],
+        },
+      },
+      {
+        name: "activateBlock",
+        description: "Activate a study block.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            blockId: { type: "STRING", description: "ID of the block to activate" },
+          },
+          required: ["blockId"],
+        },
+      },
+      {
+        name: "deleteBlock",
+        description: "Delete a study block.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            blockId: { type: "STRING", description: "ID of the block to delete" },
+          },
+          required: ["blockId"],
+        },
+      },
+      // 8. Uploaded Coaching Planners, Tests & Routine
+      {
+        name: "listPlanners",
+        description: "List uploaded coaching planners (subject, test, or routine).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            type: { type: "STRING", description: "subject, test, or routine" },
           },
         },
       },
       {
-        name: 'listChatSessions',
-        description: 'List all previous chat sessions with titles, dates, and message counts.',
+        name: "getSubject",
+        description: "Get syllabus tracker and topics for a specific subject from coaching planners.",
         parameters: {
-          type: 'OBJECT',
+          type: "OBJECT",
+          properties: {
+            subject: { type: "STRING", description: "Subject name (e.g. Physics, Chemistry, Maths)" },
+            from: { type: "STRING", description: "Start date or chapter" },
+            to: { type: "STRING", description: "End date or chapter" },
+          },
+          required: ["subject"],
+        },
+      },
+      {
+        name: "getTests",
+        description: "Get upcoming JEE mock test dates, syllabus, and test schedule from coaching planners.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            from: { type: "STRING", description: "Start date filter" },
+            to: { type: "STRING", description: "End date filter" },
+            subject: { type: "STRING", description: "Subject filter" },
+          },
+        },
+      },
+      {
+        name: "getRoutine",
+        description: "Get the daily JEE study routine and time blocks from coaching schedule.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            day: { type: "STRING", description: "Optional day name (e.g. Monday, Tuesday)" },
+          },
+        },
+      },
+      // 9. AI Memory & Durable Profile
+      {
+        name: "readMemory",
+        description: "Read the full durable memory profile of the student (commitments, weak areas, targets, score history).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            limit: { type: "INTEGER", description: "Max items to read" },
+          },
+        },
+      },
+      {
+        name: "searchMemory",
+        description: "Search remembered facts, past mistakes, formula notes, or habits about the student.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "Query to search memory for" },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "addMemory",
+        description: "Add a durable memory item to student profile.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            content: { type: "STRING", description: "The durable fact, goal, or preference to store" },
+            type: { type: "STRING", description: "fact, goal, preference, or observation" },
+          },
+          required: ["content"],
+        },
+      },
+      {
+        name: "saveCustomMemory",
+        description: "Save an important personal fact, study goal, strong/weak topic, or habit pattern about the student.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            key: { type: "STRING", description: "Category or subject key (e.g. Physics, Math, TargetScore, Weakness)" },
+            value: { type: "STRING", description: "Fact or note to remember" },
+          },
+          required: ["key", "value"],
+        },
+      },
+      // 10. Chat History Search & Sessions
+      {
+        name: "searchChatHistory",
+        description: "Search past chat conversations and messages by topic/keyword, date, or query with full context.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "Keyword, topic or sentence to search in past chats" },
+            date: { type: "STRING", description: "Specific calendar date (YYYY-MM-DD)" },
+          },
+        },
+      },
+      {
+        name: "listChatSessions",
+        description: "List all previous chat sessions with titles, dates, and message counts.",
+        parameters: {
+          type: "OBJECT",
           properties: {},
         },
       },
       {
-        name: 'getChatSession',
-        description: 'Get full transcript of a specific past conversation by sessionId or title.',
+        name: "getChatSession",
+        description: "Fetch recent chat messages or full transcript of a specific past conversation by sessionId.",
         parameters: {
-          type: 'OBJECT',
+          type: "OBJECT",
           properties: {
-            sessionId: { type: 'STRING', description: 'ID or title of the session to view' },
+            sessionId: { type: "STRING", description: "ID of the session to view" },
           },
-          required: ['sessionId'],
+          required: ["sessionId"],
         },
       },
-      {
-        name: 'saveCustomMemory',
-        description: 'Save an important user fact, goal, or weakness to persistent memory.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            content: { type: 'STRING', description: 'Fact to remember (e.g. Rotation is weak)' },
-          },
-          required: ['content'],
-        },
-      },
-      {
-        name: 'searchMemory',
-        description: 'Search saved memory entries, facts, goals, or weaknesses by keyword/topic.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            query: { type: 'STRING', description: 'Keyword, topic, weakness, or goal to search in memory' },
-          },
-          required: ['query'],
-        },
-      },
-      {
-        name: 'readMemory',
-        description: 'Read the recent saved memory facts, preferences, and observations.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {},
-        },
-      },
-      {
-        name: 'addMemory',
-        description: 'Save a new fact, preference, weakness, or goal into AI memory ("yaad rakho X").',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            content: { type: 'STRING', description: 'Fact to remember' },
-          },
-          required: ['content'],
-        },
-      },
-      {
-        name: 'getTests',
-        description: 'Get upcoming coaching test schedule and syllabus.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {},
-        },
-      },
-      {
-        name: 'getRoutine',
-        description: 'Get weekly coaching class routine or time table for a weekday.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            day: { type: 'STRING', description: 'Weekday like Monday, Tuesday' },
-          },
-        },
-      },
-      // 90-Day Challenge specific tools (only included when is90Day is true)
+      // 11. 90-Day Fast-Track Roadmap (if enabled)
       ...(is90Day
         ? [
             {
-              name: 'getPlan',
-              description: 'Get the study plan for a specific day (Day 1-90). Returns tasks and schedule.',
+              name: "get90DayToday",
+              description: "Get today planned tasks from the 90-Day JEE Fast-Track syllabus roadmap.",
               parameters: {
-                type: 'OBJECT',
-                properties: {
-                  day: { type: 'INTEGER', description: 'Day number (1 to 90)' },
-                },
-                required: ['day'],
+                type: "OBJECT",
+                properties: {},
               },
             },
             {
-              name: 'addTask',
-              description: 'Add a new study task to a specific day in the 90-day plan.',
+              name: "get90DayDay",
+              description: "Get planned tasks and chapter targets for a specific day in the 90-Day track.",
               parameters: {
-                type: 'OBJECT',
+                type: "OBJECT",
                 properties: {
-                  day: { type: 'INTEGER', description: 'Day number (1 to 90)' },
-                  intent: { type: 'STRING', description: 'What to study / title of the task' },
-                  durationMin: { type: 'INTEGER', description: 'Duration in minutes (e.g. 30, 45, 60)' },
+                  day: { type: "INTEGER", description: "Day number between 1 and 90" },
                 },
-                required: ['day', 'intent', 'durationMin'],
+                required: ["day"],
               },
             },
             {
-              name: 'markDone',
-              description: 'Mark a 90-day study task as completed for a day.',
+              name: "mark90DayTaskDone",
+              description: "Mark a task completed in the 90-Day JEE Fast-Track roadmap.",
               parameters: {
-                type: 'OBJECT',
+                type: "OBJECT",
                 properties: {
-                  day: { type: 'INTEGER', description: 'Day number (1 to 90)' },
-                  taskId: { type: 'STRING', description: 'The task id from plan' },
+                  day: { type: "INTEGER", description: "Day number" },
+                  taskId: { type: "STRING", description: "Task ID" },
                 },
-                required: ['day', 'taskId'],
-              },
-            },
-            {
-              name: 'editTask',
-              description: 'Edit a 90-day study task for a day (title, duration in minutes).',
-              parameters: {
-                type: 'OBJECT',
-                properties: {
-                  day: { type: 'INTEGER', description: 'Day number (1 to 90)' },
-                  taskId: { type: 'STRING', description: 'The task id from plan' },
-                  title: { type: 'STRING', description: 'New title of the task' },
-                  durationMin: { type: 'INTEGER', description: 'New duration in minutes' },
-                },
-                required: ['day', 'taskId'],
+                required: ["day", "taskId"],
               },
             },
           ]
         : []),
+      // 12. Call Management
       {
-        name: 'endLiveCall',
-        description: 'End and disconnect the current live voice call gracefully when the conversation is finished or user asks to hang up / bye.',
+        name: "endLiveCall",
+        description: "End and hang up the current live call when the conversation naturally concludes, student says bye/gotta go/phone rakhta hu, or study session is done.",
         parameters: {
-          type: 'OBJECT',
+          type: "OBJECT",
           properties: {
-            reason: { type: 'STRING', description: 'Reason for ending the call (e.g. study session concluded)' },
+            reason: { type: "STRING", description: "Reason for ending the call" },
           },
         },
       },
     ];
-
-    const toolDeclarations = allToolDeclarations;
 
     try {
       const ai = new GoogleGenAI({ apiKey });
@@ -510,7 +764,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
           systemInstruction: {
             parts: [{ text: fullSystemInstruction }],
           },
-          tools: [{ functionDeclarations: toolDeclarations as any }],
+          tools: [{ functionDeclarations: allToolDeclarations as any }],
         },
         callbacks: {
           onopen: () => {
@@ -539,7 +793,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.startKeepAliveAndSilenceObserver();
       void setNativeAudioRoute(this.config.defaultAudioRoute);
 
-      // Proactively greet student immediately upon voice connection with dynamic context
+      // Greet student upon connection
       setTimeout(() => {
         try {
           const rel = relationshipManager.getState();
@@ -552,13 +806,19 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
             ? `Recent chat conversation context:\n"""\n${this.recentChatSummary.slice(-600)}\n"""\nPick up seamlessly from this conversation or ask what they're up to.`
             : '';
 
-          if (this.isIncomingCallSession) {
-            this.session?.sendRealtimeInput({
-              text: `[SYSTEM EVENT: Incoming call connected! Time of day: ${timeGreeting}. ${topicClause} ${chatContextSnippet} Greet warmly and naturally like a real friend on phone (e.g. "Hey! Suno, kaisa chal raha hai?"). Reason: "${this.incomingCallReason || 'Study check-in'}"]`,
-            });
+          if (isProactiveEnabled) {
+            if (this.isIncomingCallSession) {
+              this.session?.sendRealtimeInput({
+                text: `[SYSTEM EVENT: You placed this call to the student and they answered! Greet warmly and enthusiastically like a real friend on phone (e.g. "Hey! Suno, free ho na? Kaisa chal raha hai?"). Remember: YOU called THEM to talk with them! DO NOT say they are busy, do NOT dismiss them or say "baad me baat karenge". Talk with them warmly and ask what they are working on!]`,
+              });
+            } else {
+              this.session?.sendRealtimeInput({
+                text: `[SYSTEM EVENT: The student called you on phone and you picked up! Greet naturally and warmly in 1 short, friendly sentence like a friend answering a call (e.g. "Haan bolo! Kaisa chal raha hai?").]`,
+              });
+            }
           } else {
             this.session?.sendRealtimeInput({
-              text: `[SYSTEM EVENT: Live voice call connected! Time of day: ${timeGreeting}. ${topicClause} ${chatContextSnippet} Greet naturally in 1 short, friendly Hinglish sentence continuing from the chat context or asking what they're working on.]`,
+              text: `[SYSTEM EVENT: Live voice session started! Time of day: ${timeGreeting}. ${topicClause} ${chatContextSnippet} Greet naturally in 1 short, friendly Hinglish sentence continuing from the chat context or asking what they're working on.]`,
             });
           }
         } catch (e) {
@@ -591,6 +851,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         this.updateTranscript('assistant', `${this.currentAssistantMessage} [interrupted]`, true);
         this.currentAssistantMessage = '';
       }
+      this.activeAssistantTurnId = null;
       return;
     }
 
@@ -598,6 +859,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     const parts = data.serverContent?.modelTurn?.parts;
     if (Array.isArray(parts)) {
       this.setStatus('speaking');
+      this.activeUserTurnId = null;
       for (const part of parts) {
         if (part.inlineData && part.inlineData.data) {
           this.audioStreamer.playAudioChunk(part.inlineData.data);
@@ -611,6 +873,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
     // 4. Real-time Output Transcription (Assistant subtitles)
     if (data.serverContent?.outputTranscription?.text) {
+      this.activeUserTurnId = null;
       this.currentAssistantMessage += data.serverContent.outputTranscription.text;
       this.updateTranscript('assistant', this.currentAssistantMessage, false);
     }
@@ -619,12 +882,15 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     if (data.serverContent?.inputTranscription?.text) {
       this.lastUserVoiceTime = Date.now();
       this.silenceStateMachine.onSpeechActivity();
+      this.activeAssistantTurnId = null;
+      this.currentAssistantMessage = '';
       this.updateTranscript('user', data.serverContent.inputTranscription.text, false);
     }
 
-    // 6. Turn complete
+    // 6. Turn complete — seal the assistant turn so next turn is a new bubble!
     if (data.serverContent?.turnComplete) {
       this.currentAssistantMessage = '';
+      this.activeAssistantTurnId = null;
       this.setStatus('listening');
       this.lastTurnFinishedTime = Date.now();
     }
@@ -710,9 +976,31 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     const trimmed = text.trim();
     if (!trimmed) return;
 
+    // Reset silence observer, active turns, and speech activity anchors immediately
+    this.activeAssistantTurnId = null;
+    this.activeUserTurnId = null;
+    this.currentAssistantMessage = '';
+    this.lastUserVoiceTime = Date.now();
+    this.lastTurnFinishedTime = Date.now();
+    this.lastSilenceNudgeAt = Date.now();
+    this.silenceStateMachine.onSpeechActivity();
+    if (this.status === 'speaking') {
+      this.audioStreamer.flushPlayback();
+      this.setStatus('listening');
+    }
+
     // Display clean text for the user message bubble (never dump raw tool outputs into user bubble!)
     const cleanUserText = (displayText || text).trim();
-    this.updateTranscript('user', cleanUserText);
+    const userId = `tr-user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    this.transcripts.push({
+      id: userId,
+      role: 'user',
+      text: cleanUserText,
+      timestamp: new Date().toISOString(),
+    });
+    if (this.callbacks.onTranscriptUpdate) {
+      this.callbacks.onTranscriptUpdate([...this.transcripts]);
+    }
 
     // If tools were pre-executed, store them on pendingToolCalls so they appear inside the assistant card box!
     if (toolCalls && toolCalls.length > 0) {
@@ -729,26 +1017,51 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   }
 
   private updateTranscript(role: 'user' | 'assistant', text: string, isInterrupted = false): void {
-    const lastItem = this.transcripts[this.transcripts.length - 1];
-    if (lastItem && lastItem.role === role && !lastItem.isInterrupted) {
-      lastItem.text = text;
-      if (role === 'assistant' && this.pendingToolCalls.length > 0) {
-        lastItem.toolCalls = [...(lastItem.toolCalls || []), ...this.pendingToolCalls];
+    if (role === 'assistant') {
+      const existingItem = this.activeAssistantTurnId
+        ? this.transcripts.find((t) => t.id === this.activeAssistantTurnId)
+        : null;
+
+      if (existingItem && !existingItem.isInterrupted) {
+        existingItem.text = text;
+        existingItem.isInterrupted = isInterrupted;
+        if (this.pendingToolCalls.length > 0) {
+          existingItem.toolCalls = [...(existingItem.toolCalls || []), ...this.pendingToolCalls];
+          this.pendingToolCalls = [];
+        }
+      } else {
+        const id = `tr-asst-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        this.activeAssistantTurnId = id;
+        const activeCalls = this.pendingToolCalls.length > 0 ? [...this.pendingToolCalls] : undefined;
         this.pendingToolCalls = [];
+        this.transcripts.push({
+          id,
+          role: 'assistant',
+          text,
+          timestamp: new Date().toISOString(),
+          isInterrupted,
+          toolCalls: activeCalls,
+        });
       }
     } else {
-      const activeCalls = role === 'assistant' && this.pendingToolCalls.length > 0 ? [...this.pendingToolCalls] : undefined;
-      if (role === 'assistant') {
-        this.pendingToolCalls = [];
+      const existingItem = this.activeUserTurnId
+        ? this.transcripts.find((t) => t.id === this.activeUserTurnId)
+        : null;
+
+      if (existingItem && !existingItem.isInterrupted) {
+        existingItem.text = text;
+        existingItem.isInterrupted = isInterrupted;
+      } else {
+        const id = `tr-user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        this.activeUserTurnId = id;
+        this.transcripts.push({
+          id,
+          role: 'user',
+          text,
+          timestamp: new Date().toISOString(),
+          isInterrupted,
+        });
       }
-      this.transcripts.push({
-        id: `tr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        role,
-        text,
-        timestamp: new Date().toISOString(),
-        isInterrupted,
-        toolCalls: activeCalls,
-      });
     }
 
     if (this.callbacks.onTranscriptUpdate) {
@@ -757,22 +1070,30 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   }
 
   private isUserTalkingOverThreshold = false;
+  private audioPreRollBuffer: string[] = [];
+  private activeAssistantTurnId: string | null = null;
+  private activeUserTurnId: string | null = null;
+  private lastSilenceNudgeAt = 0;
 
   /** Start recording user voice & streaming audio chunks. */
   async startVoiceStreaming(mediaStream: MediaStream): Promise<void> {
     await this.audioStreamer.startRecording(
       mediaStream,
-      (pcm16Base64) => {
-        this.sendAudioChunk(pcm16Base64);
+      (pcm16Base64, rmsLevel = 0) => {
+        this.sendAudioChunk(pcm16Base64, rmsLevel);
       },
       (inputLevel) => {
-        this.isUserTalkingOverThreshold = inputLevel > 0.25;
-        // Only register user speech activity if assistant is NOT actively speaking (prevents speaker echo from resetting silence streaks)
-        if (inputLevel > 0.14 && this.status !== 'speaking') {
+        this.isUserTalkingOverThreshold = inputLevel > 0.035;
+        // Register user speech activity
+        if (inputLevel > 0.035) {
           this.lastUserVoiceTime = Date.now();
           this.silenceStateMachine.onSpeechActivity();
+          if (this.status === 'speaking') {
+            this.audioStreamer.flushPlayback();
+            this.setStatus('listening');
+          }
         }
-        if (inputLevel > 0.08 && this.status === 'connected') {
+        if (inputLevel > 0.025 && this.status === 'connected') {
           this.setStatus('listening');
         }
         this.updateStats(inputLevel, 0);
@@ -783,12 +1104,48 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     );
   }
 
-  private sendAudioChunk(pcm16Base64: string): void {
+  private sendAudioChunk(pcm16Base64: string, rmsLevel = 0): void {
     if (!this.session) return;
-    // Prevent acoustic feedback from device speakers from cutting off assistant sentences mid-speech
-    if (this.status === 'speaking' && !this.isUserTalkingOverThreshold) {
+
+    const isSpeech = rmsLevel > 0.03 || this.isUserTalkingOverThreshold;
+
+    // Instant barge-in: If user speaks while assistant is speaking, halt assistant audio immediately
+    // so user is never talked over and their audio is preserved.
+    if (this.status === 'speaking' && isSpeech) {
+      this.audioStreamer.flushPlayback();
+      this.setStatus('listening');
+      this.lastUserVoiceTime = Date.now();
+      this.silenceStateMachine.onSpeechActivity();
+      // Flush buffered pre-roll chunks so the initial phonemes are not lost
+      while (this.audioPreRollBuffer.length > 0) {
+        const bufferedChunk = this.audioPreRollBuffer.shift();
+        if (bufferedChunk) {
+          try {
+            this.session.sendRealtimeInput({
+              audio: {
+                data: bufferedChunk,
+                mimeType: 'audio/pcm;rate=16000',
+              },
+            });
+          } catch {
+            // Ignored
+          }
+        }
+      }
+    }
+
+    // Keep rolling pre-roll buffer of recent audio (~200ms)
+    this.audioPreRollBuffer.push(pcm16Base64);
+    if (this.audioPreRollBuffer.length > 5) {
+      this.audioPreRollBuffer.shift();
+    }
+
+    // Only skip acoustic room echo silence when assistant is actively speaking and user hasn't spoken,
+    // but ALWAYS send whenever user is talking or assistant is listening!
+    if (this.status === 'speaking' && !isSpeech) {
       return;
     }
+
     try {
       this.session.sendRealtimeInput({
         audio: {
@@ -923,6 +1280,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     }, 20000);
 
     // 2. Silence Proactive Companion Observer with State Machine (every 2.5s)
+    // 2. Silence Observer (checks every 2.5s)
     this.silenceObserverTimer = setInterval(() => {
       if (!this.session || this.status === 'speaking' || this.status === 'thinking') return;
       if (this.status !== 'connected' && this.status !== 'listening') return;
@@ -934,40 +1292,24 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       );
       const silenceDurationSec = (Date.now() - lastActivityAnchor) / 1000;
 
-      try {
+      // 45 seconds silence threshold with 35s cooldown between nudges
+      if (silenceDurationSec >= 45 && (Date.now() - this.lastSilenceNudgeAt > 35000)) {
+        this.lastSilenceNudgeAt = Date.now();
+        this.lastTurnFinishedTime = Date.now();
         const isCameraOrScreen = this.visionStreamer.getIsCameraActive() || this.visionStreamer.getIsScreenSharing();
-        const rel = relationshipManager.getState();
-        const activeTopic = rel.commitments[0]?.topic || rel.currentSubject || 'General Problem Solving';
-        const topicMemoryContext = `${activeTopic} (${rel.currentGoal || 'JEE 2027'})`;
 
-        // Extract real durable memories and commitments
-        const memoryFactList: string[] = [];
-        if (rel.commitments.length > 0) {
-          rel.commitments.forEach(c => memoryFactList.push(`Goal commitment: ${c.topic} (${c.subject})`));
-        }
-        if (rel.durableMemories.length > 0) {
-          rel.durableMemories.forEach(m => memoryFactList.push(m.fact));
-        }
-        if (rel.pendingPromises.length > 0) {
-          rel.pendingPromises.forEach(p => memoryFactList.push(`User promise: ${p.userPromise}`));
-        }
-        if (rel.currentProblemArea) {
-          memoryFactList.push(`Struggling area: ${rel.currentProblemArea}`);
+        let promptText = '';
+        if (isCameraOrScreen) {
+          promptText = `[User has been quietly focused for ~45 seconds. If they are reading or thinking quietly, stay quiet or give a brief, friendly check-in. If they just said or texted something, answer their message directly.]`;
+        } else {
+          promptText = `[User has been quiet for ~45 seconds. Speak 1 short, natural, friendly Hinglish line to check in on what they are working on.]`;
         }
 
-        const promptText = this.silenceStateMachine.evaluate({
-          silenceDurationSec,
-          isCameraOrScreenActive: isCameraOrScreen,
-          topicMemoryContext,
-          memoryFactList,
-        });
-
-        if (promptText) {
-          this.lastTurnFinishedTime = Date.now(); // reset anchor for next progressive stage
+        try {
           this.session.sendRealtimeInput({ text: promptText });
+        } catch (e) {
+          console.warn('[GeminiLive] Silence nudge error:', e);
         }
-      } catch (e) {
-        console.warn('[GeminiLive] Silence state machine error:', e);
       }
     }, 2500);
   }

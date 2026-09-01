@@ -16,7 +16,7 @@ export class AudioStreamer {
   private isRecording = false;
   private isMuted = false;
   private playbackSpeed = 1.0;
-  private onAudioChunk?: (pcm16Base64: string) => void;
+  private onAudioChunk?: (pcm16Base64: string, rmsLevel?: number) => void;
   private onInputLevel?: (level: number) => void;
   private onOutputLevel?: (level: number) => void;
 
@@ -58,7 +58,7 @@ export class AudioStreamer {
   /** Start recording from microphone and stream 16kHz PCM chunks. */
   async startRecording(
     stream: MediaStream,
-    onChunk: (pcm16Base64: string) => void,
+    onChunk: (pcm16Base64: string, rmsLevel?: number) => void,
     onInputLevel?: (level: number) => void,
     onOutputLevel?: (level: number) => void,
   ): Promise<void> {
@@ -85,11 +85,16 @@ export class AudioStreamer {
     this.scriptProcessor.onaudioprocess = (e) => {
       if (!this.isRecording || this.isMuted) return;
       const inputData = e.inputBuffer.getChannelData(0);
+      let sumSq = 0;
+      for (let i = 0; i < inputData.length; i++) {
+        sumSq += inputData[i] * inputData[i];
+      }
+      const rms = Math.sqrt(sumSq / inputData.length);
       const downsampled16k = this.downsampleTo16k(inputData, ctx.sampleRate);
       const pcm16 = this.floatTo16BitPCM(downsampled16k);
       const base64 = this.arrayBufferToBase64(pcm16.buffer);
       if (this.onAudioChunk && base64) {
-        this.onAudioChunk(base64);
+        this.onAudioChunk(base64, rms);
       }
     };
 

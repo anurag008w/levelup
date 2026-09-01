@@ -627,8 +627,11 @@ export default function AISettingsScreen({
               type="checkbox"
               checked={proactivePrefs.enabled}
               onChange={(e) => updateProactive({ enabled: e.target.checked })}
+              aria-label="Toggle proactive study nudges"
             />
-            <span className="toggle-slider" />
+            <span className="track">
+              <span className="thumb" />
+            </span>
           </label>
         </div>
 
@@ -650,8 +653,11 @@ export default function AISettingsScreen({
               type="checkbox"
               checked={proactivePrefs.callsEnabled}
               onChange={(e) => updateProactive({ callsEnabled: e.target.checked })}
+              aria-label="Toggle WhatsApp-style incoming live calls"
             />
-            <span className="toggle-slider" />
+            <span className="track">
+              <span className="thumb" />
+            </span>
           </label>
         </div>
 

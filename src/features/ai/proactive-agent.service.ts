@@ -79,6 +79,13 @@ export type MessageInjectionListener = (message: {
 }) => void;
 
 const DYNAMIC_TEMPLATES: Record<string, string[]> = {
+  inactivity_daytime: [
+    "2-3 ghante se shanti hai! Numerical solve ho rahe hain ya koi step fasa hua hai? Batana saath me crack karte hain! 💪",
+    "Suno, break se wapas aaye? Ek 30-minute ka focus sprint shuru karein? 🎯",
+    "Hey! Next study session ka kya plan hai? Ek target decide kar lo, momentum turant banega!",
+    "Padhai me flow bana ya distraction ho raha hai? Thoda pani piyo aur 1 topic uthate hain! 🥤",
+    "Ek quick check-in — aaj ka subject kaisa progress kar raha hai? Revision smooth chal raha hai na?",
+  ],
   optics: [
     'Optics ke ray diagrams solve hue kya? Sign convention me focal length dhyan se lena!',
     'Hey! Optics me Snell’s law ya lens formula ke pyqs attempt kiye kya? Batana agar koi case fasa ho.',
@@ -163,6 +170,44 @@ function pickVariedTemplate(topic: string, recentSent: string[] = []): string {
   const filtered = pool.filter((t) => !recentSent.includes(t));
   const available = filtered.length > 0 ? filtered : pool;
   return available[Math.floor(Math.random() * available.length)];
+}
+
+function pickContextualMessage(topic: string, relState?: any): string {
+  const recentSent = relState?.recentSentMessages || [];
+
+  // Check if user has an active planned commitment
+  const commitment = relState?.commitments?.find((c: any) => c.state === "PLANNED");
+  if (commitment && Math.random() < 0.45) {
+    const commMsgs = [
+      `Suno! Aaj ${commitment.topic} ka session plan tha na? Shuru kiya ya koi numerical fasa hai? 💪`,
+      `Hey! ${commitment.topic} ke pyqs solve karne the na aaj? Kaisa chal raha hai progress? 🎯`,
+      `${commitment.topic} wala target start hua? Batana agar koi concept dubara recall karna ho! 😊`,
+    ];
+    const availableComm = commMsgs.filter((m) => !recentSent.includes(m));
+    if (availableComm.length > 0) {
+      return availableComm[Math.floor(Math.random() * availableComm.length)];
+    }
+  }
+
+  // Check if user had a recent struggle area
+  if (relState?.currentProblemArea && Math.random() < 0.35) {
+    const struggleMsgs = [
+      `Woh ${relState.currentProblemArea} wala doubt clear ho gaya tha ya abhi bhi tricky lag raha hai? 💡`,
+      `Suno, ${relState.currentProblemArea} me koi specific formula ya step dubara dekhna ho toh batana, saath me kar lenge! 🤝`,
+    ];
+    const availableStruggle = struggleMsgs.filter((m) => !recentSent.includes(m));
+    if (availableStruggle.length > 0) {
+      return availableStruggle[Math.floor(Math.random() * availableStruggle.length)];
+    }
+  }
+
+  // Check if user had a pending promise
+  const promise = relState?.pendingPromises?.find((p: any) => !p.isResumed);
+  if (promise && Math.random() < 0.4) {
+    return `Hey! Bol rahe the na baad me bataoge — ab batao kaisa raha target? 😏`;
+  }
+
+  return pickVariedTemplate(topic, recentSent);
 }
 
 const STORAGE_KEY = 'misa_proactive_agent_prefs_v2';
@@ -293,13 +338,66 @@ class ProactiveAgentService {
 
     this.checkColdStartOnboarding();
 
+    // Check & dispatch due scheduled triggers every 20 seconds
+    setInterval(() => {
+      this.checkAndDispatchDueTriggers();
+    }, 20000);
+
     setInterval(() => {
       this.checkInactivityAndFire();
-    }, 3 * 60 * 1000);
+    }, 2 * 60 * 1000);
 
     setTimeout(() => {
+      this.checkAndDispatchDueTriggers();
       this.checkInactivityAndFire();
     }, 5000);
+  }
+
+  private checkAndDispatchDueTriggers(): void {
+    if (!this.prefs.enabled) return;
+    if (this.isQuietTime()) return;
+
+    const now = Date.now();
+    const due = this.pendingTriggers.filter((t) => t.scheduledTime <= now);
+    if (due.length === 0) return;
+
+    this.pendingTriggers = this.pendingTriggers.filter((t) => t.scheduledTime > now);
+    this.saveState();
+
+    const relState = relationshipManager.getState();
+    for (const trig of due) {
+      if (trig.type === "incoming_call") {
+        this.triggerIncomingCall(trig.callReason || "Scheduled study check-in");
+        continue;
+      }
+
+      const validation = validateProactiveDelivery(
+        {
+          id: `trig_${trig.id}`,
+          type: "commitment_followup",
+          topic: trig.topic,
+          urgency: 0.7,
+          relevance: 0.85,
+          confidence: 0.9,
+          freshness: 0.9,
+          offlineText: trig.offlineMessage,
+          isInsideActiveSession: this.isUserCurrentlyInChat,
+        },
+        relState,
+        {
+          lastActiveTimestamp: this.lastActiveTimestamp,
+          isInsideActiveSession: this.isUserCurrentlyInChat,
+          recentSentMessages: relState.recentSentMessages,
+          now,
+        }
+      );
+
+      if (validation.valid) {
+        const msg = validation.sanitizedText || trig.offlineMessage;
+        this.injectMessageIntoChat(msg);
+        relationshipManager.recordProactiveSent(trig.topic || "proactive_nudge", msg);
+      }
+    }
   }
 
   private checkInactivityAndFire(): void {
@@ -320,6 +418,38 @@ class ProactiveAgentService {
     if (hasPending) return;
 
     const relState = relationshipManager.getState();
+
+    // Daytime Study Inactivity Check: If quiet for 2.5h to 18h during active daytime, check in naturally
+    if (this.lastUserChatTimestamp > 0 && inactiveSince >= 2.5 * 3600 * 1000 && inactiveSince < 24 * 3600 * 1000) {
+      const lastDaytimeNudge = relState.fatigue.topicCooldowns['inactivity_daytime'] || 0;
+      if (now >= lastDaytimeNudge) {
+        const msg = pickContextualMessage('inactivity_daytime', relState);
+        const validation = validateProactiveDelivery(
+          {
+            id: 'inactivity_daytime',
+            type: 'check_in',
+            urgency: 0.6,
+            relevance: 0.85,
+            confidence: 0.9,
+            freshness: 0.9,
+            offlineText: msg,
+            isInsideActiveSession: this.isUserCurrentlyInChat,
+          },
+          relState,
+          {
+            lastActiveTimestamp: this.lastActiveTimestamp,
+            isInsideActiveSession: this.isUserCurrentlyInChat,
+            recentSentMessages: relState.recentSentMessages,
+            now,
+          }
+        );
+        if (validation.valid) {
+          this.injectMessageIntoChat(validation.sanitizedText || msg);
+          relationshipManager.recordProactiveSent('inactivity_daytime', msg);
+          return;
+        }
+      }
+    }
 
     if (this.lastUserChatTimestamp > 0 && inactiveSince >= 96 * 3600 * 1000) {
       const msg = pickVariedTemplate('inactivity_96h', relState.recentSentMessages);
@@ -485,16 +615,8 @@ class ProactiveAgentService {
     this.recordUserActivity();
     this.isUserCurrentlyInChat = true;
 
-    const { wasIgnoring, pendingPromise } = relationshipManager.recordAppEngaged();
-    if (wasIgnoring) {
-      setTimeout(() => {
-        if (pendingPromise) {
-          this.injectMessageIntoChat('Acha mil gaye aap 😭 waise kal wali baat ab bataoge? 😏');
-        } else {
-          this.injectMessageIntoChat('Acha mil gaye aap 😭 kya chal raha tha?');
-        }
-      }, 1200);
-    }
+    // Clear ignoring state quietly without interrupting the active user turn with canned text
+    relationshipManager.recordAppEngaged();
 
     this.lastUserChatTimestamp = Date.now();
     const lowerUser = userText.toLowerCase();
@@ -518,7 +640,11 @@ class ProactiveAgentService {
       lowerUser.includes('call karo') ||
       lowerUser.includes('call pe aao') ||
       lowerUser.includes('call lagao') ||
-      lowerUser.includes('mujhe call karo')
+      lowerUser.includes('mujhe call karo') ||
+      lowerUser.includes('call me') ||
+      lowerUser.includes('phone karo') ||
+      lowerUser.includes('call karna') ||
+      lowerUser.includes('mujhe call')
     ) {
       setTimeout(() => {
         this.triggerIncomingCall('User ne chat me call karne ko kaha');
@@ -645,7 +771,7 @@ class ProactiveAgentService {
     const lower = userText.toLowerCase();
     const now = Date.now();
 
-    let delayMs = 3.5 * 3600 * 1000;
+    let delayMs = 1.5 * 3600 * 1000;
     let topic = 'jee_prep';
     let urgency = 0.6;
     let relevance = 0.8;
@@ -653,7 +779,7 @@ class ProactiveAgentService {
 
     if (lower.includes('optics') || lower.includes('ray diagram') || lower.includes('mirror') || lower.includes('lens')) {
       topic = 'optics';
-      delayMs = 3.5 * 3600 * 1000;
+      delayMs = 1.5 * 3600 * 1000;
       urgency = 0.8;
       relevance = 0.95;
     } else if (lower.includes('rotat') || lower.includes('torque') || lower.includes('moment of inertia')) {
@@ -663,7 +789,7 @@ class ProactiveAgentService {
       relevance = 0.95;
     } else if (lower.includes('organic') || lower.includes('reaction') || lower.includes('mechanism')) {
       topic = 'organic';
-      delayMs = 4 * 3600 * 1000;
+      delayMs = 2 * 3600 * 1000;
       urgency = 0.75;
       relevance = 0.9;
     } else if (lower.includes('thermo') || lower.includes('entropy') || lower.includes('enthalpy')) {
@@ -686,12 +812,13 @@ class ProactiveAgentService {
       relevance = 0.9;
     } else if (lower.includes('thak') || lower.includes('tired') || lower.includes('demotivat') || lower.includes('stress')) {
       topic = 'rest_burnout';
-      delayMs = 5 * 3600 * 1000;
+      delayMs = 45 * 60 * 1000;
       urgency = 0.65;
       relevance = 0.85;
     }
 
-    const offlineMessage = pickVariedTemplate(topic, relationshipManager.getState().recentSentMessages);
+    const relState = relationshipManager.getState();
+    const offlineMessage = pickContextualMessage(topic, relState);
     const scheduledTime = now + delayMs;
 
     const candidate: ProactiveCandidate = {
@@ -707,12 +834,15 @@ class ProactiveAgentService {
 
     const decision = socialDecisionEngine.shouldSpeak(
       candidate,
-      relationshipManager.getState(),
+      relState,
       this.lastActiveTimestamp,
       scheduledTime,
       this.currentActivityState
     );
     if (!decision.allow) return;
+
+    // Filter out prior pending triggers of same topic to avoid duplicate reminders
+    this.pendingTriggers = this.pendingTriggers.filter((t) => t.topic !== topic);
 
     const triggerId = Math.floor(Math.random() * 100000) + 1000;
     const trigger: ProactiveTrigger = {
@@ -726,7 +856,7 @@ class ProactiveAgentService {
 
     this.pendingTriggers.push(trigger);
     this.saveState();
-    relationshipManager.recordProactiveSent(topic, offlineMessage);
+    // Note: recordProactiveSent is NOT called here — it is recorded upon ACTUAL message delivery!
 
     if (Capacitor.isNativePlatform()) {
       try {
