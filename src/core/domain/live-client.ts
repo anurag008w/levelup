@@ -10,9 +10,10 @@ import type {
 import { AudioStreamer } from './audio-streamer';
 import { VisionStreamer } from './vision-streamer';
 import { MISA_IDENTITY_GUARD, ROMAN_SCRIPT_RULE, type ChatToolCallRecord } from './chat';
-import { setNativeAudioRoute, resetNativeAudioRoute, requestNativeCallAudioFocus } from '../../lib/native-audio-route';
+import { setNativeAudioRoute, resetNativeAudioRoute, requestNativeCallAudioFocus, addNativeAudioFocusListener } from '../../lib/native-audio-route';
 import { deviceTimeZone } from '../ports/clock';
 import { LiveSilenceStateMachine } from './live-silence-state-machine';
+import { canRetryLiveConnection, isPermanentLiveConnectionError } from './live-connection-policy';
 import { relationshipManager } from '../../features/ai/relationship-state';
 import { proactiveAgentService } from '../../features/ai/proactive-agent.service';
 
@@ -49,7 +50,6 @@ export class GeminiLiveClient {
   private connectStartTime = Date.now();
   private lastUserVoiceTime = 0;
   private lastTurnFinishedTime = 0;
-  private keepAliveTimer: any = null;
   private silenceObserverTimer: any = null;
   private isIncomingCallSession = false;
   private incomingCallReason = '';
@@ -129,6 +129,18 @@ export class GeminiLiveClient {
 
   getVisionStreamer(): VisionStreamer {
     return this.visionStreamer;
+  }
+
+  /** App lifecycle is an explicit runtime signal, not a visibility heuristic.
+   * We keep the call logically alive in background and let close/error events
+   * decide reconnecting; foreground never blindly creates a second session. */
+  setBackgroundActive(background: boolean): void {
+    if (this.isUserExplicitlyClosed || !this.session) return;
+    if (background) {
+      this.setStatus('background-active');
+    } else if (this.status === 'background-active') {
+      this.setStatus('listening');
+    }
   }
 
   private setStatus(status: LiveSessionStatus): void {
@@ -782,6 +794,9 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
             this.startKeepAliveAndSilenceObserver();
           },
           onmessage: (data: any) => {
+            // SDK callbacks from an old socket must never mutate the current
+            // transcript, tool state, or playback after a reconnect.
+            if (!this.isActiveAttempt(connectionAttempt)) return;
             this.handleServerMessage(data);
           },
           onerror: (err: any) => {
@@ -792,7 +807,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
               this.connectionAttempt += 1;
               this.setStatus('error');
               if (this.callbacks.onError) this.callbacks.onError(msg);
-            } else if (this.status !== 'idle' && this.reconnectAttempts < this.maxReconnectAttempts) {
+            } else if (!this.isPermanentConnectionError(err) && this.status !== 'idle') {
               void this.handleAutoReconnect();
             } else {
               this.setStatus('error');
@@ -802,10 +817,8 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
           onclose: () => {
             if (!this.isActiveAttempt(connectionAttempt)) return;
             console.info('[GeminiLive] WebSocket onclose. Status:', this.status);
-            if (this.status !== 'idle' && this.reconnectAttempts < this.maxReconnectAttempts) {
+            if (this.status !== 'idle') {
               void this.handleAutoReconnect();
-            } else if (this.status !== 'idle') {
-              this.setStatus('disconnected');
             }
           },
         },
@@ -821,8 +834,15 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.startKeepAliveAndSilenceObserver();
       void setNativeAudioRoute(this.config.defaultAudioRoute);
       void requestNativeCallAudioFocus();
+      void this.installAudioFocusListener();
 
-      // Greet student upon connection
+      // A reconnect is a continuation, not a fresh call.  Do not duplicate the
+      // opening greeting or discard the in-memory transcript/context.
+      if (this.reconnectAttempts > 0) {
+        this.session?.sendRealtimeInput({ text: '[SYSTEM EVENT: Connection recovered. Continue the current conversation naturally; do not greet again. Briefly acknowledge a network break only if the user notices it.]' });
+        return;
+      }
+      // Greet student upon initial connection only.
       setTimeout(() => {
         try {
           const rel = relationshipManager.getState();
@@ -1111,13 +1131,12 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private lastSilenceNudgeAt = 0;
   private isReconnecting = false;
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 99; // effectively unlimited — reconnect until user explicitly hangs up
+  private reconnectWindowStartedAt = 0;
   private currentMediaStream: MediaStream | null = null;
   private activeApiKey: string | null = null;
   private isUserExplicitlyClosed = false;
-  private visibilityHandler: (() => void) | null = null;
-  private lastWsActivity = Date.now(); // timestamp of last message received from server
-  private wsWatchdogTimer: any = null; // fires if server goes completely silent for >30s
+  private lastWsActivity = Date.now(); // diagnostic only; silence is not a transport failure
+  private audioFocusListener: { remove: () => Promise<void> } | null = null;
   private connectionAttempt = 0;
 
   private isActiveAttempt(attempt: number): boolean {
@@ -1152,6 +1171,11 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   private isModelAvailabilityError(error: any): boolean {
     return /model|not found|unsupported/i.test(String(error?.message || ''));
+  }
+
+  private isPermanentConnectionError(error: any): boolean {
+    const message = String(error?.message || error || '').toLowerCase();
+    return this.isModelAvailabilityError(error) || isPermanentLiveConnectionError(message);
   }
 
   /** Start recording user voice & streaming audio chunks. */
@@ -1324,6 +1348,25 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     this.audioStreamer.setMuted(muted);
   }
 
+  private async installAudioFocusListener(): Promise<void> {
+    if (this.audioFocusListener) return;
+    this.audioFocusListener = await addNativeAudioFocusListener((focusChange) => {
+      // LOSS and transient loss must stop both capture and stale speech. Focus
+      // regain restores capture; focus is local audio policy, not a network error.
+      if (focusChange === -1 || focusChange === -2) {
+        this.audioStreamer.setMuted(true);
+        this.audioStreamer.flushPlayback();
+        this.setStatus('background-active');
+      } else if (focusChange === 1) {
+        this.audioStreamer.setMuted(false);
+        this.audioStreamer.setOutputVolume(1);
+        if (this.session) this.setStatus('listening');
+      } else if (focusChange === -3) {
+        this.audioStreamer.setOutputVolume(0.2);
+      }
+    });
+  }
+
   /** Switch audio output route (Speaker / Earpiece / Bluetooth). */
   async setAudioRoute(route: LiveAudioRoute): Promise<void> {
     this.config.defaultAudioRoute = route;
@@ -1349,60 +1392,10 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private startKeepAliveAndSilenceObserver(): void {
     this.lastTurnFinishedTime = Date.now();
     this.lastWsActivity = Date.now();
-    if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
     if (this.silenceObserverTimer) clearInterval(this.silenceObserverTimer);
-    if (this.wsWatchdogTimer) clearInterval(this.wsWatchdogTimer);
-
-    // 1. Keep-Alive Heartbeat every 10s — prevents WebSocket idle timeout in foreground & background
-    // Uses audioStreamEnd pattern to explicitly tell Gemini the user is listening but quiet
-    this.keepAliveTimer = setInterval(() => {
-      if (this.session && (this.status === 'listening' || this.status === 'connected')) {
-        if (Date.now() - this.lastUserVoiceTime > 8000) {
-          try {
-            this.session.sendRealtimeInput({
-              audio: {
-                data: 'AAAAAAAAAAAAAAAA', // Valid 16-bit PCM silence (12 zero bytes = 6 samples)
-                mimeType: 'audio/pcm;rate=16000',
-              },
-            });
-          } catch (e) {
-            console.warn('[GeminiLive] Keep-alive error:', e);
-          }
-        }
-      }
-    }, 10000);
-
-    // 2. Watchdog: if server is completely silent for 30s while we're "connected", reconnect
-    this.wsWatchdogTimer = setInterval(() => {
-      if (this.isUserExplicitlyClosed || this.isReconnecting) return;
-      if (this.status !== 'listening' && this.status !== 'connected' && this.status !== 'speaking' && this.status !== 'thinking') return;
-      const silentMs = Date.now() - this.lastWsActivity;
-      if (silentMs > 30000) {
-        console.warn(`[GeminiLive] Watchdog: no server message for ${Math.round(silentMs / 1000)}s — triggering reconnect`);
-        void this.handleAutoReconnect();
-      }
-    }, 10000);
-
-    // 3. Visibility change listener — reconnect immediately when tab/screen comes back after suspension
-    if (typeof document !== 'undefined') {
-      if (this.visibilityHandler) {
-        document.removeEventListener('visibilitychange', this.visibilityHandler);
-      }
-      this.visibilityHandler = () => {
-        if (document.visibilityState === 'visible' && !this.isUserExplicitlyClosed) {
-          const silentMs = Date.now() - this.lastWsActivity;
-          // If we were hidden and server went silent > 8s, assume WebSocket was suspended/killed
-          if (silentMs > 8000 && !this.isReconnecting) {
-            console.info('[GeminiLive] Tab became visible after suspension — triggering reconnect');
-            this.reconnectAttempts = 0; // fresh slate on user return
-            void this.handleAutoReconnect();
-          }
-        }
-      };
-      document.addEventListener('visibilitychange', this.visibilityHandler);
-    }
-
-    // 4. Silence Proactive Companion Observer (every 2.5s)
+    // The SDK owns WebSocket protocol keepalive. Never inject fake PCM silence:
+    // it can alter VAD/turn detection, and user silence is not a failed transport.
+    // This observer is companion behaviour only, never a connection watchdog.
     this.silenceObserverTimer = setInterval(() => {
       if (!this.session || this.status === 'speaking' || this.status === 'thinking') return;
       if (this.status !== 'connected' && this.status !== 'listening') return;
@@ -1414,8 +1407,9 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       );
       const silenceDurationSec = (Date.now() - lastActivityAnchor) / 1000;
 
-      // 45 seconds silence threshold with 35s cooldown between nudges
-      if (silenceDurationSec >= 45 && (Date.now() - this.lastSilenceNudgeAt > 35000)) {
+      // Give an explicit thinker considerably more room; a single gentle prompt
+      // is preferable to repetitive study nudges.
+      if (silenceDurationSec >= 90 && (Date.now() - this.lastSilenceNudgeAt > 120000)) {
         this.lastSilenceNudgeAt = Date.now();
         this.lastTurnFinishedTime = Date.now();
         const isCameraOrScreen = this.visionStreamer.getIsCameraActive() || this.visionStreamer.getIsScreenSharing();
@@ -1424,7 +1418,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         if (isCameraOrScreen) {
           promptText = `[User has been quietly focused for ~45 seconds. If they are reading or thinking quietly, stay quiet or give a brief, friendly check-in. If they just said or texted something, answer their message directly.]`;
         } else {
-          promptText = `[User has been quiet for ~45 seconds. Speak 1 short, natural, friendly Hinglish line to check in on what they are working on.]`;
+          promptText = `[User has been quietly thinking for a while. If a brief check-in would genuinely help, use one warm, non-repetitive Hinglish line; otherwise stay quiet.]`;
         }
 
         try {
@@ -1438,23 +1432,22 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   private async handleAutoReconnect(): Promise<void> {
     if (this.isReconnecting || this.isUserExplicitlyClosed) return;
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.warn('[GeminiLive] Max reconnect attempts reached.');
-      this.setStatus('disconnected');
+    if (!canRetryLiveConnection(this.reconnectAttempts, this.reconnectWindowStartedAt)) {
+      this.setStatus('error');
+      this.callbacks.onError?.('Network connection could not be restored. End the call or try again.');
       return;
     }
 
     this.isReconnecting = true;
     this.reconnectAttempts += 1;
-    console.info(`[GeminiLive] Attempting auto-reconnect (${this.reconnectAttempts})...`);
-    this.setStatus('connecting');
+    if (!this.reconnectWindowStartedAt) this.reconnectWindowStartedAt = Date.now();
+    console.info(`[GeminiLive] reconnect attempt=${this.reconnectAttempts} lastTransportActivity=${this.lastWsActivity}`);
+    this.setStatus('reconnecting');
 
-    if (this.keepAliveTimer) { clearInterval(this.keepAliveTimer); this.keepAliveTimer = null; }
     if (this.silenceObserverTimer) { clearInterval(this.silenceObserverTimer); this.silenceObserverTimer = null; }
-    if (this.wsWatchdogTimer) { clearInterval(this.wsWatchdogTimer); this.wsWatchdogTimer = null; }
 
     // Exponential backoff capped at 3s (800ms → 1.6s → 2.4s → 3s → 3s …)
-    const delay = Math.min(3000, 800 * Math.min(this.reconnectAttempts, 4));
+    const delay = Math.min(20_000, 750 * 2 ** (this.reconnectAttempts - 1)) + Math.floor(Math.random() * 400);
     await new Promise((r) => setTimeout(r, delay));
 
     if (this.isUserExplicitlyClosed) {
@@ -1471,7 +1464,9 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       if (this.currentMediaStream) {
         await this.startVoiceStreaming(this.currentMediaStream);
       }
-      this.reconnectAttempts = 0; // reset after successful reconnect
+      // Only reset after a real, established replacement session.
+      this.reconnectAttempts = 0;
+      this.reconnectWindowStartedAt = 0;
       this.isReconnecting = false;
       console.info('[GeminiLive] Successfully reconnected session!');
     } catch (e) {
@@ -1494,24 +1489,16 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.currentMediaStream = null;
       this.activeApiKey = null;
     }
-    if (this.keepAliveTimer) {
-      clearInterval(this.keepAliveTimer);
-      this.keepAliveTimer = null;
-    }
     if (this.silenceObserverTimer) {
       clearInterval(this.silenceObserverTimer);
       this.silenceObserverTimer = null;
     }
-    if (this.wsWatchdogTimer) {
-      clearInterval(this.wsWatchdogTimer);
-      this.wsWatchdogTimer = null;
-    }
-    if (this.visibilityHandler && typeof document !== 'undefined') {
-      document.removeEventListener('visibilitychange', this.visibilityHandler);
-      this.visibilityHandler = null;
-    }
     this.silenceStateMachine.reset();
     this.audioStreamer.stopRecording();
+    if (this.audioFocusListener) {
+      void this.audioFocusListener.remove();
+      this.audioFocusListener = null;
+    }
     this.visionStreamer.stop();
     void resetNativeAudioRoute();
     if (this.session) {

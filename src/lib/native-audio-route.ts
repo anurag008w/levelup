@@ -1,4 +1,4 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type { LiveAudioRoute } from '../core/domain/live-types';
 
 interface AudioRouteNative {
@@ -6,6 +6,18 @@ interface AudioRouteNative {
   resetRoute(): Promise<void>;
   getAvailableRoutes(): Promise<{ speaker: boolean; earpiece: boolean; bluetooth: boolean }>;
   requestAudioFocus(): Promise<void>;
+  addListener(eventName: 'audioFocusChange', listenerFunc: (event: { focusChange: number }) => void): Promise<PluginListenerHandle>;
+}
+
+/** Subscribe to real Android focus changes for the lifetime of a call. */
+export async function addNativeAudioFocusListener(listener: (focusChange: number) => void): Promise<PluginListenerHandle | null> {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    return await AudioRoute.addListener('audioFocusChange', event => listener(event.focusChange));
+  } catch (err) {
+    console.warn('[AudioRoute] Failed to subscribe to audio focus:', err);
+    return null;
+  }
 }
 
 const AudioRoute = registerPlugin<AudioRouteNative>('AudioRoute');
