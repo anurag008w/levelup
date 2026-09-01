@@ -74,6 +74,8 @@
             android:name=".ScreenShareForegroundService"
             android:foregroundServiceType="mediaProjection"
             android:exported="false" />
+        <service android:name=".LiveCompanionForegroundService"
+            android:foregroundServiceType="microphone|mediaPlayback" android:exported="false" />
     </application>
 
     <!-- Permissions -->

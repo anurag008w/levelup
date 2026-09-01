@@ -26,6 +26,11 @@ export class AudioStreamer {
   private activeSources: AudioBufferSourceNode[] = [];
   private levelInterval: number | null = null;
   private onPlaybackEnded?: () => void;
+  private outputVolume = 1;
+
+  setOutputVolume(volume: number): void {
+    this.outputVolume = Math.max(0, Math.min(1, volume));
+  }
 
   setOnPlaybackEnded(cb?: () => void): void {
     this.onPlaybackEnded = cb;
@@ -154,7 +159,11 @@ export class AudioStreamer {
 
     const speed = this.playbackSpeed && this.playbackSpeed > 0 ? this.playbackSpeed : 1.0;
     source.playbackRate.value = speed;
-    source.connect(this.outputAnalyser!);
+    // Keep a single output chain; gain must be connected to analyser.
+    const gain = ctx.createGain();
+    gain.gain.value = this.outputVolume;
+    source.connect(gain);
+    gain.connect(this.outputAnalyser!);
 
     const playDuration = audioBuffer.duration / speed;
     const now = ctx.currentTime;
@@ -167,7 +176,9 @@ export class AudioStreamer {
     } else if (this.nextPlayTime - now > AudioStreamer.MAX_PLAYBACK_BACKLOG_SECONDS) {
       // Old model audio is no longer conversationally useful. Dropping it is
       // preferable to making the user wait through a stale playback queue.
-      this.flushPlayback();
+      // Replacing stale queued model audio is not a completed assistant turn.
+      // Suppress the playback-ended callback until the replacement drains.
+      this.flushPlayback(false);
       this.nextPlayTime = now + 0.030;
     }
 
@@ -188,7 +199,7 @@ export class AudioStreamer {
   }
 
   /** Immediately flush and stop active playback (e.g. on user interruption). */
-  flushPlayback(): void {
+  flushPlayback(notifyEnded = true): void {
     for (const source of this.activeSources) {
       try {
         source.stop();
@@ -199,7 +210,7 @@ export class AudioStreamer {
     }
     this.activeSources = [];
     this.nextPlayTime = 0;
-    this.onPlaybackEnded?.();
+    if (notifyEnded) this.onPlaybackEnded?.();
   }
 
   private startLevelMonitoring(): void {

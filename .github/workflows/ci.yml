@@ -37,7 +37,10 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
 
       - name: Run tests
         run: npm run test -- --run
@@ -45,7 +48,7 @@ jobs:
       - name: Type check
         run: npm run typecheck || npx tsc --noEmit
 
-  build:
+  web-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: test
@@ -59,18 +62,8 @@ jobs:
           node-version: 24
           cache: "npm"
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v5
-        with:
-          distribution: "temurin"
-          java-version: "21"
-          cache: "gradle"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build web app
         env:
@@ -81,12 +74,30 @@ jobs:
           VITE_DEFAULT_AI_AUTH: ${{ secrets.VITE_DEFAULT_AI_AUTH }}
         run: npm run build
 
+  android-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: web-build
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - uses: android-actions/setup-android@v4
+      - name: Install dependencies
+        run: npm ci
       - name: Sync Capacitor Android project
         run: npx cap sync android
 
-      - name: Build debug APK
+      - name: Android unit tests and debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew test assembleDebug --no-daemon
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
