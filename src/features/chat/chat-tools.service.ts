@@ -19,6 +19,7 @@ import { formatDayLabel, formatPlanProgress, formatScheduledTasks } from './plan
 import { buildContextOverview } from './context-overview';
 import { contentDayForDate, dateForDayNumber } from '../habit-engine/dates';
 import { deviceTimeZone, todayISO, type Clock } from '../../core/ports/clock';
+import { proactiveAgentService } from '../ai/proactive-agent.service';
 
 const MIN_DAY = 1;
 // Content day cap. Generous sanity bound for AI-requested day numbers: the
@@ -29,6 +30,46 @@ const MAX_DAY = 366;
 const MAX_RANGE_DAYS = 10;
 /** Fallback duration (minutes) when the model omits durationMin on addTask/bulkAddTasks. */
 const DEFAULT_TASK_DURATION_MIN = 45;
+
+/**
+ * Proactive tools executor — ChatToolsService ke andar nahi, module-level.
+ * proactiveAgentService singleton ke methods ko tool-action se route karta hai
+ * (scheduleMessage / makeCall / scheduleCall / listScheduled / cancelScheduled).
+ */
+function runProactiveAction(action: ChatToolAction): Promise<ChatToolResult> {
+  switch (action.action) {
+    case 'scheduleMessage': {
+      const at = Date.parse(action.scheduledAtISO);
+      if (Number.isNaN(at)) return Promise.resolve({ ok: false, summary: 'scheduleMessage: invalid scheduledAtISO timestamp' });
+      if (at <= Date.now()) return Promise.resolve({ ok: false, summary: 'scheduleMessage: time must be in the future' });
+      const id = proactiveAgentService.scheduleMessage(action.text, at, action.topic, action.linkedEntity);
+      return Promise.resolve({ ok: true, summary: `Message scheduled for ${new Date(at).toLocaleString()} (id ${id}). ${action.linkedEntity ? `Jab "${action.linkedEntity.value}" complete ho jaye to auto-cancel ho jayega.` : ''}` });
+    }
+    case 'scheduleCall': {
+      const at = Date.parse(action.scheduledAtISO);
+      if (Number.isNaN(at)) return Promise.resolve({ ok: false, summary: 'scheduleCall: invalid scheduledAtISO timestamp' });
+      if (at <= Date.now()) return Promise.resolve({ ok: false, summary: 'scheduleCall: time must be in the future' });
+      const id = proactiveAgentService.scheduleCall(action.reason, at);
+      return Promise.resolve({ ok: true, summary: `Call scheduled for ${new Date(at).toLocaleString()} (id ${id}).` });
+    }
+    case 'makeCall': {
+      proactiveAgentService.makeCall(action.reason);
+      return Promise.resolve({ ok: true, summary: 'Call shuru ki ja rahi hai abhi. IncomingCall popup dikhega.' });
+    }
+    case 'listScheduled': {
+      const list = proactiveAgentService.listScheduledMessages();
+      if (list.length === 0) return Promise.resolve({ ok: true, summary: 'No scheduled messages/calls pending.' });
+      const lines = list.map((s) => `${s.id}: ${s.kind} — ${s.text || s.reason || ''} (${new Date(s.scheduledTime).toLocaleString()})`);
+      return Promise.resolve({ ok: true, summary: `Scheduled:\n${lines.join('\n')}` });
+    }
+    case 'cancelScheduled': {
+      const ok = proactiveAgentService.cancelScheduledMessage(action.id);
+      return Promise.resolve({ ok, summary: ok ? `Scheduled item ${action.id} cancelled.` : `Scheduled item ${action.id} nahi mila.` });
+    }
+    default:
+      return Promise.resolve({ ok: false, summary: 'unknown proactive action' });
+  }
+}
 
 const ACTIONS = new AiActionRegistry();
 ACTIONS.register({ id: 'addTask', label: 'Add task', description: 'Create an editable task for one plan day.', entityType: 'dynamicTaskBank', permissions: ['create'] });
@@ -53,6 +94,12 @@ ACTIONS.register({ id: 'editMemory', label: 'Edit memory', description: 'Update 
 ACTIONS.register({ id: 'deleteMemory', label: 'Delete memory', description: 'Delete memory entry.', entityType: 'appState', permissions: ['edit'], confirmationRequired: true });
 ACTIONS.register({ id: 'pinMemory', label: 'Pin memory', description: 'Pin entry to long-term memory.', entityType: 'appState', permissions: ['edit'] });
 ACTIONS.register({ id: 'unpinMemory', label: 'Unpin memory', description: 'Unpin entry from long-term memory.', entityType: 'appState', permissions: ['edit'] });
+// Proactive: scheduleMessage / makeCall / scheduleCall / listScheduled / cancelScheduled
+ACTIONS.register({ id: 'scheduleMessage', label: 'Schedule a message', description: 'Misa a future-time message schedule kar sakti hai — user ko yaad dilane ke liye.', entityType: 'appState', permissions: ['edit'] });
+ACTIONS.register({ id: 'makeCall', label: 'Call student now', description: 'Misa abhi user ko ek proactive call kar sakti hai.', entityType: 'appState', permissions: ['edit'] });
+ACTIONS.register({ id: 'scheduleCall', label: 'Schedule a call', description: 'Misa a future-time call schedule kar sakti hai user ke saath.', entityType: 'appState', permissions: ['edit'] });
+ACTIONS.register({ id: 'listScheduled', label: 'List scheduled', description: 'Scheduled messages/calls list karo.', entityType: 'appState', permissions: ['read'] });
+ACTIONS.register({ id: 'cancelScheduled', label: 'Cancel scheduled', description: 'A scheduled message/call cancel karo.', entityType: 'appState', permissions: ['delete'], confirmationRequired: true });
 
 // Strong plan/block/chat action words. A message containing any of these is
 // clearly about the plan, task bank, custom blocks or chat history.
@@ -570,6 +617,13 @@ export class ChatToolsService {
         case 'pinMemory':
         case 'unpinMemory':
           return this.runMemory(action);
+        // Proactive scheduling / calls (AI tools)
+        case 'scheduleMessage':
+        case 'makeCall':
+        case 'scheduleCall':
+        case 'listScheduled':
+        case 'cancelScheduled':
+          return runProactiveAction(action);
       }
     } catch (err) {
       if (isAbortError(err)) throw err;
@@ -849,6 +903,12 @@ export class ChatToolsService {
       ),
     };
     this.store.save(nextState);
+
+    // To-Do complete hua — related scheduled reminder auto-cancel karo.
+    if (nextCompleted) {
+      proactiveAgentService.cancelScheduledForDoneEntity('todo', target.title);
+      proactiveAgentService.cancelScheduledForDoneEntity('keyword', target.title);
+    }
 
     return {
       ok: true,
@@ -1899,6 +1959,16 @@ export class ChatToolsService {
       confirmed: true,
     });
     this.store.save(resultAction.state);
+
+    // Kaam ho gaya — usse related scheduled reminder auto-cancel karo
+    // ("ho gaya" wala scheduled ab dobara na bhejo) — title aur taskId dono.
+    const completedTitle = this.taskBank.getById(taskId)?.title ?? '';
+    if (completedTitle) {
+      proactiveAgentService.cancelScheduledForDoneEntity('task', completedTitle);
+      proactiveAgentService.cancelScheduledForDoneEntity('keyword', completedTitle);
+    }
+    proactiveAgentService.cancelScheduledForDoneEntity('keyword', taskId);
+
     return { ok: true, versionId: resultAction.versionId, summary: resultAction.summary };
   }
 

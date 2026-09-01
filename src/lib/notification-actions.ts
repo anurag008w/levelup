@@ -118,6 +118,19 @@ async function minimizeIfNative(): Promise<void> {
   }
 }
 
+// sessionId missing hone par (cold-start/Notification Action extra strip) reply
+// kabhi drop na ho — most-recent active/last session resolve karo, warna naya
+// session banao. Reply hamesha kisi na kisi session me jaa ke bheje jaye.
+async function resolveOrCreateSession(): Promise<string> {
+  try {
+    const sessions = container.chat.listSessions();
+    if (sessions && sessions.length > 0) return sessions[0].id;
+  } catch {
+    // ignore — neeche naya create
+  }
+  return container.chat.createSession('Notification Reply').id;
+}
+
 export function setupNotificationActions(): void {
   if (setup) return;
   setup = true;
@@ -148,30 +161,26 @@ export function setupNotificationActions(): void {
       // live overlay usi client se text message bhej deta hai
       return;
     }
-    if (!sessionId) return;
-
     if (actionId === 'tap' || actionId === 'open') {
-      window.dispatchEvent(new CustomEvent('levelup:open-chat', { detail: { sessionId } }));
+      window.dispatchEvent(new CustomEvent('levelup:open-chat', { detail: sessionId ? { sessionId } : {} }));
       return;
     }
 
     if (actionId === 'reply' && inputValue && inputValue.trim()) {
-      if (isDuplicateReply(sessionId, inputValue)) {
+      const text = inputValue.trim();
+      // sessionId missing (cold-start) toh reply kabhi drop na ho — active/last
+      // session resolve karo ya naya banao. Dedupe fallback key use hoti hai.
+      if (isDuplicateReply(sessionId || '__no_session__', text)) {
         return;
       }
       void (async () => {
-        // User ka reply conversation me username ke saath dikhe (MessagingStyle),
-        // isliye send ka exact time yahan capture karo — AI bubbles ke reveal
-        // timestamps se pehle ka hai.
         const replySentAt = Date.now();
         try {
-          // Send turant shuru karo, phir request dispatch hone ke liye chhota
-          // grace dekar app turant minimize — user notification shade se reply
-          // kar raha hai, app UI khula nahi rehna chahiye. Capacitor
-          // KeepRunning=true (default) → background WebView JS timers +
-          // fetch-streams continue karte hain, isliye send minimize ke baad
-          // bhi complete hota hai.
-          const sendPromise = container.chat.send(sessionId, inputValue.trim());
+          const targetId = sessionId || (await resolveOrCreateSession());
+          // User ka reply conversation me username ke saath dikhe (MessagingStyle),
+          // isliye send ka exact time yahan capture karo — AI bubbles ke reveal
+          // timestamps se pehle ka hai.
+          const sendPromise = container.chat.send(targetId, text);
           await new Promise((resolve) => setTimeout(resolve, REPLY_GRACE_MS));
           await minimizeIfNative();
 
@@ -196,15 +205,21 @@ export function setupNotificationActions(): void {
             // har popup me" wala bug), largeBody = poora reply so far, messages
             // = native MessagingStyle expand ke liye (scrollable, full-length)
             // — user ka reply pehle, phir Misa ke bubbles.
-            for (const step of buildNotificationSteps(bubbles, schedule, undefined, { text: inputValue.trim(), at: replySentAt })) {
-              setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', sessionId, 0, true, step.text, step.messages), step.delayMs);
+            for (const step of buildNotificationSteps(bubbles, schedule, undefined, { text, at: replySentAt })) {
+              setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', targetId, 0, true, step.text, step.messages), step.delayMs);
             }
           } else {
             // Koi visible bubble nahi (sirf whitespace reply) — ek turant notification.
-            void notifyAiReply('Misa', assistant.content.trim() || 'Naya AI reply aaya', sessionId, 0, true);
+            void notifyAiReply('Misa', assistant.content.trim() || 'Naya AI reply aaya', targetId, 0, true);
           }
-        } catch {
-          // session delete ho gaya ya AI off — chup rehna, koi error nahi dikhana
+        } catch (err) {
+          // Silently drop na karo — user ko error notification se batao reply
+          // nahi gaya taaki wo chat khol kar dobara bole.
+          try {
+            await notifyAiReply('Misa', `Reply bhejne me dikkat aayi: ${err instanceof Error ? err.message : 'try again'}. Chat khol kar dobara bolo.`, sessionId || undefined, 0, true);
+          } catch {
+            // no-op
+          }
         } finally {
           // Chat UI agar khula ho to refresh ho jaye.
           window.dispatchEvent(new Event('levelup:chat-updated'));

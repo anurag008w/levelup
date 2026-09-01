@@ -163,6 +163,34 @@ export const chatToolActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('deleteMemory'), id: z.string().min(1), confirmed: z.boolean().optional() }),
   z.object({ action: z.literal('pinMemory'), id: z.string().min(1) }),
   z.object({ action: z.literal('unpinMemory'), id: z.string().min(1) }),
+  // Proactive: Misa future me message/call schedule kar sakti hai (AI tools).
+  z.object({
+    action: z.literal('scheduleMessage'),
+    text: z.string().min(1).max(500),
+    scheduledAtISO: z.string().min(1).max(40).describe('ISO-8601 timestamp — kab message bhejna hai (future)'),
+    topic: z.string().max(60).optional(),
+    linkedEntity: z.object({
+      type: z.enum(['todo', 'task', 'memory', 'keyword']),
+      value: z.string().min(1).max(200).describe('Entity ka naam/id — jab ye complete ho toh scheduled auto-cancel'),
+    }).optional(),
+  }),
+  z.object({
+    action: z.literal('makeCall'),
+    reason: z.string().min(1).max(300).describe('Call ka reason — user ko dikhega'),
+  }),
+  z.object({
+    action: z.literal('scheduleCall'),
+    reason: z.string().min(1).max(300).describe('Call ka reason'),
+    scheduledAtISO: z.string().min(1).max(40).describe('ISO-8601 timestamp — kab call karna hai (future)'),
+  }),
+  z.object({
+    action: z.literal('listScheduled'),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  z.object({
+    action: z.literal('cancelScheduled'),
+    id: z.string().min(1),
+  }),
 ]);
 
 export type ChatToolAction = z.infer<typeof chatToolActionSchema>;
@@ -221,6 +249,14 @@ ALL TOOLS (pick the MOST specific one):
 - markDone / bulkMarkDone — complete tasks. setDayMode{day,mode:study|rest|test} — set day as study, rest (holiday) or test (mock test) day.
 - listBlocks / createBlock / editBlock / extendBlock / activateBlock / deleteBlock — custom study blocks.
 - listPlanners / getSubject / getPlanner / getTest / getTests / getRoutine / getDay — uploaded coaching planners (read-only).
+
+PROACTIVE TOOLS (only when the student explicitly asks — NEVER push unsolicited messages/calls):
+- scheduleMessage{text,scheduledAtISO,topic?} — schedule a reminder message for a future time (ISO-8601). Use when the student says "kal 5 baje yaad dilana", "raat ko message karna".
+- scheduleCall{reason,scheduledAtISO} — schedule a voice-call check-in at a future time.
+- makeCall{reason} — call the student RIGHT NOW (student asked you to call them).
+- listScheduled — list currently pending scheduled messages/calls.
+- cancelScheduled{id} — cancel a scheduled message/call by id.
+Only use these when the student EXPLICITLY requests scheduling/calling. Never initiate unprompted.
 
 CURRENT CONTEXT:
 - Whole-journey questions ("mera progress kya hai", "status batao", "context batao", "mera streak kitna hai", "overview de") → {"action":"getContext"} — the complete snapshot (date, day/phase/streak, today's tasks + progress, XP, habits, gaps, blocks, planners). Prefer it over getPlan for these.
@@ -439,6 +475,12 @@ export const CHAT_TOOL_CATALOG: ChatToolMeta[] = [
   { id: 'pinMemory', label: 'Pin Memory', description: 'Memory entry ko long-term memory mein pin karo.', example: '{"action":"pinMemory","id":"mem-1"}' },
   { id: 'unpinMemory', label: 'Unpin Memory', description: 'Memory entry ko long-term memory se unpin karo.', example: '{"action":"unpinMemory","id":"mem-1"}' },
   { id: 'websearch', label: 'Web search', description: 'Live Google Search — current/recent info (news, syllabus changes, results, dates). Model khud decide karta hai kab search karna hai; raw results nahi dikhte, sirf summarized jawab.', example: 'auto — model decide karega', readOnly: true },
+  // Proactive scheduling / calls
+  { id: 'scheduleMessage', label: 'Schedule message', description: 'Future time par ek reminder message schedule karo (student jab pooche "kal yaad dilana").', example: '{"action":"scheduleMessage","text":"Aaj ka revision karo!","scheduledAtISO":"2026-09-03T18:30:00+05:30","topic":"revision"}' },
+  { id: 'makeCall', label: 'Call now', description: 'Student ko abhi voice-call karo (jab wo khud kahu ki call karo).', example: '{"action":"makeCall","reason":"Study check-in"}' },
+  { id: 'scheduleCall', label: 'Schedule call', description: 'Future time par ek voice-call check-in schedule karo.', example: '{"action":"scheduleCall","reason":"Weekly progress check","scheduledAtISO":"2026-09-04T20:00:00+05:30"}' },
+  { id: 'listScheduled', label: 'List scheduled', description: 'Pending scheduled messages/calls list karo.', example: '{"action":"listScheduled"}', readOnly: true },
+  { id: 'cancelScheduled', label: 'Cancel scheduled', description: 'A scheduled message/call cancel karo id se.', example: '{"action":"cancelScheduled","id":"<id>"}', confirmationRequired: true },
 ];
 
 /**
@@ -571,5 +613,10 @@ export const TOOL_LABELS: Record<string, string> = {
   webSearch: 'Web search hua',
   getTime: 'Time & Date dekha',
   saveCustomMemory: 'Memory me save kiya',
+  scheduleMessage: 'Message schedule kiya',
+  makeCall: 'Call shuru ki',
+  scheduleCall: 'Call schedule ki',
+  listScheduled: 'Scheduled items list ki',
+  cancelScheduled: 'Scheduled item cancel kiya',
 };
 

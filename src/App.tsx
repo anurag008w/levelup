@@ -119,7 +119,13 @@ export default function App() {
     const unsubscribe = proactiveAgentService.onIncomingCall((callEvent) => {
       setIncomingCall(callEvent);
     });
-    return unsubscribe;
+    // StrictMode/HMR double-mount se duplicate intervals + listeners na bane —
+    // teardown pe destroy() sab cleanup karta hai (initPlatformNotifications
+    // gaye listeners aur timers hata deta hai), phir rebuild fresh hota hai.
+    return () => {
+      unsubscribe();
+      proactiveAgentService.destroy();
+    };
   }, []);
 
   const handleAcceptCall = (callEvent: IncomingCallEvent) => {

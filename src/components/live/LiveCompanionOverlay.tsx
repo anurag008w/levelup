@@ -149,6 +149,8 @@ interface LiveCompanionOverlayProps {
   onUpdateConfig: (newConfig: LiveSettingsConfig) => void;
   onExecuteTool?: (name: string, args: Record<string, unknown>) => Promise<any>;
   onTranscriptUpdate?: (transcripts: LiveTranscriptItem[]) => void;
+  /** Incoming-call meta — AI ko batata hai ki usne call ki hai (nahi toh "student called you"). */
+  incomingCallMeta?: { isIncomingCall: boolean; reason?: string };
 }
 
 export default function LiveCompanionOverlay({
@@ -164,6 +166,7 @@ export default function LiveCompanionOverlay({
   toolCatalog = [],
   config,
   onUpdateConfig,
+  incomingCallMeta,
   onExecuteTool,
   onTranscriptUpdate,
 }: LiveCompanionOverlayProps) {
@@ -271,7 +274,7 @@ export default function LiveCompanionOverlay({
 
     if (!existingClient) (async () => {
       try {
-        await liveClient.connect(apiKey);
+        await liveClient.connect(apiKey, incomingCallMeta);
         await startLiveCompanionService();
         if (cancelled) {
           return;

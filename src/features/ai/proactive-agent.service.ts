@@ -72,6 +72,11 @@ export interface ScheduledProactiveMessage {
   scheduledTime: number; // epoch ms
   topic?: string;
   createdAt: number;
+  /** Jab user is felt entity (todo title / task / memory) ki baat pura kar de
+   *  toh is scheduled item ko auto-cancel karo — "ho gaya" kaam track. */
+  linkedEntity?: { type: 'todo' | 'task' | 'memory' | 'keyword'; value: string };
+  /** Track kaunsi scheduled fired ho chuki — dobara na bhejo. */
+  cancelled?: boolean;
 }
 
 export interface IncomingCallEvent {
@@ -327,9 +332,13 @@ class ProactiveAgentService {
       void this.cancelAllPendingTriggers();
       ringtonePlayer.stop();
       this.pendingTriggers = [];
+      // AI-tool scheduled messages bhi band — user ne proactive band kiya hai.
+      this.scheduledMessages = this.scheduledMessages.filter((s) => s.kind === 'call');
     }
     if (patch.callsEnabled === false) {
       this.pendingTriggers = this.pendingTriggers.filter((t) => t.type !== 'incoming_call');
+      // AI-tool scheduled calls bhi band.
+      this.scheduledMessages = this.scheduledMessages.filter((s) => s.kind !== 'call');
       ringtonePlayer.stop();
     }
     if (patch.quietHoursStart || patch.quietHoursEnd || patch.activeGraceMinutes) {
@@ -544,7 +553,7 @@ class ProactiveAgentService {
   }
 
   /** AI tool ke liye: future message schedule karo. Returns schedule id. */
-  scheduleMessage(text: string, scheduledTime: number, topic?: string): string {
+  scheduleMessage(text: string, scheduledTime: number, topic?: string, linkedEntity?: ScheduledProactiveMessage['linkedEntity']): string {
     const item: ScheduledProactiveMessage = {
       id: crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       kind: 'message',
@@ -552,6 +561,7 @@ class ProactiveAgentService {
       topic,
       scheduledTime,
       createdAt: Date.now(),
+      linkedEntity,
     };
     this.scheduledMessages.push(item);
     this.saveState();
@@ -570,6 +580,41 @@ class ProactiveAgentService {
     this.scheduledMessages.push(item);
     this.saveState();
     return item.id;
+  }
+
+  /**
+   * Scheduled item cancel karo jab usse linked entity (todo/task/memory) ki
+   * baat pura ho gayi ho. Ye har important mutation ke baad call hota hai —
+   * "kaam ho gaya, toh reminder kaun dega" wali duplicate bachta hai.
+   * Returns count of cancelled items.
+   */
+  cancelScheduledForDoneEntity(type: 'todo' | 'task' | 'memory' | 'keyword', value: string): number {
+    if (!value) return 0;
+    const norm = value.trim().toLowerCase();
+    const before = this.scheduledMessages.length;
+    this.scheduledMessages = this.scheduledMessages.filter((s) => {
+      if (s.scheduledTime <= Date.now()) return true; // already fired — chhodo
+      const ent = s.linkedEntity;
+      if (!ent) return true;
+      if (ent.type !== type) return true;
+      // Fuzzy match — exact ya contains (title mismatch par bhi cancel).
+      const entNorm = (ent.value || '').trim().toLowerCase();
+      return entNorm !== norm && !norm.includes(entNorm) && !entNorm.includes(norm);
+    });
+    if (this.scheduledMessages.length !== before) {
+      this.saveState();
+      return before - this.scheduledMessages.length;
+    }
+    return 0;
+  }
+
+  /**
+   * Generic "kaam complete ho gaya" signal — user ne kuch pura kiya (todo mark
+   * done, task complete, memory) to usse related scheduled reminders cancel
+   * karo taaki dobara reminder na aaye.
+   */
+  notifyEntityCompleted(type: 'todo' | 'task' | 'memory' | 'keyword', value: string): void {
+    this.cancelScheduledForDoneEntity(type, value);
   }
 
   /** AI tool ke liye: abhi turant call karo. */

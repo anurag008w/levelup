@@ -368,6 +368,7 @@ export default function ChatScreen({
   const [liveMicStream, setLiveMicStream] = useState<MediaStream | null>(null);
   const [liveCamStream, setLiveCamStream] = useState<MediaStream | null>(null);
   const liveCallSessionIdRef = useRef<string | null>(null);
+  const [liveIncomingMeta, setLiveIncomingMeta] = useState<{ isIncomingCall: boolean; reason?: string } | undefined>(undefined);
   const [liveConfig, setLiveConfig] = useState<LiveSettingsConfig>(() => {
     const liveFromStore = container.store.get()?.aiSettings?.live;
     if (liveFromStore) return liveFromStore;
@@ -429,8 +430,9 @@ export default function ChatScreen({
     return '';
   };
 
-  const handleStartLiveCall = async () => {
+  const handleStartLiveCall = async (meta?: { reason?: string; isIncomingCall?: boolean }) => {
     haptic();
+    setLiveIncomingMeta(meta && meta.isIncomingCall ? { isIncomingCall: true, reason: meta.reason } : undefined);
     const key = getGeminiLiveApiKey();
     if (!key) {
       hapticError();
@@ -752,6 +754,14 @@ export default function ChatScreen({
         ]);
         return { ok: res.ok, status: res.ok ? 'completed' : 'failed', requiresConfirmation: res.requiresConfirmation, result: res.summary, summary: res.summary };
       }
+      // Proactive scheduling / calls (live AI tools) — delegate to proactive agent
+      // so the message/call actually fires on schedule. Returns a natural summary
+      // back to the live model.
+      if (name === 'scheduleMessage' || name === 'scheduleCall' || name === 'makeCall' || name === 'listScheduled' || name === 'cancelScheduled') {
+        const actionObj: any = { action: name, ...args };
+        const proRes = await container.chatTools.runMany([actionObj]);
+        return { ok: proRes.ok, status: proRes.ok ? 'completed' : 'failed', result: proRes.summary, summary: proRes.summary };
+      }
       // Universal fallback for all other domain tools (editMemory, deleteMemory, pinMemory, getSubject, getRange, etc.)
       const actionObj: any = { action: name, ...args };
       const fallbackRes = await container.chatTools.runMany([actionObj]);
@@ -978,6 +988,25 @@ export default function ChatScreen({
     onlyTools: string[],
   ) {
     if (!text || streaming) return;
+    // Late-reply follow-up: agar user ne Misa ke brown (missed) me aaya message
+    // ka jawaab kaafi der baad diya, record karo taaki natural "tum bahut der
+    // me reply kiya, sab theek hai?" mile. Sirf tab jab ek visible dikhne wala
+    // gap (>= 30 min) ho aur wo paused/acknowledged na ho — service khud
+    // recent-audit + dedupe karti hai.
+    try {
+      const prev: ChatSession | null = container.chat.getSession(sessionId);
+      const lastUser = prev?.messages
+        ? [...prev.messages].reverse().find((m) => m.role === 'user' && m.content?.trim())
+        : undefined;
+      if (lastUser?.createdAt) {
+        const lateByMs = Date.now() - new Date(lastUser.createdAt).getTime();
+        if (lateByMs >= 30 * 60 * 1000) {
+          proactiveAgentService.recordMessageLateReply(lateByMs);
+        }
+      }
+    } catch {
+      // late-reply tracking best-effort — kabhi main flow ko rok na de
+    }
     let sent = false;
     setError('');
     setDraft('');
@@ -1376,8 +1405,12 @@ export default function ChatScreen({
   };
 
   useEffect(() => {
-    const onStartLiveCallEvent = (_e: Event) => {
-      void handleStartLiveCallRef.current();
+    const onStartLiveCallEvent = (e: Event) => {
+      const detail = (e as CustomEvent<{ reason?: string; isIncomingCall?: boolean }>).detail;
+      void handleStartLiveCallRef.current({
+        reason: detail?.reason,
+        isIncomingCall: detail?.isIncomingCall === true,
+      });
     };
     window.addEventListener('levelup:start-live-call', onStartLiveCallEvent);
     return () => window.removeEventListener('levelup:start-live-call', onStartLiveCallEvent);
@@ -1587,7 +1620,7 @@ export default function ChatScreen({
             {/* Live Voice / Multimodal Call Button */}
             <button
               type="button"
-              onClick={handleStartLiveCall}
+              onClick={() => void handleStartLiveCall()}
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-l/30 bg-l/15 text-l transition-transform active:scale-90 hover:bg-l/25"
               aria-label="Start Misa Live Call"
               title="Misa Live (Voice & Doubt Call)"
@@ -1773,6 +1806,7 @@ export default function ChatScreen({
           onUpdateConfig={handleUpdateLiveConfig}
           onExecuteTool={handleExecuteLiveTool}
           onTranscriptUpdate={handleLiveTranscriptUpdate}
+          incomingCallMeta={liveIncomingMeta}
         />
       )}
     </div>

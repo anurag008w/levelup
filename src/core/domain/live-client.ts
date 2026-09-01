@@ -780,6 +780,59 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
           },
         },
       },
+      // 13. Proactive scheduling (only when the student explicitly asks)
+      {
+        name: "scheduleMessage",
+        description: "Schedule a reminder message for a future time (only when the student explicitly asks, e.g. 'kal 5 baje yaad dilana').",
+        parameters: {
+          type: "OBJECT",
+          required: ["text", "scheduledAtISO"],
+          properties: {
+            text: { type: "STRING", description: "Reminder message text" },
+            scheduledAtISO: { type: "STRING", description: "ISO-8601 future timestamp" },
+            topic: { type: "STRING", description: "Optional topic/tag" },
+          },
+        },
+      },
+      {
+        name: "scheduleCall",
+        description: "Schedule a voice-call check-in for a future time (only when the student explicitly asks).",
+        parameters: {
+          type: "OBJECT",
+          required: ["reason", "scheduledAtISO"],
+          properties: {
+            reason: { type: "STRING", description: "Call reason" },
+            scheduledAtISO: { type: "STRING", description: "ISO-8601 future timestamp" },
+          },
+        },
+      },
+      {
+        name: "makeCall",
+        description: "Call the student right now (only when the student explicitly asks you to call them).",
+        parameters: {
+          type: "OBJECT",
+          required: ["reason"],
+          properties: {
+            reason: { type: "STRING", description: "Call reason" },
+          },
+        },
+      },
+      {
+        name: "listScheduled",
+        description: "List currently pending scheduled messages/calls.",
+        parameters: { type: "OBJECT", properties: {} },
+      },
+      {
+        name: "cancelScheduled",
+        description: "Cancel a scheduled message/call by id.",
+        parameters: {
+          type: "OBJECT",
+          required: ["id"],
+          properties: {
+            id: { type: "STRING", description: "Scheduled item id" },
+          },
+        },
+      },
     ];
 
     try {

@@ -128,7 +128,7 @@ describe('notification-actions', () => {
     expect(notifyAiReplyMock).toHaveBeenCalledWith('Misa', 'Naya AI reply aaya', 's1', 0, true);
   });
 
-  it('still minimizes even if the reply send fails', async () => {
+  it('still minimizes even if the reply send fails, and surfaces the error instead of silently dropping', async () => {
     sendMock.mockRejectedValue(new Error('AI off'));
     const chatUpdated = vi.fn();
     window.addEventListener('levelup:chat-updated', chatUpdated);
@@ -137,7 +137,16 @@ describe('notification-actions', () => {
     await vi.advanceTimersByTimeAsync(REPLY_GRACE_MS);
 
     expect(minimizeAppMock).toHaveBeenCalledTimes(1);
-    expect(notifyAiReplyMock).not.toHaveBeenCalled();
+    // Silently drop mat karo — user ko error notification ke through batao
+    // reply nahi gaya taaki wo chat khol kar dobara bole.
+    expect(notifyAiReplyMock).toHaveBeenCalledTimes(1);
+    expect(notifyAiReplyMock).toHaveBeenCalledWith(
+      'Misa',
+      expect.stringContaining('Reply bhejne me dikkat aayi'),
+      's1',
+      0,
+      true,
+    );
     expect(chatUpdated).toHaveBeenCalled();
   });
 
