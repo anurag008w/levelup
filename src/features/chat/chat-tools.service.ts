@@ -132,7 +132,7 @@ ACTIONS.register({ id: 'scheduleMessage', label: 'Schedule a message', descripti
 ACTIONS.register({ id: 'makeCall', label: 'Call student now', description: 'Misa abhi user ko ek proactive call kar sakti hai.', entityType: 'appState', permissions: ['edit'] });
 ACTIONS.register({ id: 'scheduleCall', label: 'Schedule a call', description: 'Misa a future-time call schedule kar sakti hai user ke saath.', entityType: 'appState', permissions: ['edit'] });
 ACTIONS.register({ id: 'listScheduled', label: 'List scheduled', description: 'Scheduled messages/calls list karo.', entityType: 'appState', permissions: ['read'] });
-ACTIONS.register({ id: 'cancelScheduled', label: 'Cancel scheduled', description: 'A scheduled message/call cancel karo.', entityType: 'appState', permissions: ['delete'], confirmationRequired: true });
+ACTIONS.register({ id: 'cancelScheduled', label: 'Cancel scheduled', description: 'A scheduled message/call cancel karo.', entityType: 'appState', permissions: ['delete'] });
 
 // Strong plan/block/chat action words. A message containing any of these is
 // clearly about the plan, task bank, custom blocks or chat history.

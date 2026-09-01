@@ -480,7 +480,7 @@ export const CHAT_TOOL_CATALOG: ChatToolMeta[] = [
   { id: 'makeCall', label: 'Call now', description: 'Student ko abhi voice-call karo (jab wo khud kahu ki call karo).', example: '{"action":"makeCall","reason":"Study check-in"}' },
   { id: 'scheduleCall', label: 'Schedule call', description: 'Future time par ek voice-call check-in schedule karo.', example: '{"action":"scheduleCall","reason":"Weekly progress check","scheduledAtISO":"2026-09-04T20:00:00+05:30"}' },
   { id: 'listScheduled', label: 'List scheduled', description: 'Pending scheduled messages/calls list karo.', example: '{"action":"listScheduled"}', readOnly: true },
-  { id: 'cancelScheduled', label: 'Cancel scheduled', description: 'A scheduled message/call cancel karo id se.', example: '{"action":"cancelScheduled","id":"<id>"}', confirmationRequired: true },
+  { id: 'cancelScheduled', label: 'Cancel scheduled', description: 'A scheduled message/call cancel karo id se.', example: '{"action":"cancelScheduled","id":"<id>"}' },
 ];
 
 /**
