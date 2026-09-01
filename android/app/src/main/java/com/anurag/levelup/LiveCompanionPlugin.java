@@ -64,14 +64,17 @@ public class LiveCompanionPlugin extends Plugin {
   /** Receives a quick-reply fired from the call notification and forwards it
    * to the registered JS listener (see LiveCompanionForegroundService.java). */
   private void forwardUserReply(String text) {
-    Plugin p = current;
-    if (p == null) {
+    // notifyListeners is protected in Plugin — must be invoked through a
+    // LiveCompanionPlugin-typed reference (subclass of Plugin), not a widened
+    // Plugin reference, or javac rejects the protected access.
+    LiveCompanionPlugin plugin = current;
+    if (plugin == null) {
       // No plugin instance alive (JS not ready) — drop silently.
       return;
     }
     JSObject payload = new JSObject();
     payload.put("text", text);
-    p.notifyListeners("notificationReply", payload);
+    plugin.notifyListeners("notificationReply", payload);
   }
 
   /** Static entry point used by LiveCompanionReplyReceiver so the message can
