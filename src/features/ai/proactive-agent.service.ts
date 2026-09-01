@@ -20,6 +20,7 @@ import { relationshipManager, type SubjectArea } from './relationship-state';
 import { socialDecisionEngine, type ProactiveCandidate } from './social-decision-engine';
 import { validateProactiveDelivery } from './behavior-validator';
 import type { UserActivityState } from '../../core/domain/activity-signal';
+import { container } from '../../di/container';
 
 export interface ProactivePreferences {
   enabled: boolean;
@@ -409,16 +410,59 @@ class ProactiveAgentService {
     }
   }
 
-  private checkInactivityAndFire(): void {
+  /** Dynamically synthesize personalized proactive messages using active LLM (Gemini) with persona & context. */
+  async generateDynamicProactiveMessage(situation: string, topic?: string): Promise<string> {
+    const relState = relationshipManager.getState();
+    const activeTopic = topic || relState.commitments[0]?.topic || relState.currentProblemArea || relState.currentSubject || 'JEE study';
+    const recentStruggle = relState.durableMemories.find((m) => m.category === 'struggle')?.fact;
+
+    try {
+      if (typeof container !== 'undefined' && container?.llm?.isAvailable()) {
+        const systemInstruction = `You are Misa, a warm, caring, real human-like female JEE study partner and best friend.
+Student Context:
+- Current Target Topic: "${activeTopic}"
+- Recent Struggle/Doubt: ${recentStruggle ? `"${recentStruggle}"` : 'None recorded'}
+- Situation: ${situation}
+
+Instructions:
+- Write exactly 1 short, natural, warm Hinglish message (maximum 1-2 sentences) directly to the student.
+- DO NOT say "As an AI" or "Misa here" or "Main aapki study assistant hoon" or "Kya main aapki madad kar sakti hoon?".
+- Speak like a real close friend on WhatsApp (casual, warm, empathetic, motivational).
+- You can use natural words like "bhai", "yaar", "suno", or light emojis.`;
+
+        const res = await container.llm.complete({
+          messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: `Send a natural, 1-line study check-in message for situation: ${situation}` },
+          ],
+          temperature: 0.85,
+          maxTokens: 80,
+        });
+
+        const reply = res.text?.trim();
+        if (reply && reply.length > 5 && reply.length < 220) {
+          return reply.replace(/^["']|["']$/g, '');
+        }
+      }
+    } catch (err) {
+      console.warn('[ProactiveAgent] Dynamic LLM generation fallback:', err);
+    }
+
+    // Offline / fallback to varied template
+    return pickContextualMessage(topic || 'jee_prep', relState);
+  }
+
+  private async checkInactivityAndFire(): Promise<void> {
     if (!this.prefs.enabled) return;
     if (this.isQuietTime()) return;
 
     const now = Date.now();
-    const inactiveSince = now - this.lastUserChatTimestamp;
+    const effectiveLastActive = Math.max(this.lastUserChatTimestamp || 0, this.lastActiveTimestamp || 0);
+    const inactiveSince = effectiveLastActive > 0 ? now - effectiveLastActive : 0;
     const activeSince = now - this.lastActiveTimestamp;
 
     // 30-min active grace period: user is using app actively, do not interrupt
-    if (activeSince < this.prefs.activeGraceMinutes * 60 * 1000 && this.lastUserChatTimestamp > 0) return;
+    if (activeSince < this.prefs.activeGraceMinutes * 60 * 1000 && effectiveLastActive > 0) return;
 
     // Do not interrupt during deep study / solving
     if (this.currentActivityState === 'DEEP_STUDY' || this.currentActivityState === 'SOLVING') return;
@@ -429,10 +473,13 @@ class ProactiveAgentService {
     const relState = relationshipManager.getState();
 
     // Daytime Study Inactivity Check: If quiet for 2.5h to 18h during active daytime, check in naturally
-    if (this.lastUserChatTimestamp > 0 && inactiveSince >= 2.5 * 3600 * 1000 && inactiveSince < 24 * 3600 * 1000) {
+    if (effectiveLastActive > 0 && inactiveSince >= 2.5 * 3600 * 1000 && inactiveSince < 24 * 3600 * 1000) {
       const lastDaytimeNudge = relState.fatigue.topicCooldowns['inactivity_daytime'] || 0;
       if (now >= lastDaytimeNudge) {
-        const msg = pickContextualMessage('inactivity_daytime', relState);
+        const situation = this.lastUserChatTimestamp === 0
+          ? 'Student has opened/used the app but has not yet chatted or started their daily study sprint.'
+          : 'Student has been quietly studying or away from study session for ~3 hours during daytime.';
+        const msg = await this.generateDynamicProactiveMessage(situation, 'inactivity_daytime');
         const validation = validateProactiveDelivery(
           {
             id: 'inactivity_daytime',
@@ -455,13 +502,14 @@ class ProactiveAgentService {
         if (validation.valid) {
           this.injectMessageIntoChat(validation.sanitizedText || msg);
           relationshipManager.recordProactiveSent('inactivity_daytime', msg);
+          this.lastUserChatTimestamp = now;
           return;
         }
       }
     }
 
-    if (this.lastUserChatTimestamp > 0 && inactiveSince >= 96 * 3600 * 1000) {
-      const msg = pickVariedTemplate('inactivity_96h', relState.recentSentMessages);
+    if (effectiveLastActive > 0 && inactiveSince >= 96 * 3600 * 1000) {
+      const msg = await this.generateDynamicProactiveMessage('Student has been inactive for 4 days. Send a warm, zero-guilt, fresh start reset message.', 'inactivity_96h');
       const validation = validateProactiveDelivery(
         { id: 'inactivity_96h', type: 'check_in', urgency: 0.7, relevance: 0.8, confidence: 0.9, freshness: 0.9, offlineText: msg },
         relState,
@@ -472,8 +520,8 @@ class ProactiveAgentService {
         relationshipManager.recordProactiveSent('inactivity_96h', msg);
         this.lastUserChatTimestamp = now - 48 * 3600 * 1000;
       }
-    } else if (this.lastUserChatTimestamp > 0 && inactiveSince >= 48 * 3600 * 1000) {
-      const msg = pickVariedTemplate('inactivity_48h', relState.recentSentMessages);
+    } else if (effectiveLastActive > 0 && inactiveSince >= 48 * 3600 * 1000) {
+      const msg = await this.generateDynamicProactiveMessage('Student has been quiet for 2 days. Send a friendly, low-pressure check-in.', 'inactivity_48h');
       const validation = validateProactiveDelivery(
         { id: 'inactivity_48h', type: 'check_in', urgency: 0.6, relevance: 0.75, confidence: 0.85, freshness: 0.85, offlineText: msg },
         relState,
@@ -482,9 +530,10 @@ class ProactiveAgentService {
       if (validation.valid) {
         this.injectMessageIntoChat(validation.sanitizedText || msg);
         relationshipManager.recordProactiveSent('inactivity_48h', msg);
+        this.lastUserChatTimestamp = now;
       }
-    } else if (this.lastUserChatTimestamp > 0 && inactiveSince >= 24 * 3600 * 1000) {
-      const msg = pickVariedTemplate('inactivity_24h', relState.recentSentMessages);
+    } else if (effectiveLastActive > 0 && inactiveSince >= 24 * 3600 * 1000) {
+      const msg = await this.generateDynamicProactiveMessage('Student has been away for 24 hours. Encourage starting with 1 small study target today.', 'inactivity_24h');
       const validation = validateProactiveDelivery(
         { id: 'inactivity_24h', type: 'check_in', urgency: 0.5, relevance: 0.7, confidence: 0.8, freshness: 0.8, offlineText: msg },
         relState,
@@ -493,6 +542,7 @@ class ProactiveAgentService {
       if (validation.valid) {
         this.injectMessageIntoChat(validation.sanitizedText || msg);
         relationshipManager.recordProactiveSent('inactivity_24h', msg);
+        this.lastUserChatTimestamp = now;
       }
     }
 
@@ -512,12 +562,13 @@ class ProactiveAgentService {
     const minCallInterval = this.prefs.callFrequency === 'rare' ? 4 * 24 * 3600 * 1000 : 2 * 24 * 3600 * 1000;
     const declinePenaltyMs = (3 + this.consecutiveCallDeclines) * 24 * 3600 * 1000;
     const sevenDays = 7 * 24 * 3600 * 1000;
+    const effectiveLastActive = Math.max(this.lastUserChatTimestamp || 0, this.lastActiveTimestamp || 0);
 
     const callReady =
       now - this.lastCallTimestamp > minCallInterval &&
       now - this.lastCallDeclinedTimestamp > declinePenaltyMs &&
-      this.lastUserChatTimestamp > 0 &&
-      now - this.lastUserChatTimestamp < sevenDays &&
+      effectiveLastActive > 0 &&
+      now - effectiveLastActive < sevenDays &&
       relState.fatigue.fatigueScore < 0.4;
 
     if (callReady) {

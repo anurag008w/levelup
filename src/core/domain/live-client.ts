@@ -843,6 +843,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   private handleServerMessage(data: any): void {
     if (!data) return;
+    this.lastWsActivity = Date.now(); // Watchdog: server is alive
 
     // 1. Tool Calls from Gemini Live
     if (data.toolCall?.functionCalls) {
@@ -1084,10 +1085,13 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private lastSilenceNudgeAt = 0;
   private isReconnecting = false;
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 4;
+  private maxReconnectAttempts = 99; // effectively unlimited — reconnect until user explicitly hangs up
   private currentMediaStream: MediaStream | null = null;
   private activeApiKey: string | null = null;
   private isUserExplicitlyClosed = false;
+  private visibilityHandler: (() => void) | null = null;
+  private lastWsActivity = Date.now(); // timestamp of last message received from server
+  private wsWatchdogTimer: any = null; // fires if server goes completely silent for >30s
 
   /** Start recording user voice & streaming audio chunks. */
   async startVoiceStreaming(mediaStream: MediaStream): Promise<void> {
@@ -1283,13 +1287,16 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   private startKeepAliveAndSilenceObserver(): void {
     this.lastTurnFinishedTime = Date.now();
+    this.lastWsActivity = Date.now();
     if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
     if (this.silenceObserverTimer) clearInterval(this.silenceObserverTimer);
+    if (this.wsWatchdogTimer) clearInterval(this.wsWatchdogTimer);
 
-    // 1. Keep-Alive Heartbeat every 15 seconds (keeps WebSocket active during quiet study)
+    // 1. Keep-Alive Heartbeat every 10s — prevents WebSocket idle timeout in foreground & background
+    // Uses audioStreamEnd pattern to explicitly tell Gemini the user is listening but quiet
     this.keepAliveTimer = setInterval(() => {
       if (this.session && (this.status === 'listening' || this.status === 'connected')) {
-        if (Date.now() - this.lastUserVoiceTime > 10000) {
+        if (Date.now() - this.lastUserVoiceTime > 8000) {
           try {
             this.session.sendRealtimeInput({
               audio: {
@@ -1302,10 +1309,39 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
           }
         }
       }
-    }, 15000);
+    }, 10000);
 
-    // 2. Silence Proactive Companion Observer with State Machine (every 2.5s)
-    // 2. Silence Observer (checks every 2.5s)
+    // 2. Watchdog: if server is completely silent for 30s while we're "connected", reconnect
+    this.wsWatchdogTimer = setInterval(() => {
+      if (this.isUserExplicitlyClosed || this.isReconnecting) return;
+      if (this.status !== 'listening' && this.status !== 'connected' && this.status !== 'speaking' && this.status !== 'thinking') return;
+      const silentMs = Date.now() - this.lastWsActivity;
+      if (silentMs > 30000) {
+        console.warn(`[GeminiLive] Watchdog: no server message for ${Math.round(silentMs / 1000)}s — triggering reconnect`);
+        void this.handleAutoReconnect();
+      }
+    }, 10000);
+
+    // 3. Visibility change listener — reconnect immediately when tab/screen comes back after suspension
+    if (typeof document !== 'undefined') {
+      if (this.visibilityHandler) {
+        document.removeEventListener('visibilitychange', this.visibilityHandler);
+      }
+      this.visibilityHandler = () => {
+        if (document.visibilityState === 'visible' && !this.isUserExplicitlyClosed) {
+          const silentMs = Date.now() - this.lastWsActivity;
+          // If we were hidden and server went silent > 8s, assume WebSocket was suspended/killed
+          if (silentMs > 8000 && !this.isReconnecting) {
+            console.info('[GeminiLive] Tab became visible after suspension — triggering reconnect');
+            this.reconnectAttempts = 0; // fresh slate on user return
+            void this.handleAutoReconnect();
+          }
+        }
+      };
+      document.addEventListener('visibilitychange', this.visibilityHandler);
+    }
+
+    // 4. Silence Proactive Companion Observer (every 2.5s)
     this.silenceObserverTimer = setInterval(() => {
       if (!this.session || this.status === 'speaking' || this.status === 'thinking') return;
       if (this.status !== 'connected' && this.status !== 'listening') return;
@@ -1349,19 +1385,15 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
     this.isReconnecting = true;
     this.reconnectAttempts += 1;
-    console.info(`[GeminiLive] Attempting auto-reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+    console.info(`[GeminiLive] Attempting auto-reconnect (${this.reconnectAttempts})...`);
     this.setStatus('connecting');
 
-    if (this.keepAliveTimer) {
-      clearInterval(this.keepAliveTimer);
-      this.keepAliveTimer = null;
-    }
-    if (this.silenceObserverTimer) {
-      clearInterval(this.silenceObserverTimer);
-      this.silenceObserverTimer = null;
-    }
+    if (this.keepAliveTimer) { clearInterval(this.keepAliveTimer); this.keepAliveTimer = null; }
+    if (this.silenceObserverTimer) { clearInterval(this.silenceObserverTimer); this.silenceObserverTimer = null; }
+    if (this.wsWatchdogTimer) { clearInterval(this.wsWatchdogTimer); this.wsWatchdogTimer = null; }
 
-    const delay = Math.min(3000, 800 * this.reconnectAttempts);
+    // Exponential backoff capped at 3s (800ms → 1.6s → 2.4s → 3s → 3s …)
+    const delay = Math.min(3000, 800 * Math.min(this.reconnectAttempts, 4));
     await new Promise((r) => setTimeout(r, delay));
 
     if (this.isUserExplicitlyClosed) {
@@ -1378,7 +1410,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       if (this.currentMediaStream) {
         await this.startVoiceStreaming(this.currentMediaStream);
       }
-      this.reconnectAttempts = 0;
+      this.reconnectAttempts = 0; // reset after successful reconnect
       this.isReconnecting = false;
       console.info('[GeminiLive] Successfully reconnected session!');
     } catch (e) {
@@ -1403,6 +1435,14 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     if (this.silenceObserverTimer) {
       clearInterval(this.silenceObserverTimer);
       this.silenceObserverTimer = null;
+    }
+    if (this.wsWatchdogTimer) {
+      clearInterval(this.wsWatchdogTimer);
+      this.wsWatchdogTimer = null;
+    }
+    if (this.visibilityHandler && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.visibilityHandler);
+      this.visibilityHandler = null;
     }
     this.silenceStateMachine.reset();
     this.audioStreamer.stopRecording();
