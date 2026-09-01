@@ -159,28 +159,6 @@ describe('pickApkAsset', () => {
     ).toBe('https://x/plain.apk');
     expect(pickApkAsset(assets([{ name: 'readme.txt', browser_download_url: 'https://x/readme.txt' }]))).toBeNull();
   });
-
-  it('beta flavor picks beta assets only, signed preferred', () => {
-    const picked = pickApkAsset(
-      assets([
-        { name: 'levelup-2026.08.01-signed.apk', browser_download_url: 'https://x/stable-signed.apk' },
-        { name: 'levelup-2026.08.01-beta-signed.apk', browser_download_url: 'https://x/beta-signed.apk' },
-        { name: 'levelup-2026.08.01-beta.apk', browser_download_url: 'https://x/beta-plain.apk' },
-      ]),
-      true,
-    );
-    expect(picked?.url).toBe('https://x/beta-signed.apk');
-  });
-
-  it('stable flavor never picks beta assets', () => {
-    const picked = pickApkAsset(
-      assets([
-        { name: 'levelup-2026.08.01-beta-signed.apk', browser_download_url: 'https://x/beta-signed.apk' },
-        { name: 'levelup-2026.08.01-signed.apk', browser_download_url: 'https://x/stable-signed.apk' },
-      ]),
-    );
-    expect(picked?.url).toBe('https://x/stable-signed.apk');
-  });
 });
 
 describe('releaseFromApi', () => {
@@ -209,43 +187,6 @@ describe('releaseFromApi', () => {
   it('returns null for a malformed payload', () => {
     expect(releaseFromApi({})).toBeNull();
     expect(releaseFromApi({ tag_name: 42 })).toBeNull();
-  });
-
-  it('beta flavor maps the beta asset, ignoring the stable one', () => {
-    const release = releaseFromApi(
-      {
-        tag_name: 'v2026.08.01',
-        name: '',
-        body: '',
-        published_at: '',
-        html_url: '',
-        draft: false,
-        prerelease: false,
-        assets: [
-          { name: 'levelup-2026.08.01-signed.apk', browser_download_url: 'https://x/stable.apk' },
-          { name: 'levelup-2026.08.01-beta-signed.apk', browser_download_url: 'https://x/beta.apk' },
-        ],
-      },
-      true,
-    );
-    expect(release?.apkUrl).toBe('https://x/beta.apk');
-  });
-
-  it('beta flavor has no apkUrl when only stable assets exist', () => {
-    const release = releaseFromApi(
-      {
-        tag_name: 'v2026.08.01',
-        name: '',
-        body: '',
-        published_at: '',
-        html_url: '',
-        draft: false,
-        prerelease: false,
-        assets: [{ name: 'levelup-2026.08.01-signed.apk', browser_download_url: 'https://x/stable.apk' }],
-      },
-      true,
-    );
-    expect(release?.apkUrl).toBeNull();
   });
 });
 

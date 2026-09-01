@@ -21,24 +21,6 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
-    // Build variants: LevelUp (Stable) + LevelUp Beta.
-    // Alag applicationId = dono ek hi phone pe saath install ho sakte hain,
-    // alag app sandbox milta hai, aur uninstall/update kabhi cross nahi hota.
-    // Shared source code src/main + variant resources src/{stable,beta}/res.
-    flavorDimensions "edition"
-    productFlavors {
-        stable {
-            dimension "edition"
-            // applicationId defaultConfig se inherit karta hai = com.anurag.levelup
-        }
-        beta {
-            dimension "edition"
-            // ".beta" suffix Stable se alag applicationId banata hai.
-            applicationId "com.anurag.levelup.beta"
-            // Beta versionName hamesha "-beta" suffix ke saath distinguish hota hai.
-            versionNameSuffix "-beta"
-        }
-    }
     buildTypes {
         release {
             minifyEnabled false

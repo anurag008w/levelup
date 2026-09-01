@@ -5,13 +5,13 @@
     <string name="package_name">com.anurag.levelup</string>
     <string name="custom_url_scheme">com.anurag.levelup</string>
 
-    <!-- Misa Live foreground service — stable labels. Beta source set overrides these. -->
+    <!-- Misa Live foreground service labels. -->
     <string name="notif_channel_live_call_name">Misa Live call</string>
     <string name="notif_channel_live_call_desc">Shown only while Misa Live has an active call</string>
     <string name="notif_live_call_title">Misa Live call active</string>
     <string name="notif_live_call_text">Misa is ready while you use other apps.</string>
 
-    <!-- Screen share foreground service — stable labels. Beta source set overrides these. -->
+    <!-- Screen share foreground service labels. -->
     <string name="notif_channel_screenshare_name">Misa Live Screen Share</string>
     <string name="notif_channel_screenshare_desc">Active only during Misa Live screen sharing sessions</string>
     <string name="notif_screenshare_title">Misa Live — Screen Share Active</string>

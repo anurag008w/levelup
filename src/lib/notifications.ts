@@ -15,7 +15,6 @@ import { IntentLauncher, ActivityAction } from '@capgo/capacitor-intent-launcher
 import { container } from '../di/container';
 import { persistentStorage } from '../infra/storage/persistent-storage';
 import { loadSession } from './auth';
-import { resolveAppId } from './app-packaging';
 
 export type NotificationPermissionStatus = 'granted' | 'denied' | 'prompt' | 'unsupported';
 
@@ -38,6 +37,8 @@ export interface NotificationActionPayload {
   sessionId?: string;
 }
 
+/** LevelUp ka Android package (capacitor.config.ts ke appId se match karna chahiye). */
+const APP_PACKAGE = 'com.anurag.levelup';
 /** persistentStorage key — notifications ON/OFF. */
 const PREF_KEY = 'notifications';
 /** Android NotificationManager ka id 32-bit int hota hai — isi liye modulo. */
@@ -203,13 +204,10 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
  */
 export async function openNotificationSettings(): Promise<boolean> {
   if (!isNativePlatform()) return false;
-  // Per-flavor package id — settings intents must resolve the installed build
-  // (Stable: com.anurag.levelup, Beta: com.anurag.levelup.beta).
-  const appPkg = await resolveAppId();
   try {
     await IntentLauncher.startActivityAsync({
       action: ActivityAction.APP_NOTIFICATION_SETTINGS,
-      extra: { 'android.provider.extra.APP_PACKAGE': appPkg },
+      extra: { 'android.provider.extra.APP_PACKAGE': APP_PACKAGE },
     });
     return true;
   } catch {
@@ -218,7 +216,7 @@ export async function openNotificationSettings(): Promise<boolean> {
     try {
       await IntentLauncher.startActivityAsync({
         action: ActivityAction.APPLICATION_DETAILS_SETTINGS,
-        data: `package:${appPkg}`,
+        data: `package:${APP_PACKAGE}`,
       });
       return true;
     } catch {
