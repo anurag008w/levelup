@@ -840,6 +840,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.session = session;
       this.setStatus('connected');
       this.startKeepAliveAndSilenceObserver();
+      void requestNativeCallAudioFocus();
       void setNativeAudioRoute(this.config.defaultAudioRoute);
       void this.installAudioFocusListener();
 
