@@ -1700,14 +1700,19 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         this.audioFocusPaused = false;
         this.applyMicrophoneMute();
         this.audioStreamer.setOutputVolume(1);
-        // Review-9 P1.12: route restoration is TRANSACTIONAL — request the
-        // desired route, VERIFY what native actually applied, then update JS
-        // state; if it failed, deterministically fall back to the loudspeaker.
-        // Never resume "listening" while JS claims one route and native is on
-        // the other/unknown route. (The route may have been reset by another
-        // app claiming speaker/BT during the loss window.)
-        await this.restoreAudioRouteTransactional();
-        if (this.session) this.setStatus('listening');
+        // Review-9 P1.12 + review-10 P1 (focus-regain overwrite): route
+        // restoration is TRANSACTIONAL — request the desired route, VERIFY what
+        // native actually applied, then update JS state; if it failed,
+        // deterministically fall back to the loudspeaker. Only transition the
+        // session to 'listening' when the route actually restored (ok === true).
+        // Previously the caller unconditionally set 'listening' AFTER the
+        // restore, clobbering the 'error' state emitted on a terminal native
+        // failure (routes refused) and leaving the call falsely "listening"
+        // with no working output route.
+        const restored = await this.restoreAudioRouteTransactional();
+        if (restored.ok && this.session) {
+          this.setStatus('listening');
+        }
       } else if (focusChange === -3) {
         // CAN_DUCK: lower output volume; capture stays active.
         this.audioStreamer.setOutputVolume(0.2);
@@ -1726,35 +1731,46 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   }
 
   /**
-   * Review-9 P1.12: transactional route restoration (used on focus regain and
-   * explicit switches). request → VERIFY what native actually applied → update
-   * JS state. If the desired route failed to apply, deterministically fall back
-   * to the loudspeaker and VERIFY that too. Never leave JS believing a route is
+   * Review-9 P1.12 + review-10 P1: transactional route restoration (used on
+   * focus regain). request → VERIFY what native actually applied → update JS
+   * state. If the desired route failed to apply, deterministically fall back to
+   * the loudspeaker and VERIFY that too. Never leave JS believing a route is
    * active when native landed on another/unknown route.
+   *
+   * Returns `{ ok, actualRoute }` (NOT void) so the caller can distinguish a
+   * successfully-restored route (ok === true → may resume 'listening') from a
+   * terminal failure (ok === false → the status/error was already emitted and
+   * the caller must NOT clobber it). This closes the focus-regain overwrite:
+   * previously the terminal `setStatus('error')` inside this method was
+   * immediately overwritten by the caller's unconditional `setStatus('listening')`.
    */
-  private async restoreAudioRouteTransactional(): Promise<void> {
+  private async restoreAudioRouteTransactional(): Promise<{ ok: boolean; actualRoute: LiveAudioRoute }> {
     const desired = this.config.defaultAudioRoute ?? 'speaker';
-    let applied = await setNativeAudioRoute(desired);
+    const applied = await setNativeAudioRoute(desired);
     if (applied) {
       this.currentAudioRoute = (applied.route as LiveAudioRoute) || desired;
-      return;
+      return { ok: true, actualRoute: this.currentAudioRoute };
     }
     if (desired !== 'speaker') {
       console.warn(`[GeminiLive] Route "${desired}" not confirmed on restore — falling back to speaker.`);
       const fallback = await setNativeAudioRoute('speaker');
       if (fallback) {
         this.currentAudioRoute = (fallback.route as LiveAudioRoute) || 'speaker';
-      } else if (!isNativeAudioPlatform()) {
-        this.currentAudioRoute = 'speaker';
-      } else {
-        // Native and even the speaker fallback refused — terminal audio error.
-        this.setStatus('error');
-        this.callbacks.onError?.('Audio route could not be restored. Please retry.');
+        return { ok: true, actualRoute: this.currentAudioRoute };
       }
-    } else {
-      // Speaker requested but not confirmed (web no-op is acceptable).
-      this.currentAudioRoute = 'speaker';
+      if (!isNativeAudioPlatform()) {
+        this.currentAudioRoute = 'speaker';
+        return { ok: true, actualRoute: this.currentAudioRoute };
+      }
+      // Native and even the speaker fallback refused — terminal audio error.
+      // The caller must NOT overwrite this 'error' state with a false 'listening'.
+      this.setStatus('error');
+      this.callbacks.onError?.('Audio route could not be restored. Please retry.');
+      return { ok: false, actualRoute: this.currentAudioRoute };
     }
+    // Speaker requested but not confirmed (web no-op is acceptable).
+    this.currentAudioRoute = 'speaker';
+    return { ok: true, actualRoute: this.currentAudioRoute };
   }
 
   private updateStats(inputVolume = 0, outputVolume = 0): void {

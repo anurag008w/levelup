@@ -239,6 +239,36 @@ describe('Live audio ownership & startup transaction (review 7)', () => {
     disconnectSpy.mockRestore();
   });
 
+  it('10b. Focus regain does NOT clobber terminal route-restore error with "listening" (review-10 P1 focus-regain overwrite)', async () => {
+    // Focus regain must only resume 'listening' when the route actually restored.
+    // If native refuses BOTH the desired route and the speaker fallback,
+    // restoreAudioRouteTransactional() emits 'error' + onError — and the caller
+    // must NOT overwrite that with a false 'listening' (the pre-fix bug where the
+    // unconditional setStatus('listening') clobbered the terminal error state).
+    const onError = vi.fn();
+    // Use a NON-speaker desired route: only then does a speaker-fallback refusal
+    // reach the terminal 'error' branch (speaker-as-desired is treated as
+    // acceptable/ok on web and native no-op paths).
+    const client = new GeminiLiveClient({ ...mockConfig, defaultAudioRoute: 'bluetooth' }, { onError });
+    await client.connect('test-key');
+    // Now make native refuse the route AND the speaker fallback.
+    native.plugin.setRoute.mockReset().mockResolvedValue(null);
+    const focusHandler = native.plugin.addListener.mock.calls[0][1] as (event: { focusChange: number }) => void;
+
+    // Transient loss first (so we are paused), then regain under broken routes.
+    focusHandler({ focusChange: -2 });
+    expect((client as any).audioFocusPaused).toBe(true);
+
+    focusHandler({ focusChange: 1 });
+    // Async listener body runs restoreAudioRouteTransactional — await a tick so
+    // the promise resolves before asserting (we cannot await the callback directly).
+    await vi.waitFor(() => {
+      expect(onError).toHaveBeenCalledWith('Audio route could not be restored. Please retry.');
+    });
+    // The session must NOT be reported as 'listening' — the error is authoritative.
+    expect(client.getStatus()).toBe('error');
+  });
+
   it('11. Modal cancellation stops tracks + resets native audio resources (review-8 P1 permission-modal gate)', async () => {
     // Smoke test: import the modal's cleanup logic (releasePartialResources).
     // The modal is a React component; its cleanup is tested by verifying that

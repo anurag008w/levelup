@@ -314,6 +314,15 @@ export default function LiveCompanionOverlay({
         // session + FGS + ARMED marker — a cancelled startup can never commit a
         // late markCallConnected or leave a half-armed service behind.
         await armLiveCall();
+        // Review-10 P0 (arm→connect gate): if the user cancelled / unmounted
+        // DURING the arm native round-trip, do NOT proceed into connect() —
+        // otherwise a cancelled startup would still open a Gemini session
+        // (short-lived, torn down by rollback, but wasted + a visible blip).
+        // Gate here so a cancelled startup never even begins socket/audio setup.
+        if (cancelled) {
+          rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
+          return;
+        }
 
         if (!existingClient) {
           // P1: the pre-capture path (permission modal / remembered fast path)
