@@ -15,6 +15,16 @@ public class LiveCompanionPlugin extends Plugin {
   private static final String TAG = "LiveCompanionPlugin";
   private static final String PREFS_NAME = "live_call_state";
   private static final String KEY_WAS_INTERRUPTED = "was_interrupted";
+  private static final String KEY_LIFECYCLE = "lifecycle";
+
+  // Lifecycle states (review 8 / P1): the "was interrupted" banner must only
+  // surface when the call had actually reached a CONNECTED state before a
+  // process death. markCallInterrupted() sets ARMED on arm; the JS bridge
+  // promotes it to CONNECTED the moment the Gemini session commits. A process
+  // kill during the connecting window therefore reads back as an ATTEMPTED
+  // (un-armed) call — never a false "previous live call was interrupted".
+  private static final String LIFECYCLE_ARMED = "ARMED";
+  private static final String LIFECYCLE_CONNECTED = "CONNECTED";
 
   // NOTE (review 7 / P1): there is deliberately NO static "is the service
   // running" flag anymore. A process-local boolean can drift from the real
@@ -55,13 +65,27 @@ public class LiveCompanionPlugin extends Plugin {
    */
   private void markCallInterrupted() {
     SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-    prefs.edit().putBoolean(KEY_WAS_INTERRUPTED, true).apply();
+    // ARMED: the call was begun but not yet confirmed connected. Only
+    // markCallConnected() (called on a committed Gemini session) upgrades this
+    // to a recoverable "interrupted by process death" truth.
+    prefs.edit().putString(KEY_LIFECYCLE, LIFECYCLE_ARMED).apply();
+  }
+
+  /**
+   * The Gemini session has committed (audio + voice + vision live) — promote
+   * the persisted lifecycle to CONNECTED so a later process death correctly
+   * surfaces the "previous live call was interrupted" recovery UX. A kill
+   * before this point is an un-finished startup, not an interrupted call.
+   */
+  public void markCallConnected() {
+    SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    prefs.edit().putString(KEY_LIFECYCLE, LIFECYCLE_CONNECTED).apply();
   }
 
   /** Explicit user hangup — the call ended intentionally, so no interruption banner. */
   private void clearCallInterrupted() {
     SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-    prefs.edit().remove(KEY_WAS_INTERRUPTED).apply();
+    prefs.edit().remove(KEY_WAS_INTERRUPTED).remove(KEY_LIFECYCLE).apply();
   }
 
   @PluginMethod public void start(PluginCall call) {
@@ -98,6 +122,12 @@ public class LiveCompanionPlugin extends Plugin {
     call.resolve();
   }
 
+  /** Promote the persisted lifecycle to CONNECTED once the session commits (review 8). */
+  @PluginMethod public void markCallConnected(PluginCall call) {
+    markCallConnected();
+    call.resolve();
+  }
+
   /** PiP mode — foreground service active hai, background me bhi mic + audio chalta rahe. */
   @PluginMethod public void enterPiP(PluginCall call) {
     MainActivity.enterPiPViaPlugin(this);
@@ -115,7 +145,15 @@ public class LiveCompanionPlugin extends Plugin {
   @PluginMethod public void isLiveCallInterrupted(PluginCall call) {
     SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
     JSObject ret = new JSObject();
-    ret.put("interrupted", prefs.getBoolean(KEY_WAS_INTERRUPTED, false));
+    // This is DETECTION/UX, not session recovery (review 8 / P1): a process
+    // kill mid-session simply ends the session in place (FGS is
+    // START_NOT_STICKY, session lives in the WebView). The banner only
+    // appears when the call had actually reached CONNECTED — an ARMED-but-never
+    // connected startup is reported as an attempted call, not an interrupted one.
+    String lifecycle = prefs.getString(KEY_LIFECYCLE, null);
+    boolean interrupted = LIFECYCLE_CONNECTED.equals(lifecycle);
+    ret.put("interrupted", interrupted);
+    ret.put("attempted", LIFECYCLE_ARMED.equals(lifecycle) || interrupted);
     call.resolve(ret);
   }
 

@@ -126,6 +126,23 @@ describe('Live audio ownership & startup transaction (review 7)', () => {
     client.disconnect(false);
   });
 
+  it('8. A later call cannot inherit a prior call\'s handed-off focus claim (review-8 P1)', async () => {
+    const client = new GeminiLiveClient(mockConfig);
+    // Call #1: pre-capture focus handed off, connects without requesting focus.
+    await client.connect('test-key', undefined, { audioFocusAlreadyGranted: true });
+    expect(native.plugin.requestAudioFocus).not.toHaveBeenCalled();
+    // Explicit hangup (preserveReconnectState=false) → native focus abandoned
+    // on disconnect + the client's own claim cleared.
+    client.disconnect(false);
+    expect((client as any).callAudioFocusGranted).toBe(false);
+
+    // Call #2: NO handoff → fresh connect must re-request focus exactly once.
+    native.plugin.requestAudioFocus.mockClear();
+    await client.connect('test-key');
+    expect(native.plugin.requestAudioFocus).toHaveBeenCalledTimes(1);
+    client.disconnect(false);
+  });
+
   it('6. User hangup cancels a pending reconnect backoff immediately (P2 cancellable worker)', async () => {
     vi.useFakeTimers();
     const client = new GeminiLiveClient(mockConfig);

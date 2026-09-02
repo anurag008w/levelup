@@ -5,8 +5,9 @@ interface NativeLiveCompanion {
   start(): Promise<void>;
   stop(): Promise<void>;
   armLiveCall(): Promise<void>;
+  markCallConnected(): Promise<void>;
   enterPiP(): Promise<void>;
-  isLiveCallInterrupted(): Promise<{ interrupted: boolean }>;
+  isLiveCallInterrupted(): Promise<{ interrupted: boolean; attempted: boolean }>;
   clearLiveCallInterrupted(): Promise<void>;
   addListener(eventName: 'pipModeChanged', listener: (data: { inPictureInPicture: boolean }) => void): Promise<PluginListenerHandle>;
 }
@@ -39,9 +40,22 @@ export async function enterPictureInPicture(): Promise<void> {
 }
 
 /**
- * Process-death recovery: returns true when a previous Live call was killed by
- * the system (Activity/OEM kill) and never explicitly ended — native persists
- * the intent at arm/start time and clears it only on explicit hangup.
+ * Promote the persisted lifecycle ARMED → CONNECTED once the Gemini session
+ * commits (review 8 / P1). Called by the overlay at its startup commit point so
+ * that a later process death surfaces the "previous live call was interrupted"
+ * recovery UX only for calls that had actually connected — a kill mid-startup
+ * is reported as an attempted call instead.
+ */
+export async function markLiveCallConnected(): Promise<void> {
+  if (Capacitor.isNativePlatform()) await LiveCompanion.markCallConnected();
+}
+
+/**
+ * Process-death recovery: returns true when a previous Live call had reached
+ * CONNECTED and was killed by the system (Activity/OEM kill) before an explicit
+ * hangup — native persists the lifecycle ARMED → CONNECTED and clears it only
+ * on explicit hangup. This is DETECTION/UX, not session recovery: the session
+ * itself lives in the process/WebView and a kill ends it in place.
  */
 export async function isLiveCallInterrupted(): Promise<boolean> {
   if (!Capacitor.isNativePlatform()) return false;

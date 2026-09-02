@@ -164,6 +164,18 @@ public class AudioRoutePlugin extends Plugin {
             }
         }
 
+        // Review-8 P2: Bluetooth topology can change between enumeration and
+        // application — re-verify the selected device is STILL in the current
+        // available set immediately before setCommunicationDevice(), so a
+        // headset that detached mid-flight is never applied as if it were live.
+        boolean stillAvailable = false;
+        for (AudioDeviceInfo d : am.getAvailableCommunicationDevices()) {
+            if (d.getId() == targetDevice.getId()) { stillAvailable = true; break; }
+        }
+        if (!stillAvailable) {
+            call.reject("Audio route could not be applied: device no longer available");
+            return;
+        }
         boolean ok = am.setCommunicationDevice(targetDevice);
         if (ok) {
             JSObject ret = new JSObject();
@@ -207,23 +219,29 @@ public class AudioRoutePlugin extends Plugin {
                 break;
 
             case "bluetooth":
-                am.startBluetoothSco();
-                am.setBluetoothScoOn(true);
-                am.setSpeakerphoneOn(false);
-                // Review 7 / P1 (Android 8–11): startBluetoothSco() is
-                // ASYNC — it returns before the headset profile converges, so
+                // Review 7 / P1 + final audit (Android 8–11): startBluetoothSco()
+                // is ASYNC — it returns before the headset profile converges, so
                 // resolving immediately lets the WebView AudioRecord open its
                 // capture session while audio is still on the phone speaker
                 // (first ~hundreds of ms of user speech can be lost). Wait for
                 // the SCO_CONNECTED broadcast (bounded timeout) so the JS
                 // caller only continues once the headset is the actual route.
-                // If SCO never converges, revert to the loudspeaker instead of
-                // letting the app believe it is "on bluetooth".
+                // The broadcast receiver is registered BEFORE startBluetoothSco()
+                // (final-audit race): a fast headset can emit SCO_CONNECTED in
+                // the synchronous window after startBluetoothSco() returns, so
+                // registering first guarantees that one transition is never
+                // missed. If SCO never converges, revert to the loudspeaker
+                // instead of letting the app believe it is "on bluetooth".
                 call.setKeepAlive(true);
                 final AudioManager amSco = am;
                 final PluginCall callSco = call;
                 Thread scoWaiter = new Thread(() -> {
-                    if (waitForScoConnected(amSco)) {
+                    boolean scoReady = waitForScoConnected(amSco, () -> {
+                        amSco.startBluetoothSco();
+                        amSco.setBluetoothScoOn(true);
+                        amSco.setSpeakerphoneOn(false);
+                    });
+                    if (scoReady) {
                         JSObject ret = new JSObject();
                         ret.put("route", "bluetooth");
                         ret.put("deviceType", "BLUETOOTH_SCO");
@@ -253,12 +271,13 @@ public class AudioRoutePlugin extends Plugin {
     }
 
     /**
-     * Block until the SCO headset reports CONNECTED (bounded by a short
-     * convergence window, e.g. 2s). Returns true if the headset is usable.
-     * The broadcast listener is unregistered on every exit path; on Android
-     * 13+ a dynamic receiver must declare its exported-ness.
+     * Register the SCO state receiver BEFORE calling startSco(), then wait
+     * for the CONNECTED broadcast with a bounded timeout. Returns true if
+     * SCO connected in time. The broadcast listener is unregistered on
+     * every exit path; on Android 13+ a dynamic receiver must declare its
+     * exported-ness.
      */
-    private boolean waitForScoConnected(AudioManager am) {
+    private boolean waitForScoConnected(AudioManager am, Runnable startSco) {
         if (am.isBluetoothScoOn()) return true;
         final Object lock = new Object();
         final boolean[] connected = { false };
@@ -273,11 +292,17 @@ public class AudioRoutePlugin extends Plugin {
         };
         IntentFilter filter = new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED);
         try {
+            // FINAL-AUDIT FIX (review 8 / P1): register the receiver BEFORE
+            // calling startBluetoothSco() — a fast headset can emit the
+            // SCO_CONNECTED transition in the synchronous window right after
+            // startBluetoothSco() returns. Registering first guarantees the
+            // transition cannot be missed.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 getContext().registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
             } else {
                 getContext().registerReceiver(receiver, filter);
             }
+            startSco.run();
             long deadline = System.currentTimeMillis() + 2000;
             synchronized (lock) {
                 while (!connected[0] && System.currentTimeMillis() < deadline) {

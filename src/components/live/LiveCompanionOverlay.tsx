@@ -41,6 +41,7 @@ import LiveSettingsModal from './LiveSettingsModal';
 import {
   stopLiveCompanionService,
   armLiveCall,
+  markLiveCallConnected,
   onPiPModeChanged,
 } from '../../lib/live-companion-service';
 import { setLiveCallReplyHandler, LIVE_CALL_SESSION_ID } from '../../lib/notification-actions';
@@ -320,6 +321,11 @@ export default function LiveCompanionOverlay({
         if (!cancelled) {
           setErrorMessage(null);
         }
+        // Review-8 P1: the Gemini session has committed — promote the persisted
+        // process-death lifecycle from ARMED to CONNECTED so a later kill
+        // surfaces the interruption banner accurately (never for an unfinished
+        // startup).
+        void markLiveCallConnected().catch(() => undefined);
       } catch (err: any) {
         // SINGLE ROLLBACK FINALIZER for every uncommitted startup path.
         //   - stopLiveCompanionService(): clears the FGS + liveCallActive AND
@@ -364,6 +370,14 @@ export default function LiveCompanionOverlay({
           // (WhatsApp-style, keepAudioPlaying=true). Sirf fully-hidden me
           // audio discard hota hai.
           liveClient.setBackgroundActive(true, true);
+          // Review-8 P1 (background camera contract): the Live FGS is
+          // MICROPHONE|MEDIA_PLAYBACK — it does NOT grant background camera
+          // capture. We therefore deliberately do NOT keep camera running here;
+          // camera capture only continues while the app is on-screen or in PiP
+          // (the FGS keeps the process alive for JS). If background camera must
+          // one day outlive this, it needs its own camera-type FGS + full
+          // Android-version validation (a separate contract, not implied to
+          // follow from the mic FGS).
         }
       }).then(listener => {
         if (released) void listener.remove();

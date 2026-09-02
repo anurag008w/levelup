@@ -959,6 +959,14 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       // connectionAttempt and throws, and no half-configured socket is leaked.
       await this.setupCallAudio();
 
+      // Review-8 P1: second cancellation gate AFTER the awaited audio setup —
+      // a hangup during the native focus/route round-trip must not resurrect a
+      // session the user already ended.
+      if (!this.isActiveAttempt(connectionAttempt)) {
+        session?.close?.();
+        throw new Error('Gemini Live connection was cancelled.');
+      }
+
       this.session = session;
       this.setStatus('connected');
       this.startKeepAliveAndSilenceObserver();
@@ -1784,8 +1792,20 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         isIncomingCall: this.isIncomingCallSession,
         reason: this.incomingCallReason,
       });
+      // Review-8 P1: strict invariant — once the epoch is stale (a hangup landed
+      // during the handshake/audio setup) this worker must not perform ANY
+      // further session mutation.
+      if (epoch !== this.reconnectEpoch || this.isUserExplicitlyClosed) {
+        this.isReconnecting = false;
+        return;
+      }
       if (this.currentMediaStream) {
         await this.startVoiceStreaming(this.currentMediaStream);
+      }
+      // Review-8 P1: same guard before the session mutation (vision re-orient).
+      if (epoch !== this.reconnectEpoch || this.isUserExplicitlyClosed) {
+        this.isReconnecting = false;
+        return;
       }
       // M6: vision capture survives the reconnect (disconnect(true) no longer
       // stops it), but re-orient the model so it knows the camera/screen feed
@@ -1877,6 +1897,18 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       : (this.pendingAudioReset ?? Promise.resolve())
           .then(() => resetNativeAudioRoute())
           .catch(() => undefined);
+    // Review-8 P1: a call that was handed-off a pre-captured focus must not
+    // leave callAudioFocusGranted true after teardown — otherwise a LATER
+    // connect() (Call #2 / a reconnect) could inherit Call #1's stale
+    // ownership claim and skip re-requesting focus. The only legitimate path
+    // that keeps the flag is the fresh-start + handed-off focus case
+    // (skipNativeAudioReset=true), where the focus is still held by the
+    // pre-capture path. On ANY other teardown (normal hangup, reconnect
+    // teardown, failed startup rollback) the native focus is abandoned here,
+    // so the flag must be cleared to match reality.
+    if (!skipNativeAudioReset) {
+      this.callAudioFocusGranted = false;
+    }
     if (this.session) {
       try {
         this.session.close?.();

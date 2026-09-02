@@ -889,6 +889,13 @@ export default function ChatScreen({
     liveCamStream?.getTracks().forEach((track) => track.stop());
     setLiveMicStream(null);
     setLiveCamStream(null);
+    // Review-8 P1 (duplicated handoff state): this screen-level ownership flag
+    // must be reset on EVERY hangup so Call #2 can never inherit Call #1's
+    // "pre-capture focus granted" claim. The client separately clears its own
+    // callAudioFocusGranted on disconnect (single source of truth for focus);
+    // this React flag is only the pre-capture handoff hint and must start
+    // false for every new call.
+    setLiveAudioFocusGranted(false);
     const targetSessionId = liveCallSessionIdRef.current || active?.id;
     if (transcripts?.length > 0 && targetSessionId) {
       for (const t of transcripts) {
@@ -1605,8 +1612,7 @@ export default function ChatScreen({
             <span>
               Pichli Live call system restart ki wajah se ruk gayi thi (yahan maine call end nahi ki thi).
               Dobara shuru karne ke liye Live Call kholen.
-            </span>
-            <button
+            </span>            <button
               onClick={dismissLiveCallInterrupted}
               className="ml-auto shrink-0 rounded-full border border-amber-500/30 px-2 py-0.5 text-[10px] font-semibold hover:bg-amber-500/10"
               aria-label="Dismiss"
