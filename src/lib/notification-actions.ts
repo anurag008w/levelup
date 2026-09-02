@@ -206,11 +206,11 @@ export function setupNotificationActions(): void {
             // = native MessagingStyle expand ke liye (scrollable, full-length)
             // — user ka reply pehle, phir Misa ke bubbles.
             for (const step of buildNotificationSteps(bubbles, schedule, undefined, { text, at: replySentAt })) {
-              setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', targetId, 0, true, step.text, step.messages, { preferBigText: true }), step.delayMs);
+              setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', targetId, 0, true, step.text, step.messages), step.delayMs);
             }
           } else {
             // Koi visible bubble nahi (sirf whitespace reply) — ek turant notification.
-            void notifyAiReply('Misa', assistant.content.trim() || 'Naya AI reply aaya', targetId, 0, true, assistant.content.trim() || undefined, undefined, { preferBigText: true });
+            void notifyAiReply('Misa', assistant.content.trim() || 'Naya AI reply aaya', targetId, 0, true);
           }
         } catch (err) {
           // Silently drop na karo — user ko error notification se batao reply

@@ -38,7 +38,7 @@ describe('notification-formatter', () => {
       expect(resolveLatexToUnicode('A \\pm B \\times C \\div D')).toBe('A ± B × C ÷ D');
       expect(resolveLatexToUnicode('x \\le y \\ge z \\ne 0 \\approx 1')).toBe('x ≤ y ≥ z ≠ 0 ≈ 1');
       expect(resolveLatexToUnicode('\\sum_{i=1}^{n} i')).toBe('∑ᵢ₌₁ⁿ i');
-      expect(resolveLatexToUnicode('\\int_{0}^{\\infty} f(x) dx')).toBe('∫₀^∞ f(x) dx');
+      expect(resolveLatexToUnicode('\\int_{0}^{\\infty} f(x) dx')).toBe('∫₀∞ f(x) dx');
     });
 
     it('strips LaTeX wrappers like \\text, \\mathbf, \\left, \\right', () => {

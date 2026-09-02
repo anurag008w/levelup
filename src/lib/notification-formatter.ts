@@ -80,109 +80,109 @@ const FRACTION_MAP: Record<string, string> = {
 // LaTeX symbols & Greek letters to clean Unicode
 const LATEX_SYMBOLS: [RegExp, string][] = [
   // Arrows & Logic
-  [/\\(iff|Leftrightarrow)\b/g, '⇔'],
-  [/\\(implies|Rightarrow)\b/g, '⇒'],
-  [/\\Leftarrow\b/g, '⇐'],
-  [/\\(to|rightarrow)\b/g, '→'],
-  [/\\(gets|leftarrow)\b/g, '←'],
-  [/\\leftrightarrow\b/g, '↔'],
-  [/\\mapsto\b/g, '↦'],
-  [/\\therefore\b/g, '∴'],
-  [/\\because\b/g, '∵'],
-  [/\\forall\b/g, '∀'],
-  [/\\exists\b/g, '∃'],
-  [/\\nexists\b/g, '∄'],
-  [/\\neg\b/g, '¬'],
-  [/\\land\b/g, '∧'],
-  [/\\lor\b/g, '∨'],
-  [/\\oplus\b/g, '⊕'],
-  [/\\otimes\b/g, '⊗'],
+  [/\\(iff|Leftrightarrow)(?![a-zA-Z])/g, '⇔'],
+  [/\\(implies|Rightarrow)(?![a-zA-Z])/g, '⇒'],
+  [/\\Leftarrow(?![a-zA-Z])/g, '⇐'],
+  [/\\(to|rightarrow)(?![a-zA-Z])/g, '→'],
+  [/\\(gets|leftarrow)(?![a-zA-Z])/g, '←'],
+  [/\\leftrightarrow(?![a-zA-Z])/g, '↔'],
+  [/\\mapsto(?![a-zA-Z])/g, '↦'],
+  [/\\therefore(?![a-zA-Z])/g, '∴'],
+  [/\\because(?![a-zA-Z])/g, '∵'],
+  [/\\forall(?![a-zA-Z])/g, '∀'],
+  [/\\exists(?![a-zA-Z])/g, '∃'],
+  [/\\nexists(?![a-zA-Z])/g, '∄'],
+  [/\\neg(?![a-zA-Z])/g, '¬'],
+  [/\\land(?![a-zA-Z])/g, '∧'],
+  [/\\lor(?![a-zA-Z])/g, '∨'],
+  [/\\oplus(?![a-zA-Z])/g, '⊕'],
+  [/\\otimes(?![a-zA-Z])/g, '⊗'],
 
   // Math Operators & Relations
-  [/\\pm\b/g, '±'],
-  [/\\mp\b/g, '∓'],
-  [/\\times\b/g, '×'],
-  [/\\div\b/g, '÷'],
-  [/\\cdot\b/g, '·'],
-  [/\\bullet\b/g, '•'],
-  [/\\ast\b/g, '*'],
-  [/\\star\b/g, '⋆'],
-  [/\\circ\b/g, '°'],
-  [/\\degree\b/g, '°'],
-  [/\\(le|leq)\b/g, '≤'],
-  [/\\(ge|geq)\b/g, '≥'],
-  [/\\(ne|neq)\b/g, '≠'],
-  [/\\approx\b/g, '≈'],
-  [/\\sim\b/g, '~'],
-  [/\\equiv\b/g, '≡'],
-  [/\\cong\b/g, '≅'],
-  [/\\ll\b/g, '≪'],
-  [/\\gg\b/g, '≫'],
-  [/\\propto\b/g, '∝'],
-  [/\\infty\b/g, '∞'],
-  [/\\partial\b/g, '∂'],
-  [/\\nabla\b/g, '∇'],
-  [/\\angle\b/g, '∠'],
-  [/\\perp\b/g, '⊥'],
-  [/\\parallel\b/g, '∥'],
+  [/\\pm(?![a-zA-Z])/g, '±'],
+  [/\\mp(?![a-zA-Z])/g, '∓'],
+  [/\\times(?![a-zA-Z])/g, '×'],
+  [/\\div(?![a-zA-Z])/g, '÷'],
+  [/\\cdot(?![a-zA-Z])/g, '·'],
+  [/\\bullet(?![a-zA-Z])/g, '•'],
+  [/\\ast(?![a-zA-Z])/g, '*'],
+  [/\\star(?![a-zA-Z])/g, '⋆'],
+  [/\\circ(?![a-zA-Z])/g, '°'],
+  [/\\degree(?![a-zA-Z])/g, '°'],
+  [/\\(le|leq)(?![a-zA-Z])/g, '≤'],
+  [/\\(ge|geq)(?![a-zA-Z])/g, '≥'],
+  [/\\(ne|neq)(?![a-zA-Z])/g, '≠'],
+  [/\\approx(?![a-zA-Z])/g, '≈'],
+  [/\\sim(?![a-zA-Z])/g, '~'],
+  [/\\equiv(?![a-zA-Z])/g, '≡'],
+  [/\\cong(?![a-zA-Z])/g, '≅'],
+  [/\\ll(?![a-zA-Z])/g, '≪'],
+  [/\\gg(?![a-zA-Z])/g, '≫'],
+  [/\\propto(?![a-zA-Z])/g, '∝'],
+  [/\\infty(?![a-zA-Z])/g, '∞'],
+  [/\\partial(?![a-zA-Z])/g, '∂'],
+  [/\\nabla(?![a-zA-Z])/g, '∇'],
+  [/\\angle(?![a-zA-Z])/g, '∠'],
+  [/\\perp(?![a-zA-Z])/g, '⊥'],
+  [/\\parallel(?![a-zA-Z])/g, '∥'],
 
   // Calculus & Sets
-  [/\\iint\b/g, '∬'],
-  [/\\iiint\b/g, '∭'],
-  [/\\oint\b/g, '∮'],
-  [/\\int\b/g, '∫'],
-  [/\\sum\b/g, '∑'],
-  [/\\prod\b/g, '∏'],
-  [/\\coprod\b/g, '∐'],
-  [/\\in\b/g, '∈'],
-  [/\\notin\b/g, '∉'],
-  [/\\ni\b/g, '∋'],
-  [/\\subset\b/g, '⊂'],
-  [/\\subseteq\b/g, '⊆'],
-  [/\\supset\b/g, '⊃'],
-  [/\\supseteq\b/g, '⊇'],
-  [/\\cup\b/g, '∪'],
-  [/\\cap\b/g, '∩'],
-  [/\\setminus\b/g, '∖'],
-  [/\\(emptyset|varnothing)\b/g, '∅'],
+  [/\\iint(?![a-zA-Z])/g, '∬'],
+  [/\\iiint(?![a-zA-Z])/g, '∭'],
+  [/\\oint(?![a-zA-Z])/g, '∮'],
+  [/\\int(?![a-zA-Z])/g, '∫'],
+  [/\\sum(?![a-zA-Z])/g, '∑'],
+  [/\\prod(?![a-zA-Z])/g, '∏'],
+  [/\\coprod(?![a-zA-Z])/g, '∐'],
+  [/\\in(?![a-zA-Z])/g, '∈'],
+  [/\\notin(?![a-zA-Z])/g, '∉'],
+  [/\\ni(?![a-zA-Z])/g, '∋'],
+  [/\\subset(?![a-zA-Z])/g, '⊂'],
+  [/\\subseteq(?![a-zA-Z])/g, '⊆'],
+  [/\\supset(?![a-zA-Z])/g, '⊃'],
+  [/\\supseteq(?![a-zA-Z])/g, '⊇'],
+  [/\\cup(?![a-zA-Z])/g, '∪'],
+  [/\\cap(?![a-zA-Z])/g, '∩'],
+  [/\\setminus(?![a-zA-Z])/g, '∖'],
+  [/\\(emptyset|varnothing)(?![a-zA-Z])/g, '∅'],
 
   // Greek Alphabet (Uppercase)
-  [/\\Gamma\b/g, 'Γ'],
-  [/\\Delta\b/g, 'Δ'],
-  [/\\Theta\b/g, 'Θ'],
-  [/\\Lambda\b/g, 'Λ'],
-  [/\\Xi\b/g, 'Ξ'],
-  [/\\Pi\b/g, 'Π'],
-  [/\\Sigma\b/g, 'Σ'],
-  [/\\Upsilon\b/g, 'Υ'],
-  [/\\Phi\b/g, 'Φ'],
-  [/\\Psi\b/g, 'Ψ'],
-  [/\\Omega\b/g, 'Ω'],
+  [/\\Gamma(?![a-zA-Z])/g, 'Γ'],
+  [/\\Delta(?![a-zA-Z])/g, 'Δ'],
+  [/\\Theta(?![a-zA-Z])/g, 'Θ'],
+  [/\\Lambda(?![a-zA-Z])/g, 'Λ'],
+  [/\\Xi(?![a-zA-Z])/g, 'Ξ'],
+  [/\\Pi(?![a-zA-Z])/g, 'Π'],
+  [/\\Sigma(?![a-zA-Z])/g, 'Σ'],
+  [/\\Upsilon(?![a-zA-Z])/g, 'Υ'],
+  [/\\Phi(?![a-zA-Z])/g, 'Φ'],
+  [/\\Psi(?![a-zA-Z])/g, 'Ψ'],
+  [/\\Omega(?![a-zA-Z])/g, 'Ω'],
 
   // Greek Alphabet (Lowercase)
-  [/\\alpha\b/g, 'α'],
-  [/\\beta\b/g, 'β'],
-  [/\\gamma\b/g, 'γ'],
-  [/\\delta\b/g, 'δ'],
-  [/\\(epsilon|varepsilon)\b/g, 'ε'],
-  [/\\zeta\b/g, 'ζ'],
-  [/\\eta\b/g, 'η'],
-  [/\\(theta|vartheta)\b/g, 'θ'],
-  [/\\iota\b/g, 'ι'],
-  [/\\kappa\b/g, 'κ'],
-  [/\\lambda\b/g, 'λ'],
-  [/\\mu\b/g, 'μ'],
-  [/\\nu\b/g, 'ν'],
-  [/\\xi\b/g, 'ξ'],
-  [/\\(pi|varpi)\b/g, 'π'],
-  [/\\(rho|varrho)\b/g, 'ρ'],
-  [/\\(sigma|varsigma)\b/g, 'σ'],
-  [/\\tau\b/g, 'τ'],
-  [/\\upsilon\b/g, 'υ'],
-  [/\\(phi|varphi)\b/g, 'φ'],
-  [/\\chi\b/g, 'χ'],
-  [/\\psi\b/g, 'ψ'],
-  [/\\omega\b/g, 'ω'],
+  [/\\alpha(?![a-zA-Z])/g, 'α'],
+  [/\\beta(?![a-zA-Z])/g, 'β'],
+  [/\\gamma(?![a-zA-Z])/g, 'γ'],
+  [/\\delta(?![a-zA-Z])/g, 'δ'],
+  [/\\(epsilon|varepsilon)(?![a-zA-Z])/g, 'ε'],
+  [/\\zeta(?![a-zA-Z])/g, 'ζ'],
+  [/\\eta(?![a-zA-Z])/g, 'η'],
+  [/\\(theta|vartheta)(?![a-zA-Z])/g, 'θ'],
+  [/\\iota(?![a-zA-Z])/g, 'ι'],
+  [/\\kappa(?![a-zA-Z])/g, 'κ'],
+  [/\\lambda(?![a-zA-Z])/g, 'λ'],
+  [/\\mu(?![a-zA-Z])/g, 'μ'],
+  [/\\nu(?![a-zA-Z])/g, 'ν'],
+  [/\\xi(?![a-zA-Z])/g, 'ξ'],
+  [/\\(pi|varpi)(?![a-zA-Z])/g, 'π'],
+  [/\\(rho|varrho)(?![a-zA-Z])/g, 'ρ'],
+  [/\\(sigma|varsigma)(?![a-zA-Z])/g, 'σ'],
+  [/\\tau(?![a-zA-Z])/g, 'τ'],
+  [/\\upsilon(?![a-zA-Z])/g, 'υ'],
+  [/\\(phi|varphi)(?![a-zA-Z])/g, 'φ'],
+  [/\\chi(?![a-zA-Z])/g, 'χ'],
+  [/\\psi(?![a-zA-Z])/g, 'ψ'],
+  [/\\omega(?![a-zA-Z])/g, 'ω'],
 ];
 
 /**
@@ -275,9 +275,9 @@ function resolveFractions(math: string): string {
     if (FRACTION_MAP[simpleKey]) {
       out += FRACTION_MAP[simpleKey];
     } else {
-      // Need parentheses if complex
+      // Need parentheses if compound expression (signs, spaces, or coefficient like 2a, 2z)
       const needsNumParen = /[+\-\s]/.test(num) && !/^\(.*\)$/.test(num);
-      const needsDenParen = /[+\-*/\s]/.test(den) && !/^\(.*\)$/.test(den);
+      const needsDenParen = !/^\(.*\)$/.test(den) && (/[+\-*/\s]/.test(den) || /^\d+[a-zA-Z]/.test(den));
       const formattedNum = needsNumParen ? `(${num})` : num;
       const formattedDen = needsDenParen ? `(${den})` : den;
       out += `${formattedNum} / ${formattedDen}`;
@@ -353,15 +353,25 @@ export function resolveLatexToUnicode(rawMath: string): string {
   }
 
   // Superscripts: ^{expr} or ^x
-  s = s.replace(/\^\{([^{}]+)\}/g, (_m, expr: string) => toSuperscript(expr.trim()));
+  s = s.replace(/\^\{([^{}]+)\}/g, (_m, expr: string) => {
+    let clean = expr.trim();
+    clean = clean.replace(/\^([0-9a-zA-Z+\-()])/g, (_m2, ch: string) => toSuperscript(ch));
+    return toSuperscript(clean);
+  });
   s = s.replace(/\^([0-9a-zA-Z+\-()])/g, (_m, ch: string) => toSuperscript(ch));
 
   // Subscripts: _{expr} or _x
-  s = s.replace(/_\{([^{}]+)\}/g, (_m, expr: string) => toSubscript(expr.trim()));
+  s = s.replace(/_\{([^{}]+)\}/g, (_m, expr: string) => {
+    let clean = expr.trim();
+    clean = clean.replace(/_([0-9a-zA-Z+\-()])/g, (_m2, ch: string) => toSubscript(ch));
+    return toSubscript(clean);
+  });
   s = s.replace(/_([0-9a-zA-Z+\-()])/g, (_m, ch: string) => toSubscript(ch));
 
   // Sizing & Delimiters
-  s = s.replace(/\\(left|right)\s*([()[\]{}|])/g, '$2');
+  s = s.replace(/\\(left|right)\s*([()[\]{}|])\s*/g, '$2');
+  s = s.replace(/\(\s+/g, '(').replace(/\s+\)/g, ')');
+  s = s.replace(/\[\s+/g, '[').replace(/\s+\]/g, ']');
   s = s.replace(/\\\{/g, '{').replace(/\\\}/g, '}');
 
   // Spacing commands
