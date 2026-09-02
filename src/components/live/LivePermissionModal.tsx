@@ -3,14 +3,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, Camera, Monitor, ShieldCheck, AlertCircle, CheckCircle2, X } from 'lucide-react';
 import { haptic, hapticSuccess, hapticError } from '../../lib/haptics';
 import { requestNativeCallAudioFocus, setNativeAudioRoute } from '../../lib/native-audio-route';
+import type { LiveAudioRoute } from '../../core/domain/live-types';
 
 interface LivePermissionModalProps {
   isOpen: boolean;
   onClose: () => void;
   onProceed: (micStream: MediaStream, cameraStream?: MediaStream) => void;
+  /** User's configured default audio route — used instead of hardcoding 'speaker'. */
+  defaultAudioRoute?: LiveAudioRoute;
 }
 
-export default function LivePermissionModal({ isOpen, onClose, onProceed }: LivePermissionModalProps) {
+export default function LivePermissionModal({ isOpen, onClose, onProceed, defaultAudioRoute = 'speaker' }: LivePermissionModalProps) {
   const [micGranted, setMicGranted] = useState(false);
   const [cameraGranted, setCameraGranted] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -29,8 +32,14 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed }: Live
       // MODE_IN_COMMUNICATION *before* getUserMedia opens the AudioRecord,
       // not after the call connects, otherwise the mic capture session can
       // go silent to the model on many Android devices.
-      await requestNativeCallAudioFocus();
-      await setNativeAudioRoute('speaker');
+      const focusGranted = await requestNativeCallAudioFocus();
+      if (!focusGranted) {
+        hapticError();
+        setErrorMsg('Microphone ko audio focus nahi mila. Music/call band karke dobara try karo.');
+        setRequesting(false);
+        return;
+      }
+      await setNativeAudioRoute(defaultAudioRoute);
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,

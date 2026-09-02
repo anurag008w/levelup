@@ -41,7 +41,7 @@ import LiveSettingsModal from './LiveSettingsModal';
 import {
   startLiveCompanionService,
   stopLiveCompanionService,
-  enterPictureInPicture,
+  armLiveCall,
   onPiPModeChanged,
 } from '../../lib/live-companion-service';
 import { setLiveCallReplyHandler, LIVE_CALL_SESSION_ID } from '../../lib/notification-actions';
@@ -273,6 +273,12 @@ export default function LiveCompanionOverlay({
     let cancelled = false;
 
     if (!existingClient) (async () => {
+      // Arm PiP + foreground service as soon as the overlay opens, BEFORE the
+      // (potentially multi-second) connection. This fixes the race where a
+      // Home/Recents press during the connecting window would otherwise hit
+      // onUserLeaveHint with liveCallActive still false -> no PiP -> frozen
+      // background -> reply only surfaces on reopen. Idempotent no-op after.
+      void armLiveCall().catch(() => undefined);
       try {
         await liveClient.connect(apiKey, incomingCallMeta);
         await startLiveCompanionService();
@@ -324,12 +330,14 @@ export default function LiveCompanionOverlay({
         if (isActive) {
           liveClient.setBackgroundActive(false);
         } else {
-          // App background me ja raha hai — PiP enter karo taaki call live
-          // rahe. PiP mode me user abhi bhi "call me" hota hai, isliye model
-          // audio CONTINUE hota hai (WhatsApp-style) — `keepAudioPlaying=true`.
-          // Sirf jab PiP nahi ho sakta (fully hidden) tab audio discard hota.
+          // App background me ja raha hai. PiP entry ab NATIVE
+          // MainActivity.onUserLeaveHint se handle hoti hai (reliable, exact
+          // lifecycle moment pe) — yahan sirf audio-continue state set karte
+          // hain. Isse dono paths ka duplicate/racy PiP entry khatam. PiP me
+          // user abhi "call me" hota hai, isliye audio CONTINUE hota hai
+          // (WhatsApp-style, keepAudioPlaying=true). Sirf fully-hidden me
+          // audio discard hota hai.
           liveClient.setBackgroundActive(true, true);
-          void enterPictureInPicture();
         }
       }).then(listener => {
         if (released) void listener.remove();

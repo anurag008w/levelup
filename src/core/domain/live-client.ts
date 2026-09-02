@@ -925,11 +925,17 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         throw new Error('Gemini Live connection was cancelled.');
       }
 
+      // M7 + M9: audio setup is single, ORDERED and AWAITED — never
+      // fire-and-forget. resetNativeAudioRoute() (from disconnect above) has
+      // already completed long before this await, so there is no overlap race.
+      // If focus is denied, we fail cleanly BEFORE the session is assigned:
+      // the generic catch below clears connectionAttempt and throws, and no
+      // half-configured socket is leaked to this.session.
+      await this.setupCallAudio();
+
       this.session = session;
       this.setStatus('connected');
       this.startKeepAliveAndSilenceObserver();
-      void requestNativeCallAudioFocus();
-      void setNativeAudioRoute(this.config.defaultAudioRoute);
       void this.installAudioFocusListener();
 
       // A reconnect is a continuation, not a fresh call.  Do not duplicate the
@@ -1245,6 +1251,8 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private isUserExplicitlyClosed = false;
   private lastWsActivity = Date.now(); // diagnostic only; silence is not a transport failure
   private audioFocusListener: { remove: () => Promise<void> } | null = null;
+  /** Single-owner flag: audio focus is acquired once (pre-capture), not per call-site. */
+  private callAudioFocusGranted = false;
   private connectionAttempt = 0;
   private manuallyMuted = false;
   private audioFocusPaused = false;
@@ -1294,11 +1302,15 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   /** Start recording user voice & streaming audio chunks. */
   async startVoiceStreaming(mediaStream: MediaStream): Promise<void> {
-    // Focus is acquired before capture. This check also makes direct callers
-    // safe on native platforms when a session was restored/reconnected.
-    if (!await requestNativeCallAudioFocus()) {
-      this.setStatus('error');
-      throw new Error('Microphone cannot start because audio focus was denied.');
+    // Single-owner focus: connect() already acquired focus via setupCallAudio().
+    // This guard only fires for DIRECT callers (e.g. a session restored without
+    // going through connect) — it never double-acquires on the normal path.
+    if (!this.callAudioFocusGranted) {
+      if (!await requestNativeCallAudioFocus()) {
+        this.setStatus('error');
+        throw new Error('Microphone cannot start because audio focus was denied.');
+      }
+      this.callAudioFocusGranted = true;
     }
     this.currentMediaStream = mediaStream;
     this.audioStreamer.setOnPlaybackEnded(() => {
@@ -1340,6 +1352,18 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         this.updateStats(0, outputLevel);
       },
     );
+  }
+
+  private async setupCallAudio(): Promise<void> {
+    if (!this.callAudioFocusGranted) {
+      if (!await requestNativeCallAudioFocus()) {
+        // Fail cleanly — never let a silent-audio session appear connected.
+        throw new Error('Microphone cannot start because audio focus was denied.');
+      }
+      this.callAudioFocusGranted = true;
+    }
+    // Route is applied AFTER focus and AWAITED — ordered, single-owner audio init.
+    await setNativeAudioRoute(this.config.defaultAudioRoute);
   }
 
   private sendAudioChunk(pcm16Base64: string, rmsLevel = 0): void {
@@ -1414,7 +1438,12 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   async startCameraStream(lens: LiveCameraLens): Promise<MediaStream> {
     const attempt = this.connectionAttempt;
     const stream = await this.visionStreamer.startCamera(lens, this.config.videoFps, (jpegBase64) => {
-      this.sendVideoFrame(jpegBase64, attempt);
+      // NOTE (M6): deliberately NOT capturing `attempt` here. The callback
+      // resolves the CURRENT connectionAttempt at send time (sendVideoFrame's
+      // default param), so after a reconnect the still-running camera stream
+      // keeps sending frames to the new session instead of silently dropping
+      // them because it was bound to a stale attempt.
+      this.sendVideoFrame(jpegBase64);
     });
 
     if (stream && this.session) {
@@ -1435,9 +1464,9 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   /** Flip between Front and Back camera. */
   async flipCamera(): Promise<MediaStream> {
-    const attempt = this.connectionAttempt;
     return this.visionStreamer.switchLens(this.config.videoFps, (jpegBase64) => {
-      this.sendVideoFrame(jpegBase64, attempt);
+      // M6: current-attempt resolution at send time (see startCameraStream).
+      this.sendVideoFrame(jpegBase64);
     });
   }
 
@@ -1445,7 +1474,8 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   async startScreenStream(onEnded?: () => void): Promise<MediaStream | null> {
     const attempt = this.connectionAttempt;
     const stream = await this.visionStreamer.startScreenShare(this.config.screenFps, (jpegBase64) => {
-      this.sendVideoFrame(jpegBase64, attempt);
+      // M6: current-attempt resolution at send time (see startCameraStream).
+      this.sendVideoFrame(jpegBase64);
     }, onEnded);
 
     if (stream && this.session) {
@@ -1643,6 +1673,20 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       if (this.currentMediaStream) {
         await this.startVoiceStreaming(this.currentMediaStream);
       }
+      // M6: vision capture survives the reconnect (disconnect(true) no longer
+      // stops it), but re-orient the model so it knows the camera/screen feed
+      // is still live instead of assuming vision ended with the break.
+      if (this.visionStreamer.getIsCameraActive() || this.visionStreamer.getIsScreenSharing()) {
+        try {
+          this.session?.sendRealtimeInput({
+            text: this.visionStreamer.getIsCameraActive()
+              ? '[SYSTEM EVENT: The camera feed continues after a brief connection break. Keep observing what you see exactly as before.]'
+              : '[SYSTEM EVENT: The screen share continues after a brief connection break. Keep observing the screen exactly as before.]',
+          });
+        } catch (e) {
+          console.warn('[GeminiLive] Vision re-orient prompt after reconnect failed:', e);
+        }
+      }
       // Only reset after a real, established replacement session.
       this.reconnectAttempts = 0;
       this.reconnectWindowStartedAt = 0;
@@ -1674,11 +1718,20 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     }
     this.silenceStateMachine.reset();
     this.audioStreamer.stopRecording();
+    // Single-owner audio flag: the next connect() must re-acquire focus before
+    // streaming again (reconnect does its own ordered setup — M7).
+    this.callAudioFocusGranted = false;
     if (this.audioFocusListener) {
       void this.audioFocusListener.remove();
       this.audioFocusListener = null;
     }
-    this.visionStreamer.stop();
+    // INTENTIONAL BEHAVIOR PRESERVED: an explicit hangup (preserve=false) MUST
+    // stop the camera/screen capture. But a reconnect (preserve=true) must NOT
+    // kill it — otherwise the active camera/screen stream dies the moment the
+    // WebSocket reconnects and only voice comes back (Review 3 issue #1).
+    if (!preserveReconnectState) {
+      this.visionStreamer.stop();
+    }
     void resetNativeAudioRoute();
     if (this.session) {
       try {

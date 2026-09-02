@@ -63,7 +63,13 @@ public class AudioRoutePlugin extends Plugin {
         }
 
         try {
-            requestCallAudioFocus(am);
+            // NOTE: Audio focus is acquired as a single-owner step via the
+            // dedicated `requestAudioFocus` plugin call + `resetRoute`/`abandon`.
+            // We intentionally DO NOT request focus here — otherwise calling
+            // setRoute right after requestAudioFocus (as the pre-capture mic-fix
+            // does) creates a second AudioFocusRequest that overwrites the stored
+            // one, so resetRoute would only abandon the latest and leave focus
+            // ownership inconsistent. Focus is set once, before capture starts.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 // Android 12+ (API 31+): use setCommunicationDevice
                 setRouteApi31(am, route, call);

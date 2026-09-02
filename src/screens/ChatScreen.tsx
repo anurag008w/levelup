@@ -457,7 +457,13 @@ export default function ChatScreen({
         // re-route an already-open capture session when the mode changes
         // underneath it, so the mic effectively went silent to the model
         // every single call, in foreground and background alike.
-        await requestNativeCallAudioFocus();
+        const focusGranted = await requestNativeCallAudioFocus();
+        if (!focusGranted) {
+          // Fall through to the permission modal — its requestMic() also honours
+          // focus and will surface a clear error instead of silently proceeding
+          // into a broken (silent-mic) call.
+          throw new Error('Audio focus denied');
+        }
         await setNativeAudioRoute(liveConfig.defaultAudioRoute);
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
@@ -1788,6 +1794,7 @@ export default function ChatScreen({
         isOpen={showLivePermission}
         onClose={() => setShowLivePermission(false)}
         onProceed={handlePermissionProceed}
+        defaultAudioRoute={liveConfig.defaultAudioRoute}
       />
 
       {showLiveOverlay && liveMicStream && (

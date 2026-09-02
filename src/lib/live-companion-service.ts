@@ -4,6 +4,7 @@ import type { PluginListenerHandle } from '@capacitor/core';
 interface NativeLiveCompanion {
   start(): Promise<void>;
   stop(): Promise<void>;
+  armLiveCall(): Promise<void>;
   enterPiP(): Promise<void>;
   addListener(eventName: 'pipModeChanged', listener: (data: { inPictureInPicture: boolean }) => void): Promise<PluginListenerHandle>;
 }
@@ -12,6 +13,16 @@ const LiveCompanion = registerPlugin<NativeLiveCompanion>('LiveCompanion');
 /** Explicit native foreground-service ownership for an active Live call. */
 export async function startLiveCompanionService(): Promise<void> {
   if (Capacitor.isNativePlatform()) await LiveCompanion.start();
+}
+
+/**
+ * Arm PiP + foreground service as soon as the live overlay opens (before the
+ * call connects) so a Home/Recents press during the connecting window still
+ * enters PiP instead of silently failing — the exact bug the PR fixes.
+ * Idempotent: calling it again while already armed is a harmless no-op.
+ */
+export async function armLiveCall(): Promise<void> {
+  if (Capacitor.isNativePlatform()) await LiveCompanion.armLiveCall();
 }
 
 /** Relinquish foreground-service ownership. */

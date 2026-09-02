@@ -10,6 +10,16 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 @CapacitorPlugin(name = "LiveCompanion")
 public class LiveCompanionPlugin extends Plugin {
+  @Override
+  public void load() {
+    super.load();
+    // Self-register so the auto PiP path (onUserLeaveHint) can dispatch the
+    // pipModeChanged callback to JS even when enterPiP was never called
+    // explicitly. Without this, livePlugin stays null and the PiP callback
+    // is silently lost on the automatic entry path.
+    MainActivity.registerLivePlugin(this);
+  }
+
   @PluginMethod public void start(PluginCall call) {
     Intent i = new Intent(getContext(), LiveCompanionForegroundService.class);
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getContext().startForegroundService(i); else getContext().startService(i);
@@ -23,6 +33,20 @@ public class LiveCompanionPlugin extends Plugin {
   @PluginMethod public void stop(PluginCall call) {
     getContext().stopService(new Intent(getContext(), LiveCompanionForegroundService.class));
     MainActivity.setLiveCallActive(false);
+    call.resolve();
+  }
+
+  /**
+   * Arm PiP *before* the call actually connects. Called from JS when the live
+   * overlay opens (stream acquisition starts), so a Home press during the
+   * multi-second connecting window still enters PiP instead of silently doing
+   * nothing (exact bug being fixed). Also starts the foreground service so the
+   * process stays eligible for background execution while connecting.
+   */
+  @PluginMethod public void armLiveCall(PluginCall call) {
+    Intent i = new Intent(getContext(), LiveCompanionForegroundService.class);
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getContext().startForegroundService(i); else getContext().startService(i);
+    MainActivity.setLiveCallActive(true);
     call.resolve();
   }
 

@@ -65,6 +65,11 @@ public class MainActivity extends BridgeActivity {
         MainActivity activity = getInstance();
         if (activity == null) return;
         try {
+            // Defensive: jab apne aap already PiP mode me ho (dono paths —
+            // appStateChange + onUserLeaveHint — ek saath fire ho sakte hain)
+            // toh duplicate entry attempt na karo (API 26-30 par IllegalStateException
+            // throw hota hai agar already PiP me ho).
+            if (activity.isInPictureInPictureMode()) return;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 PictureInPictureParams params = new PictureInPictureParams.Builder()
                     .setAspectRatio(new Rational(9, 16))
@@ -72,6 +77,11 @@ public class MainActivity extends BridgeActivity {
                 activity.enterPictureInPictureMode(params);
             }
         } catch (Exception ignored) { }
+    }
+
+    /** Plugin construction time par self-register hota hai (see LiveCompanionPlugin.load). */
+    public static void registerLivePlugin(LiveCompanionPlugin plugin) {
+        livePlugin = plugin;
     }
 
     /** Plugin call ke through bhi PiP enter kar sakte ho. */
@@ -135,6 +145,11 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onDestroy() {
+        // CRITICAL: reset the stale flag. If the activity is destroyed mid-call
+        // (task kill / OEM swipe) while the FGS keeps the process alive, the
+        // static liveCallActive would otherwise stay true and any Home press on
+        // a freshly recreated non-call Activity would spuriously enter PiP.
+        liveCallActive = false;
         instance = null;
         super.onDestroy();
     }
