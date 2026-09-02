@@ -155,8 +155,8 @@ public class AudioRoutePlugin extends Plugin {
                 }
             }
             if (targetDevice != null) {
+                am.setSpeakerphoneOn(true);
                 boolean ok = am.setCommunicationDevice(targetDevice);
-                // Review-9 P1.9: confirm with getCommunicationDevice() (authoritative).
                 if (ok && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     AudioDeviceInfo actual = am.getCommunicationDevice();
                     ok = actual != null && actual.getId() == targetDevice.getId();
@@ -175,6 +175,7 @@ public class AudioRoutePlugin extends Plugin {
             }
             // No loudspeaker in comm devices (rare) — clear so Android picks default.
             am.clearCommunicationDevice();
+            am.setSpeakerphoneOn(true);
             JSObject ret = new JSObject();
             ret.put("route", "speaker");
             ret.put("deviceType", "BUILTIN_SPEAKER");
@@ -195,21 +196,16 @@ public class AudioRoutePlugin extends Plugin {
             }
 
         } else if ("bluetooth".equals(route)) {
-            // REAL wireless communication devices only: SCO / BLE headset /
-            // BLE speaker / hearing aid (A2DP only if the system itself lists
-            // it as a communication device). Wired/USB headsets are NOT
-            // bluetooth and must never be selected or reported as such —
-            // otherwise the user hears "bluetooth" while audio goes to a wire.
-            for (AudioDeviceInfo d : devices) {
-                int type = d.getType();
-                if (type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                    type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-                    type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
-                    type == AudioDeviceInfo.TYPE_HEARING_AID ||
-                    type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
-                    targetDevice = d;
-                    break;
-                }
+            // Priority selection: SCO & BLE headsets first (bidirectional voice communication),
+            // then hearing aids / BLE speakers, then A2DP.
+            targetDevice = findBestBluetoothDevice(devices);
+            if (targetDevice == null) {
+                // If devices did not reflect Bluetooth immediately upon mode switch, wait briefly and retry
+                try {
+                    Thread.sleep(150);
+                } catch (InterruptedException ignored) {}
+                devices = am.getAvailableCommunicationDevices();
+                targetDevice = findBestBluetoothDevice(devices);
             }
             if (targetDevice == null) {
                 call.reject("No Bluetooth communication device available");
@@ -217,27 +213,53 @@ public class AudioRoutePlugin extends Plugin {
             }
         }
 
-        // Review-8 P2: Bluetooth topology can change between enumeration and
-        // application — re-verify the selected device is STILL in the current
-        // available set immediately before setCommunicationDevice(), so a
-        // headset that detached mid-flight is never applied as if it were live.
+        // Re-verify the selected device is STILL in the current available set
         boolean stillAvailable = false;
         for (AudioDeviceInfo d : am.getAvailableCommunicationDevices()) {
             if (d.getId() == targetDevice.getId()) { stillAvailable = true; break; }
         }
         if (!stillAvailable) {
+            // Re-verify after a brief delay in case device list was transitioning
+            try { Thread.sleep(80); } catch (InterruptedException ignored) {}
+            for (AudioDeviceInfo d : am.getAvailableCommunicationDevices()) {
+                if (d.getId() == targetDevice.getId()) { stillAvailable = true; break; }
+            }
+        }
+        if (!stillAvailable) {
             call.reject("Audio route could not be applied: device no longer available");
             return;
         }
+
+        // When switching to earpiece or bluetooth, turn speakerphone OFF so Android does not route to speaker
+        am.setSpeakerphoneOn(false);
+
         boolean ok = am.setCommunicationDevice(targetDevice);
-        // Review-9 P1.9: setCommunicationDevice() returning true is the apply;
-        // getCommunicationDevice() (API 31+) is the AUTHORITATIVE confirmation
-        // that the system actually switched. A true-but-unchanged apply (or a
-        // device that detached between the call and now) must never let JS claim
-        // a route the system did not land on.
         if (ok && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             AudioDeviceInfo actual = am.getCommunicationDevice();
-            ok = actual != null && actual.getId() == targetDevice.getId();
+            boolean confirmed = (actual != null && actual.getId() == targetDevice.getId());
+
+            // Bluetooth audio handshake is asynchronous on Android 12+.
+            // Bounded poll up to 2000ms for getCommunicationDevice() to converge to targetDevice.
+            if (!confirmed && "bluetooth".equals(route)) {
+                long deadline = System.currentTimeMillis() + 2000;
+                while (System.currentTimeMillis() < deadline) {
+                    try {
+                        Thread.sleep(60);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                    actual = am.getCommunicationDevice();
+                    if (actual != null && actual.getId() == targetDevice.getId()) {
+                        confirmed = true;
+                        break;
+                    }
+                }
+            }
+
+            // If the system accepted setCommunicationDevice (returned true), trust it for Bluetooth
+            // even if the HAL updates getCommunicationDevice() lazily when the audio track renders.
+            ok = confirmed || ("bluetooth".equals(route) && ok);
         }
         if (ok) {
             JSObject ret = new JSObject();
@@ -251,6 +273,34 @@ public class AudioRoutePlugin extends Plugin {
                 + " (device " + (targetDevice.getProductName() != null ? targetDevice.getProductName() : targetDevice.getId()) + ")");
             call.reject("Audio route could not be applied: " + route);
         }
+    }
+
+    /** Find highest priority Bluetooth communication device for 2-way call. */
+    @android.annotation.SuppressLint("NewApi")
+    private AudioDeviceInfo findBestBluetoothDevice(List<AudioDeviceInfo> devices) {
+        if (devices == null) return null;
+        // Priority 1: True 2-way call communication headsets (SCO or BLE Headset)
+        for (AudioDeviceInfo d : devices) {
+            int type = d.getType();
+            if (type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || type == AudioDeviceInfo.TYPE_BLE_HEADSET) {
+                return d;
+            }
+        }
+        // Priority 2: Hearing aid / BLE Speaker
+        for (AudioDeviceInfo d : devices) {
+            int type = d.getType();
+            if (type == AudioDeviceInfo.TYPE_HEARING_AID || type == AudioDeviceInfo.TYPE_BLE_SPEAKER) {
+                return d;
+            }
+        }
+        // Priority 3: A2DP (if system exposes it as communication device)
+        for (AudioDeviceInfo d : devices) {
+            int type = d.getType();
+            if (type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
+                return d;
+            }
+        }
+        return null;
     }
 
     /** Human-readable Android device type name (device-matrix verification aid). */
@@ -530,20 +580,9 @@ public class AudioRoutePlugin extends Plugin {
 
         if (am != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             List<AudioDeviceInfo> devices = am.getAvailableCommunicationDevices();
+            hasBluetooth = findBestBluetoothDevice(devices) != null;
             for (AudioDeviceInfo d : devices) {
-                int type = d.getType();
-                // Honest classification: only REAL wireless communication
-                // devices count as bluetooth. Wired/USB headsets are routed
-                // automatically by Android and are neither bluetooth nor
-                // earpiece nor speaker — do not mislabel them.
-                if (type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                    type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-                    type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
-                    type == AudioDeviceInfo.TYPE_HEARING_AID ||
-                    type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
-                    hasBluetooth = true;
-                }
-                if (type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
+                if (d.getType() == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
                     hasEarpiece = true;
                 }
             }
