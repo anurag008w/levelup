@@ -2,7 +2,7 @@ import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor
 import type { LiveAudioRoute } from '../core/domain/live-types';
 
 interface AudioRouteNative {
-  setRoute(options: { route: string }): Promise<{ route: string; deviceName?: string }>;
+  setRoute(options: { route: string }): Promise<{ route: string; deviceName?: string; deviceType?: string }>;
   resetRoute(): Promise<void>;
   getAvailableRoutes(): Promise<{ speaker: boolean; earpiece: boolean; bluetooth: boolean }>;
   requestAudioFocus(): Promise<{ granted: boolean; status: 'granted' | 'delayed' | 'failed' }>;
@@ -26,7 +26,7 @@ const AudioRoute = registerPlugin<AudioRouteNative>('AudioRoute');
  * Switch Android system audio route between Loudspeaker, Earpiece, and Bluetooth headset.
  * On browser/web, this is a graceful no-op.
  */
-export async function setNativeAudioRoute(route: LiveAudioRoute): Promise<{ route: string; deviceName?: string } | null> {
+export async function setNativeAudioRoute(route: LiveAudioRoute): Promise<{ route: string; deviceName?: string; deviceType?: string } | null> {
   if (!Capacitor.isNativePlatform()) return null;
   try {
     return await AudioRoute.setRoute({ route });

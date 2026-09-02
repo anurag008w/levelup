@@ -39,7 +39,13 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed, defaul
         setRequesting(false);
         return;
       }
-      await setNativeAudioRoute(defaultAudioRoute);
+      // P3: verify the route was actually applied — don't start capture under
+      // a route the system refused (missing Bluetooth device etc.). Fall back
+      // to the always-available loudspeaker rather than limping into capture.
+      const applied = await setNativeAudioRoute(defaultAudioRoute);
+      if (!applied && defaultAudioRoute !== 'speaker') {
+        await setNativeAudioRoute('speaker');
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,

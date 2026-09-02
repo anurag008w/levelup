@@ -186,7 +186,11 @@ export class GeminiLiveClient {
   }
 
   /** Connect to the Gemini Live API via official Google GenAI SDK. */
-  async connect(apiKey: string, incomingCallMeta?: { isIncomingCall?: boolean; reason?: string }): Promise<void> {
+  async connect(
+    apiKey: string,
+    incomingCallMeta?: { isIncomingCall?: boolean; reason?: string },
+    options?: { audioFocusAlreadyGranted?: boolean },
+  ): Promise<void> {
     if (!apiKey) {
       throw new Error('Google Gemini API Key is required for Live Voice.');
     }
@@ -194,6 +198,15 @@ export class GeminiLiveClient {
     // onclose synchronously and must not start a competing reconnect.
     const connectionAttempt = ++this.connectionAttempt;
     this.disconnect(true);
+    // SINGLE-SOURCE FOCUS (Review 4 / P1): the pre-capture path (permission
+    // modal / remembered fast path) already acquired native audio focus BEFORE
+    // getUserMedia. The caller hands that fact in here so connect() must NOT
+    // request focus a second time — `setupCallAudio()` below skips the request
+    // and only applies the route. Only reconnect/auto paths (no handed-off
+    // flag) re-acquire, and disconnect() above has already reset the flag.
+    if (options?.audioFocusAlreadyGranted) {
+      this.callAudioFocusGranted = true;
+    }
     this.isUserExplicitlyClosed = false;
     this.activeApiKey = apiKey;
     this.setStatus('connecting');
@@ -925,12 +938,12 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         throw new Error('Gemini Live connection was cancelled.');
       }
 
-      // M7 + M9: audio setup is single, ORDERED and AWAITED — never
-      // fire-and-forget. resetNativeAudioRoute() (from disconnect above) has
-      // already completed long before this await, so there is no overlap race.
-      // If focus is denied, we fail cleanly BEFORE the session is assigned:
-      // the generic catch below clears connectionAttempt and throws, and no
-      // half-configured socket is leaked to this.session.
+      // M7 + M9 + P7: audio setup is single, ORDERED and AWAITED — never
+      // fire-and-forget. setupCallAudio() first awaits the stored
+      // resetNativeAudioRoute() from disconnect(true), then applies focus/route,
+      // so there is no reset/setup overlap race. If focus is denied, we fail
+      // cleanly BEFORE the session is assigned: the generic catch below clears
+      // connectionAttempt and throws, and no half-configured socket is leaked.
       await this.setupCallAudio();
 
       this.session = session;
@@ -1245,7 +1258,6 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private lastSilenceNudgeAt = 0;
   private isReconnecting = false;
   private reconnectAttempts = 0;
-  private reconnectWindowStartedAt = 0;
   private currentMediaStream: MediaStream | null = null;
   private activeApiKey: string | null = null;
   private isUserExplicitlyClosed = false;
@@ -1253,6 +1265,15 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private audioFocusListener: { remove: () => Promise<void> } | null = null;
   /** Single-owner flag: audio focus is acquired once (pre-capture), not per call-site. */
   private callAudioFocusGranted = false;
+  /** Route that was actually applied by the system (may differ after fallback). */
+  private currentAudioRoute: LiveAudioRoute = 'speaker';
+  /**
+   * P7: in-flight `resetNativeAudioRoute()` from the last disconnect. Stored so
+   * the NEXT setupCallAudio() can await it — otherwise the fire-and-forget reset
+   * could finish AFTER the new focus/route setup and revert the freshly selected
+   * communication route/mode (the reset/setup race).
+   */
+  private pendingAudioReset: Promise<void> | null = null;
   private connectionAttempt = 0;
   private manuallyMuted = false;
   private audioFocusPaused = false;
@@ -1355,6 +1376,19 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   }
 
   private async setupCallAudio(): Promise<void> {
+    // P7: serialize with the previous disconnect's reset. disconnect(true) only
+    // STORES the reset promise; awaiting it here guarantees the old route/mode
+    // teardown fully completes before we apply the new focus/route — the
+    // reset/setup race is closed by ordering, not by timing luck.
+    if (this.pendingAudioReset) {
+      await this.pendingAudioReset;
+      this.pendingAudioReset = null;
+    }
+    // SINGLE-SOURCE FOCUS (P1): if the pre-capture path already acquired
+    // native focus and handed it in via connect({audioFocusAlreadyGranted}),
+    // the flag is already true here — so we NEVER issue a second
+    // requestAudioFocus for the same call startup. Only reconnect/auto paths
+    // (no handed-off flag after disconnect() reset) request fresh.
     if (!this.callAudioFocusGranted) {
       if (!await requestNativeCallAudioFocus()) {
         // Fail cleanly — never let a silent-audio session appear connected.
@@ -1363,7 +1397,29 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.callAudioFocusGranted = true;
     }
     // Route is applied AFTER focus and AWAITED — ordered, single-owner audio init.
-    await setNativeAudioRoute(this.config.defaultAudioRoute);
+    // P3: the native result is VERIFIED, not swallowed. setNativeAudioRoute()
+    // resolves null on native failure (missing Bluetooth device for the
+    // requested route, etc.). A requested route that was never applied must
+    // not silently pass as "connected on bluetooth".
+    const desiredRoute = this.config.defaultAudioRoute ?? 'speaker';
+    const applied = await setNativeAudioRoute(desiredRoute);
+    if (applied) {
+      this.currentAudioRoute = (applied.route as LiveAudioRoute) || desiredRoute;
+      if (applied.deviceType && applied.deviceType !== 'BUILTIN_SPEAKER') {
+        console.info(`[GeminiLive] Audio route applied: ${applied.route} (${applied.deviceType}${applied.deviceName ? ` - ${applied.deviceName}` : ''})`);
+      }
+    } else if (desiredRoute !== 'speaker') {
+      // Explicit fallback: a failed earpiece/bluetooth apply is not fatal to the
+      // call, but we must NOT pretend the wanted route is active. Fall back to
+      // the always-available loudspeaker and report the actual route.
+      console.warn(`[GeminiLive] Requested audio route "${desiredRoute}" was not applied by the system — falling back to speaker.`);
+      const fallback = await setNativeAudioRoute('speaker');
+      this.currentAudioRoute = (fallback?.route as LiveAudioRoute) || 'speaker';
+    } else {
+      // desiredRoute IS speaker and nothing reported back (e.g. web/no-op) — no
+      // route to verify; keep the default.
+      this.currentAudioRoute = 'speaker';
+    }
   }
 
   private sendAudioChunk(pcm16Base64: string, rmsLevel = 0): void {
@@ -1524,6 +1580,11 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     this.applyMicrophoneMute();
   }
 
+  /** Route that the system actually applied (correct even after speaker fallback). */
+  getCurrentAudioRoute(): LiveAudioRoute {
+    return this.currentAudioRoute;
+  }
+
   private applyMicrophoneMute(): void {
     this.audioStreamer.setMuted(this.manuallyMuted || this.audioFocusPaused);
   }
@@ -1639,7 +1700,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   private async handleAutoReconnect(): Promise<void> {
     if (this.isReconnecting || this.isUserExplicitlyClosed) return;
-    if (!canRetryLiveConnection(this.reconnectAttempts, this.reconnectWindowStartedAt)) {
+    if (!canRetryLiveConnection(this.reconnectAttempts)) {
       this.setStatus('error');
       this.callbacks.onError?.('Network connection could not be restored. End the call or try again.');
       return;
@@ -1647,7 +1708,6 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
     this.isReconnecting = true;
     this.reconnectAttempts += 1;
-    if (!this.reconnectWindowStartedAt) this.reconnectWindowStartedAt = Date.now();
     console.info(`[GeminiLive] reconnect attempt=${this.reconnectAttempts} lastTransportActivity=${this.lastWsActivity}`);
     this.setStatus('reconnecting');
 
@@ -1689,7 +1749,6 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       }
       // Only reset after a real, established replacement session.
       this.reconnectAttempts = 0;
-      this.reconnectWindowStartedAt = 0;
       this.isReconnecting = false;
       console.info('[GeminiLive] Successfully reconnected session!');
     } catch (e) {
@@ -1732,7 +1791,9 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     if (!preserveReconnectState) {
       this.visionStreamer.stop();
     }
-    void resetNativeAudioRoute();
+    // P7: store (not fire-and-forget) so the next setupCallAudio() serializes
+    // after this reset — the route can no longer be reverted after new setup.
+    this.pendingAudioReset = resetNativeAudioRoute();
     if (this.session) {
       try {
         this.session.close?.();

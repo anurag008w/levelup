@@ -6,6 +6,8 @@ interface NativeLiveCompanion {
   stop(): Promise<void>;
   armLiveCall(): Promise<void>;
   enterPiP(): Promise<void>;
+  isLiveCallInterrupted(): Promise<{ interrupted: boolean }>;
+  clearLiveCallInterrupted(): Promise<void>;
   addListener(eventName: 'pipModeChanged', listener: (data: { inPictureInPicture: boolean }) => void): Promise<PluginListenerHandle>;
 }
 const LiveCompanion = registerPlugin<NativeLiveCompanion>('LiveCompanion');
@@ -34,6 +36,32 @@ export async function stopLiveCompanionService(): Promise<void> {
 export async function enterPictureInPicture(): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   try { await LiveCompanion.enterPiP(); } catch { /* noop */ }
+}
+
+/**
+ * Process-death recovery: returns true when a previous Live call was killed by
+ * the system (Activity/OEM kill) and never explicitly ended — native persists
+ * the intent at arm/start time and clears it only on explicit hangup.
+ */
+export async function isLiveCallInterrupted(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return false;
+  try {
+    const { interrupted } = await LiveCompanion.isLiveCallInterrupted();
+    return interrupted;
+  } catch (err) {
+    console.warn('[LiveCompanion] isLiveCallInterrupted failed:', err);
+    return false;
+  }
+}
+
+/** Dismiss the "last call was interrupted" banner (user acknowledged). */
+export async function clearLiveCallInterrupted(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    await LiveCompanion.clearLiveCallInterrupted();
+  } catch (err) {
+    console.warn('[LiveCompanion] clearLiveCallInterrupted failed:', err);
+  }
 }
 
 /** Listen for PiP mode changes (enter/exit). Returns cleanup function. */

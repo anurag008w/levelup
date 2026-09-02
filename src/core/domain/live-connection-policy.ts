@@ -4,14 +4,19 @@ export function isPermanentLiveConnectionError(error: unknown): boolean {
   return /model|not found|unsupported|(?:401|403)|api key|authentication|unauthori[sz]ed|permission denied|invalid argument|invalid api/.test(message);
 }
 
-export function canRetryLiveConnection(attempt: number, _windowStartedAt: number, _now = Date.now()): boolean {
-  // LONG-LIVED ROLLING RETRY: as long as the user has NOT hung up (the caller
-  // gates that via isUserExplicitlyClosed) a multi-minute network outage must
-  // NOT silently become a terminal call state. The old 6-attempt / 90s window
-  // ended the call on any temporary blip longer than 90 seconds — a lost
-  // commute, elevator, or dead zone would kill a study call for no reason.
-  // Backoff in the caller caps at 20s, so a permanently-down link retries at
-  // most ~every 20s; the attempt count here is only a sanity valve against
-  // truly pathological endless churn (>= 500 attempts ≈ hours at capped backoff).
-  return attempt < 500;
+/**
+ * INTENTIONAL SAFETY LIMIT (review item 4): with 20s-capped exponential backoff,
+ * 500 attempts ≈ 2.5–3 hours of continuous retry on a permanently-down link.
+ * This is NOT the call-termination policy — the caller gates on the user having
+ * hung up (isUserExplicitlyClosed), so in real usage a call retries for the
+ * entire outage. The cap exists purely as a sanity valve against truly
+ * pathological endless churn (a lost device, a battery-dead background worker,
+ * a permanently torn-down socket that never errors cleanly). If the product
+ * contract is "only an explicit hangup ends the call", raising this constant is
+ * the single knob — it is deliberately kept out of the per-attempt hot path.
+ */
+export const MAX_LIVE_RECONNECT_ATTEMPTS = 500;
+
+export function canRetryLiveConnection(attempt: number): boolean {
+  return attempt < MAX_LIVE_RECONNECT_ATTEMPTS;
 }

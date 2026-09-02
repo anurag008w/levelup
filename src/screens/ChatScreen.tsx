@@ -75,6 +75,7 @@ import { DEFAULT_LIVE_SETTINGS } from '../core/domain/live-types';
 import LivePermissionModal from '../components/live/LivePermissionModal';
 import LiveCompanionOverlay from '../components/live/LiveCompanionOverlay';
 import { requestNativeCallAudioFocus, setNativeAudioRoute } from '../lib/native-audio-route';
+import { isLiveCallInterrupted, clearLiveCallInterrupted } from '../lib/live-companion-service';
 
 interface DraftAttachment {
   id: string;
@@ -356,6 +357,27 @@ export default function ChatScreen({
     return () => window.clearTimeout(t);
   }, [notice]);
 
+  // P5: check once on mount whether the last Live call was killed by the system
+  // (process death / OEM kill — a hard platform limit). If yes, surface it so
+  // the user is not left wondering why the call vanished. Dismissal clears the
+  // persisted flag so this banner does not haunt the next launches.
+  useEffect(() => {
+    let cancelled = false;
+    isLiveCallInterrupted()
+      .then((interrupted) => {
+        if (interrupted && !cancelled) setLiveCallInterrupted(true);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dismissLiveCallInterrupted = () => {
+    setLiveCallInterrupted(false);
+    void clearLiveCallInterrupted().catch(() => undefined);
+  };
+
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -367,6 +389,10 @@ export default function ChatScreen({
   const [showLivePermission, setShowLivePermission] = useState(false);
   const [showLiveOverlay, setShowLiveOverlay] = useState(false);
   const [liveMicStream, setLiveMicStream] = useState<MediaStream | null>(null);
+  /** P1: true jab pre-capture path ne native audio focus pehle hi le liya ho (single-owner). */
+  const [liveAudioFocusGranted, setLiveAudioFocusGranted] = useState(false);
+  /** P5: previous live call was killed by the system (process death) — recovery UX. */
+  const [liveCallInterrupted, setLiveCallInterrupted] = useState(false);
   const [liveCamStream, setLiveCamStream] = useState<MediaStream | null>(null);
   const liveCallSessionIdRef = useRef<string | null>(null);
   const [liveIncomingMeta, setLiveIncomingMeta] = useState<{ isIncomingCall: boolean; reason?: string } | undefined>(undefined);
@@ -464,6 +490,9 @@ export default function ChatScreen({
           // into a broken (silent-mic) call.
           throw new Error('Audio focus denied');
         }
+        // P1: focus acquired HERE — tell the overlay/client so connect() does
+        // not request it a second time (single-owner audio focus).
+        setLiveAudioFocusGranted(true);
         await setNativeAudioRoute(liveConfig.defaultAudioRoute);
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
@@ -491,6 +520,9 @@ export default function ChatScreen({
     } catch {
       // Ignored
     }
+    // P1: the modal's requestMic() already acquired native focus for this
+    // stream — mark it so the client never requests focus a second time.
+    setLiveAudioFocusGranted(true);
     setLiveMicStream(micStream);
     setLiveCamStream(camStream || null);
     setShowLivePermission(false);
@@ -1536,6 +1568,24 @@ export default function ChatScreen({
 
       {/* Composer */}
       <div className="chat-composer-wrap">
+        {liveCallInterrupted && (
+          <div
+            className="mb-2 flex items-center justify-between gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-400"
+            role="status"
+          >
+            <span>
+              Pichli Live call system restart ki wajah se ruk gayi thi (yahan maine call end nahi ki thi).
+              Dobara shuru karne ke liye Live Call kholen.
+            </span>
+            <button
+              onClick={dismissLiveCallInterrupted}
+              className="ml-auto shrink-0 rounded-full border border-amber-500/30 px-2 py-0.5 text-[10px] font-semibold hover:bg-amber-500/10"
+              aria-label="Dismiss"
+            >
+              Theek hai
+            </button>
+          </div>
+        )}
         {(error || notice) && (
           <div
             className={`mb-2 flex justify-center text-center ${error ? 'text-danger' : 'text-muted'}`}
@@ -1832,6 +1882,7 @@ export default function ChatScreen({
           onExecuteTool={handleExecuteLiveTool}
           onTranscriptUpdate={handleLiveTranscriptUpdate}
           incomingCallMeta={liveIncomingMeta}
+          audioFocusAlreadyGranted={liveAudioFocusGranted}
         />
       )}
     </div>

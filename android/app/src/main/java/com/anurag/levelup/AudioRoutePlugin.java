@@ -87,8 +87,13 @@ public class AudioRoutePlugin extends Plugin {
     private void setRouteApi31(AudioManager am, String route, PluginCall call) {
         am.setMode(AudioManager.MODE_IN_COMMUNICATION);
 
-        AudioDeviceInfo targetDevice = null;
+        // getAvailableCommunicationDevices() is the authoritative source
+        // (Android docs): it lists exactly the devices usable with
+        // setCommunicationDevice(). We classify by the ACTUAL device type —
+        // never report "bluetooth" when what is physically attached is a
+        // wired/USB headset.
         List<AudioDeviceInfo> devices = am.getAvailableCommunicationDevices();
+        AudioDeviceInfo targetDevice = null;
 
         if ("speaker".equals(route)) {
             // Find loudspeaker
@@ -99,12 +104,24 @@ public class AudioRoutePlugin extends Plugin {
                 }
             }
             if (targetDevice != null) {
-                am.setCommunicationDevice(targetDevice);
-            } else {
-                am.clearCommunicationDevice();
+                boolean ok = am.setCommunicationDevice(targetDevice);
+                if (ok) {
+                    JSObject ret = new JSObject();
+                    ret.put("route", "speaker");
+                    ret.put("deviceType", deviceTypeName(targetDevice.getType()));
+                    ret.put("deviceName", targetDevice.getProductName() != null
+                        ? targetDevice.getProductName().toString() : "Loudspeaker");
+                    call.resolve(ret);
+                } else {
+                    call.reject("Loudspeaker route could not be applied");
+                }
+                return;
             }
+            // No loudspeaker in comm devices (rare) — clear so Android picks default.
+            am.clearCommunicationDevice();
             JSObject ret = new JSObject();
             ret.put("route", "speaker");
+            ret.put("deviceType", "BUILTIN_SPEAKER");
             call.resolve(ret);
             return;
 
@@ -116,39 +133,64 @@ public class AudioRoutePlugin extends Plugin {
                     break;
                 }
             }
+            if (targetDevice == null) {
+                call.reject("No earpiece communication device available");
+                return;
+            }
 
         } else if ("bluetooth".equals(route)) {
-            // Find any connected Bluetooth / BLE / Wired headset
+            // REAL wireless communication devices only: SCO / BLE headset /
+            // BLE speaker / hearing aid (A2DP only if the system itself lists
+            // it as a communication device). Wired/USB headsets are NOT
+            // bluetooth and must never be selected or reported as such —
+            // otherwise the user hears "bluetooth" while audio goes to a wire.
             for (AudioDeviceInfo d : devices) {
                 int type = d.getType();
                 if (type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
                     type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
                     type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
                     type == AudioDeviceInfo.TYPE_HEARING_AID ||
-                    type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                    type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-                    type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
-                    type == AudioDeviceInfo.TYPE_USB_HEADSET) {
+                    type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
                     targetDevice = d;
                     break;
                 }
             }
-        }
-
-        if (targetDevice != null) {
-            boolean ok = am.setCommunicationDevice(targetDevice);
-            if (ok) {
-                JSObject ret = new JSObject();
-                ret.put("route", route);
-                ret.put("deviceName", targetDevice.getProductName() != null
-                    ? targetDevice.getProductName().toString() : route);
-                call.resolve(ret);
+            if (targetDevice == null) {
+                call.reject("No Bluetooth communication device available");
                 return;
             }
         }
 
-        // Fallback to legacy if setCommunicationDevice did not resolve
-        setRouteLegacy(am, route, call);
+        boolean ok = am.setCommunicationDevice(targetDevice);
+        if (ok) {
+            JSObject ret = new JSObject();
+            ret.put("route", route);
+            ret.put("deviceType", deviceTypeName(targetDevice.getType()));
+            ret.put("deviceName", targetDevice.getProductName() != null
+                ? targetDevice.getProductName().toString() : route);
+            call.resolve(ret);
+        } else {
+            call.reject("Audio route could not be applied: " + route);
+        }
+    }
+
+    /** Human-readable Android device type name (device-matrix verification aid). */
+    @android.annotation.SuppressLint("NewApi")
+    private static String deviceTypeName(int type) {
+        switch (type) {
+            case AudioDeviceInfo.TYPE_BUILTIN_SPEAKER: return "BUILTIN_SPEAKER";
+            case AudioDeviceInfo.TYPE_BUILTIN_EARPIECE: return "BUILTIN_EARPIECE";
+            case AudioDeviceInfo.TYPE_BLUETOOTH_SCO: return "BLUETOOTH_SCO";
+            case AudioDeviceInfo.TYPE_BLE_HEADSET: return "BLE_HEADSET";
+            case AudioDeviceInfo.TYPE_BLE_SPEAKER: return "BLE_SPEAKER";
+            case AudioDeviceInfo.TYPE_HEARING_AID: return "HEARING_AID";
+            case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP: return "BLUETOOTH_A2DP";
+            case AudioDeviceInfo.TYPE_WIRED_HEADSET: return "WIRED_HEADSET";
+            case AudioDeviceInfo.TYPE_WIRED_HEADPHONES: return "WIRED_HEADPHONES";
+            case AudioDeviceInfo.TYPE_USB_HEADSET: return "USB_HEADSET";
+            case AudioDeviceInfo.TYPE_USB_DEVICE: return "USB_DEVICE";
+            default: return "TYPE_" + type;
+        }
     }
 
     private void setRouteLegacy(AudioManager am, String route, PluginCall call) {
@@ -255,13 +297,15 @@ public class AudioRoutePlugin extends Plugin {
             List<AudioDeviceInfo> devices = am.getAvailableCommunicationDevices();
             for (AudioDeviceInfo d : devices) {
                 int type = d.getType();
+                // Honest classification: only REAL wireless communication
+                // devices count as bluetooth. Wired/USB headsets are routed
+                // automatically by Android and are neither bluetooth nor
+                // earpiece nor speaker — do not mislabel them.
                 if (type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
                     type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
                     type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
                     type == AudioDeviceInfo.TYPE_HEARING_AID ||
-                    type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                    type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-                    type == AudioDeviceInfo.TYPE_USB_HEADSET) {
+                    type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
                     hasBluetooth = true;
                 }
                 if (type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {

@@ -151,6 +151,8 @@ interface LiveCompanionOverlayProps {
   onTranscriptUpdate?: (transcripts: LiveTranscriptItem[]) => void;
   /** Incoming-call meta — AI ko batata hai ki usne call ki hai (nahi toh "student called you"). */
   incomingCallMeta?: { isIncomingCall: boolean; reason?: string };
+  /** True when the pre-capture path (permission modal / fast path) already acquired native audio focus. */
+  audioFocusAlreadyGranted?: boolean;
 }
 
 export default function LiveCompanionOverlay({
@@ -169,6 +171,7 @@ export default function LiveCompanionOverlay({
   incomingCallMeta,
   onExecuteTool,
   onTranscriptUpdate,
+  audioFocusAlreadyGranted = false,
 }: LiveCompanionOverlayProps) {
   const [status, setStatus] = useState<LiveSessionStatus>('connecting');
   const [transcripts, setTranscripts] = useState<LiveTranscriptItem[]>([]);
@@ -272,34 +275,44 @@ export default function LiveCompanionOverlay({
     clientRef.current = liveClient;
     let cancelled = false;
 
-    if (!existingClient) (async () => {
-      // Arm PiP + foreground service as soon as the overlay opens, BEFORE the
-      // (potentially multi-second) connection. This fixes the race where a
-      // Home/Recents press during the connecting window would otherwise hit
-      // onUserLeaveHint with liveCallActive still false -> no PiP -> frozen
-      // background -> reply only surfaces on reopen. Idempotent no-op after.
-      void armLiveCall().catch(() => undefined);
+    (async () => {
       try {
-        await liveClient.connect(apiKey, incomingCallMeta);
-        await startLiveCompanionService();
-        if (cancelled) {
-          return;
-        }
-        await liveClient.startVoiceStreaming(initialMicStream);
+        // P2 + P8: arm is AWAITED and runs on EVERY overlay mount (idempotent
+        // natively). This closes the connecting-window race (the old
+        // `void armLiveCall()` could still lose a Home press taken before the
+        // native bridge round-trip finished) AND re-arms a recreated Activity:
+        // after Activity recreation the singleton live client survives but
+        // MainActivity.onDestroy() reset liveCallActive — onUserLeaveHint would
+        // otherwise silently skip auto-PiP for the whole revived call.
+        await armLiveCall();
+        if (cancelled) return;
 
-        if (cancelled) {
-          return;
-        }
-
-        if (initialCameraStream) {
-          const stream = await liveClient.startCameraStream('environment');
+        if (!existingClient) {
+          // P1: the pre-capture path (permission modal / remembered fast path)
+          // already acquired native audio focus before getUserMedia. Hand that
+          // fact in so connect() does NOT request focus a second time — focus
+          // stays single-owner; connect only applies the route.
+          await liveClient.connect(apiKey, incomingCallMeta, { audioFocusAlreadyGranted });
+          await startLiveCompanionService();
           if (cancelled) {
             return;
           }
-          setIsCameraActive(true);
-          setIsVisionPreviewVisible(true);
-          if (videoPreviewRef.current) {
-            videoPreviewRef.current.srcObject = stream;
+          await liveClient.startVoiceStreaming(initialMicStream);
+
+          if (cancelled) {
+            return;
+          }
+
+          if (initialCameraStream) {
+            const stream = await liveClient.startCameraStream('environment');
+            if (cancelled) {
+              return;
+            }
+            setIsCameraActive(true);
+            setIsVisionPreviewVisible(true);
+            if (videoPreviewRef.current) {
+              videoPreviewRef.current.srcObject = stream;
+            }
           }
         }
       } catch (err: any) {
