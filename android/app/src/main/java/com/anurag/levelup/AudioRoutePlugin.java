@@ -41,6 +41,17 @@ import java.util.List;
 public class AudioRoutePlugin extends Plugin {
 
     private static final String TAG = "AudioRoutePlugin";
+
+    /**
+     * Bounded wait for a Bluetooth SCO profile to converge after
+     * startBluetoothSco(). Real-device OEM stacks (e.g. vivo/Android 9) can
+     * take longer than the framework's nominal window to flip the A2DP
+     * headset into an active communication/SCO path. Raised 3s -> 5s after a
+     * real-device report where the headset stayed on the phone speaker (SCO
+     * never converged within 3s). Still bounded so a headset with NO SCO
+     * profile falls back to speaker promptly instead of hanging the call.
+     */
+    private static final long SCO_CONNECT_TIMEOUT_MS = 5000;
     private AudioFocusRequest audioFocusRequest;
     private final AudioManager.OnAudioFocusChangeListener audioFocusListener = focusChange -> {
         JSObject event = new JSObject();
@@ -253,9 +264,14 @@ public class AudioRoutePlugin extends Plugin {
                 final PluginCall callSco = call;
                 Thread scoWaiter = new Thread(() -> {
                     boolean scoReady = waitForScoReady(amSco, () -> {
+                        // Order matters on Android 8–11 OEMs: force the phone's
+                        // loudspeaker OFF and enter the communication profile
+                        // (mode already MODE_IN_COMMUNICATION) BEFORE signalling
+                        // SCO on, so the headset profile is the active output the
+                        // moment CONNECTED lands instead of fighting the speaker.
+                        amSco.setSpeakerphoneOn(false);
                         amSco.startBluetoothSco();
                         amSco.setBluetoothScoOn(true);
-                        amSco.setSpeakerphoneOn(false);
                     });
                     if (scoReady) {
                         JSObject ret = new JSObject();
@@ -298,9 +314,9 @@ public class AudioRoutePlugin extends Plugin {
      * a fast headset can emit CONNECTED between startBluetoothSco() returning
      * and a post-hoc registration, so registering first guarantees that
      * transition is never missed). SCO establishment can take several seconds,
-     * so the wait is bounded (review-9 P1.8: 3s is a conservative floor derived
-     * from the documented multi-second establishment window; timeout + failure
-     * paths log diagnostics below for real-device validation).
+     * so the wait is bounded (SCO_CONNECT_TIMEOUT_MS, 5s — raised from 3s after
+     * a real-device report where a slow OEM stack stayed on the speaker; the
+     * timeout + failure paths log diagnostics below for real-device validation).
      *
      * Receives on BOTH the current action (ACTION_SCO_AUDIO_STATE_UPDATED) and
      * the older ACTION_SCO_AUDIO_STATE_CHANGED (kept as compatibility fallback),
@@ -356,7 +372,7 @@ public class AudioRoutePlugin extends Plugin {
             } else {
                 startSco.run();
             }
-            long deadline = System.currentTimeMillis() + 3000;
+            long deadline = System.currentTimeMillis() + SCO_CONNECT_TIMEOUT_MS;
             synchronized (lock) {
                 while (!ready[0] && System.currentTimeMillis() < deadline) {
                     long remaining = deadline - System.currentTimeMillis();

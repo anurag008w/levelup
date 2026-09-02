@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GeminiLiveClient } from '../live-client';
+import { requiresLiveReconnect, DEFAULT_LIVE_SETTINGS } from '../live-types';
 import type { LiveSettingsConfig } from '../live-types';
 
 // Review 7 (5087747147) behavioral regression tests — audio-ownership /
@@ -328,5 +329,45 @@ describe('Live audio ownership & startup transaction (review 7)', () => {
     // stale reset nuking it.
     expect(native.plugin.requestAudioFocus).not.toHaveBeenCalled();
     client.disconnect(false);
+  });
+
+  it('14. Mid-call setAudioRoute(bluetooth) that native refuses falls back to speaker and reports the REAL route (live Bluetooth-report bug)', async () => {
+    // Connect on speaker first.
+    native.plugin.setRoute.mockResolvedValue({ route: 'speaker', deviceType: 'BUILTIN_SPEAKER' });
+    const client = new GeminiLiveClient(mockConfig);
+    await client.connect('test-key');
+
+    // Now the user taps Bluetooth mid-call: first call (bluetooth) refused →
+    // speaker fallback accepted. setAudioRoute must return 'speaker' (the ACTUAL
+    // route) and keep getCurrentAudioRoute() truthful, so the overlay never
+    // shows "Bluetooth" while audio is on the phone speaker.
+    native.plugin.setRoute
+      .mockClear()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ route: 'speaker', deviceType: 'BUILTIN_SPEAKER' });
+
+    const applied = await client.setAudioRoute('bluetooth');
+    expect(native.plugin.setRoute).toHaveBeenNthCalledWith(1, { route: 'bluetooth' });
+    expect(native.plugin.setRoute).toHaveBeenNthCalledWith(2, { route: 'speaker' });
+    expect(applied).toBe('speaker');
+    expect(client.getCurrentAudioRoute()).toBe('speaker');
+    client.disconnect(false);
+  });
+
+  it('15. requiresLiveReconnect is true only when a session-baked setting (model/voice/VAD/FPS/tokens/key) changed', () => {
+    const base: LiveSettingsConfig = { ...DEFAULT_LIVE_SETTINGS };
+    // Purely client-side / hot-appliable changes must NOT force a reconnect
+    // (that unconditional reconnect was the "changing settings disconnects the
+    // call" bug)...
+    expect(requiresLiveReconnect(base, { ...base, playbackSpeed: 0.85 })).toBe(false);
+    expect(requiresLiveReconnect(base, { ...base, defaultAudioRoute: 'bluetooth' })).toBe(false);
+    // ...but a model change DOES need a new Gemini session.
+    expect(requiresLiveReconnect(base, { ...base, model: 'gemini-2.5-flash-live' })).toBe(true);
+    expect(requiresLiveReconnect(base, { ...base, voice: 'Zephyr' })).toBe(true);
+    expect(requiresLiveReconnect(base, { ...base, vadSensitivity: 'low' })).toBe(true);
+    expect(requiresLiveReconnect(base, { ...base, videoFps: 10 })).toBe(true);
+    expect(requiresLiveReconnect(base, { ...base, apiKey: 'different-key' })).toBe(true);
+    // No change at all → no reconnect.
+    expect(requiresLiveReconnect(base, { ...base })).toBe(false);
   });
 });

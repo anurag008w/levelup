@@ -118,14 +118,18 @@ export default function App() {
   // Android autoplay unlock — kisi bhi user-interaction (tap/scroll/key) pe
   // AudioContext resume karte hain taaki proactive incoming-call ringtone
   // bina gesture ke baaj sake (Web Audio by-default suspended hota hai).
+  //
+  // NOTE: hum mic ko yahan per-touch unlock NAHI karte. Pehle yeh har touch pe
+  // `getUserMedia({audio:true})` kholta tha jo Android/WebView ko "audio capture
+  // started" samjha deta tha → user ka chalta hua music har tap pe duck/pause ho
+  // jata tha (real-device report: 'jab app on kiya music band 1 sec, jab bhi
+  // touch karta band ho raha tha'). Live call apna mic khud acquire karta hai
+  // jab call actually start hoti hai (ChatScreen → getUserMedia), isliye yahan
+  // sirf WebAudio ringtone unlock kaafi hai.
   useEffect(() => {
     const unlock: EventListener = () => {
       try {
         ringtonePlayer.unlock();
-        // Microphone bhi unlock — aage live call accept ho to voice-tap ready.
-        void navigator.mediaDevices?.getUserMedia?.({ audio: true, video: false }).then((s) => {
-          s.getTracks().forEach((t) => t.stop());
-        }).catch(() => {});
       } catch {
         // no-op
       }

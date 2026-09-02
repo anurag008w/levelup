@@ -183,6 +183,36 @@ export const DEFAULT_LIVE_SETTINGS: LiveSettingsConfig = {
   thinkingBudget: 0,
 };
 
+/**
+ * Settings that are baked into the Gemini Live SESSION at connect() time and
+ * therefore need a full re-connect to take effect on a running call. Every
+ * other field is hot-appliable client-side (e.g. playbackSpeed) or applied by
+ * re-routing audio (defaultAudioRoute) without tearing the session down.
+ */
+const LIVE_SESSION_BAKED_KEYS: ReadonlyArray<keyof LiveSettingsConfig> = [
+  'providerId',
+  'apiKey',
+  'model',
+  'voice',
+  'vadSensitivity',
+  'videoFps',
+  'screenFps',
+  'temperature',
+  'maxOutputTokens',
+  'thinkingBudget',
+];
+
+/**
+ * True when switching from `prev` to `next` changes any session-baked setting
+ * (model/voice/VAD/FPS/tokens/API-key), i.e. when the running Gemini session
+ * must be re-established for the change to take effect. Used by the live
+ * overlay so saving unrelated settings (speed, prompts) does NOT tear down a
+ * healthy call — the "changing settings disconnects the call" bug.
+ */
+export function requiresLiveReconnect(prev: LiveSettingsConfig, next: LiveSettingsConfig): boolean {
+  return LIVE_SESSION_BAKED_KEYS.some((key) => prev[key] !== next[key]);
+}
+
 export interface LiveStreamStats {
   latencyMs: number;
   inputVolume: number; // 0..1

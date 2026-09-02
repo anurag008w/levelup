@@ -228,6 +228,29 @@ export default function ChatScreen({
     };
   }, []);
 
+  // Link the Live settings so a change made in the AI Settings screen (which
+  // writes aiSettings.live to the SAME store) is reflected here — otherwise the
+  // live overlay opens a call with a stale, mount-time config. Poll the store
+  // (same pattern as the provider list above) and only commit when it changed,
+  // so an untouched config never triggers a re-render. Both the call overlay
+  // (LiveSettingsModal → onUpdateConfig) and AISettingsScreen write to this
+  // single store, so polling keeps every surface in sync.
+  useEffect(() => {
+    let disposed = false;
+    const id = setInterval(() => {
+      if (disposed) return;
+      const fromStore = container.store.get()?.aiSettings?.live;
+      if (!fromStore) return;
+      setLiveConfig((prev) =>
+        JSON.stringify(prev) === JSON.stringify(fromStore) ? prev : fromStore,
+      );
+    }, 300);
+    return () => {
+      disposed = true;
+      clearInterval(id);
+    };
+  }, []);
+
   // "@" tool picker: close when the user interacts OUTSIDE the picker + input
   // (not on blur — blur fires on touch/scroll inside the panel and killed the
   // whole scrollable list on mobile).

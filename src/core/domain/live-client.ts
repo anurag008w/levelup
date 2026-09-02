@@ -1720,14 +1720,22 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     });
   }
 
-  /** Switch audio output route (Speaker / Earpiece / Bluetooth). */
-  async setAudioRoute(route: LiveAudioRoute): Promise<void> {
-    this.config.defaultAudioRoute = route;
-    try {
-      await setNativeAudioRoute(route);
-    } catch (err) {
-      console.warn('[GeminiLive] setAudioRoute failed:', err);
+  /**
+   * Switch audio output route (Speaker / Earpiece / Bluetooth).
+   *
+   * Transactional: requests the route, VERIFIES what native actually applied,
+   * falls back to the loudspeaker if the desired route failed to confirm (e.g.
+   * a Bluetooth SCO headset that never converges), and keeps `currentAudioRoute`
+   * truthful so the UI never shows "Bluetooth" while audio is actually on the
+   * phone speaker. Returns the ACTUAL applied route so the overlay can reflect
+   * reality instead of the optimistically-selected label.
+   */
+  async setAudioRoute(route: LiveAudioRoute): Promise<LiveAudioRoute> {
+    if (route !== this.config.defaultAudioRoute) {
+      this.config.defaultAudioRoute = route;
     }
+    const { actualRoute } = await this.restoreAudioRouteTransactional();
+    return actualRoute;
   }
 
   /**

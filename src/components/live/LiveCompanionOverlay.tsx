@@ -33,6 +33,7 @@ import type {
   LiveStreamStats,
   LiveTranscriptItem,
 } from '../../core/domain/live-types';
+import { requiresLiveReconnect } from '../../core/domain/live-types';
 import { GeminiLiveClient, type LiveClientCallbacks } from '../../core/domain/live-client';
 import { proactiveAgentService } from '../../features/ai/proactive-agent.service';
 import { haptic, hapticError } from '../../lib/haptics';
@@ -47,7 +48,7 @@ import {
   onPiPModeChanged,
 } from '../../lib/live-companion-service';
 import { setLiveCallReplyHandler, LIVE_CALL_SESSION_ID } from '../../lib/notification-actions';
-import { notifyAiReply, type NotificationBubble } from '../../lib/notifications';
+import { notifyAiReply, LIVE_CHANNEL_ID, type NotificationBubble } from '../../lib/notifications';
 
 // The call belongs to this module-level runtime, not to a particular overlay
 // instance. Navigation/minimising may unmount the observer without hanging up.
@@ -251,7 +252,13 @@ export default function LiveCompanionOverlay({
           }));
           // force=true: PiP mode me appActive still true hota hai, force
           // bypasses the chatTabActive skip so notification aati hai.
-          void notifyAiReply('Misa Live', bodyText, LIVE_CALL_SESSION_ID, 0, true, bodyText, messages);
+          // LIVE_CHANNEL_ID: silent channel (no popup/sound) — live-call chat
+          // notifications show in the drawer even while the app is foreground,
+          // without disturbing the call. (Contrast: normal chat replies use the
+          // HIGH-importance channel only when the chat tab is NOT being watched.)
+          void notifyAiReply('Misa Live', bodyText, LIVE_CALL_SESSION_ID, 0, true, bodyText, messages, {
+            channelId: LIVE_CHANNEL_ID,
+          });
         }
       },
       onStatsUpdate: (newStats) => setStats(newStats),
@@ -601,11 +608,16 @@ export default function LiveCompanionOverlay({
   }
 
   // Audio route switch
-  function handleSelectAudioRoute(route: LiveAudioRoute) {
+  async function handleSelectAudioRoute(route: LiveAudioRoute) {
     haptic();
+    // Optimistic label so the menu Check moves instantly, then reconcile with
+    // the ACTUAL applied route (setAudioRoute is transactional: it falls back
+    // to the loudspeaker and reports reality if Bluetooth SCO can't confirm,
+    // so we never show "Bluetooth" while audio is still on the phone speaker).
     setAudioRoute(route);
     setShowAudioMenu(false);
-    clientRef.current?.setAudioRoute(route);
+    const actual = await clientRef.current?.setAudioRoute(route);
+    if (actual) setAudioRoute(actual);
   }
 
   // In-Call Live Text Message with Tool Execution
@@ -1259,7 +1271,23 @@ export default function LiveCompanionOverlay({
           config={config}
           onSave={(newConfig) => {
             onUpdateConfig(newConfig);
-            clientRef.current?.reconnectWithNewConfig(apiKey, initialMicStream).catch(console.warn);
+            const client = clientRef.current;
+            if (!client) return;
+            const prev = client.getConfig();
+            // Sync the NEW settings into the RUNNING client first (fixes the
+            // "live settings not linked to the live session" bug: the client
+            // held its mount-time config, so even a reconnect used stale values).
+            client.updateConfig(newConfig);
+            // Reconnect ONLY when a session-baked setting (model/voice/VAD/FPS/
+            // tokens/API-key) changed. Saving unrelated settings must NOT tear
+            // down a healthy call — that unconditional reconnect was the real
+            // "changing settings disconnects the call" bug.
+            if (requiresLiveReconnect(prev, newConfig)) {
+              client.reconnectWithNewConfig(apiKey, initialMicStream).catch(console.warn);
+            } else if (prev.defaultAudioRoute !== newConfig.defaultAudioRoute) {
+              // Route changed but the session didn't — just re-route the audio.
+              void client.setAudioRoute(newConfig.defaultAudioRoute);
+            }
           }}
           defaultApiKey={apiKey}
         />

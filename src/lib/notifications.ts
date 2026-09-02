@@ -45,6 +45,16 @@ const PREF_KEY = 'notifications';
 const ANDROID_ID_MAX = 2_147_483_647;
 /** Android 8+ notification channel — HIGH importance = heads-up + sound. */
 const CHANNEL_ID = 'levelup-ai-replies';
+/**
+ * LIVE-call chat channel — intentionally LOW importance (2) = SILENT: appears
+ * in the drawer only, NO heads-up popup and NO sound. The user wants the live
+ * call's chat notification to keep arriving even while the app is foreground,
+ * but never to pop up or disturb over the call. (The normal AI-reply channel
+ * is HIGH-importance; live-call replies must not reuse it.)
+ */
+const LIVE_CHANNEL_ID = 'levelup-live-silent';
+/** Export so the live overlay can route its chat replies to this silent channel. */
+export { LIVE_CHANNEL_ID };
 /** Notification action type — inline reply + open chat actions. */
 const ACTION_TYPE_ID = 'levelup-ai-reply';
 
@@ -141,6 +151,30 @@ export async function ensureNotificationChannel(): Promise<void> {
     });
   } catch {
     // channel banana best-effort hai — plugin ka default channel hamesha hota hai
+  }
+}
+
+/**
+ * Silently-creates the LIVE-call chat channel (LOW importance, no sound, no
+ * heads-up). Like ensureNotificationChannel it's idempotent but non-blocking —
+ * a failure falls back to the plugin's default channel rather than erroring
+ * the call flow. Kept separate from ensureNotificationChannel because that one
+ * is HIGH importance and MUST stay that way for normal chat replies.
+ */
+async function ensureLiveNotificationChannel(): Promise<void> {
+  if (!isNativePlatform()) return;
+  try {
+    const { channels } = await LocalNotifications.listChannels();
+    if (channels.some((c) => c.id === LIVE_CHANNEL_ID)) return;
+    await LocalNotifications.createChannel({
+      id: LIVE_CHANNEL_ID,
+      name: 'Live call chat',
+      description: 'Misa Live call ke chat replies (silent)',
+      importance: 2, // IMPORTANCE_LOW — silent, drawer only
+      visibility: 1, // VISIBILITY_PUBLIC — lock screen pe bhi dikhe
+    });
+  } catch {
+    // channel banana best-effort hai
   }
 }
 
@@ -297,6 +331,7 @@ export async function notifyAiReply(
   force = false,
   largeBody?: string,
   messages?: NotificationBubble[],
+  opts?: { channelId?: string },
 ): Promise<void> {
   if (!isNotificationSupported()) return;
   try {
@@ -306,6 +341,12 @@ export async function notifyAiReply(
   }
   const perm = await getNotificationPermission();
   if (perm !== 'granted') return;
+
+  // LIVE-call chat notifications use a dedicated SILENT channel (no popup/sound)
+  // and must ALWAYS show, even while the app is foreground (opts.channelId +
+  // caller's force=true). Normal chat replies keep the HIGH-importance channel.
+  const channelId = opts?.channelId ?? CHANNEL_ID;
+  const channelSilent = channelId !== CHANNEL_ID;
 
   const notificationId = sessionToNotificationId(sessionId);
   const tag = sessionId ? `levelup-chat-${sessionId}` : 'levelup-ai';
@@ -339,7 +380,11 @@ export async function notifyAiReply(
   // nahi dekh raha", isliye OS-level scheduling hamesha safe hai.
   if (isNativePlatform() && (force || !appActive) && delayMs > 0) {
     try {
-      await ensureNotificationChannel();
+      if (channelSilent) {
+        await ensureLiveNotificationChannel();
+      } else {
+        await ensureNotificationChannel();
+      }
       await LocalNotifications.schedule({
         notifications: [
           {
@@ -348,7 +393,7 @@ export async function notifyAiReply(
             body,
             largeBody: expanded,
             summaryText: title,
-            channelId: CHANNEL_ID,
+            channelId,
             actionTypeId: ACTION_TYPE_ID,
             extra,
             schedule: { at: new Date(Date.now() + delayMs), allowWhileIdle: true },
@@ -382,7 +427,11 @@ export async function notifyAiReply(
 
     if (isNativePlatform()) {
       try {
-        await ensureNotificationChannel();
+        if (channelSilent) {
+          await ensureLiveNotificationChannel();
+        } else {
+          await ensureNotificationChannel();
+        }
         await LocalNotifications.schedule({
           notifications: [
             {
@@ -395,7 +444,7 @@ export async function notifyAiReply(
               // (multi-line) message dikhta hai instead of cut-off single line.
               largeBody: expanded,
               summaryText: title,
-              channelId: CHANNEL_ID,
+              channelId,
               // Reply/Open actions + session id — tap/reply se app usi chat pe khule.
               actionTypeId: ACTION_TYPE_ID,
               extra,
