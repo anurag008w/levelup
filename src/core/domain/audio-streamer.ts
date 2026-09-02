@@ -1,3 +1,5 @@
+import { Capacitor } from '@capacitor/core';
+
 // WebAudio Streamer for Gemini Live
 // High-performance real-time audio pipeline:
 // - 16kHz 16-bit Mono Linear PCM recording (optimized for Gemini input)
@@ -98,11 +100,18 @@ export class AudioStreamer {
    */
   private htmlAudioUnlocked = false;
   private unlockViaHtmlAudio(): void {
-    if (this.htmlAudioUnlocked || typeof window === 'undefined') return;
+    // CRITICAL (Android audio focus collision fix): On native Android (Capacitor),
+    // playing an HTML5 <audio> element makes Chromium create an Android MediaPlayer
+    // instance with USAGE_MEDIA audio focus. This conflicts directly with our
+    // AudioRoutePlugin (USAGE_VOICE_COMMUNICATION) and causes Android to send an
+    // AUDIOFOCUS_LOSS (-1) event that instantly killed the live call session!
+    // On native, AudioRoutePlugin already acquired communication focus and
+    // audioContext.resume() on user gesture is 100% sufficient without colliding.
+    if (this.htmlAudioUnlocked || typeof window === 'undefined' || Capacitor.isNativePlatform()) return;
     try {
       // 20ms silent WAV — zero audible but counts as an audio-gesture playback,
-      // aur Android WebView ke audio subsystem ko wake karta hai taaki baad ke
-      // AudioContext nodes bhi reliably fire (webview verified fix).
+      // aur browser WebView ke audio subsystem ko wake karta hai taaki baad ke
+      // AudioContext nodes bhi reliably fire (browser fallback).
       const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
       const el = new Audio(silentWav);
       el.volume = 0;
@@ -340,10 +349,19 @@ export class AudioStreamer {
 
   close(): void {
     this.stopRecording(true);
+    if (this.outputAnalyser) {
+      try { this.outputAnalyser.disconnect(); } catch {}
+      this.outputAnalyser = null;
+    }
+    if (this.inputAnalyser) {
+      try { this.inputAnalyser.disconnect(); } catch {}
+      this.inputAnalyser = null;
+    }
     if (this.audioContext && this.audioContext.state !== 'closed') {
-      void this.audioContext.close();
+      try { void this.audioContext.close(); } catch {}
       this.audioContext = null;
     }
+    this.htmlAudioUnlocked = false;
   }
 
   // ===== Helper conversions =====

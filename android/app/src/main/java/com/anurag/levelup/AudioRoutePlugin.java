@@ -75,6 +75,31 @@ public class AudioRoutePlugin extends Plugin {
         return (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
     }
 
+    @Override
+    public void load() {
+        super.load();
+        // Clear any dangling communication mode or focus from a previous run or crash on app start
+        resetNativeAudioState();
+    }
+
+    private void resetNativeAudioState() {
+        AudioManager am = audioManager();
+        if (am != null) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    am.clearCommunicationDevice();
+                }
+                am.stopBluetoothSco();
+                am.setBluetoothScoOn(false);
+                am.setSpeakerphoneOn(false);
+                am.setMode(AudioManager.MODE_NORMAL);
+                abandonCallAudioFocus(am);
+            } catch (Exception e) {
+                Log.w(TAG, "resetNativeAudioState: " + e.getMessage());
+            }
+        }
+    }
+
     /**
      * Set audio output route.
      * JS: await AudioRoute.setRoute({ route: 'speaker' | 'earpiece' | 'bluetooth' })
@@ -407,8 +432,8 @@ public class AudioRoutePlugin extends Plugin {
             }
             long deadline = System.currentTimeMillis() + SCO_CONNECT_TIMEOUT_MS;
             synchronized (lock) {
-                while (!ready[0] && System.currentTimeMillis() < deadline) {
-                    long remaining = deadline - System.currentTimeMillis();
+                while (!ready[0] && !am.isBluetoothScoOn() && System.currentTimeMillis() < deadline) {
+                    long remaining = Math.min(deadline - System.currentTimeMillis(), 300);
                     if (remaining <= 0) break;
                     lock.wait(remaining);
                 }
@@ -421,11 +446,12 @@ public class AudioRoutePlugin extends Plugin {
         // Review-9 P1.8 observability: log the SCO outcome so real-device
         // timeouts/failures are diagnosable without a debugger. No sensitive
         // data — only route state + whether SCO converged.
-        Log.i(TAG, "SCO wait result=" + (ready[0] ? "CONNECTED" : "TIMEOUT/FAILURE")
+        boolean success = (ready[0] || am.isBluetoothScoOn()) && am.isBluetoothScoOn();
+        Log.i(TAG, "SCO wait result=" + (success ? "CONNECTED" : "TIMEOUT/FAILURE")
             + " isBluetoothScoOn=" + am.isBluetoothScoOn());
         // Final physical verification (P1): a CONNECTED state is only meaningful
         // if the communication path is actually active on the headset.
-        return ready[0] && am.isBluetoothScoOn();
+        return success;
     }
 
     /** Reset audio mode to normal when the Live session ends. */
@@ -434,21 +460,7 @@ public class AudioRoutePlugin extends Plugin {
         // Invalidate any in-flight async SCO waiter: a hangup/teardown must
         // never let an old thread re-activate SCO after the call is over.
         scoRequestGeneration.incrementAndGet();
-        AudioManager am = audioManager();
-        if (am != null) {
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    am.clearCommunicationDevice();
-                }
-                am.stopBluetoothSco();
-                am.setBluetoothScoOn(false);
-                am.setSpeakerphoneOn(false);
-                am.setMode(AudioManager.MODE_NORMAL);
-                abandonCallAudioFocus(am);
-            } catch (Exception e) {
-                Log.w(TAG, "resetRoute: " + e.getMessage());
-            }
-        }
+        resetNativeAudioState();
         call.resolve();
     }
 
@@ -487,7 +499,7 @@ public class AudioRoutePlugin extends Plugin {
             // deliberately handled as terminal in the JS layer (the session
             // cannot continue without audio). GAIN would be wrong here: it would
             // assert sole ownership and other apps cannot politely duck us.
-            audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+            audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(attributes)
                 .setOnAudioFocusChangeListener(audioFocusListener)
                 // JS owns explicit ducking, so Android must deliver CAN_DUCK.
@@ -495,7 +507,7 @@ public class AudioRoutePlugin extends Plugin {
                 .build();
             return am.requestAudioFocus(audioFocusRequest);
         } else {
-            return am.requestAudioFocus(audioFocusListener, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
+            return am.requestAudioFocus(audioFocusListener, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN);
         }
     }
 

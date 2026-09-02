@@ -153,6 +153,10 @@ export class GeminiLiveClient {
     return this.isActiveAttempt(attempt);
   }
 
+  isClosed(): boolean {
+    return this.isUserExplicitlyClosed;
+  }
+
   getVisionStreamer(): VisionStreamer {
     return this.visionStreamer;
   }
@@ -1715,6 +1719,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         this.applyMicrophoneMute();
         this.audioStreamer.flushPlayback();
         this.setStatus('background-active');
+        this.callbacks.onError?.('Call ended: audio focus was claimed by another app or phone call.');
         // Permanent loss ends the call: disconnect as an explicit close
         // (preserveReconnectState=false) so no reconnect/rollback resurrects it
         // and the native focus is abandoned on teardown.
@@ -2035,6 +2040,11 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     this.isReconnecting = false;
     if (!preserveReconnectState) {
       this.reconnectAttempts = 999;
+      if (this.currentMediaStream) {
+        try {
+          this.currentMediaStream.getTracks().forEach((t) => t.stop());
+        } catch {}
+      }
       this.currentMediaStream = null;
       this.activeApiKey = null;
     }
@@ -2043,7 +2053,11 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.silenceObserverTimer = null;
     }
     this.silenceStateMachine.reset();
-    this.audioStreamer.stopRecording();
+    if (!preserveReconnectState) {
+      this.audioStreamer.close();
+    } else {
+      this.audioStreamer.stopRecording();
+    }
     // Single-owner audio flag: the next connect() must re-acquire focus before
     // streaming again (reconnect does its own ordered setup — M7).
     this.callAudioFocusGranted = false;

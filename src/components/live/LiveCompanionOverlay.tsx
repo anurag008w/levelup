@@ -49,6 +49,7 @@ import {
 } from '../../lib/live-companion-service';
 import { setLiveCallReplyHandler, LIVE_CALL_SESSION_ID } from '../../lib/notification-actions';
 import { notifyAiReply, LIVE_CHANNEL_ID, type NotificationBubble } from '../../lib/notifications';
+import { resetNativeAudioRoute } from '../../lib/native-audio-route';
 
 // The call belongs to this module-level runtime, not to a particular overlay
 // instance. Navigation/minimising may unmount the observer without hanging up.
@@ -255,6 +256,13 @@ export default function LiveCompanionOverlay({
 
     const callbacks: LiveClientCallbacks = {
       onStatusChange: (newStatus) => {
+        if (newStatus === 'idle' || newStatus === 'disconnected') {
+          if (!cancelled) {
+            setStatus('error');
+            setErrorMessage((prev) => prev || 'Call disconnected unexpectedly.');
+          }
+          return;
+        }
         setStatus(newStatus);
         if (newStatus === 'connected') setErrorMessage(null);
       },
@@ -319,7 +327,6 @@ export default function LiveCompanionOverlay({
     }
     clientRef.current = liveClient;
     let cancelled = false;
-    let startupAttempt: number | null = null;
     // This mount's generation: only the newest overlay may run the SHARED native
     // teardown (FGS stop / lifecycle clear). See module-level `overlayEpoch`.
     const myEpoch = ++overlayEpoch;
@@ -349,7 +356,10 @@ export default function LiveCompanionOverlay({
       // Global FGS teardown is SHARED + generation-scoped: if a newer overlay
       // (a fresh call) has already armed the service during our cleanup, we
       // must NOT stop it. Only the newest mount may tear down the shared FGS.
-      if (myEpoch === overlayEpoch) void stopLiveCompanionService();
+      if (myEpoch === overlayEpoch) {
+        void stopLiveCompanionService();
+        void resetNativeAudioRoute().catch(() => undefined);
+      }
     }
 
     (async () => {
@@ -389,25 +399,33 @@ export default function LiveCompanionOverlay({
           // fact in so connect() does NOT request focus a second time — focus
           // stays single-owner; connect only applies the route.
           await liveClient.connect(apiKey, incomingCallMeta, { audioFocusAlreadyGranted });
-          // Capture the authoritative generation immediately after connect —
-          // this exact startup owns the session, and only THIS attempt may
-          // commit the persisted lifecycle or attach vision.
-          startupAttempt = liveClient.getConnectionAttempt();
-          if (cancelled || !liveClient.isCurrentAttempt(startupAttempt)) {
+          if (cancelled || liveClient.isClosed()) {
             rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
+            if (!cancelled) {
+              setStatus('error');
+              setErrorMessage('Call disconnected.');
+            }
             return;
           }
 
           await liveClient.startVoiceStreaming(initialMicStream);
-          if (cancelled || !liveClient.isCurrentAttempt(startupAttempt)) {
+          if (cancelled || liveClient.isClosed()) {
             rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
+            if (!cancelled) {
+              setStatus('error');
+              setErrorMessage('Call disconnected.');
+            }
             return;
           }
 
           if (initialCameraStream) {
             const stream = await liveClient.startCameraStream('environment');
-            if (cancelled || !liveClient.isCurrentAttempt(startupAttempt)) {
+            if (cancelled || liveClient.isClosed()) {
               rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
+              if (!cancelled) {
+                setStatus('error');
+                setErrorMessage('Call disconnected.');
+              }
               return;
             }
             setIsCameraActive(true);
@@ -416,36 +434,22 @@ export default function LiveCompanionOverlay({
               videoPreviewRef.current.srcObject = stream;
             }
           }
-        } else {
-          // Reattaching to an established singleton call: no startup work, but
-          // still capture the current generation so the commit below is safe.
-          startupAttempt = liveClient.getConnectionAttempt();
         }
 
         // Review-8 P1 + review-9 P0.2: the Gemini session has committed —
         // promote the persisted process-death lifecycle from ARMED to CONNECTED
         // so a later kill surfaces the interruption banner accurately (never for
         // an unfinished startup). AWAITED + generation-gated: the commit only
-        // runs while `!cancelled` AND this exact startupAttempt is still the
-        // current, un-closed one. This makes the CONNECTED write atomic with the
-        // client lifecycle — an old startup can never write CONNECTED after
-        // hangup, cancellation, Activity recreation, or a newer startup. If it
-        // fails, the rollback below still clears the ARMED marker via stop().
-        if (!cancelled && liveClient.isCurrentAttempt(startupAttempt)) {
+        // runs while `!cancelled` AND client is not closed.
+        if (!cancelled && !liveClient.isClosed()) {
           await markLiveCallConnected();
-          // Review-10 P0 (post-commit gate): the CONNECTED persistence write is
-          // ASYNC — a hangup/cancel could land mid-await and the native write
-          // could still complete AFTER teardown cleared it, leaving a stale
-          // CONNECTED marker (false "previous call was interrupted" banner on
-          // next launch). If we are no longer the current attempt after the
-          // await, explicitly revert the CONNECTED marker before continuing, so
-          // the persisted lifecycle can never outlive an explicit hangup/cancel.
-          if (cancelled || !liveClient.isCurrentAttempt(startupAttempt)) {
-            // Global lifecycle clear is generation-scoped: if a newer overlay
-            // (a fresh call) already committed its own CONNECTED marker, do not
-            // wipe it with our stale revert.
+          if (cancelled || liveClient.isClosed()) {
             if (myEpoch === overlayEpoch) await clearLiveCallInterrupted();
             rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
+            if (!cancelled) {
+              setStatus('error');
+              setErrorMessage('Call disconnected.');
+            }
             return;
           }
           // Review-9 P1.4: verify the foreground service is ACTUALLY running
@@ -780,6 +784,7 @@ export default function LiveCompanionOverlay({
     clientRef.current?.disconnect();
     void stopLiveCompanionService();
     activeLiveClient = null;
+    void resetNativeAudioRoute().catch(() => undefined);
     onClose(currentTranscripts);
   }
 
@@ -866,7 +871,17 @@ export default function LiveCompanionOverlay({
               }`}
             />
             <span className="font-semibold capitalize text-text">
-              {status === 'thinking' ? 'Thinking' : status === 'reconnecting' ? 'Reconnecting' : status === 'background-active' ? 'Audio paused' : status === 'background-pip-active' ? 'Live (PiP)' : status}
+              {status === 'thinking'
+                ? 'Thinking'
+                : status === 'reconnecting'
+                ? 'Reconnecting'
+                : status === 'background-active'
+                ? 'Audio paused'
+                : status === 'background-pip-active'
+                ? 'Live (PiP)'
+                : status === 'idle' || status === 'disconnected'
+                ? 'Disconnected'
+                : status}
             </span>
             {isProactiveEnabled ? (
               <span className="font-mono text-[11px] text-emerald-400 font-medium">{formatDuration(callDurationSeconds)}</span>

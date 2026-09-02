@@ -17,6 +17,7 @@ import ScreenSkeleton from './components/ScreenSkeleton';
 import { IncomingCallModal } from './components/live/IncomingCallModal';
 import { proactiveAgentService, type IncomingCallEvent } from './features/ai/proactive-agent.service';
 import { ringtonePlayer } from './lib/ringtone-player';
+import { resetNativeAudioRoute } from './lib/native-audio-route';
 
 function lazyRetry<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T }>
@@ -140,6 +141,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Clean audio state on app launch: release any lingering audio focus or communication mode
+    void resetNativeAudioRoute().catch(() => undefined);
     void proactiveAgentService.init();
     const unsubscribe = proactiveAgentService.onIncomingCall((callEvent) => {
       setIncomingCall(callEvent);

@@ -230,6 +230,13 @@ class RingtonePlayerService {
       } catch {}
       this.activeGainNode = null;
     }
+    if (this.audioCtx && this.audioCtx.state === 'running') {
+      setTimeout(() => {
+        if (!this.isPlaying && this.audioCtx && this.audioCtx.state === 'running') {
+          void this.audioCtx.suspend().catch(() => {});
+        }
+      }, 300);
+    }
   }
 }
 

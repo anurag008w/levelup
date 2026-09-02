@@ -946,6 +946,7 @@ export default function ChatScreen({
     // this React flag is only the pre-capture handoff hint and must start
     // false for every new call.
     setLiveAudioFocusGranted(false);
+    void resetNativeAudioRoute().catch(() => undefined);
     const targetSessionId = liveCallSessionIdRef.current || active?.id;
     if (transcripts?.length > 0 && targetSessionId) {
       for (const t of transcripts) {
