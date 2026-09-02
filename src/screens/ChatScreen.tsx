@@ -74,6 +74,7 @@ import type { LiveSettingsConfig, LiveTranscriptItem } from '../core/domain/live
 import { DEFAULT_LIVE_SETTINGS } from '../core/domain/live-types';
 import LivePermissionModal from '../components/live/LivePermissionModal';
 import LiveCompanionOverlay from '../components/live/LiveCompanionOverlay';
+import { requestNativeCallAudioFocus, setNativeAudioRoute } from '../lib/native-audio-route';
 
 interface DraftAttachment {
   id: string;
@@ -443,6 +444,21 @@ export default function ChatScreen({
     const hasGrantedBefore = localStorage.getItem('levelup.live.permission_granted') === 'true';
     if (hasGrantedBefore) {
       try {
+        // ROOT-CAUSE FIX (mic silent bug): AudioManager mode/focus MUST be
+        // set to MODE_IN_COMMUNICATION *before* getUserMedia() opens the
+        // native AudioRecord — Chromium's own echoCancellation-triggered
+        // capture pipeline expects to open under communication mode from
+        // the start (this is exactly what Google's own AppRTC WebRTC demo
+        // documents: "switch to COMMUNICATION mode when the first
+        // streaming session starts"). Previously this only happened
+        // *after* the Live WebSocket connected (several hundred ms to a
+        // few seconds later), by which point the mic's AudioRecord was
+        // already open under MODE_NORMAL — many Android audio HALs do not
+        // re-route an already-open capture session when the mode changes
+        // underneath it, so the mic effectively went silent to the model
+        // every single call, in foreground and background alike.
+        await requestNativeCallAudioFocus();
+        await setNativeAudioRoute(liveConfig.defaultAudioRoute);
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,

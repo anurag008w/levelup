@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, Camera, Monitor, ShieldCheck, AlertCircle, CheckCircle2, X } from 'lucide-react';
 import { haptic, hapticSuccess, hapticError } from '../../lib/haptics';
+import { requestNativeCallAudioFocus, setNativeAudioRoute } from '../../lib/native-audio-route';
 
 interface LivePermissionModalProps {
   isOpen: boolean;
@@ -23,6 +24,13 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed }: Live
     setErrorMsg(null);
     setRequesting(true);
     try {
+      // ROOT-CAUSE FIX (mic silent bug) — see ChatScreen.handleStartLiveCall
+      // for the full explanation: AudioManager must be in
+      // MODE_IN_COMMUNICATION *before* getUserMedia opens the AudioRecord,
+      // not after the call connects, otherwise the mic capture session can
+      // go silent to the model on many Android devices.
+      await requestNativeCallAudioFocus();
+      await setNativeAudioRoute('speaker');
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
