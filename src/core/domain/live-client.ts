@@ -260,6 +260,13 @@ export class GeminiLiveClient {
     this.activeApiKey = apiKey;
     this.setStatus('connecting');
     this.framesSentCount = 0;
+    this.silenceNudgeStreak = 0;
+    this.awaitingAssistantReply = false;
+    this.lastUserSpokenText = '';
+    this.userSpeechEndedAt = 0;
+    this.quietFocusUntil = 0;
+    this.lastUserVoiceTime = 0;
+    this.lastTurnFinishedTime = 0;
 
     if (incomingCallMeta?.isIncomingCall) {
       this.isIncomingCallSession = true;
@@ -320,7 +327,14 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
           return `\n=== LIVE CALL TRANSCRIPT BEFORE RECONNECT (ALL COMPLETED & ANSWERED) ===\n${recentLiveTurns}\nCRITICAL INSTRUCTION: Every turn above was ALREADY exchanged and resolved in this live call! NEVER re-answer or re-address any previous question upon reconnect!\n========================================================================`;
         }
         if (this.recentChatSummary) {
-          return `\n=== RECENT CHAT MESSAGES CONTEXT ===\nThese are recent messages from the text chat with the student right before this live voice call started. Refer naturally to what was being discussed, do not act like a stranger or ask what to do if they already mentioned it:\n${this.recentChatSummary}\n====================================`;
+          return `\n=== BACKGROUND TEXT CHAT HISTORY (FOR REFERENCE ONLY) ===
+These are past text chat messages before this live phone call started.
+CRITICAL INSTRUCTIONS:
+1. All questions in this text chat history were ALREADY answered in text chat. NEVER answer or repeat them on this live phone call!
+2. The student has NOT spoken these text messages on this phone call. DO NOT assume the student is currently speaking about them.
+3. When this call starts, the student has NOT spoken yet. Only respond to what the student actually speaks out loud on this live call right now!
+${this.recentChatSummary}
+=========================================================`;
         }
         return '';
       })(),
@@ -1049,9 +1063,9 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       if (this.reconnectAttempts > 0) {
         this.session?.sendRealtimeInput({
           text: `[SYSTEM EVENT: Connection recovered after a brief network drop.
-CRITICAL INSTRUCTION: All previous conversation and user questions before this disconnect have ALREADY been answered.
+CRITICAL INSTRUCTION: All previous conversation and user questions before this disconnect have ALREADY been completed.
 DO NOT re-answer any past messages, and DO NOT repeat any previous reply!
-Stay completely quiet in listening mode waiting for the student to speak. If you must say anything right now, simply ask 1 quick check: "Haan, ab aawaz aa rahi hai na?"]`,
+Stay completely quiet in listening mode waiting for the student to speak.]`,
         });
         return;
       }
@@ -1072,11 +1086,11 @@ Stay completely quiet in listening mode waiting for the student to speak. If you
             const diffSec = Math.max(1, Math.round(timeSinceLastCallMs / 1000));
             if (hadUserHangup) {
               this.session?.sendRealtimeInput({
-                text: `[SYSTEM EVENT: The student hung up the previous call (lasted ${lastDuration}s) just ${diffSec} seconds ago and called back right away! React naturally, warmly, and playfully like a real close friend on phone: casually ask why they cut the call or if the call dropped / got disconnected (e.g. "Arre call kyu cut kar diya tha? Sab theek? / Kya hua disconnected ho gaya tha kya?"). 1 short, warm, natural Hinglish line. Speak out loud directly now.]`,
+                text: `[SYSTEM EVENT: The student hung up the previous call (lasted ${lastDuration}s) just ${diffSec}s ago and called back right away! React naturally, warmly, and playfully like a real close friend on phone: casually ask why they cut the call or if it disconnected. Keep it fresh, spontaneous, and unpredictable without using rigid canned scripts. 1 short, warm, natural Hinglish line out loud now.]`,
               });
             } else {
               this.session?.sendRealtimeInput({
-                text: `[SYSTEM EVENT: The previous call got disconnected ${diffSec} seconds ago due to network or glitch and the student called back! Greet warmly and reassure them (e.g. "Arre achanak call disconnect ho gaya tha na! Network issue tha lagta hai, ab meri aawaz aa rahi hai na?"). 1 short, warm Hinglish line. Speak out loud directly now.]`,
+                text: `[SYSTEM EVENT: The previous call got disconnected ${diffSec}s ago due to network glitch and the student called back! Greet warmly like a close friend acknowledging the network drop. Be completely spontaneous without using rigid canned scripts. 1 short, warm Hinglish line out loud now.]`,
               });
             }
             return;
@@ -1088,10 +1102,6 @@ Stay completely quiet in listening mode waiting for the student to speak. If you
           const timeGreeting = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
           const topicClause = activeTopic && activeTopic !== 'General' ? `Their recent target topic is "${activeTopic}".` : '';
 
-          const chatContextSnippet = this.recentChatSummary
-            ? `Recent chat conversation context:\n"""\n${this.recentChatSummary.slice(-600)}\n"""\nPick up seamlessly from this conversation or ask what they're up to.`
-            : '';
-
           if (this.isIncomingCallSession) {
             this.session?.sendRealtimeInput({
               text: `[SYSTEM EVENT: YOU (MISA) PLACED THIS PHONE CALL to the student!
@@ -1102,8 +1112,10 @@ HOW TO SPEAK: As the caller, open the call warmly, acknowledging that you called
           } else {
             this.session?.sendRealtimeInput({
               text: `[SYSTEM EVENT: THE STUDENT PHONED YOU by tapping the Live Call button, and you just picked up their call!
-Time of day: ${timeGreeting}. ${topicClause} ${chatContextSnippet}
-HOW TO SPEAK: As the receiver answering their call, greet them warmly and naturally knowing they dialed you. Be fresh, unpredictable, and conversational — never use robotic template phrases like "kuch soch rahe ho kya batao kahan se start karein". Speak 1 short, warm Hinglish sentence directly out loud now.]`,
+Time of day: ${timeGreeting}. ${topicClause}
+IMPORTANT: The student has just dialed and connected, and has NOT spoken any words yet!
+HOW TO SPEAK: As the receiver answering their call, greet them warmly and naturally like picking up the phone (e.g. casual "Haan bolo!", "Hey!").
+STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said something, NEVER reply to any past chat messages, and NEVER ask "kya bol rahe the" as if you missed their words. Speak 1 short, warm Hinglish line directly out loud now.]`,
             });
           }
         } catch (e) {
@@ -1181,16 +1193,18 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
 
     // 5. Real-time Input Transcription (User subtitles)
     if (data.serverContent?.inputTranscription?.text) {
-      const recognized = data.serverContent.inputTranscription.text;
-      this.lastUserVoiceTime = Date.now();
-      this.userSpeechEndedAt = Date.now();
-      this.awaitingAssistantReply = true;
-      this.silenceStateMachine.onSpeechActivity();
-      this.silenceNudgeStreak = 0; // reset silence streak on user speech
-      this.lastUserSpokenText = (this.lastUserSpokenText + ' ' + recognized).trim();
-      this.activeAssistantTurnId = null;
-      this.currentAssistantMessage = '';
-      this.updateTranscript('user', recognized, false);
+      const recognized = data.serverContent.inputTranscription.text.trim();
+      if (recognized.length > 0) {
+        this.lastUserVoiceTime = Date.now();
+        this.userSpeechEndedAt = Date.now();
+        this.awaitingAssistantReply = true;
+        this.silenceStateMachine.onSpeechActivity();
+        this.silenceNudgeStreak = 0; // reset silence streak on user speech
+        this.lastUserSpokenText = (this.lastUserSpokenText + ' ' + recognized).trim();
+        this.activeAssistantTurnId = null;
+        this.currentAssistantMessage = '';
+        this.updateTranscript('user', recognized, false);
+      }
 
       // Check if user explicitly asked for silence / quiet study / observe screen
       const txt = data.serverContent.inputTranscription.text.toLowerCase();
@@ -1504,10 +1518,6 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
         // Register user speech activity
         if (talking) {
           if (!this.userInterruptStreakStartedAt) this.userInterruptStreakStartedAt = Date.now();
-          this.lastUserVoiceTime = Date.now();
-          this.userSpeechEndedAt = Date.now();
-          this.silenceNudgeStreak = 0;
-          this.silenceStateMachine.onSpeechActivity();
           // Barge-in debounce: ek hi 80ms analyser spike (room echo, keyboard,
           // door) Misa ki voice nahi kaat sakta. Sustained user speech
           // (>=200ms) hone par hi playback flush hota hai — voice cutting fix.
@@ -1606,9 +1616,6 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
       this.audioStreamer.flushPlayback();
       this.setStatus('listening');
       this.lastUserVoiceTime = now;
-      this.userSpeechEndedAt = now;
-      this.silenceNudgeStreak = 0;
-      this.awaitingAssistantReply = true;
       this.silenceStateMachine.onSpeechActivity();
       while (this.audioPreRollBuffer.length > 0) {
         const bufferedChunk = this.audioPreRollBuffer.shift();
@@ -1643,9 +1650,6 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
 
     if (isSpeech) {
       this.lastUserVoiceTime = now;
-      this.userSpeechEndedAt = now;
-      this.silenceNudgeStreak = 0;
-      this.awaitingAssistantReply = true;
       this.silenceStateMachine.onSpeechActivity();
     }
 
@@ -1952,24 +1956,22 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
       );
       const silenceDurationSec = (Date.now() - lastActivityAnchor) / 1000;
 
-      // ── Fast Stalled-Turn Watchdog (User Spoke but AI Didn't Reply) ──────────────
-      // In a live voice call, if the student spoke and 2.8s pass without
-      // Gemini generating a reply, kick the stalled turn immediately!
-      const userSpokeRecently = this.awaitingAssistantReply && this.userSpeechEndedAt > 0;
+      // ── Fast Stalled-Turn Watchdog (User Spoke Real Words but Model Didn't Reply) ──
+      // In a live voice call, if the student spoke actual words and 3.5s pass without
+      // Gemini generating a reply, kick the stalled turn with their exact words!
+      const spokenWords = this.lastUserSpokenText.slice(-300).trim();
+      const userSpokeRealWords = this.awaitingAssistantReply && spokenWords.length > 0 && this.userSpeechEndedAt > 0;
       const speechWaitDurationSec = (Date.now() - this.userSpeechEndedAt) / 1000;
-      if (userSpokeRecently && speechWaitDurationSec >= 2.8 && (Date.now() - this.lastSilenceNudgeAt > 8000)) {
+      if (userSpokeRealWords && speechWaitDurationSec >= 3.5 && (Date.now() - this.lastSilenceNudgeAt > 8000)) {
         this.awaitingAssistantReply = false;
         this.lastSilenceNudgeAt = Date.now();
         this.lastTurnFinishedTime = Date.now();
-        const spokenWords = this.lastUserSpokenText.slice(-300).trim();
         this.lastUserSpokenText = '';
         try {
           this.session.sendRealtimeInput({
-            text: spokenWords
-              ? `[SYSTEM EVENT: The student said: "${spokenWords}". Answer their spoken words directly out loud right now!]`
-              : `[SYSTEM EVENT: The student just spoke to you and is waiting for your reply — respond to their spoken words directly out loud right now!]`,
+            text: `[SYSTEM EVENT: The student said: "${spokenWords}". Answer their spoken words directly out loud right now!]`,
           });
-          console.info(`[GeminiLive] Fast reply watchdog kicked stalled turn (text: "${spokenWords}")`);
+          console.info(`[GeminiLive] Fast reply watchdog kicked stalled turn for recognized words: "${spokenWords}"`);
         } catch (e) {
           console.warn('[GeminiLive] Fast reply watchdog error:', e);
         }
@@ -2189,6 +2191,11 @@ HOW TO SPEAK: Break the silence naturally like a real friend on phone. Make a fr
       clearInterval(this.silenceObserverTimer);
       this.silenceObserverTimer = null;
     }
+    this.silenceNudgeStreak = 0;
+    this.awaitingAssistantReply = false;
+    this.lastUserSpokenText = '';
+    this.userSpeechEndedAt = 0;
+    this.quietFocusUntil = 0;
     this.silenceStateMachine.reset();
     if (!preserveReconnectState) {
       this.audioStreamer.close();
