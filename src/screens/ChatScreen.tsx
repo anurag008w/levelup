@@ -74,7 +74,7 @@ import type { LiveSettingsConfig, LiveTranscriptItem } from '../core/domain/live
 import { DEFAULT_LIVE_SETTINGS } from '../core/domain/live-types';
 import LivePermissionModal from '../components/live/LivePermissionModal';
 import LiveCompanionOverlay from '../components/live/LiveCompanionOverlay';
-import { requestNativeCallAudioFocus, setNativeAudioRoute } from '../lib/native-audio-route';
+import { requestNativeCallAudioFocus, setNativeAudioRoute, resetNativeAudioRoute, isNativeAudioPlatform } from '../lib/native-audio-route';
 import { isLiveCallInterrupted, clearLiveCallInterrupted } from '../lib/live-companion-service';
 
 interface DraftAttachment {
@@ -490,22 +490,51 @@ export default function ChatScreen({
           // into a broken (silent-mic) call.
           throw new Error('Audio focus denied');
         }
-        // P1: focus acquired HERE — tell the overlay/client so connect() does
-        // not request it a second time (single-owner audio focus).
-        setLiveAudioFocusGranted(true);
-        await setNativeAudioRoute(liveConfig.defaultAudioRoute);
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: false,
-        });
-        setLiveMicStream(stream);
-        liveCallSessionIdRef.current = active?.id || ensureSession().id;
-        setShowLiveOverlay(true);
-        return;
+        try {
+          // P3 + review-7 P1: the route result must be VERIFIED, not swallowed.
+          // Requested route applied → continue. Non-speaker route refused →
+          // fall back to the always-available loudspeaker and verify THAT too.
+          // Fallback also refused → the startup is aborted (no silent
+          // "connected on bluetooth" lie) and native focus is released below.
+          const desiredRoute = liveConfig.defaultAudioRoute ?? 'speaker';
+          const applied = await setNativeAudioRoute(desiredRoute);
+          if (!applied && desiredRoute !== 'speaker') {
+            const fallback = await setNativeAudioRoute('speaker');
+            // On web the route API is a no-op (null) — accept it there; on
+            // native a refused speaker means abort (rollback below releases
+            // focus) rather than limping into a false route claim.
+            if (!fallback && isNativeAudioPlatform()) {
+              throw new Error('No audio route available (speaker fallback failed)');
+            }
+          }
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+            video: false,
+          });
+          // COMMIT POINT (review-7 P0): the handoff flag only becomes true once
+          // focus + route + mic capture ALL succeeded. If any step above failed,
+          // native focus is released and the flag stays false — a connected
+          // overlay can never inherit a stale "focus granted" claim into a call
+          // whose audio session never came up.
+          setLiveAudioFocusGranted(true);
+          setLiveMicStream(stream);
+          liveCallSessionIdRef.current = active?.id || ensureSession().id;
+          setShowLiveOverlay(true);
+          return;
+        } catch {
+          // Rollback the half-acquired native audio session (mode/focus/route)
+          // so no dangling session lingers — the modal below re-acquires cleanly.
+          try {
+            await resetNativeAudioRoute();
+          } catch {
+            // Ignored — best-effort native teardown.
+          }
+          setLiveAudioFocusGranted(false);
+        }
       } catch {
         // Fallback to permission modal if stream acquisition failed
       }

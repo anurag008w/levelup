@@ -16,8 +16,16 @@ public class LiveCompanionPlugin extends Plugin {
   private static final String PREFS_NAME = "live_call_state";
   private static final String KEY_WAS_INTERRUPTED = "was_interrupted";
 
-  /** Idempotency guard: armLiveCall() → start() must not double-start the FGS. */
-  private static boolean foregroundServiceStarted = false;
+  // NOTE (review 7 / P1): there is deliberately NO static "is the service
+  // running" flag anymore. A process-local boolean can drift from the real
+  // Android Service lifecycle (killed service, two identical plugin instances
+  // after a reload, etc.), and trusting it as the source of truth lets the two
+  // drift apart silently. The Service itself is the authority: it is started by
+  // startForegroundService() and stopped by stopService(); both are idempotent
+  // by definition — startForegroundService() on an already-running service just
+  // re-delivers onStartCommand() (which re-posts the same notification, same
+  // id), and stopService() on a non-running service is a no-op. The plugin only
+  // issues start/stop requests and never pretends to know the Service state.
 
   @Override
   public void load() {
@@ -30,10 +38,12 @@ public class LiveCompanionPlugin extends Plugin {
   }
 
   private void ensureForegroundService() {
-    if (foregroundServiceStarted) return;
+    // The Android Service lifecycle is authoritative and idempotent — see the
+    // class-level note. No static guard: a duplicate start is a harmless
+    // re-delivery of onStartCommand(), and stopService() is a no-op if the
+    // service is not running.
     Intent i = new Intent(getContext(), LiveCompanionForegroundService.class);
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getContext().startForegroundService(i); else getContext().startService(i);
-    foregroundServiceStarted = true;
   }
 
   /**
@@ -65,8 +75,8 @@ public class LiveCompanionPlugin extends Plugin {
   }
 
   @PluginMethod public void stop(PluginCall call) {
+    // stopService() on a non-running service is a no-op — no flag to reset.
     getContext().stopService(new Intent(getContext(), LiveCompanionForegroundService.class));
-    foregroundServiceStarted = false;
     MainActivity.setLiveCallActive(false);
     clearCallInterrupted();
     call.resolve();

@@ -39,7 +39,6 @@ import { haptic, hapticError } from '../../lib/haptics';
 import ChatMarkdown from '../ChatMarkdown';
 import LiveSettingsModal from './LiveSettingsModal';
 import {
-  startLiveCompanionService,
   stopLiveCompanionService,
   armLiveCall,
   onPiPModeChanged,
@@ -284,8 +283,18 @@ export default function LiveCompanionOverlay({
         // after Activity recreation the singleton live client survives but
         // MainActivity.onDestroy() reset liveCallActive — onUserLeaveHint would
         // otherwise silently skip auto-PiP for the whole revived call.
+        //
+        // Review-7 P0/P1: the startup is ONE TRANSACTION. arm → connect →
+        // voice → camera either all succeed (commit) or the single catch below
+        // rolls back EVERYTHING. There is NO `return` inside the critical path,
+        // so a view unmount can never strand a half-armed foreground service:
+        // the startup either commits (the module-level singleton owns the call
+        // and a remounted overlay reattaches its callbacks) or fails and rolls
+        // back exactly once. `startLiveCompanionService()` is intentionally NOT
+        // called again here — armLiveCall() is the single FGS owner (P1); the
+        // plugin only issues start/stop requests and the Android Service
+        // lifecycle is the authority.
         await armLiveCall();
-        if (cancelled) return;
 
         if (!existingClient) {
           // P1: the pre-capture path (permission modal / remembered fast path)
@@ -293,35 +302,39 @@ export default function LiveCompanionOverlay({
           // fact in so connect() does NOT request focus a second time — focus
           // stays single-owner; connect only applies the route.
           await liveClient.connect(apiKey, incomingCallMeta, { audioFocusAlreadyGranted });
-          await startLiveCompanionService();
-          if (cancelled) {
-            return;
-          }
           await liveClient.startVoiceStreaming(initialMicStream);
-
-          if (cancelled) {
-            return;
-          }
 
           if (initialCameraStream) {
             const stream = await liveClient.startCameraStream('environment');
-            if (cancelled) {
-              return;
-            }
-            setIsCameraActive(true);
-            setIsVisionPreviewVisible(true);
-            if (videoPreviewRef.current) {
-              videoPreviewRef.current.srcObject = stream;
+            if (!cancelled) {
+              setIsCameraActive(true);
+              setIsVisionPreviewVisible(true);
+              if (videoPreviewRef.current) {
+                videoPreviewRef.current.srcObject = stream;
+              }
             }
           }
         }
-      } catch (err: any) {
+        // Commit: the startup succeeded. State updates are gated on the view
+        // still being mounted — but the underlying call is committed regardless.
         if (!cancelled) {
-          // A denied focus or failed capture is terminal for this attempt.
-          // Do not retain a half-connected singleton or foreground service.
+          setErrorMessage(null);
+        }
+      } catch (err: any) {
+        // SINGLE ROLLBACK FINALIZER for every uncommitted startup path.
+        //   - stopLiveCompanionService(): clears the FGS + liveCallActive AND
+        //     the was_interrupted intent — a failed attempt never surfaces a
+        //     false "call was interrupted" banner on next launch.
+        //   - liveClient.disconnect(): tears down socket + audio focus + route.
+        // Only roll back when THIS mount started the call. Re-attaching to an
+        // established singleton call (existingClient) must never kill it just
+        // because the idempotent arm() hiccuped.
+        if (!existingClient) {
           liveClient.disconnect();
           if (activeLiveClient === liveClient) activeLiveClient = null;
           void stopLiveCompanionService();
+        }
+        if (!cancelled && !existingClient) {
           hapticError();
           setStatus('error');
           setErrorMessage(err?.message || 'Connection to Gemini Live failed');

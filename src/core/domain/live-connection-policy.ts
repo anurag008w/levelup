@@ -5,15 +5,22 @@ export function isPermanentLiveConnectionError(error: unknown): boolean {
 }
 
 /**
- * INTENTIONAL SAFETY LIMIT (review item 4): with 20s-capped exponential backoff,
- * 500 attempts ≈ 2.5–3 hours of continuous retry on a permanently-down link.
- * This is NOT the call-termination policy — the caller gates on the user having
- * hung up (isUserExplicitlyClosed), so in real usage a call retries for the
- * entire outage. The cap exists purely as a sanity valve against truly
- * pathological endless churn (a lost device, a battery-dead background worker,
- * a permanently torn-down socket that never errors cleanly). If the product
- * contract is "only an explicit hangup ends the call", raising this constant is
- * the single knob — it is deliberately kept out of the per-attempt hot path.
+ * INTENTIONAL SAFETY LIMIT (review item 4 / review 7 P2): with 20s-capped
+ * exponential backoff, 500 attempts ≈ 2.5–3 hours of continuous retry on a
+ * permanently-down link.
+ *
+ * CONTRACT CLARIFICATION: this constant is a TERMINAL SAFETY VALVE only, not
+ * the product's call-termination policy. The product contract stays
+ * "an explicit hangup is the only way a call ends" — the caller never enters
+ * this loop once the user hangs up (the reconnect worker is also cancelled
+ * immediately on hangup: pending backoff timer cleared + epoch token bumped).
+ * The cap exists purely so a PATHOLOGICAL state (lost device, battery-dead
+ * background worker, a socket that never errors cleanly) cannot spin forever.
+ *
+ * When the valve trips the user sees a clear error card ("Network connection
+ * could not be restored. End the call or try again.") — the outage ceiling is
+ * therefore USER-VISIBLE and documented, not silent. If the product wants a
+ * call to survive longer than ~3h of link outage, raise this single knob.
  */
 export const MAX_LIVE_RECONNECT_ATTEMPTS = 500;
 

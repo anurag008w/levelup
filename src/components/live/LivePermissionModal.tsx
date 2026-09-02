@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, Camera, Monitor, ShieldCheck, AlertCircle, CheckCircle2, X } from 'lucide-react';
 import { haptic, hapticSuccess, hapticError } from '../../lib/haptics';
-import { requestNativeCallAudioFocus, setNativeAudioRoute } from '../../lib/native-audio-route';
+import { requestNativeCallAudioFocus, setNativeAudioRoute, resetNativeAudioRoute, isNativeAudioPlatform } from '../../lib/native-audio-route';
 import type { LiveAudioRoute } from '../../core/domain/live-types';
 
 interface LivePermissionModalProps {
@@ -39,12 +39,20 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed, defaul
         setRequesting(false);
         return;
       }
-      // P3: verify the route was actually applied — don't start capture under
-      // a route the system refused (missing Bluetooth device etc.). Fall back
-      // to the always-available loudspeaker rather than limping into capture.
+      // P3 + review-7 P1: verify the route was actually applied — don't start
+      // capture under a route the system refused (missing Bluetooth device
+      // etc.). Fall back to the always-available loudspeaker, and verify the
+      // FALLBACK too: if even the speaker is refused the capture must abort
+      // (never a silent "connected on bluetooth" lie). The catch below then
+      // releases the half-acquired native focus.
       const applied = await setNativeAudioRoute(defaultAudioRoute);
       if (!applied && defaultAudioRoute !== 'speaker') {
-        await setNativeAudioRoute('speaker');
+        const fallback = await setNativeAudioRoute('speaker');
+        // Web: route APIs are no-ops (null) — accept. Native: a refused
+        // speaker aborts the capture so no route lie reaches the call.
+        if (!fallback && isNativeAudioPlatform()) {
+          throw new Error('No audio route available (speaker fallback failed).');
+        }
       }
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -57,9 +65,18 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed, defaul
       setSavedMicStream(stream);
       setMicGranted(true);
       hapticSuccess();
-    } catch {
+    } catch (err: any) {
+      // Review-7 P1: on ANY capture failure (route refused, fallback refused,
+      // mic denied) release the native audio session so the modal's error
+      // state does not sit on top of a half-acquired focus/mode/route. The
+      // next retry re-acquires from a clean slate.
+      try {
+        await resetNativeAudioRoute();
+      } catch {
+        // Ignored — best-effort native teardown.
+      }
       hapticError();
-      setErrorMsg('Microphone access denied. Please allow microphone in your device settings.');
+      setErrorMsg(err?.message || 'Microphone access denied. Please allow microphone in your device settings.');
     } finally {
       setRequesting(false);
     }

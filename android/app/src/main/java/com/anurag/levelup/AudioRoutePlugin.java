@@ -5,6 +5,9 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothHeadset;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
+import android.content.BroadcastReceiver;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.media.AudioDeviceInfo;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
@@ -207,7 +210,34 @@ public class AudioRoutePlugin extends Plugin {
                 am.startBluetoothSco();
                 am.setBluetoothScoOn(true);
                 am.setSpeakerphoneOn(false);
-                break;
+                // Review 7 / P1 (Android 8–11): startBluetoothSco() is
+                // ASYNC — it returns before the headset profile converges, so
+                // resolving immediately lets the WebView AudioRecord open its
+                // capture session while audio is still on the phone speaker
+                // (first ~hundreds of ms of user speech can be lost). Wait for
+                // the SCO_CONNECTED broadcast (bounded timeout) so the JS
+                // caller only continues once the headset is the actual route.
+                // If SCO never converges, revert to the loudspeaker instead of
+                // letting the app believe it is "on bluetooth".
+                call.setKeepAlive(true);
+                final AudioManager amSco = am;
+                final PluginCall callSco = call;
+                Thread scoWaiter = new Thread(() -> {
+                    if (waitForScoConnected(amSco)) {
+                        JSObject ret = new JSObject();
+                        ret.put("route", "bluetooth");
+                        ret.put("deviceType", "BLUETOOTH_SCO");
+                        callSco.resolve(ret);
+                    } else {
+                        // No SCO profile in time — never pretend; go speaker.
+                        amSco.stopBluetoothSco();
+                        amSco.setBluetoothScoOn(false);
+                        amSco.setSpeakerphoneOn(true);
+                        callSco.reject("Bluetooth SCO headset did not connect in time");
+                    }
+                }, "sco-connect-wait");
+                scoWaiter.start();
+                return;
 
             case "speaker":
             default:
@@ -220,6 +250,48 @@ public class AudioRoutePlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("route", route);
         call.resolve(ret);
+    }
+
+    /**
+     * Block until the SCO headset reports CONNECTED (bounded by a short
+     * convergence window, e.g. 2s). Returns true if the headset is usable.
+     * The broadcast listener is unregistered on every exit path; on Android
+     * 13+ a dynamic receiver must declare its exported-ness.
+     */
+    private boolean waitForScoConnected(AudioManager am) {
+        if (am.isBluetoothScoOn()) return true;
+        final Object lock = new Object();
+        final boolean[] connected = { false };
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                int state = intent.getIntExtra(
+                    AudioManager.EXTRA_SCO_AUDIO_STATE, AudioManager.SCO_AUDIO_STATE_ERROR);
+                if (state == AudioManager.SCO_AUDIO_STATE_CONNECTED) {
+                    synchronized (lock) { connected[0] = true; lock.notifyAll(); }
+                }
+            }
+        };
+        IntentFilter filter = new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                getContext().registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                getContext().registerReceiver(receiver, filter);
+            }
+            long deadline = System.currentTimeMillis() + 2000;
+            synchronized (lock) {
+                while (!connected[0] && System.currentTimeMillis() < deadline) {
+                    long remaining = deadline - System.currentTimeMillis();
+                    if (remaining <= 0) break;
+                    lock.wait(remaining);
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            try { getContext().unregisterReceiver(receiver); } catch (Exception ignored) { }
+        }
+        return connected[0];
     }
 
     /** Reset audio mode to normal when the Live session ends. */

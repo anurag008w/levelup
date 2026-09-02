@@ -1,7 +1,7 @@
 {
-  "name": "jee-levelup",
+  "name": "levelup",
   "private": true,
-  "version": "0.0.0",
+  "version": "2026.09.2006",
   "type": "module",
   "scripts": {
     "dev": "vite",

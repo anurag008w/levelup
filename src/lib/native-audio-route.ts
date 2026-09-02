@@ -23,6 +23,16 @@ export async function addNativeAudioFocusListener(listener: (focusChange: number
 const AudioRoute = registerPlugin<AudioRouteNative>('AudioRoute');
 
 /**
+ * True on Android/iOS (where the plugin is real). On web the route/focus APIs
+ * are graceful no-ops, so callers distinguish "native refused this route"
+ * (treat as a hard failure → fallback/abort) from "web, nothing to do"
+ * (accept silently instead of breaking browser calls).
+ */
+export function isNativeAudioPlatform(): boolean {
+  return Capacitor.isNativePlatform();
+}
+
+/**
  * Switch Android system audio route between Loudspeaker, Earpiece, and Bluetooth headset.
  * On browser/web, this is a graceful no-op.
  */

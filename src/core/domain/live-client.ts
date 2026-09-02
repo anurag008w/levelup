@@ -10,7 +10,7 @@ import type {
 import { AudioStreamer } from './audio-streamer';
 import { VisionStreamer } from './vision-streamer';
 import { MISA_IDENTITY_GUARD, ROMAN_SCRIPT_RULE, type ChatToolCallRecord } from './chat';
-import { setNativeAudioRoute, resetNativeAudioRoute, requestNativeCallAudioFocus, addNativeAudioFocusListener } from '../../lib/native-audio-route';
+import { setNativeAudioRoute, resetNativeAudioRoute, requestNativeCallAudioFocus, addNativeAudioFocusListener, isNativeAudioPlatform } from '../../lib/native-audio-route';
 import { deviceTimeZone } from '../ports/clock';
 import { LiveSilenceStateMachine } from './live-silence-state-machine';
 import { canRetryLiveConnection, isPermanentLiveConnectionError } from './live-connection-policy';
@@ -1271,6 +1271,18 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private lastSilenceNudgeAt = 0;
   private isReconnecting = false;
   private reconnectAttempts = 0;
+  /**
+   * Review 7 / P2: the reconnect worker is a single, cancellable task.
+   * - `reconnectTimer` holds the in-flight backoff setTimeout so disconnect()
+   *   can clearTimeout() it the moment the user hangs up (immediate cancel,
+   *   no wasted wakeup).
+   * - `reconnectEpoch` is bumped on EVERY disconnect. The worker captures the
+   *   epoch before sleeping and aborts if it changed when it wakes — a stale
+   *   worker can therefore never mutate a newer session or revive a hung-up
+   *   call (its pending backoff dies with the epoch).
+   */
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectEpoch = 0;
   private currentMediaStream: MediaStream | null = null;
   private activeApiKey: string | null = null;
   private isUserExplicitlyClosed = false;
@@ -1427,7 +1439,18 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       // the always-available loudspeaker and report the actual route.
       console.warn(`[GeminiLive] Requested audio route "${desiredRoute}" was not applied by the system — falling back to speaker.`);
       const fallback = await setNativeAudioRoute('speaker');
-      this.currentAudioRoute = (fallback?.route as LiveAudioRoute) || 'speaker';
+      if (!fallback) {
+        // Review-7 P1: on NATIVE even the loudspeaker was refused — abort the
+        // startup instead of letting the session claim a route the system never
+        // set (the caller rolls back focus via its single teardown path).
+        // On web setNativeAudioRoute() is a no-op returning null — accept it.
+        if (isNativeAudioPlatform()) {
+          throw new Error('No audio route available (speaker fallback failed).');
+        }
+        this.currentAudioRoute = 'speaker';
+      } else {
+        this.currentAudioRoute = (fallback?.route as LiveAudioRoute) || 'speaker';
+      }
     } else {
       // desiredRoute IS speaker and nothing reported back (e.g. web/no-op) — no
       // route to verify; keep the default.
@@ -1728,17 +1751,35 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
     // Exponential backoff (750ms → 1.5s → 3s → 6s → 12s → capped 20s) +
     // jitter — a real network blip gets several chances, but a down link
-    // can't spin forever.
+    // can't spin forever. The timer is stored so a hangup/direct-connect can
+    // cancel it immediately (P2); the epoch token (captured above) makes any
+    // worker that woke up after a disconnect abort instead of racing.
+    const epoch = this.reconnectEpoch;
     const delay = Math.min(20_000, 750 * 2 ** (this.reconnectAttempts - 1)) + Math.floor(Math.random() * 400);
-    await new Promise((r) => setTimeout(r, delay));
+    await new Promise<void>((resolve) => {
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        resolve();
+      }, delay);
+    });
 
-    if (this.isUserExplicitlyClosed) {
+    if (epoch !== this.reconnectEpoch || this.isUserExplicitlyClosed) {
+      // A disconnect happened while we slept (hangup, or someone connected
+      // directly e.g. reconnectWithNewConfig). This worker is stale — stop
+      // without touching any session.
       this.isReconnecting = false;
       return;
     }
 
     try {
       if (!this.activeApiKey) throw new Error('No active API key');
+      // Extra epoch gate right before connect(): the user may have hung up in
+      // the synchronous gap after the timer fired — connect() must not revive
+      // a call they explicitly ended.
+      if (epoch !== this.reconnectEpoch || this.isUserExplicitlyClosed) {
+        this.isReconnecting = false;
+        return;
+      }
       await this.connect(this.activeApiKey, {
         isIncomingCall: this.isIncomingCallSession,
         reason: this.incomingCallReason,
@@ -1785,6 +1826,16 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       this.connectionAttempt += 1;
       this.isUserExplicitlyClosed = true;
     }
+    // P2: cancel any pending reconnect backoff NOW. Clearing the timer kills
+    // the scheduled wakeup; bumping the epoch makes a worker that already woke
+    // abort at its next gate. Bumped on EVERY disconnect (including the
+    // reconnect-internal one) so a direct connect() while a worker sleeps
+    // invalidates that worker too.
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.reconnectEpoch += 1;
     this.isReconnecting = false;
     if (!preserveReconnectState) {
       this.reconnectAttempts = 999;
@@ -1811,11 +1862,21 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     if (!preserveReconnectState) {
       this.visionStreamer.stop();
     }
-    // P7: store (not fire-and-forget) so the next setupCallAudio() serializes
-    // after this reset — the route can no longer be reverted after new setup.
-    // Skipped (null) on fresh+handoff: nothing to tear down, and the reset
-    // would abandon the pre-capture focus (review-6 regression).
-    this.pendingAudioReset = skipNativeAudioReset ? null : resetNativeAudioRoute();
+    // P7 + review-7 P0: store (never fire-and-forget) so the next
+    // setupCallAudio() serializes after this reset — the route can no longer
+    // be reverted after new setup. Resets CHAIN FIFO instead of replacing:
+    // a reset from a failed startup that is still in flight must never be
+    // discarded, because an orphaned native reset executing later could
+    // abandon the very focus the next attempt just acquired.
+    //   - skip=false (normal teardown): append a reset to the chain.
+    //   - skip=true (fresh start + handed-off pre-capture focus): schedule
+    //     NO new reset (it would abandon that focus — review-6 regression),
+    //     but KEEP any prior chain so the new setup still waits for it.
+    this.pendingAudioReset = skipNativeAudioReset
+      ? this.pendingAudioReset
+      : (this.pendingAudioReset ?? Promise.resolve())
+          .then(() => resetNativeAudioRoute())
+          .catch(() => undefined);
     if (this.session) {
       try {
         this.session.close?.();
