@@ -43,6 +43,7 @@ import {
   armLiveCall,
   markLiveCallConnected,
   isLiveCompanionServiceActive,
+  clearLiveCallInterrupted,
   onPiPModeChanged,
 } from '../../lib/live-companion-service';
 import { setLiveCallReplyHandler, LIVE_CALL_SESSION_ID } from '../../lib/notification-actions';
@@ -197,6 +198,8 @@ export default function LiveCompanionOverlay({
   const [isMinimized, setIsMinimized] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  /** Review-10 P1: the Live FGS died right after commit — background/PiP continuation is no longer guaranteed. */
+  const [fgsDegraded, setFgsDegraded] = useState(false);
   const [activeTool, setActiveTool] = useState<{ name: string; args: any; status: 'running' | 'done' } | null>(null);
 
   const isProactiveEnabled = proactiveAgentService.getPreferences().enabled;
@@ -374,6 +377,18 @@ export default function LiveCompanionOverlay({
         // fails, the rollback below still clears the ARMED marker via stop().
         if (!cancelled && liveClient.isCurrentAttempt(startupAttempt)) {
           await markLiveCallConnected();
+          // Review-10 P0 (post-commit gate): the CONNECTED persistence write is
+          // ASYNC — a hangup/cancel could land mid-await and the native write
+          // could still complete AFTER teardown cleared it, leaving a stale
+          // CONNECTED marker (false "previous call was interrupted" banner on
+          // next launch). If we are no longer the current attempt after the
+          // await, explicitly revert the CONNECTED marker before continuing, so
+          // the persisted lifecycle can never outlive an explicit hangup/cancel.
+          if (cancelled || !liveClient.isCurrentAttempt(startupAttempt)) {
+            await clearLiveCallInterrupted();
+            rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
+            return;
+          }
           // Review-9 P1.4: verify the foreground service is ACTUALLY running
           // (onCreate→true, onDestroy→false — clears if the OS killed it). If
           // startForegroundService() was requested but the service died, we
@@ -383,6 +398,12 @@ export default function LiveCompanionOverlay({
           const fgsActive = await isLiveCompanionServiceActive();
           if (fgsActive === false) {
             console.warn('[LiveCompanion] FGS not active after startup commit — background audio/PiP persistence not guaranteed.');
+            // Review-10 P1 (degraded state, not just a console warning): make the
+            // loss of FGS-backed background/PiP capability VISIBLE to the user,
+            // so they aren't surprised when audio/persistence lapses the moment
+            // they leave the app. The foreground call still works; only the
+            // background contract is revoked.
+            setFgsDegraded(true);
           }
         }
         if (!cancelled) {
@@ -851,6 +872,11 @@ export default function LiveCompanionOverlay({
         {errorMessage && (
           <div className="absolute top-4 mx-auto max-w-sm rounded-2xl border border-danger/40 bg-danger/20 p-3 text-xs text-danger text-center">
             {errorMessage}
+          </div>
+        )}
+        {fgsDegraded && !errorMessage && (
+          <div className="absolute top-4 mx-auto max-w-sm rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-400 text-center">
+            Background call continuation ab guaranteed nahi hai (system foreground service start nahi ho saki).
           </div>
         )}
 
