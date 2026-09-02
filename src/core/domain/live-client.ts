@@ -180,30 +180,12 @@ export class GeminiLiveClient {
     if (this.isUserExplicitlyClosed) return;
 
     if (background) {
-      // PiP me user abhi call dekh raha hai — audio continue karo.
-      if (keepAudioPlaying) {
-        this.audioBackgroundActive = false;
-        this.setStatus('background-pip-active');
-        return;
-      }
-      // 1) Flush already-queued model audio so it does not blast on foreground.
-      this.audioStreamer.flushPlayback();
-      // 2) Mark background-active — `playAudioChunk` will discard incoming
-      //    model audio while this flag is true.
-      this.audioBackgroundActive = true;
-      this.setStatus('background-active');
+      // Background / PiP: voice call continues live via Foreground Service (microphone + media playback).
+      // Model audio plays seamlessly in both background and PiP so user can speak and hear replies.
+      this.setStatus(keepAudioPlaying ? 'background-pip-active' : 'background-active');
     } else if (this.status === 'background-active' || this.status === 'background-pip-active') {
-      this.audioBackgroundActive = false;
       this.audioStreamer.setMuted(this.manuallyMuted || this.audioFocusPaused);
       this.setStatus('listening');
-      if (this.session) {
-        // Tell the model that mic input was live while we were away — it should
-        // NOT respond to any speech that happened during that window, only from
-        // this point forward.
-        this.session.sendRealtimeInput({
-          text: '[SYSTEM EVENT: The app just returned from background. Microphone input was captured live during the background period. Do NOT reply to or repeat anything heard while the app was backgrounded — that window is closed. Continue fresh from now.]',
-        });
-      }
     }
   }
 
@@ -1115,12 +1097,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
             this.measuredResponseLatencyMs = Date.now() - this.pendingResponseSince;
             this.pendingResponseSince = 0;
           }
-          // Model audio is DISCARDED while backgrounded so replies don't pile
-          // up and blast all at once when the app is reopened. Text/transcript
-          // output is unaffected — it still flows to the notification.
-          if (!this.audioBackgroundActive) {
-            this.audioStreamer.playAudioChunk(part.inlineData.data);
-          }
+          this.audioStreamer.playAudioChunk(part.inlineData.data);
         }
         if (part.text) {
           this.currentAssistantMessage += part.text;
@@ -1367,8 +1344,6 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private connectionAttempt = 0;
   private manuallyMuted = false;
   private audioFocusPaused = false;
-  /** When true, model audio replay is discarded to prevent backlog blast. */
-  private audioBackgroundActive = false;
   private pendingResponseSince = 0;
   private measuredResponseLatencyMs = 0;
 

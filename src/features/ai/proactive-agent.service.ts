@@ -20,6 +20,7 @@ import { relationshipManager, type SubjectArea } from './relationship-state';
 import { socialDecisionEngine, type ProactiveCandidate } from './social-decision-engine';
 import { validateProactiveDelivery } from './behavior-validator';
 import type { UserActivityState } from '../../core/domain/activity-signal';
+import { isAppActive } from '../../lib/notifications';
 import { container } from '../../di/container';
 
 export interface ProactivePreferences {
@@ -1240,6 +1241,7 @@ Instructions:
     this.lastSessionTopic = topicForFollowUp || this.lastSessionTopic;
 
     this.sessionIdleTimer = setTimeout(() => {
+      this.isUserCurrentlyInChat = false;
       this.evaluateSessionFollowUp();
     }, 5 * 60 * 1000);
   }
@@ -1654,8 +1656,56 @@ Instructions:
       }
     }
 
+    // Direct listener path (ChatScreen mounted + visible)
+    let delivered = false;
     for (const listener of this.messageInjectionListeners) {
-      listener({ role: 'assistant', text, isProactive: true });
+      try {
+        listener({ role: 'assistant', text, isProactive: true });
+        delivered = true;
+      } catch {}
+    }
+
+    // Persist to store if ChatScreen listener wasn't active
+    if (!delivered) {
+      try {
+        const activeId = container?.chat?.getActiveSessionId?.() || container?.chat?.listSessions?.()?.[0]?.id;
+        if (activeId) {
+          container.chat.appendMessage(activeId, {
+            id: `msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
+            role: 'assistant',
+            content: text,
+            createdAt: new Date(now).toISOString(),
+            isProactive: true,
+          });
+        }
+      } catch {}
+    }
+
+    // Window event fallback for active views
+    if (!delivered && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('levelup:proactive-message', {
+          detail: { text, isProactive: true },
+        })
+      );
+    }
+
+    // Native notification: agar user chat view me nahi hai ya app background me hai,
+    // toh device notification bhej kar student ko notify karo!
+    if (Capacitor.isNativePlatform() && (!this.isUserCurrentlyInChat || !isAppActive())) {
+      void LocalNotifications.schedule({
+        notifications: [
+          {
+            id: (now % 2147483647) + 1,
+            title: 'Misa',
+            body: text,
+            largeBody: text,
+            schedule: { at: new Date(now + 100), allowWhileIdle: true },
+            channelId: 'misa_proactive_channel',
+            extra: { offlineMessage: text },
+          },
+        ],
+      }).catch(() => undefined);
     }
   }
 

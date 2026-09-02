@@ -48,7 +48,7 @@ import {
   onPiPModeChanged,
 } from '../../lib/live-companion-service';
 import { setLiveCallReplyHandler, LIVE_CALL_SESSION_ID } from '../../lib/notification-actions';
-import { notifyAiReply, LIVE_CHANNEL_ID, type NotificationBubble } from '../../lib/notifications';
+import { notifyAiReply, LIVE_CHANNEL_ID, isAppActive, type NotificationBubble } from '../../lib/notifications';
 import { resetNativeAudioRoute } from '../../lib/native-audio-route';
 
 // The call belongs to this module-level runtime, not to a particular overlay
@@ -291,9 +291,9 @@ export default function LiveCompanionOverlay({
         // HIGH-importance channel only when the chat tab is NOT being watched.)
         //
         // Trailing debounce: har audio chunk pe schedule() flood na karo —
-        // ~1.2s ke settle hone par ek hi same-id refresh do, jo hamesha aakhri
-        // (poore) text ke saath post hota hai. Isse long reply ki notification
-        // grow hote hue dikhti hai aur drop/stall nahi hoti.
+        // foreground me ~1.2s ke settle hone par ek hi same-id refresh do,
+        // background me fast 200ms debounce do taaki throttled timers se drop na ho.
+        const notifDelay = isAppActive() ? 1200 : 200;
         if (liveNotifTimerRef.current !== null) window.clearTimeout(liveNotifTimerRef.current);
         liveNotifTimerRef.current = window.setTimeout(() => {
           liveNotifTimerRef.current = null;
@@ -301,7 +301,7 @@ export default function LiveCompanionOverlay({
             channelId: LIVE_CHANNEL_ID,
             preferBigText: true,
           });
-        }, 1200);
+        }, notifDelay);
       },
       onStatsUpdate: (newStats) => setStats(newStats),
       onExecuteTool: onExecuteTool ? (name, args) => onExecuteTool(name, args) : undefined,

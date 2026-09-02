@@ -410,6 +410,7 @@ export default function App() {
         onChange={(next) => {
           if (next !== tab) {
             setTab(next);
+            proactiveAgentService.setInChatSession(next === 'chat');
           }
         }}
       />

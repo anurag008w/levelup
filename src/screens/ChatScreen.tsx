@@ -1582,6 +1582,29 @@ export default function ChatScreen({
     return unsubscribe;
   }, [active, refresh]);
 
+  // Fallback: window event se proactive messages catch karo jab listener
+  // registered nahi tha (ChatScreen unmounted/tab switch). Direct listener
+  // path se dedupe already hota hai — yeh sirf woh deliver karta hai jo
+  // listener ke bina dispatch hua tha.
+  useEffect(() => {
+    const onProactiveWindow = (e: Event) => {
+      const detail = (e as CustomEvent<{ text: string; isProactive?: boolean }>).detail;
+      if (!detail?.text || !active) return;
+      const msg: ChatMessage = {
+        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        role: 'assistant',
+        content: detail.text,
+        createdAt: new Date().toISOString(),
+        isProactive: detail.isProactive ?? true,
+      };
+      container.chat.appendMessage(active.id, msg);
+      refresh();
+      haptic();
+    };
+    window.addEventListener('levelup:proactive-message', onProactiveWindow);
+    return () => window.removeEventListener('levelup:proactive-message', onProactiveWindow);
+  }, [active, refresh]);
+
   return (
     <div className="chat-shell fade-up">
       {/* Top bar */}
