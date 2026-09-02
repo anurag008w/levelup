@@ -236,7 +236,7 @@ public class AudioRoutePlugin extends Plugin {
                 final AudioManager amSco = am;
                 final PluginCall callSco = call;
                 Thread scoWaiter = new Thread(() -> {
-                    boolean scoReady = waitForScoConnected(amSco, () -> {
+                    boolean scoReady = waitForScoReady(amSco, () -> {
                         amSco.startBluetoothSco();
                         amSco.setBluetoothScoOn(true);
                         amSco.setSpeakerphoneOn(false);
@@ -271,41 +271,61 @@ public class AudioRoutePlugin extends Plugin {
     }
 
     /**
-     * Register the SCO state receiver BEFORE calling startSco(), then wait
-     * for the CONNECTED broadcast with a bounded timeout. Returns true if
-     * SCO connected in time. The broadcast listener is unregistered on
-     * every exit path; on Android 13+ a dynamic receiver must declare its
-     * exported-ness.
+     * Android 7–11 sticky-SCO state machine, per Android's documented flow:
+     *
+     *   register receiver → read current sticky SCO state → if already
+     *   CONNECTED (or isBluetoothScoOn()), keep/start SCO and resolve →
+     *   otherwise startBluetoothSco() → wait CONNECTING → CONNECTED →
+     *   timeout/failure cleanup (stop SCO, disable SCO, speaker).
+     *
+     * The receiver is registered BEFORE startBluetoothSco() (final-audit race:
+     * a fast headset can emit CONNECTED between startBluetoothSco() returning
+     * and a post-hoc registration, so registering first guarantees that
+     * transition is never missed). SCO establishment can take several seconds,
+     * so the wait is bounded at 3s. The `startSco` Runnable is only invoked
+     * when SCO is not already on.
+     *
+     * Receives on BOTH the current action (ACTION_SCO_AUDIO_STATE_UPDATED) and
+     * the older ACTION_SCO_AUDIO_STATE_CHANGED, because OEMs vary: some still
+     * broadcast the deprecated action only. Returns true only when the physical
+     * Bluetooth communication path is verified active (isBluetoothScoOn()).
      */
-    private boolean waitForScoConnected(AudioManager am, Runnable startSco) {
-        if (am.isBluetoothScoOn()) return true;
+    private boolean waitForScoReady(AudioManager am, Runnable startSco) {
         final Object lock = new Object();
-        final boolean[] connected = { false };
+        final boolean[] ready = { false };
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override public void onReceive(Context context, Intent intent) {
                 int state = intent.getIntExtra(
                     AudioManager.EXTRA_SCO_AUDIO_STATE, AudioManager.SCO_AUDIO_STATE_ERROR);
                 if (state == AudioManager.SCO_AUDIO_STATE_CONNECTED) {
-                    synchronized (lock) { connected[0] = true; lock.notifyAll(); }
+                    synchronized (lock) { ready[0] = true; lock.notifyAll(); }
                 }
             }
         };
-        IntentFilter filter = new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED);
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED);
+        filter.addAction(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED);
         try {
-            // FINAL-AUDIT FIX (review 8 / P1): register the receiver BEFORE
-            // calling startBluetoothSco() — a fast headset can emit the
-            // SCO_CONNECTED transition in the synchronous window right after
-            // startBluetoothSco() returns. Registering first guarantees the
-            // transition cannot be missed.
+            // SYSTEM broadcast (framework-SCO state): must be EXPORTED so the
+            // Android framework can deliver it on every OEM/skin. App-private
+            // broadcasts stay NOT_EXPORTED instead — only this system broadcast
+            // is intentionally exported. Guarded so pre-33 need no flag at all.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                getContext().registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                getContext().registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
             } else {
                 getContext().registerReceiver(receiver, filter);
             }
-            startSco.run();
-            long deadline = System.currentTimeMillis() + 2000;
+            // Read the STICKY state: SCO may already be connected before us, or
+            // connect in the small window after registration. isBluetoothScoOn()
+            // is the authoritative physical check; only start SCO when it is off.
+            if (am.isBluetoothScoOn()) {
+                ready[0] = true;
+            } else {
+                startSco.run();
+            }
+            long deadline = System.currentTimeMillis() + 3000;
             synchronized (lock) {
-                while (!connected[0] && System.currentTimeMillis() < deadline) {
+                while (!ready[0] && System.currentTimeMillis() < deadline) {
                     long remaining = deadline - System.currentTimeMillis();
                     if (remaining <= 0) break;
                     lock.wait(remaining);
@@ -316,7 +336,9 @@ public class AudioRoutePlugin extends Plugin {
         } finally {
             try { getContext().unregisterReceiver(receiver); } catch (Exception ignored) { }
         }
-        return connected[0];
+        // Final physical verification (P1): a CONNECTED state is only meaningful
+        // if the communication path is actually active on the headset.
+        return ready[0] && am.isBluetoothScoOn();
     }
 
     /** Reset audio mode to normal when the Live session ends. */

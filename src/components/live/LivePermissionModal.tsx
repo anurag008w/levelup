@@ -111,6 +111,33 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed, defaul
     onProceed(savedMicStream, savedCamStream || undefined);
   }
 
+  /**
+   * Review-8 P1 (modal cancellation cleanup): closing/cancelling the modal —
+   * whether the user granted mic access or not — must release every partially
+   * acquired resource. Invariant:
+   *   modal opened → partial resources acquired → cancel/close =
+   *   stop capture tracks + reset native audio route/focus + clear saved
+   *   streams/state.
+   * Without this, a granted-rerouted mic + native focus/route would leak
+   * until the next call (silent mic + stale route claims, or a dangling
+   * MODE_IN_COMMUNICATION session).
+   */
+  function releasePartialResources() {
+    savedMicStream?.getTracks().forEach((track) => track.stop());
+    savedCamStream?.getTracks().forEach((track) => track.stop());
+    setSavedMicStream(null);
+    setSavedCamStream(null);
+    void resetNativeAudioRoute().catch(() => undefined);
+    setMicGranted(false);
+    setCameraGranted(false);
+  }
+
+  function handleClose() {
+    haptic();
+    releasePartialResources();
+    onClose();
+  }
+
   if (!isOpen) return null;
 
   return (
@@ -135,10 +162,7 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed, defaul
             </div>
             <button
               type="button"
-              onClick={() => {
-                haptic();
-                onClose();
-              }}
+              onClick={handleClose}
               className="icon-btn"
               aria-label="Close"
             >
@@ -233,10 +257,7 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed, defaul
           <div className="mt-6 flex gap-3">
             <button
               type="button"
-              onClick={() => {
-                haptic();
-                onClose();
-              }}
+              onClick={handleClose}
               className="btn btn-secondary flex-1 text-xs"
             >
               Cancel

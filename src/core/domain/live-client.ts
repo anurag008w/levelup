@@ -1636,19 +1636,47 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
   private async installAudioFocusListener(): Promise<void> {
     if (this.audioFocusListener) return;
     this.audioFocusListener = await addNativeAudioFocusListener((focusChange) => {
-      // LOSS and transient loss must stop both capture and stale speech. Focus
-      // regain restores capture; focus is local audio policy, not a network error.
-      if (focusChange === -1 || focusChange === -2) {
+      // Review-8 P1 (focus-loss/regain authoritative lifecycle):
+      // Focus is local Android audio policy — not a network error.
+      // AUDIOFOCUS_LOSS (-1) is permanent: another app (phone call, navigation)
+      // has claimed the audio session. In a live call this is terminal: the
+      // session cannot continue without audio, so disconnect rather than sit
+      // in a zombie state.  AUDIOFOCUS_LOSS_TRANSIENT (-2) is temporary (e.g.
+      // a short notification) — pause capture + flush stale speech, and resume
+      // when regain fires. AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK (-3) keeps
+      // playback at reduced volume; no capture change needed.  AUDIOFOCUS_GAIN
+      // (1) restores capture + volume + route without a second focus request.
+      if (focusChange === -1) {
+        // Permanent loss: acknowledge the revocation in JS so the next call
+        // starts clean, then tear down the session.  disconnect() will also
+        // clear callAudioFocusGranted, but writing it here first makes the
+        // causal intent clear.
+        this.audioFocusPaused = true;
+        this.applyMicrophoneMute();
+        this.audioStreamer.flushPlayback();
+        this.setStatus('background-active');
+        // Permanent loss ends the call: disconnect as an explicit close
+        // (preserveReconnectState=false) so no reconnect/rollback resurrects it
+        // and the native focus is abandoned on teardown.
+        this.disconnect(false);
+      } else if (focusChange === -2) {
+        // Transient loss: keep the session alive but mute capture + flush.
         this.audioFocusPaused = true;
         this.applyMicrophoneMute();
         this.audioStreamer.flushPlayback();
         this.setStatus('background-active');
       } else if (focusChange === 1) {
+        // Regain: restore capture + full volume.  Do NOT re-request focus —
+        // we are still the focus holder; Android only asked us to pause.
         this.audioFocusPaused = false;
         this.applyMicrophoneMute();
         this.audioStreamer.setOutputVolume(1);
+        // Restore the configured audio route (may have been reset by another
+        // app claiming speaker/BT during the loss window).
+        void this.setAudioRoute(this.config.defaultAudioRoute);
         if (this.session) this.setStatus('listening');
       } else if (focusChange === -3) {
+        // CAN_DUCK: lower output volume; capture stays active.
         this.audioStreamer.setOutputVolume(0.2);
       }
     });

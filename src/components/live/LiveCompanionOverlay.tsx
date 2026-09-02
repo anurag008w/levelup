@@ -316,16 +316,18 @@ export default function LiveCompanionOverlay({
             }
           }
         }
-        // Commit: the startup succeeded. State updates are gated on the view
-        // still being mounted — but the underlying call is committed regardless.
-        if (!cancelled) {
-          setErrorMessage(null);
-        }
         // Review-8 P1: the Gemini session has committed — promote the persisted
         // process-death lifecycle from ARMED to CONNECTED so a later kill
         // surfaces the interruption banner accurately (never for an unfinished
-        // startup).
-        void markLiveCallConnected().catch(() => undefined);
+        // startup). AWAITED inside the transaction (not fire-and-forget):
+        // the commit flows arm → … → markCallConnected → UI-enabled hangup, so
+        // a user hangup cannot interleave and write CONNECTED after an
+        // end-call. If this write fails the rollback below still clears the
+        // ARMED marker via stop().
+        await markLiveCallConnected();
+        if (!cancelled) {
+          setErrorMessage(null);
+        }
       } catch (err: any) {
         // SINGLE ROLLBACK FINALIZER for every uncommitted startup path.
         //   - stopLiveCompanionService(): clears the FGS + liveCallActive AND
