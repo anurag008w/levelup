@@ -535,6 +535,14 @@ export default function ChatScreen({
               throw new Error('No audio route available (speaker fallback failed)');
             }
           }
+          // Warm re-launch release race (same root cause as the camera-flip
+          // bug): right after an ended call, the WebView can still hold the
+          // previous mic hardware. Re-acquiring getUserMedia in the same
+          // synchronous turn returns a stale/silent stream and the new call
+          // never starts — which is why a cold (full process) restart is the
+          // only thing that "worked". Yield a macrotask so the WebView frees
+          // the prior mic before we open a fresh one.
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
           const stream = await navigator.mediaDevices.getUserMedia({
             audio: {
               echoCancellation: true,
@@ -871,8 +879,10 @@ export default function ChatScreen({
       // previously endLiveCall had no handler, fell into the unknown-tool
       // fallback below, and surfaced an "error reading summary".
       if (name === 'endLiveCall') {
-        // Hang up the active overlay call (Ref is set by the overlay while mounted).
-        endLiveCallRef.current?.();
+        // Give Misa ~4s headroom to FINISH the sentence she's currently
+        // speaking before the call actually drops, so the goodbye isn't cut
+        // mid-word. Defer the hang-up; return the summary to the model now.
+        window.setTimeout(() => endLiveCallRef.current?.(), 4000);
         const reason = String(args?.reason || '').trim();
         const summary = reason ? `Live call ended (${reason}).` : 'Live call ended.';
         return { ok: true, status: 'completed', result: summary, summary };
