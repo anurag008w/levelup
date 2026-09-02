@@ -28,21 +28,50 @@ export class VisionStreamer {
     this.currentLens = lens;
     this.isScreenSharing = false;
 
-    const constraints: MediaStreamConstraints = {
-      video: {
-        facingMode: lens === 'user' ? 'user' : { ideal: 'environment' },
-        width: { ideal: 640, max: 1280 },
-        height: { ideal: 480, max: 720 },
-        frameRate: { ideal: 15, max: 30 },
-      },
-      audio: false,
+    // Android WebView camera-flip race: re-acquiring getUserMedia in the same
+    // synchronous turn after stop() can keep the OLD camera device (the "front
+    // camera sometimes doesn't switch" bug) because the previous device isn't
+    // released yet. Yield a macrotask so the WebView actually frees the camera
+    // before we request a new one.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    const baseVideo: MediaTrackConstraints = {
+      width: { ideal: 640, max: 1280 },
+      height: { ideal: 480, max: 720 },
+      frameRate: { ideal: 15, max: 30 },
     };
 
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    // Request the intended lens with an EXACT facingMode so the WebView is
+    // forced to switch cameras (or throw) instead of silently returning the
+    // currently-held one. Fall back to ideal-only for WebViews/OEMs that do
+    // not support exact facingMode constraints.
+    const stream = await this.acquireCamera(lens, baseVideo);
+
     this.videoStream = stream;
     this.isCameraActive = true;
     this.setupVideoProcessing(stream, fps, onFrame);
     return stream;
+  }
+
+  private async acquireCamera(
+    lens: LiveCameraLens,
+    baseVideo: MediaTrackConstraints,
+  ): Promise<MediaStream> {
+    const desired = lens === 'user' ? 'user' : 'environment';
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: { ...baseVideo, facingMode: { exact: desired } },
+        audio: false,
+      });
+    } catch {
+      // Some WebViews expose facingMode only as a soft hint (or not at all) —
+      // exact throws OverconstrainedError there. Retry with ideal so switching
+      // still works on those devices.
+      return await navigator.mediaDevices.getUserMedia({
+        video: { ...baseVideo, facingMode: lens === 'user' ? 'user' : { ideal: 'environment' } },
+        audio: false,
+      });
+    }
   }
 
   /** Start screen sharing stream (displays PDF, coaching apps, browser, etc.). */
