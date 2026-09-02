@@ -197,14 +197,27 @@ export class GeminiLiveClient {
     // Invalidate callbacks from the old socket before closing it; some SDKs invoke
     // onclose synchronously and must not start a competing reconnect.
     const connectionAttempt = ++this.connectionAttempt;
-    this.disconnect(true);
+    // REGRESSION FIX (review 6): on a FRESH start with handed-off pre-capture
+    // focus we must NOT schedule the native audio reset. disconnect() would
+    // otherwise call resetNativeAudioRoute() → native resetRoute() →
+    // abandonCallAudioFocus(), which silently kills the focus the pre-capture
+    // path just acquired — while setupCallAudio() would then believe it is
+    // still granted (flag handed off) and never re-request it. Result: a
+    // connected session with NO native audio focus. Skip the reset only when
+    // there is nothing native to tear down (no prior session) AND focus was
+    // already acquired upstream.
+    const hadActiveSession = this.session !== null;
+    const skipNativeAudioReset = options?.audioFocusAlreadyGranted === true && !hadActiveSession;
+    this.disconnect(true, skipNativeAudioReset);
     // SINGLE-SOURCE FOCUS (Review 4 / P1): the pre-capture path (permission
     // modal / remembered fast path) already acquired native audio focus BEFORE
-    // getUserMedia. The caller hands that fact in here so connect() must NOT
-    // request focus a second time — `setupCallAudio()` below skips the request
-    // and only applies the route. Only reconnect/auto paths (no handed-off
-    // flag) re-acquire, and disconnect() above has already reset the flag.
-    if (options?.audioFocusAlreadyGranted) {
+    // getUserMedia. Inherit that fact ONLY when no native reset ran — a reset
+    // abandons native focus, so the handed-off claim is stale after it
+    // (review-6 regression: a scheduled reset + inherited flag = connected
+    // without focus). setupCallAudio() then re-requests focus like any other
+    // reconnect path. INVARIANT: this.callAudioFocusGranted is true only when
+    // native focus is genuinely held.
+    if (options?.audioFocusAlreadyGranted && skipNativeAudioReset) {
       this.callAudioFocusGranted = true;
     }
     this.isUserExplicitlyClosed = false;
@@ -1760,7 +1773,14 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     }
   }
 
-  disconnect(preserveReconnectState = false): void {
+  /**
+   * @param preserveReconnectState true for reconnect-internal teardown (keeps
+   *   media/camera alive), false for explicit hangup (full teardown).
+   * @param skipNativeAudioReset true ONLY for the fresh-start + handed-off-focus
+   *   case (see connect()) — scheduling resetNativeAudioRoute() there would
+   *   abandon the pre-capture focus the client is about to rely on.
+   */
+  disconnect(preserveReconnectState = false, skipNativeAudioReset = false): void {
     if (!preserveReconnectState) {
       this.connectionAttempt += 1;
       this.isUserExplicitlyClosed = true;
@@ -1793,7 +1813,9 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     }
     // P7: store (not fire-and-forget) so the next setupCallAudio() serializes
     // after this reset — the route can no longer be reverted after new setup.
-    this.pendingAudioReset = resetNativeAudioRoute();
+    // Skipped (null) on fresh+handoff: nothing to tear down, and the reset
+    // would abandon the pre-capture focus (review-6 regression).
+    this.pendingAudioReset = skipNativeAudioReset ? null : resetNativeAudioRoute();
     if (this.session) {
       try {
         this.session.close?.();
