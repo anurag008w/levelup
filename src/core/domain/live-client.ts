@@ -27,6 +27,10 @@ export interface LiveClientCallbacks {
   onError?: (error: string) => void;
 }
 
+let globalLastCallEndedAt = 0;
+let globalLastCallDurationSec = 0;
+let wasLastCallUserExplicitHangup = false;
+
 export class GeminiLiveClient {
   /** A hung SDK/WebSocket handshake must never leave the call UI in Connecting. */
   private static readonly CONNECTION_TIMEOUT_MS = 15_000;
@@ -49,6 +53,9 @@ export class GeminiLiveClient {
   private framesSentCount = 0;
   private lastUserVoiceTime = 0;
   private lastTurnFinishedTime = 0;
+  private sessionStartTime = 0;
+  private quietFocusUntil = 0;
+  private silenceNudgeStreak = 0;
   private silenceObserverTimer: any = null;
   private isIncomingCallSession = false;
   private incomingCallReason = '';
@@ -91,6 +98,8 @@ export class GeminiLiveClient {
   }
 
   async reconnectWithNewConfig(apiKey: string, micStream: MediaStream): Promise<void> {
+    globalLastCallEndedAt = 0;
+    wasLastCallUserExplicitHangup = false;
     // Preserve the media stream until the replacement session is established.
     // Calling a full disconnect here used to erase it before reconnect could restore it.
     this.disconnect(true);
@@ -293,9 +302,17 @@ export class GeminiLiveClient {
 - Current Local Time: ${timeString} (${timeZone})
 - Current ISO Time: ${now.toISOString()}
 Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.) or what date it is, state this exact time and date.`,
-      this.recentChatSummary
-        ? `\n=== RECENT CHAT MESSAGES CONTEXT ===\nThese are recent messages from the text chat with the student right before this live voice call started. Refer naturally to what was being discussed, do not act like a stranger or ask what to do if they already mentioned it:\n${this.recentChatSummary}\n====================================`
-        : '',
+      (() => {
+        const isReconnect = this.reconnectAttempts > 0;
+        const recentLiveTurns = this.transcripts.slice(-8).map((t) => `${t.role === 'user' ? 'Student' : 'Misa'}: ${t.text}`).join('\n');
+        if (isReconnect && recentLiveTurns) {
+          return `\n=== LIVE CALL TRANSCRIPT BEFORE RECONNECT (ALL COMPLETED & ANSWERED) ===\n${recentLiveTurns}\nCRITICAL INSTRUCTION: Every turn above was ALREADY exchanged and resolved in this live call! NEVER re-answer or re-address any previous question upon reconnect!\n========================================================================`;
+        }
+        if (this.recentChatSummary) {
+          return `\n=== RECENT CHAT MESSAGES CONTEXT ===\nThese are recent messages from the text chat with the student right before this live voice call started. Refer naturally to what was being discussed, do not act like a stranger or ask what to do if they already mentioned it:\n${this.recentChatSummary}\n====================================`;
+        }
+        return '';
+      })(),
       this.memoryContext ? `\n=== USER CONTEXT & RECOLLECTIONS ===\n${this.memoryContext}\n========================` : '',
       ROMAN_SCRIPT_RULE,
       (() => {
@@ -1007,6 +1024,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       }
 
       this.session = session;
+      this.sessionStartTime = Date.now();
       this.setStatus('connected');
       this.startKeepAliveAndSilenceObserver();
       void this.installAudioFocusListener();
@@ -1014,13 +1032,41 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       // A reconnect is a continuation, not a fresh call.  Do not duplicate the
       // opening greeting or discard the in-memory transcript/context.
       if (this.reconnectAttempts > 0) {
-        this.session?.sendRealtimeInput({ text: '[SYSTEM EVENT: Connection recovered. Continue the current conversation naturally; do not greet again. Briefly acknowledge a network break only if the user notices it.]' });
+        this.session?.sendRealtimeInput({
+          text: `[SYSTEM EVENT: Connection recovered after a brief network drop.
+CRITICAL INSTRUCTION: All previous conversation and user questions before this disconnect have ALREADY been answered.
+DO NOT re-answer any past messages, and DO NOT repeat any previous reply!
+Stay completely quiet in listening mode waiting for the student to speak. If you must say anything right now, simply ask 1 quick check: "Haan, ab aawaz aa rahi hai na?"]`,
+        });
         return;
       }
       // Greet student upon initial connection only.
       setTimeout(() => {
         if (!this.isActiveAttempt(connectionAttempt)) return;
         try {
+          // Quick redial check: agar student ne pichle 2 min me call end kiya ya disconnect hua,
+          // toh distinguish karo user hangup vs dropped call me!
+          const timeSinceLastCallMs = Date.now() - globalLastCallEndedAt;
+          const isRecentCall = globalLastCallEndedAt > 0 && timeSinceLastCallMs < 120_000;
+          if (isRecentCall) {
+            const hadUserHangup = wasLastCallUserExplicitHangup;
+            const lastDuration = globalLastCallDurationSec;
+            globalLastCallEndedAt = 0;
+            globalLastCallDurationSec = 0;
+            wasLastCallUserExplicitHangup = false;
+            const diffSec = Math.max(1, Math.round(timeSinceLastCallMs / 1000));
+            if (hadUserHangup) {
+              this.session?.sendRealtimeInput({
+                text: `[SYSTEM EVENT: The student hung up the previous call (lasted ${lastDuration}s) just ${diffSec} seconds ago and called back right away! React naturally, warmly, and playfully like a real close friend on phone: casually ask why they cut the call or if the call dropped / got disconnected (e.g. "Arre call kyu cut kar diya tha? Sab theek? / Kya hua disconnected ho gaya tha kya?"). 1 short, warm, natural Hinglish line. Speak out loud directly now.]`,
+              });
+            } else {
+              this.session?.sendRealtimeInput({
+                text: `[SYSTEM EVENT: The previous call got disconnected ${diffSec} seconds ago due to network or glitch and the student called back! Greet warmly and reassure them (e.g. "Arre achanak call disconnect ho gaya tha na! Network issue tha lagta hai, ab meri aawaz aa rahi hai na?"). 1 short, warm Hinglish line. Speak out loud directly now.]`,
+              });
+            }
+            return;
+          }
+
           const rel = relationshipManager.getState();
           const activeTopic = rel.commitments[0]?.topic || rel.currentProblemArea || rel.currentSubject;
           const hour = new Date().getHours();
@@ -1034,16 +1080,16 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
           if (isProactiveEnabled) {
             if (this.isIncomingCallSession) {
               this.session?.sendRealtimeInput({
-                text: `[SYSTEM EVENT: You placed this call to the student and they answered! Greet warmly and enthusiastically like a real friend on phone (e.g. "Hey! Suno, free ho na? Kaisa chal raha hai?"). Remember: YOU called THEM to talk with them! DO NOT say they are busy, do NOT dismiss them or say "baad me baat karenge". Talk with them warmly and ask what they are working on!]`,
+                text: `[SYSTEM EVENT: You placed this phone call to the student and they just answered! Greet them warmly, enthusiastically, and naturally like a real female close friend on a call. Be spontaneous, lively, and fresh. DO NOT use repetitive canned templates or cliché helper phrases. Talk with them and ask what they're up to right now in 1 short sentence.]`,
               });
             } else {
               this.session?.sendRealtimeInput({
-                text: `[SYSTEM EVENT: The student called you on phone and you picked up! Greet naturally and warmly in 1 short, friendly sentence like a friend answering a call (e.g. "Haan bolo! Kaisa chal raha hai?").]`,
+                text: `[SYSTEM EVENT: The student phoned you and you just answered! Give a warm, natural, spontaneous greeting like a real person picking up a call from a close friend. 1 short sentence. Be authentic and conversational — NEVER repeat rigid robotic templates like "kuch soch rahe ho kya batao kahan se start karein". Speak freshly.]`,
               });
             }
           } else {
             this.session?.sendRealtimeInput({
-              text: `[SYSTEM EVENT: Live voice session started! Time of day: ${timeGreeting}. ${topicClause} ${chatContextSnippet} Greet naturally in 1 short, friendly Hinglish sentence continuing from the chat context or asking what they're working on.]`,
+              text: `[SYSTEM EVENT: Live voice session started! Time of day: ${timeGreeting}. ${topicClause} ${chatContextSnippet} Greet naturally and spontaneously in 1 short, friendly Hinglish sentence continuing from the chat context or asking what they're up to without using repetitive cliché phrases.]`,
             });
           }
         } catch (e) {
@@ -1117,9 +1163,24 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     if (data.serverContent?.inputTranscription?.text) {
       this.lastUserVoiceTime = Date.now();
       this.silenceStateMachine.onSpeechActivity();
+      this.silenceNudgeStreak = 0; // reset silence streak on user speech
       this.activeAssistantTurnId = null;
       this.currentAssistantMessage = '';
       this.updateTranscript('user', data.serverContent.inputTranscription.text, false);
+
+      // Check if user explicitly asked for silence / quiet study / observe screen
+      const txt = data.serverContent.inputTranscription.text.toLowerCase();
+      const quietCues = [
+        'chup rah', 'chup rh', 'shant rah', 'kuch mat bol', 'disturb mat kar',
+        'screen dekh', 'bas dekh', 'solve kar raha', 'solve kr raha', 'mai chup',
+        'chup ho ja', 'quiet', 'focus karne do', 'focus krne do',
+      ];
+      if (quietCues.some((cue) => txt.includes(cue))) {
+        this.quietFocusUntil = Date.now() + 180_000;
+        console.info('[GeminiLive] User requested quiet focus mode — silence nudges suppressed for 3m');
+      } else if (this.quietFocusUntil > 0 && txt.length > 5) {
+        this.quietFocusUntil = 0;
+      }
     }
 
     // 6. Turn complete — seal the assistant turn so next turn is a new bubble!
@@ -1836,7 +1897,18 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     // This observer is companion behaviour only, never a connection watchdog.
     this.silenceObserverTimer = setInterval(() => {
       if (!this.session || this.status === 'speaking' || this.status === 'thinking') return;
-      if (this.status !== 'connected' && this.status !== 'listening') return;
+      const isCallActive =
+        this.status === 'connected' ||
+        this.status === 'listening' ||
+        this.status === 'background-active' ||
+        this.status === 'background-pip-active';
+      if (!isCallActive) return;
+
+      // If user explicitly asked for quiet / focus ("mai chup rahunga", "screen dekho", etc.):
+      // Respect user's explicit wish! Do NOT nudge or interrupt with small talk!
+      if (Date.now() < this.quietFocusUntil) {
+        return;
+      }
 
       // Calculate silence elapsed strictly from the moment either user or assistant stopped speaking
       const lastActivityAnchor = Math.max(
@@ -1846,22 +1918,18 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       const silenceDurationSec = (Date.now() - lastActivityAnchor) / 1000;
 
       // ── Reply-decay watchdog (Gemini Live silent-stall fix) ──────────────
-      // Gemini Live (esp. long sessions) can silently stop sending replies after
-      // a few exchanges: socket stays open, status stays 'listening', but no
-      // model audio/turn arrives. Detect "user spoke, reply never came" and give
-      // the model a gentle, real prompt text nudge so it resumes (this kicks the
-      // stalled turn). Only when the user actually said something most recently.
+      // User spoke, but model didn't reply within 8s: kick stalled turn
       const userAwaitingReply =
         this.lastUserVoiceTime > 0 &&
         this.lastUserVoiceTime > this.lastTurnFinishedTime &&
-        silenceDurationSec >= 15 &&
-        (Date.now() - this.lastSilenceNudgeAt > 25000);
+        silenceDurationSec >= 8 &&
+        (Date.now() - this.lastSilenceNudgeAt > 15000);
       if (userAwaitingReply) {
         this.lastSilenceNudgeAt = Date.now();
-        this.lastTurnFinishedTime = Date.now(); // reset anchor; don't spam every tick
+        this.lastTurnFinishedTime = Date.now();
         try {
           this.session.sendRealtimeInput({
-            text: '[Prompt answer: the student just said something and is waiting for your reply — respond to their message directly now.]',
+            text: '[SYSTEM EVENT: The student just spoke and is waiting for your reply — respond to their spoken message directly out loud right now!]',
           });
           console.info('[GeminiLive] Reply-decay nudge sent (stalled model turn)');
         } catch (e) {
@@ -1870,27 +1938,64 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         return;
       }
 
-      // Give an explicit thinker considerably more room; a single gentle prompt
-      // is preferable to repetitive study nudges.
-      if (silenceDurationSec >= 90 && (Date.now() - this.lastSilenceNudgeAt > 120000)) {
+      // ── Proactive Companion Silence Nudges (Human-like Pacing & Vision Priority) ──
+      // When user and assistant are silent:
+      // - Vision active (Camera/Screen): priority on what student is reading/solving
+      // - Background / PiP: proactive check-in ("itne chup kyu ho gaye?", "mujhse baat kyu nahi kar rahe?")
+      // - Streak >= 2: Real female friend playful frustration / teasing ("call kyu kiya agar bolna hi nahi tha?")
+      const isBackground = this.status === 'background-active' || this.status === 'background-pip-active';
+      const isCameraOrScreen = this.visionStreamer.getIsCameraActive() || this.visionStreamer.getIsScreenSharing();
+      const silenceThresholdSec = isCameraOrScreen ? 20 : isBackground ? 22 : 25;
+      const nudgeCooldownMs = isBackground ? 35_000 : 40_000;
+
+      if (silenceDurationSec >= silenceThresholdSec && (Date.now() - this.lastSilenceNudgeAt > nudgeCooldownMs)) {
         this.lastSilenceNudgeAt = Date.now();
         this.lastTurnFinishedTime = Date.now();
-        const isCameraOrScreen = this.visionStreamer.getIsCameraActive() || this.visionStreamer.getIsScreenSharing();
+        this.silenceNudgeStreak += 1;
 
         let promptText = '';
         if (isCameraOrScreen) {
-          promptText = `[User has been quietly focused for ~45 seconds. If they are reading or thinking quietly, stay quiet or give a brief, friendly check-in. If they just said or texted something, answer their message directly.]`;
+          if (this.silenceNudgeStreak >= 2) {
+            promptText = `[SYSTEM EVENT - LIVE VISION OBSERVATION]: You are on live voice call with the student, camera/screenshare is active, and they have been quiet for ~${Math.round(silenceDurationSec)}s.
+Look closely at the actual text, question, formula, diagram, code, or video currently visible on their screen or desk.
+Comment specifically and spontaneously on that actual visual item like an intelligent, lively study partner sitting next to them.
+STRICT RULE: DO NOT speak generic lines like "kuch soch rahe ho kya" or "kahan se start karein". Talk directly about the concrete visual detail on screen.
+Keep it to 1 concise, natural Hinglish sentence. Speak directly out loud now.]`;
+          } else {
+            promptText = `[SYSTEM EVENT - LIVE VISION OBSERVATION]: You are on live voice call with the student, and camera/screenshare is actively streaming.
+Observe what the student is looking at or doing on screen/desk right now.
+Make a concrete, natural observation directly about what is visible (the specific problem, step, formula, or note they are on).
+STRICT RULE: NEVER use robotic phrases like "kuch soch rahe ho kya" or "batao na kahan se start karein". Speak about the actual work on screen.
+Keep it to 1 warm, conversational Hinglish sentence. Speak directly out loud now.]`;
+          }
+        } else if (this.silenceNudgeStreak >= 2) {
+          // Prolonged silence on call: playful female friend teasing & frustration
+          promptText = `[SYSTEM EVENT - REALISTIC TEASING ON PROLONGED SILENCE]: You are on a real phone call with the student. They have remained completely quiet for ~${Math.round(silenceDurationSec)} seconds despite you already checking in.
+React with authentic human emotion like a real female friend on a phone call: playfully call them out for calling you and then staying totally silent (e.g. tease if they called just to listen to dead air, or ask if they're ignoring you or fell asleep).
+BE TOTALLY SPONTANEOUS: do NOT use cliché robotic scripts. Speak with genuine warmth, wit, and real girl attitude.
+Keep it to 1 short, lively Hinglish sentence. Speak directly out loud now.]`;
+        } else if (isBackground) {
+          promptText = `[SYSTEM EVENT - BACKGROUND CALL PROACTIVE CHECK-IN]: You are on a phone call with the student. The app is minimized or in background (~${Math.round(silenceDurationSec)}s of silence).
+As a real female friend and JEE study companion, proactively break the silence.
+Check in on them spontaneously — ask what they're doing on their phone, playfully call out the quietness, or share a quick thought.
+STRICT RULE: NEVER repeat robotic template lines like "kuch soch rahe ho kya batao na kahan se start karna hai" or "kaisa chal raha hai". Be 100% original, fresh, and human.
+Speak 1 short, natural Hinglish sentence directly out loud now.]`;
         } else {
-          promptText = `[User has been quietly thinking for a while. If a brief check-in would genuinely help, use one warm, non-repetitive Hinglish line; otherwise stay quiet.]`;
+          promptText = `[SYSTEM EVENT - COMPANION BREAKING SILENCE]: You are on a live voice call with the student. It has been quiet for ~${Math.round(silenceDurationSec)} seconds.
+As a real human friend on a phone call, break the silence with an original, spontaneous remark.
+You can comment on the time of day, ask what they're pondering, or playfully tease their quietness.
+STRICT RULE: NEVER use repetitive canned phrases like "kuch soch rahe ho kya" or "kahan se start karna hai". Be spontaneous and natural.
+Speak 1 short, warm Hinglish sentence directly out loud now.]`;
         }
 
         try {
           this.session.sendRealtimeInput({ text: promptText });
+          console.info(`[GeminiLive] Proactive silence nudge sent (streak=${this.silenceNudgeStreak}, silence=${Math.round(silenceDurationSec)}s, background=${isBackground}, vision=${isCameraOrScreen})`);
         } catch (e) {
           console.warn('[GeminiLive] Silence nudge error:', e);
         }
       }
-    }, 2500);
+    }, 2000);
   }
 
   private async handleAutoReconnect(): Promise<void> {
@@ -2001,6 +2106,14 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
     if (!preserveReconnectState) {
       this.connectionAttempt += 1;
       this.isUserExplicitlyClosed = true;
+      if (this.sessionStartTime > 0) {
+        globalLastCallEndedAt = Date.now();
+        globalLastCallDurationSec = Math.round((Date.now() - this.sessionStartTime) / 1000);
+        wasLastCallUserExplicitHangup = true;
+      }
+      this.sessionStartTime = 0;
+    } else {
+      wasLastCallUserExplicitHangup = false;
     }
     // P2: cancel any pending reconnect backoff NOW. Clearing the timer kills
     // the scheduled wakeup; bumping the epoch makes a worker that already woke
