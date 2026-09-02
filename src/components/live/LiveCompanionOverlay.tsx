@@ -293,14 +293,23 @@ export default function LiveCompanionOverlay({
     // down the client session + audio focus/route, stop the FGS (which also
     // clears the persisted ARMED marker), and release the module-level
     // singleton only when THIS mount started the call.
+    //
+    // Review-11 P1 (ownership-aware): the ENTIRE rollback is gated on
+    // `!existing`. When this mount is re-attaching to an ALREADY-established
+    // singleton call (existingClient), this component does NOT own the
+    // mic/camera streams — they belong to the running call the user is on. A
+    // cancelled idempotent arm(), a stale post-commit gate, or a transient
+    // startup error in the reattach path must NEVER call t.stop() on those
+    // streams, or the user's live audio dies mid-call while the call keeps
+    // running. Stopping tracks + disconnect + FGS release ALL belong to THIS
+    // mount's startup only.
     function rollbackStartup(c: typeof liveClient, existing: typeof existingClient, mic: MediaStream, cam?: MediaStream) {
+      if (existing) return; // this mount doesn't own the streams/session — never touch them
       mic.getTracks().forEach((t) => t.stop());
       cam?.getTracks().forEach((t) => t.stop());
-      if (!existing) {
-        c.disconnect();
-        if (activeLiveClient === c) activeLiveClient = null;
-        void stopLiveCompanionService();
-      }
+      c.disconnect();
+      if (activeLiveClient === c) activeLiveClient = null;
+      void stopLiveCompanionService();
     }
 
     (async () => {
