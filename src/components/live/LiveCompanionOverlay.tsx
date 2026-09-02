@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, memo } from 'react';
+import { useEffect, useRef, useState, useMemo, memo, type MutableRefObject } from 'react';
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -165,6 +165,9 @@ interface LiveCompanionOverlayProps {
   incomingCallMeta?: { isIncomingCall: boolean; reason?: string };
   /** True when the pre-capture path (permission modal / fast path) already acquired native audio focus. */
   audioFocusAlreadyGranted?: boolean;
+  /** Imperative handle: ChatScreen sets this to the overlay's hang-up routine so
+   *  the `endLiveCall` live tool can programmatically end the call. */
+  endLiveCallRef?: MutableRefObject<(() => void) | null>;
 }
 
 export default function LiveCompanionOverlay({
@@ -184,6 +187,7 @@ export default function LiveCompanionOverlay({
   onExecuteTool,
   onTranscriptUpdate,
   audioFocusAlreadyGranted = false,
+  endLiveCallRef,
 }: LiveCompanionOverlayProps) {
   const [status, setStatus] = useState<LiveSessionStatus>('connecting');
   const [transcripts, setTranscripts] = useState<LiveTranscriptItem[]>([]);
@@ -239,6 +243,10 @@ export default function LiveCompanionOverlay({
   // Initialize and connect Gemini Live
   useEffect(() => {
     if (!isOpen) return;
+
+    // Expose the hang-up routine to ChatScreen so the `endLiveCall` live tool
+    // can end the call programmatically. Cleared in the cleanup below.
+    if (endLiveCallRef) endLiveCallRef.current = handleEndCall;
 
     const callbacks: LiveClientCallbacks = {
       onStatusChange: (newStatus) => {
@@ -515,6 +523,7 @@ export default function LiveCompanionOverlay({
     return () => {
       cancelled = true;
       released = true;
+      if (endLiveCallRef) endLiveCallRef.current = null;
       if (appStateListener) void appStateListener.remove();
       if (pipListener) pipListener();
       // Do not make React ownership equal call ownership. Explicit hangup is

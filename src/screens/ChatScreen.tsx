@@ -414,6 +414,11 @@ export default function ChatScreen({
   const [liveMicStream, setLiveMicStream] = useState<MediaStream | null>(null);
   /** P1: true jab pre-capture path ne native audio focus pehle hi le liya ho (single-owner). */
   const [liveAudioFocusGranted, setLiveAudioFocusGranted] = useState(false);
+  /** Imperative handle so the `endLiveCall` live tool can hang up the active
+   *  overlay call programmatically (it otherwise had no handler and fell into
+   *  the unknown-tool fallback, surfacing an "error reading summary"). The
+   *  overlay sets this to its own end-call routine while mounted. */
+  const endLiveCallRef = useRef<(() => void) | null>(null);
   /** P5: previous live call was killed by the system (process death) — recovery UX. */
   const [liveCallInterrupted, setLiveCallInterrupted] = useState(false);
   const [liveCamStream, setLiveCamStream] = useState<MediaStream | null>(null);
@@ -859,6 +864,18 @@ export default function ChatScreen({
           },
         ]);
         return { ok: res.ok, status: res.ok ? 'completed' : 'failed', requiresConfirmation: res.requiresConfirmation, result: res.summary, summary: res.summary };
+      }
+      // End / hang up the live call when the model decides the conversation is
+      // over (student says bye/gotta go/phone rakhta hu). This must actually
+      // tear down the call AND return a clean, readable summary to the model —
+      // previously endLiveCall had no handler, fell into the unknown-tool
+      // fallback below, and surfaced an "error reading summary".
+      if (name === 'endLiveCall') {
+        // Hang up the active overlay call (Ref is set by the overlay while mounted).
+        endLiveCallRef.current?.();
+        const reason = String(args?.reason || '').trim();
+        const summary = reason ? `Live call ended (${reason}).` : 'Live call ended.';
+        return { ok: true, status: 'completed', result: summary, summary };
       }
       // Proactive scheduling / calls (live AI tools) — delegate to proactive agent
       // so the message/call actually fires on schedule. Returns a natural summary
@@ -1931,6 +1948,7 @@ export default function ChatScreen({
           initialCameraStream={liveCamStream || undefined}
           initialMessages={active?.messages || []}
           toolCatalog={toolCatalog}
+          endLiveCallRef={endLiveCallRef}
           config={{
             ...liveConfig,
             enable90DayTrack: container.store.get().enable90DayTrack !== false,
