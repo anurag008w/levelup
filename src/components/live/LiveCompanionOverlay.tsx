@@ -239,6 +239,11 @@ export default function LiveCompanionOverlay({
 
   const clientRef = useRef<GeminiLiveClient | null>(null);
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
+  // Debounce handle for the live-call reply notification: coalesces the many
+  // per-audio-chunk transcript updates into a clean same-id refresh (so the
+  // drawer notification grows with the full long reply instead of being
+  // flooded with schedule() calls that can drop / stall).
+  const liveNotifTimerRef = useRef<number | null>(null);
 
   // Initialize and connect Gemini Live
   useEffect(() => {
@@ -257,26 +262,39 @@ export default function LiveCompanionOverlay({
         setTranscripts(newTranscripts);
         onTranscriptUpdate?.(newTranscripts);
         // Notification chat trick: sirf assistant ka latest message notification
-        // me dikhao (WhatsApp style). Har update pe notification bhejna spam hai
-        // — sirf last assistant text bhejo.
+        // me dikhao (WhatsApp style), aur jaise-jaise reply stream hota hai
+        // same-id se update karke poora text dikhao.
         const lastAssistant = [...newTranscripts].reverse().find((t) => t.role === 'assistant');
-        if (lastAssistant?.text) {
-          const bodyText = lastAssistant.text.replace(/\n+/g, ' ').slice(0, 200);
-          const messages: NotificationBubble[] = newTranscripts.slice(-20).map((t) => ({
-            text: (t.text || '').replace(/\n+/g, ' ').slice(0, 200),
-            at: t.timestamp ? new Date(t.timestamp).getTime() : Date.now(),
-            sender: t.role === 'assistant' ? 'ai' : 'user',
-          }));
-          // force=true: PiP mode me appActive still true hota hai, force
-          // bypasses the chatTabActive skip so notification aati hai.
-          // LIVE_CHANNEL_ID: silent channel (no popup/sound) — live-call chat
-          // notifications show in the drawer even while the app is foreground,
-          // without disturbing the call. (Contrast: normal chat replies use the
-          // HIGH-importance channel only when the chat tab is NOT being watched.)
-          void notifyAiReply('Misa Live', bodyText, LIVE_CALL_SESSION_ID, 0, true, bodyText, messages, {
+        if (!lastAssistant?.text) return;
+        // Collapsed (single-line / heads-up) view: chhota rakho — Android khud
+        // ellipsize kar leta hai. Expanded (BigText) + chat bubbles me POORA
+        // reply do taaki lambe messages cut na ho ("lambe replies poore nahi
+        // aate" ka asli reason yeh 200-char cap tha).
+        const collapsed = lastAssistant.text.replace(/\n+/g, ' ').slice(0, 200);
+        const expanded = lastAssistant.text.replace(/\n+/g, '\n').slice(0, 8000);
+        const messages: NotificationBubble[] = newTranscripts.slice(-20).map((t) => ({
+          text: (t.text || '').replace(/\n+/g, ' ').slice(0, 8000),
+          at: t.timestamp ? new Date(t.timestamp).getTime() : Date.now(),
+          sender: t.role === 'assistant' ? 'ai' : 'user',
+        }));
+        // force=true: PiP mode me appActive still true hota hai, force
+        // bypasses the chatTabActive skip so notification aati hai.
+        // LIVE_CHANNEL_ID: silent channel (no popup/sound) — live-call chat
+        // notifications show in the drawer even while the app is foreground,
+        // without disturbing the call. (Contrast: normal chat replies use the
+        // HIGH-importance channel only when the chat tab is NOT being watched.)
+        //
+        // Trailing debounce: har audio chunk pe schedule() flood na karo —
+        // ~1.2s ke settle hone par ek hi same-id refresh do, jo hamesha aakhri
+        // (poore) text ke saath post hota hai. Isse long reply ki notification
+        // grow hote hue dikhti hai aur drop/stall nahi hoti.
+        if (liveNotifTimerRef.current !== null) window.clearTimeout(liveNotifTimerRef.current);
+        liveNotifTimerRef.current = window.setTimeout(() => {
+          liveNotifTimerRef.current = null;
+          void notifyAiReply('Misa Live', collapsed, LIVE_CALL_SESSION_ID, 0, true, expanded, messages, {
             channelId: LIVE_CHANNEL_ID,
           });
-        }
+        }, 1200);
       },
       onStatsUpdate: (newStats) => setStats(newStats),
       onExecuteTool: onExecuteTool ? (name, args) => onExecuteTool(name, args) : undefined,
@@ -524,6 +542,10 @@ export default function LiveCompanionOverlay({
       cancelled = true;
       released = true;
       if (endLiveCallRef) endLiveCallRef.current = null;
+      if (liveNotifTimerRef.current !== null) {
+        window.clearTimeout(liveNotifTimerRef.current);
+        liveNotifTimerRef.current = null;
+      }
       if (appStateListener) void appStateListener.remove();
       if (pipListener) pipListener();
       // Do not make React ownership equal call ownership. Explicit hangup is
