@@ -1750,6 +1750,10 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       }
     });
 
+    // addNativeAudioFocusListener resolves null on non-native platforms; in
+    // that case there is no listener to bind or remove.
+    if (!listener) return;
+
     // Post-await generation gate: if the user hung up or a new call started
     // while registration was in flight, discard this stale listener instead of
     // binding it to the (possibly new) runtime. Remove it so it can't leak and
