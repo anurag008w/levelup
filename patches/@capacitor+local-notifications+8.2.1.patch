@@ -1,7 +1,8 @@
 diff --git a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
+index 0b826a5..637ec17 100644
 --- a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
 +++ b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
-@@ -13,10 +13,12 @@
+@@ -13,10 +13,12 @@ import android.media.AudioAttributes;
  import android.net.Uri;
  import android.os.Build;
  import android.os.Bundle;
@@ -14,7 +15,7 @@ diff --git a/node_modules/@capacitor/local-notifications/android/src/main/java/c
  import androidx.core.app.RemoteInput;
  import com.getcapacitor.CapConfig;
  import com.getcapacitor.JSObject;
-@@ -160,25 +162,86 @@
+@@ -160,25 +162,86 @@ public class LocalNotificationManager {
      // TODO expandable notification NotificationCompat.MessagingStyle
      // TODO media style notification support NotificationCompat.MediaStyle
      // TODO custom small/large icons
@@ -106,3 +107,36 @@ diff --git a/node_modules/@capacitor/local-notifications/android/src/main/java/c
              );
          }
  
+@@ -192,15 +255,24 @@ public class LocalNotificationManager {
+             mBuilder.setStyle(inboxStyle);
+         }
+ 
+-        String sound = localNotification.getSound(context, getDefaultSound(context));
+-        if (sound != null) {
+-            Uri soundUri = Uri.parse(sound);
+-            // Grant permission to use sound
+-            context.grantUriPermission("com.android.systemui", soundUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+-            mBuilder.setSound(soundUri);
+-            mBuilder.setDefaults(Notification.DEFAULT_VIBRATE | Notification.DEFAULT_LIGHTS);
++        JSObject notificationExtraForSound = localNotification.getExtra();
++        boolean isNotificationSilent = (notificationExtraForSound != null && notificationExtraForSound.optBoolean("silent", false))
++            || "levelup-live-silent".equals(localNotification.getChannelId());
++
++        if (isNotificationSilent) {
++            mBuilder.setSilent(true);
++            mBuilder.setDefaults(0);
+         } else {
+-            mBuilder.setDefaults(Notification.DEFAULT_ALL);
++            String sound = localNotification.getSound(context, getDefaultSound(context));
++            if (sound != null) {
++                Uri soundUri = Uri.parse(sound);
++                // Grant permission to use sound
++                context.grantUriPermission("com.android.systemui", soundUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
++                mBuilder.setSound(soundUri);
++                mBuilder.setDefaults(Notification.DEFAULT_VIBRATE | Notification.DEFAULT_LIGHTS);
++            } else {
++                mBuilder.setDefaults(Notification.DEFAULT_ALL);
++            }
+         }
+ 
+         String group = localNotification.getGroup();

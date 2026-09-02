@@ -260,9 +260,9 @@ export class AudioStreamer {
 
     // Seamless continuous playback:
     // If consecutive chunks stream in continuously (nextPlayTime >= now), schedule seamlessly with 0ms gap.
-    // If audio buffer underruns or starting initial speech, buffer with 60ms lead to avoid audio chop/jitter.
+    // If audio buffer underruns or starting initial speech, buffer with 100ms lead to avoid audio chop/jitter.
     if (this.nextPlayTime < now) {
-      this.nextPlayTime = now + 0.060;
+      this.nextPlayTime = now + 0.100;
     } else if (this.nextPlayTime - now > AudioStreamer.MAX_PLAYBACK_BACKLOG_SECONDS) {
       // Only defensive purge for genuinely stale queued audio (now 60s — so an
       // ordinary long reply streams-to-play seamlessly instead of being cut).

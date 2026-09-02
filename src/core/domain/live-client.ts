@@ -1809,7 +1809,9 @@ STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said som
         // notification without dropping what Misa is currently saying.
         this.audioFocusPaused = true;
         this.applyMicrophoneMute();
-        this.setStatus('background-active');
+        if (this.status !== 'speaking') {
+          this.setStatus('background-active');
+        }
       } else if (focusChange === 1) {
         // Regain: restore capture + full volume.  Do NOT re-request focus —
         // we are still the focus holder; Android only asked us to pause.
@@ -1827,11 +1829,13 @@ STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said som
         // with no working output route.
         const restored = await this.restoreAudioRouteTransactional();
         if (restored.ok && this.session) {
-          this.setStatus('listening');
+          if (this.status !== 'speaking') {
+            this.setStatus('listening');
+          }
         }
       } else if (focusChange === -3) {
-        // CAN_DUCK: lower output volume; capture stays active.
-        this.audioStreamer.setOutputVolume(0.2);
+        // CAN_DUCK: gentle volume reduction so AI speech remains audible and doesn't sound chopped/stuttering.
+        this.audioStreamer.setOutputVolume(0.85);
       }
     });
 

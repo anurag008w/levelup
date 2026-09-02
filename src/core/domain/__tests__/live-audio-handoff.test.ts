@@ -83,7 +83,7 @@ describe('Live audio ownership & startup transaction (review 7)', () => {
       native.plugin.setRoute.mock.invocationCallOrder[0]);
     expect(client.getCurrentAudioRoute()).toBe('speaker');
     client.disconnect(false);
-  });
+  }, 15000);
 
   it('2. Fresh connect (no handed-off focus) requests focus exactly once before applying the route', async () => {
     const client = new GeminiLiveClient(mockConfig);

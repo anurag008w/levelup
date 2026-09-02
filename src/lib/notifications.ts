@@ -181,6 +181,8 @@ async function ensureLiveNotificationChannel(): Promise<boolean> {
       description: 'Misa Live call ke chat replies (silent)',
       importance: 2, // IMPORTANCE_LOW — silent, drawer only
       visibility: 1, // VISIBILITY_PUBLIC — lock screen pe bhi dikhe
+      vibration: false,
+      lights: false,
     });
     return true;
   } catch {
@@ -387,6 +389,7 @@ export async function notifyAiReply(
   const extra: Record<string, unknown> = {};
   if (sessionId) extra.sessionId = sessionId;
   if (opts?.preferBigText) extra.preferBigText = true;
+  if (channelSilent) extra.silent = true;
   if (messages && messages.length > 0) {
     extra.messages = messages.map((m) => ({
       text: hasMarkdownOrMath(m.text) ? formatNotificationHtml(m.text) : m.text,

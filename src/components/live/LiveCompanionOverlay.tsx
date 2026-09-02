@@ -291,9 +291,9 @@ export default function LiveCompanionOverlay({
         // HIGH-importance channel only when the chat tab is NOT being watched.)
         //
         // Trailing debounce: har audio chunk pe schedule() flood na karo —
-        // foreground me ~1.2s ke settle hone par ek hi same-id refresh do,
-        // background me fast 200ms debounce do taaki throttled timers se drop na ho.
-        const notifDelay = isAppActive() ? 1200 : 200;
+        // foreground me ~2.5s ke settle hone par ek hi same-id refresh do taaki sentence
+        // ke beech me IPC churn na ho, background me fast 300ms debounce do taaki throttled timers se drop na ho.
+        const notifDelay = isAppActive() ? 2500 : 300;
         if (liveNotifTimerRef.current !== null) window.clearTimeout(liveNotifTimerRef.current);
         liveNotifTimerRef.current = window.setTimeout(() => {
           liveNotifTimerRef.current = null;
