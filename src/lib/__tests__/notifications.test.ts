@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { scheduleMock, checkPermissionsMock } = vi.hoisted(() => ({
+const { scheduleMock, checkPermissionsMock, createChannelMock } = vi.hoisted(() => ({
   scheduleMock: vi.fn(),
   checkPermissionsMock: vi.fn(),
+  createChannelMock: vi.fn(),
 }));
 
 const nativePlatform = vi.hoisted(() => ({ value: false }));
@@ -21,7 +22,7 @@ vi.mock('@capacitor/local-notifications', () => ({
     checkPermissions: () => checkPermissionsMock(),
     schedule: (args: unknown) => scheduleMock(args),
     listChannels: async () => ({ channels: [] }),
-    createChannel: async () => {},
+    createChannel: (args: unknown) => createChannelMock(args),
     registerActionTypes: async () => {},
     addListener: async () => ({ remove: async () => {} }),
   },
@@ -39,6 +40,7 @@ import {
   setChatTabActive,
   setNotificationPreference,
   trackAppState,
+  LIVE_CHANNEL_ID,
 } from '../notifications';
 import { container } from '../../di/container';
 
@@ -66,6 +68,7 @@ describe('notifications — chat-tab suppression', () => {
     setChatTabActive(false);
     setAppHidden(false);
     scheduleMock.mockReset();
+    createChannelMock.mockReset();
     checkPermissionsMock.mockReset();
     checkPermissionsMock.mockResolvedValue({ display: 'granted' });
     localStorage.clear();
@@ -236,5 +239,54 @@ describe('notifications — chat-tab suppression', () => {
     await notifyAiReply('Misa', 'reply', 'session-1');
     await flush();
     expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it('live-call chat reply still notifies on a SILENT channel while the app is foreground + chat tab active (no popup, but it always arrives)', async () => {
+    // Real-device report: durante a live call the chat notification never came.
+    // Root cause hypothesis: the app "thinks" it's foreground (appActive true)
+    // so the normal skip lambda stops it. The live overlay forces through with
+    // force=true, but it ALSO must land on a LOW-importance SILENT channel so it
+    // arrives in the drawer without popping up over the call (user request:
+    // "silent wali aaye, popup ke bina, foreground ho ya background").
+    await setNotificationPreference(true);
+    setChatTabActive(true);
+    setAppHidden(false); // app genuinely foreground, exactly the reported case
+
+    await notifyAiReply('Misa Live', 'reply', 'live', 0, true, 'reply', [{ text: 'reply', at: 1 }], {
+      channelId: LIVE_CHANNEL_ID,
+    });
+    await flush();
+
+    // It MUST NOT be suppressed by the foreground+chatTabActive check.
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    const n = scheduleMock.mock.calls[0][0].notifications[0];
+    expect(n.channelId).toBe(LIVE_CHANNEL_ID);
+
+    // The silent channel is created with LOW importance (no popup/sound).
+    const ch = createChannelMock.mock.calls.map((c) => c[0]).find((c: any) => c.id === LIVE_CHANNEL_ID);
+    expect(ch).toBeDefined();
+    expect(ch.importance).toBe(2);
+  });
+
+  it('falls back to the HIGH channel when the silent LIVE channel can NOT be ensured — the live reply is still delivered, never dropped', async () => {
+    // OEM/channel failure: creating the silent channel throws. The code must
+    // fall back to the default HIGH channel and STILL schedule the live reply,
+    // instead of leaving it on a channel that does not exist (silent drop).
+    await setNotificationPreference(true);
+    setChatTabActive(true);
+    setAppHidden(false);
+    createChannelMock.mockImplementation(() => {
+      throw new Error('channel create failed');
+    });
+
+    await notifyAiReply('Misa Live', 'reply', 'live', 0, true, 'reply', [{ text: 'reply', at: 1 }], {
+      channelId: LIVE_CHANNEL_ID,
+    });
+    await flush();
+
+    // Still delivered once — but on the default HIGH channel fallback.
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    const n = scheduleMock.mock.calls[0][0].notifications[0];
+    expect(n.channelId).toBe('levelup-ai-replies');
   });
 });

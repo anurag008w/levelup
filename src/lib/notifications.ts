@@ -15,6 +15,12 @@ import { IntentLauncher, ActivityAction } from '@capgo/capacitor-intent-launcher
 import { container } from '../di/container';
 import { persistentStorage } from '../infra/storage/persistent-storage';
 import { loadSession } from './auth';
+import {
+  hasMarkdownOrMath,
+  formatNotificationHtml,
+  formatNotificationPlain,
+  formatCollapsedNotification,
+} from './notification-formatter';
 
 export type NotificationPermissionStatus = 'granted' | 'denied' | 'prompt' | 'unsupported';
 
@@ -45,6 +51,16 @@ const PREF_KEY = 'notifications';
 const ANDROID_ID_MAX = 2_147_483_647;
 /** Android 8+ notification channel — HIGH importance = heads-up + sound. */
 const CHANNEL_ID = 'levelup-ai-replies';
+/**
+ * LIVE-call chat channel — intentionally LOW importance (2) = SILENT: appears
+ * in the drawer only, NO heads-up popup and NO sound. The user wants the live
+ * call's chat notification to keep arriving even while the app is foreground,
+ * but never to pop up or disturb over the call. (The normal AI-reply channel
+ * is HIGH-importance; live-call replies must not reuse it.)
+ */
+const LIVE_CHANNEL_ID = 'levelup-live-silent';
+/** Export so the live overlay can route its chat replies to this silent channel. */
+export { LIVE_CHANNEL_ID };
 /** Notification action type — inline reply + open chat actions. */
 const ACTION_TYPE_ID = 'levelup-ai-reply';
 
@@ -141,6 +157,36 @@ export async function ensureNotificationChannel(): Promise<void> {
     });
   } catch {
     // channel banana best-effort hai — plugin ka default channel hamesha hota hai
+  }
+}
+
+/**
+ * Silently-creates the LIVE-call chat channel (LOW importance, no sound, no
+ * heads-up). Returns `true` when the silent LIVE channel is confirmed ready
+ * (already existed, or was just created) — and `false` when it could NOT be
+ * ensured (creation failed / non-native). The caller must only schedule the
+ * notification on LIVE_CHANNEL_ID when this returns true; otherwise it falls
+ * back to the default HIGH channel so the message is never silently dropped.
+ * Kept separate from ensureNotificationChannel because that one is HIGH
+ * importance and MUST stay that way for normal chat replies.
+ */
+async function ensureLiveNotificationChannel(): Promise<boolean> {
+  if (!isNativePlatform()) return false;
+  try {
+    const { channels } = await LocalNotifications.listChannels();
+    if (channels.some((c) => c.id === LIVE_CHANNEL_ID)) return true;
+    await LocalNotifications.createChannel({
+      id: LIVE_CHANNEL_ID,
+      name: 'Live call chat',
+      description: 'Misa Live call ke chat replies (silent)',
+      importance: 2, // IMPORTANCE_LOW — silent, drawer only
+      visibility: 1, // VISIBILITY_PUBLIC — lock screen pe bhi dikhe
+    });
+    return true;
+  } catch {
+    // channel ban na paya — caller ko false return karo taaki wo default HIGH
+    // channel pe fallback kar sake aur notification silently drop na ho.
+    return false;
   }
 }
 
@@ -297,6 +343,7 @@ export async function notifyAiReply(
   force = false,
   largeBody?: string,
   messages?: NotificationBubble[],
+  opts?: { channelId?: string; preferBigText?: boolean },
 ): Promise<void> {
   if (!isNotificationSupported()) return;
   try {
@@ -307,22 +354,45 @@ export async function notifyAiReply(
   const perm = await getNotificationPermission();
   if (perm !== 'granted') return;
 
+  // LIVE-call chat notifications use a dedicated SILENT channel (no popup/sound)
+  // and must ALWAYS show, even while the app is foreground (opts.channelId +
+  // caller's force=true). Normal chat replies keep the HIGH-importance channel.
+  // The live channel is resolved DEFENSIVELY: if creating/confirming the silent
+  // channel fails (some OEMs throw on list/create), fall back to the default
+  // HIGH channel so the live reply is still delivered (never silently dropped
+  // on a channel that doesn't exist).
+  const requestedSilentChannel = opts?.channelId ?? null;
+  const effectiveChannelId =
+    requestedSilentChannel === LIVE_CHANNEL_ID
+      ? (await ensureLiveNotificationChannel() ? LIVE_CHANNEL_ID : CHANNEL_ID)
+      : CHANNEL_ID;
+  const channelSilent = effectiveChannelId === LIVE_CHANNEL_ID;
+
   const notificationId = sessionToNotificationId(sessionId);
   const tag = sessionId ? `levelup-chat-${sessionId}` : 'levelup-ai';
   // Collapsed/heads-up body = `body`; expandable BigText = `largeBody` (ya body,
-  // agar alag na diya ho). Bubble updates body me latest paragraph rakhte hain,
-  // taaki har popup current message dikhaye (aur hamesha first bubble na).
-  const expanded = largeBody ?? body;
+  // agar alag na diya ho).
+  const rawExpanded = largeBody ?? body;
+  const nativeExpanded = hasMarkdownOrMath(rawExpanded) ? formatNotificationHtml(rawExpanded) : rawExpanded;
+  const webBody = hasMarkdownOrMath(rawExpanded)
+    ? formatNotificationPlain(rawExpanded)
+    : (largeBody ? formatNotificationPlain(rawExpanded) : body);
+  const collapsedBody = hasMarkdownOrMath(body) ? formatCollapsedNotification(body) : body;
+
   // Native patch ko MessagingStyle ke liye conversation chahiye (`messages`).
   // Siraf jab bubbles diye hain tab `extra` me jaata hai — nahi diye to payload
   // pehle jaisa hi rehta hai (existing behavior untouched). `userName` = phone
   // owner (MessagingStyle ka "user") — AI ke messages "Misa" se aate hain,
-  // user ke apne messages owner name se. Owner name: login username pehle,
-  // warna Settings > Profile ka naam; dono na ho to native title fallback.
+  // user ke apne messages owner name se.
   const extra: Record<string, unknown> = {};
   if (sessionId) extra.sessionId = sessionId;
+  if (opts?.preferBigText) extra.preferBigText = true;
   if (messages && messages.length > 0) {
-    extra.messages = messages.map((m) => ({ text: m.text, at: m.at ?? Date.now(), sender: m.sender ?? 'ai' }));
+    extra.messages = messages.map((m) => ({
+      text: hasMarkdownOrMath(m.text) ? formatNotificationHtml(m.text) : m.text,
+      at: m.at ?? Date.now(),
+      sender: m.sender ?? 'ai',
+    }));
     const ownerName = loadSession()?.username || container.store.get().userProfile?.name?.trim() || undefined;
     if (ownerName) extra.userName = ownerName;
   }
@@ -331,24 +401,20 @@ export async function notifyAiReply(
   // setTimeout se kabhi fire nahi hogi. OS ko absolute time de do — Android
   // isse alarm ki tarah schedule karta hai aur app background/locked ho tab
   // bhi dikhata hai.
-  //
-  // `force` bhi isi path ko trigger karta hai: notification-actions.ts reply
-  // flow me send complete hote hi app minimize ho jaati hai, isliye wahan bhi
-  // JS timers fire hone ki guarantee nahi — chahe appActive is moment galat
-  // "true" hi kyu na dikhe (Activity-resume race). force = "user definitely
-  // nahi dekh raha", isliye OS-level scheduling hamesha safe hai.
   if (isNativePlatform() && (force || !appActive) && delayMs > 0) {
     try {
-      await ensureNotificationChannel();
+      // Silent channel is already ensured during effectiveChannelId resolution;
+      // only the HIGH reply channel still needs creating here when not silent.
+      if (!channelSilent) await ensureNotificationChannel();
       await LocalNotifications.schedule({
         notifications: [
           {
             id: notificationId,
             title,
-            body,
-            largeBody: expanded,
+            body: collapsedBody,
+            largeBody: nativeExpanded,
             summaryText: title,
-            channelId: CHANNEL_ID,
+            channelId: effectiveChannelId,
             actionTypeId: ACTION_TYPE_ID,
             extra,
             schedule: { at: new Date(Date.now() + delayMs), allowWhileIdle: true },
@@ -363,39 +429,26 @@ export async function notifyAiReply(
 
   const fire = async () => {
     // Chat tab active + app foreground = user is already watching the reply
-    // bubble-by-bubble — don't push a notification on top of it. Jab app
-    // background me ho (appActive false) to hamesha aati hai, kyunki user chat
-    // nahi dekh raha. Ye check fire-time pe hota hai, isliye agar user reveal
-    // ke beech me tab switch kare to agle bubbles ki notifications turant
-    // chalu ho jaati hain.
-    //
-    // `force` isi check ko bypass karta hai — notification-actions.ts se
-    // reply karne par Android us Activity ko launch/resume kar deta hai
-    // (RemoteInput deliver karne ke liye), isliye appActive turant true ho
-    // jaata hai, aur agar app pehle se chat tab pe tha to chatTabActive bhi
-    // true rehta hai — bilkul "user dekh raha hai" jaisa lagta hai, jabki
-    // user notification shade me tha aur reply ke baad app phir minimize ho
-    // jaati hai. Us case me ye check hamesha AI ka reply-notification skip
-    // kar deta tha. force=true caller ko batata hai ki "user definitely nahi
-    // dekh raha" — sirf notification-actions.ts isse use karta hai.
+    // bubble-by-bubble — don't push a notification on top of it.
     if (!force && chatTabActive && appActive) return;
 
     if (isNativePlatform()) {
       try {
-        await ensureNotificationChannel();
+        // Silent channel is already ensured during effectiveChannelId resolution;
+        // only the HIGH reply channel still needs creating here when not silent.
+        if (!channelSilent) await ensureNotificationChannel();
         await LocalNotifications.schedule({
           notifications: [
             {
               id: notificationId,
               title,
-              // Collapsed (single-line) view ke liye body — Android khud
-              // ellipsize kar deta hai agar lamba ho.
-              body,
+              // Collapsed (single-line) view ke liye clean preview
+              body: collapsedBody,
               // largeBody = BigTextStyle — expand/swipe-down karne par poora
-              // (multi-line) message dikhta hai instead of cut-off single line.
-              largeBody: expanded,
+              // message formatted markdown + LaTeX math ke saath dikhta hai
+              largeBody: nativeExpanded,
               summaryText: title,
-              channelId: CHANNEL_ID,
+              channelId: effectiveChannelId,
               // Reply/Open actions + session id — tap/reply se app usi chat pe khule.
               actionTypeId: ACTION_TYPE_ID,
               extra,
@@ -416,9 +469,9 @@ export async function notifyAiReply(
             .getRegistration()
             .then((reg) => {
               if (reg) {
-                void reg.showNotification(title, { body, tag, icon: '/favicon.svg' });
+                void reg.showNotification(title, { body: webBody, tag, icon: '/favicon.svg' });
               } else if (typeof Notification !== 'undefined') {
-                const n = new Notification(title, { body, tag });
+                const n = new Notification(title, { body: webBody, tag });
                 setTimeout(() => n.close(), 10_000);
               }
             })
@@ -426,7 +479,7 @@ export async function notifyAiReply(
           return;
         }
         if (typeof Notification !== 'undefined') {
-          const n = new Notification(title, { body, tag });
+          const n = new Notification(title, { body: webBody, tag });
           setTimeout(() => n.close(), 10_000);
         }
       } catch {

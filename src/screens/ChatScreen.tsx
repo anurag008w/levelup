@@ -74,6 +74,8 @@ import type { LiveSettingsConfig, LiveTranscriptItem } from '../core/domain/live
 import { DEFAULT_LIVE_SETTINGS } from '../core/domain/live-types';
 import LivePermissionModal from '../components/live/LivePermissionModal';
 import LiveCompanionOverlay from '../components/live/LiveCompanionOverlay';
+import { requestNativeCallAudioFocus, setNativeAudioRoute, resetNativeAudioRoute, isNativeAudioPlatform } from '../lib/native-audio-route';
+import { isLiveCallInterrupted, clearLiveCallInterrupted } from '../lib/live-companion-service';
 
 interface DraftAttachment {
   id: string;
@@ -226,6 +228,29 @@ export default function ChatScreen({
     };
   }, []);
 
+  // Link the Live settings so a change made in the AI Settings screen (which
+  // writes aiSettings.live to the SAME store) is reflected here — otherwise the
+  // live overlay opens a call with a stale, mount-time config. Poll the store
+  // (same pattern as the provider list above) and only commit when it changed,
+  // so an untouched config never triggers a re-render. Both the call overlay
+  // (LiveSettingsModal → onUpdateConfig) and AISettingsScreen write to this
+  // single store, so polling keeps every surface in sync.
+  useEffect(() => {
+    let disposed = false;
+    const id = setInterval(() => {
+      if (disposed) return;
+      const fromStore = container.store.get()?.aiSettings?.live;
+      if (!fromStore) return;
+      setLiveConfig((prev) =>
+        JSON.stringify(prev) === JSON.stringify(fromStore) ? prev : fromStore,
+      );
+    }, 300);
+    return () => {
+      disposed = true;
+      clearInterval(id);
+    };
+  }, []);
+
   // "@" tool picker: close when the user interacts OUTSIDE the picker + input
   // (not on blur — blur fires on touch/scroll inside the panel and killed the
   // whole scrollable list on mobile).
@@ -355,6 +380,27 @@ export default function ChatScreen({
     return () => window.clearTimeout(t);
   }, [notice]);
 
+  // P5: check once on mount whether the last Live call was killed by the system
+  // (process death / OEM kill — a hard platform limit). If yes, surface it so
+  // the user is not left wondering why the call vanished. Dismissal clears the
+  // persisted flag so this banner does not haunt the next launches.
+  useEffect(() => {
+    let cancelled = false;
+    isLiveCallInterrupted()
+      .then((interrupted) => {
+        if (interrupted && !cancelled) setLiveCallInterrupted(true);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dismissLiveCallInterrupted = () => {
+    setLiveCallInterrupted(false);
+    void clearLiveCallInterrupted().catch(() => undefined);
+  };
+
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -366,6 +412,15 @@ export default function ChatScreen({
   const [showLivePermission, setShowLivePermission] = useState(false);
   const [showLiveOverlay, setShowLiveOverlay] = useState(false);
   const [liveMicStream, setLiveMicStream] = useState<MediaStream | null>(null);
+  /** P1: true jab pre-capture path ne native audio focus pehle hi le liya ho (single-owner). */
+  const [liveAudioFocusGranted, setLiveAudioFocusGranted] = useState(false);
+  /** Imperative handle so the `endLiveCall` live tool can hang up the active
+   *  overlay call programmatically (it otherwise had no handler and fell into
+   *  the unknown-tool fallback, surfacing an "error reading summary"). The
+   *  overlay sets this to its own end-call routine while mounted. */
+  const endLiveCallRef = useRef<(() => void) | null>(null);
+  /** P5: previous live call was killed by the system (process death) — recovery UX. */
+  const [liveCallInterrupted, setLiveCallInterrupted] = useState(false);
   const [liveCamStream, setLiveCamStream] = useState<MediaStream | null>(null);
   const liveCallSessionIdRef = useRef<string | null>(null);
   const [liveIncomingMeta, setLiveIncomingMeta] = useState<{ isIncomingCall: boolean; reason?: string } | undefined>(undefined);
@@ -443,18 +498,79 @@ export default function ChatScreen({
     const hasGrantedBefore = localStorage.getItem('levelup.live.permission_granted') === 'true';
     if (hasGrantedBefore) {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: false,
-        });
-        setLiveMicStream(stream);
-        liveCallSessionIdRef.current = active?.id || ensureSession().id;
-        setShowLiveOverlay(true);
-        return;
+        // ROOT-CAUSE FIX (mic silent bug): AudioManager mode/focus MUST be
+        // set to MODE_IN_COMMUNICATION *before* getUserMedia() opens the
+        // native AudioRecord — Chromium's own echoCancellation-triggered
+        // capture pipeline expects to open under communication mode from
+        // the start (this is exactly what Google's own AppRTC WebRTC demo
+        // documents: "switch to COMMUNICATION mode when the first
+        // streaming session starts"). Previously this only happened
+        // *after* the Live WebSocket connected (several hundred ms to a
+        // few seconds later), by which point the mic's AudioRecord was
+        // already open under MODE_NORMAL — many Android audio HALs do not
+        // re-route an already-open capture session when the mode changes
+        // underneath it, so the mic effectively went silent to the model
+        // every single call, in foreground and background alike.
+        const focusGranted = await requestNativeCallAudioFocus();
+        if (!focusGranted) {
+          // Fall through to the permission modal — its requestMic() also honours
+          // focus and will surface a clear error instead of silently proceeding
+          // into a broken (silent-mic) call.
+          throw new Error('Audio focus denied');
+        }
+        try {
+          // P3 + review-7 P1: the route result must be VERIFIED, not swallowed.
+          // Requested route applied → continue. Non-speaker route refused →
+          // fall back to the always-available loudspeaker and verify THAT too.
+          // Fallback also refused → the startup is aborted (no silent
+          // "connected on bluetooth" lie) and native focus is released below.
+          const desiredRoute = liveConfig.defaultAudioRoute ?? 'speaker';
+          const applied = await setNativeAudioRoute(desiredRoute);
+          if (!applied && desiredRoute !== 'speaker') {
+            const fallback = await setNativeAudioRoute('speaker');
+            // On web the route API is a no-op (null) — accept it there; on
+            // native a refused speaker means abort (rollback below releases
+            // focus) rather than limping into a false route claim.
+            if (!fallback && isNativeAudioPlatform()) {
+              throw new Error('No audio route available (speaker fallback failed)');
+            }
+          }
+          // Warm re-launch release race (same root cause as the camera-flip
+          // bug): right after an ended call, the WebView can still hold the
+          // previous mic hardware. Re-acquiring getUserMedia in the same
+          // synchronous turn returns a stale/silent stream and the new call
+          // never starts — which is why a cold (full process) restart is the
+          // only thing that "worked". Yield a macrotask so the WebView frees
+          // the prior mic before we open a fresh one.
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+            video: false,
+          });
+          // COMMIT POINT (review-7 P0): the handoff flag only becomes true once
+          // focus + route + mic capture ALL succeeded. If any step above failed,
+          // native focus is released and the flag stays false — a connected
+          // overlay can never inherit a stale "focus granted" claim into a call
+          // whose audio session never came up.
+          setLiveAudioFocusGranted(true);
+          setLiveMicStream(stream);
+          liveCallSessionIdRef.current = active?.id || ensureSession().id;
+          setShowLiveOverlay(true);
+          return;
+        } catch {
+          // Rollback the half-acquired native audio session (mode/focus/route)
+          // so no dangling session lingers — the modal below re-acquires cleanly.
+          try {
+            await resetNativeAudioRoute();
+          } catch {
+            // Ignored — best-effort native teardown.
+          }
+          setLiveAudioFocusGranted(false);
+        }
       } catch {
         // Fallback to permission modal if stream acquisition failed
       }
@@ -469,6 +585,9 @@ export default function ChatScreen({
     } catch {
       // Ignored
     }
+    // P1: the modal's requestMic() already acquired native focus for this
+    // stream — mark it so the client never requests focus a second time.
+    setLiveAudioFocusGranted(true);
     setLiveMicStream(micStream);
     setLiveCamStream(camStream || null);
     setShowLivePermission(false);
@@ -754,6 +873,20 @@ export default function ChatScreen({
         ]);
         return { ok: res.ok, status: res.ok ? 'completed' : 'failed', requiresConfirmation: res.requiresConfirmation, result: res.summary, summary: res.summary };
       }
+      // End / hang up the live call when the model decides the conversation is
+      // over (student says bye/gotta go/phone rakhta hu). This must actually
+      // tear down the call AND return a clean, readable summary to the model —
+      // previously endLiveCall had no handler, fell into the unknown-tool
+      // fallback below, and surfaced an "error reading summary".
+      if (name === 'endLiveCall') {
+        // Give Misa ~4s headroom to FINISH the sentence she's currently
+        // speaking before the call actually drops, so the goodbye isn't cut
+        // mid-word. Defer the hang-up; return the summary to the model now.
+        window.setTimeout(() => endLiveCallRef.current?.(), 4000);
+        const reason = String(args?.reason || '').trim();
+        const summary = reason ? `Live call ended (${reason}).` : 'Live call ended.';
+        return { ok: true, status: 'completed', result: summary, summary };
+      }
       // Proactive scheduling / calls (live AI tools) — delegate to proactive agent
       // so the message/call actually fires on schedule. Returns a natural summary
       // back to the live model.
@@ -806,6 +939,13 @@ export default function ChatScreen({
     liveCamStream?.getTracks().forEach((track) => track.stop());
     setLiveMicStream(null);
     setLiveCamStream(null);
+    // Review-8 P1 (duplicated handoff state): this screen-level ownership flag
+    // must be reset on EVERY hangup so Call #2 can never inherit Call #1's
+    // "pre-capture focus granted" claim. The client separately clears its own
+    // callAudioFocusGranted on disconnect (single source of truth for focus);
+    // this React flag is only the pre-capture handoff hint and must start
+    // false for every new call.
+    setLiveAudioFocusGranted(false);
     const targetSessionId = liveCallSessionIdRef.current || active?.id;
     if (transcripts?.length > 0 && targetSessionId) {
       for (const t of transcripts) {
@@ -1083,7 +1223,7 @@ export default function ChatScreen({
       // far, messages = native MessagingStyle expand ke liye (scrollable) —
       // user ka message username se, Misa ke bubbles 'ai' se.
       for (const step of buildNotificationSteps(bubbles, schedule, undefined, { text, at: Date.now() })) {
-        setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', sessionId, 0, undefined, step.text, step.messages), step.delayMs);
+        setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', sessionId, 0, undefined, step.text, step.messages, { preferBigText: true }), step.delayMs);
       }
       // Koi visible bubble nahi (sirf whitespace reply) — ek turant notification.
       if (bubbles.length === 0) {
@@ -1092,6 +1232,10 @@ export default function ChatScreen({
           assistant.content.trim() || 'Naya AI reply aaya',
           sessionId,
           0,
+          undefined,
+          assistant.content.trim() || undefined,
+          undefined,
+          { preferBigText: true },
         );
       }
     } catch (err) {
@@ -1164,7 +1308,7 @@ export default function ChatScreen({
         const schedule = computeRevealSchedule(bubbles.length);
         if (bubbles.length > 0) revealScheduleRef.current = schedule;
         for (const step of buildNotificationSteps(bubbles, schedule, undefined, { text: confirmed ? 'Confirm' : 'Cancel', at: Date.now() })) {
-          setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', active.id, 0, undefined, step.text, step.messages), step.delayMs);
+          setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', active.id, 0, undefined, step.text, step.messages, { preferBigText: true }), step.delayMs);
         }
       })
       .catch((err: unknown) => {
@@ -1514,6 +1658,23 @@ export default function ChatScreen({
 
       {/* Composer */}
       <div className="chat-composer-wrap">
+        {liveCallInterrupted && (
+          <div
+            className="mb-2 flex items-center justify-between gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-400"
+            role="status"
+          >
+            <span>
+              Pichli Live call system restart ki wajah se ruk gayi thi (yahan maine call end nahi ki thi).
+              Dobara shuru karne ke liye Live Call kholen.
+            </span>            <button
+              onClick={dismissLiveCallInterrupted}
+              className="ml-auto shrink-0 rounded-full border border-amber-500/30 px-2 py-0.5 text-[10px] font-semibold hover:bg-amber-500/10"
+              aria-label="Dismiss"
+            >
+              Theek hai
+            </button>
+          </div>
+        )}
         {(error || notice) && (
           <div
             className={`mb-2 flex justify-center text-center ${error ? 'text-danger' : 'text-muted'}`}
@@ -1772,6 +1933,7 @@ export default function ChatScreen({
         isOpen={showLivePermission}
         onClose={() => setShowLivePermission(false)}
         onProceed={handlePermissionProceed}
+        defaultAudioRoute={liveConfig.defaultAudioRoute}
       />
 
       {showLiveOverlay && liveMicStream && (
@@ -1800,6 +1962,7 @@ export default function ChatScreen({
           initialCameraStream={liveCamStream || undefined}
           initialMessages={active?.messages || []}
           toolCatalog={toolCatalog}
+          endLiveCallRef={endLiveCallRef}
           config={{
             ...liveConfig,
             enable90DayTrack: container.store.get().enable90DayTrack !== false,
@@ -1809,6 +1972,7 @@ export default function ChatScreen({
           onExecuteTool={handleExecuteLiveTool}
           onTranscriptUpdate={handleLiveTranscriptUpdate}
           incomingCallMeta={liveIncomingMeta}
+          audioFocusAlreadyGranted={liveAudioFocusGranted}
         />
       )}
     </div>

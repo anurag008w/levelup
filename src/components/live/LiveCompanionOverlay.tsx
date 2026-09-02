@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, memo } from 'react';
+import { useEffect, useRef, useState, useMemo, memo, type MutableRefObject } from 'react';
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -33,23 +33,35 @@ import type {
   LiveStreamStats,
   LiveTranscriptItem,
 } from '../../core/domain/live-types';
+import { requiresLiveReconnect } from '../../core/domain/live-types';
 import { GeminiLiveClient, type LiveClientCallbacks } from '../../core/domain/live-client';
 import { proactiveAgentService } from '../../features/ai/proactive-agent.service';
 import { haptic, hapticError } from '../../lib/haptics';
 import ChatMarkdown from '../ChatMarkdown';
 import LiveSettingsModal from './LiveSettingsModal';
 import {
-  startLiveCompanionService,
   stopLiveCompanionService,
-  enterPictureInPicture,
+  armLiveCall,
+  markLiveCallConnected,
+  isLiveCompanionServiceActive,
+  clearLiveCallInterrupted,
   onPiPModeChanged,
 } from '../../lib/live-companion-service';
 import { setLiveCallReplyHandler, LIVE_CALL_SESSION_ID } from '../../lib/notification-actions';
-import { notifyAiReply, type NotificationBubble } from '../../lib/notifications';
+import { notifyAiReply, LIVE_CHANNEL_ID, type NotificationBubble } from '../../lib/notifications';
 
 // The call belongs to this module-level runtime, not to a particular overlay
 // instance. Navigation/minimising may unmount the observer without hanging up.
 let activeLiveClient: GeminiLiveClient | null = null;
+
+// Ever-increasing overlay generation. Every overlay mount captures `++overlayEpoch`
+// as its own epoch. Global native teardown calls (stopLiveCompanionService,
+// clearLiveCallInterrupted) are SHARED — a stale/cancelled mount must never tear
+// down the FGS/lifecycle that a NEWER mount (a fresh call started while the old
+// one was still cleaning up) has already armed. Gating those global calls on
+// `myEpoch === overlayEpoch` makes the global FGS/lifecycle ownership
+// generation-scoped: only the newest overlay may touch the shared service.
+let overlayEpoch = 0;
 
 function ThinkingBlock({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
@@ -151,6 +163,11 @@ interface LiveCompanionOverlayProps {
   onTranscriptUpdate?: (transcripts: LiveTranscriptItem[]) => void;
   /** Incoming-call meta — AI ko batata hai ki usne call ki hai (nahi toh "student called you"). */
   incomingCallMeta?: { isIncomingCall: boolean; reason?: string };
+  /** True when the pre-capture path (permission modal / fast path) already acquired native audio focus. */
+  audioFocusAlreadyGranted?: boolean;
+  /** Imperative handle: ChatScreen sets this to the overlay's hang-up routine so
+   *  the `endLiveCall` live tool can programmatically end the call. */
+  endLiveCallRef?: MutableRefObject<(() => void) | null>;
 }
 
 export default function LiveCompanionOverlay({
@@ -169,6 +186,8 @@ export default function LiveCompanionOverlay({
   incomingCallMeta,
   onExecuteTool,
   onTranscriptUpdate,
+  audioFocusAlreadyGranted = false,
+  endLiveCallRef,
 }: LiveCompanionOverlayProps) {
   const [status, setStatus] = useState<LiveSessionStatus>('connecting');
   const [transcripts, setTranscripts] = useState<LiveTranscriptItem[]>([]);
@@ -193,6 +212,8 @@ export default function LiveCompanionOverlay({
   const [isMinimized, setIsMinimized] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  /** Review-10 P1: the Live FGS died right after commit — background/PiP continuation is no longer guaranteed. */
+  const [fgsDegraded, setFgsDegraded] = useState(false);
   const [activeTool, setActiveTool] = useState<{ name: string; args: any; status: 'running' | 'done' } | null>(null);
 
   const isProactiveEnabled = proactiveAgentService.getPreferences().enabled;
@@ -218,10 +239,19 @@ export default function LiveCompanionOverlay({
 
   const clientRef = useRef<GeminiLiveClient | null>(null);
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
+  // Debounce handle for the live-call reply notification: coalesces the many
+  // per-audio-chunk transcript updates into a clean same-id refresh (so the
+  // drawer notification grows with the full long reply instead of being
+  // flooded with schedule() calls that can drop / stall).
+  const liveNotifTimerRef = useRef<number | null>(null);
 
   // Initialize and connect Gemini Live
   useEffect(() => {
     if (!isOpen) return;
+
+    // Expose the hang-up routine to ChatScreen so the `endLiveCall` live tool
+    // can end the call programmatically. Cleared in the cleanup below.
+    if (endLiveCallRef) endLiveCallRef.current = handleEndCall;
 
     const callbacks: LiveClientCallbacks = {
       onStatusChange: (newStatus) => {
@@ -232,20 +262,38 @@ export default function LiveCompanionOverlay({
         setTranscripts(newTranscripts);
         onTranscriptUpdate?.(newTranscripts);
         // Notification chat trick: sirf assistant ka latest message notification
-        // me dikhao (WhatsApp style). Har update pe notification bhejna spam hai
-        // — sirf last assistant text bhejo.
+        // me dikhao (WhatsApp style), aur jaise-jaise reply stream hota hai
+        // same-id se update karke poora text dikhao.
         const lastAssistant = [...newTranscripts].reverse().find((t) => t.role === 'assistant');
-        if (lastAssistant?.text) {
-          const bodyText = lastAssistant.text.replace(/\n+/g, ' ').slice(0, 200);
-          const messages: NotificationBubble[] = newTranscripts.slice(-20).map((t) => ({
-            text: (t.text || '').replace(/\n+/g, ' ').slice(0, 200),
-            at: t.timestamp ? new Date(t.timestamp).getTime() : Date.now(),
-            sender: t.role === 'assistant' ? 'ai' : 'user',
-          }));
-          // force=true: PiP mode me appActive still true hota hai, force
-          // bypasses the chatTabActive skip so notification aati hai.
-          void notifyAiReply('Misa Live', bodyText, LIVE_CALL_SESSION_ID, 0, true, bodyText, messages);
-        }
+        if (!lastAssistant?.text) return;
+        // Collapsed preview + expanded full response: Markdown preserved,
+        // math formulas rendered in Unicode, code blocks readable, expandable
+        // without truncation ("long responses expandable, truncated nahi").
+        const assistantText = lastAssistant.text;
+        const messages: NotificationBubble[] = newTranscripts.slice(-20).map((t) => ({
+          text: t.text || '',
+          at: t.timestamp ? new Date(t.timestamp).getTime() : Date.now(),
+          sender: t.role === 'assistant' ? 'ai' : 'user',
+        }));
+        // force=true: PiP mode me appActive still true hota hai, force
+        // bypasses the chatTabActive skip so notification aati hai.
+        // LIVE_CHANNEL_ID: silent channel (no popup/sound) — live-call chat
+        // notifications show in the drawer even while the app is foreground,
+        // without disturbing the call. (Contrast: normal chat replies use the
+        // HIGH-importance channel only when the chat tab is NOT being watched.)
+        //
+        // Trailing debounce: har audio chunk pe schedule() flood na karo —
+        // ~1.2s ke settle hone par ek hi same-id refresh do, jo hamesha aakhri
+        // (poore) text ke saath post hota hai. Isse long reply ki notification
+        // grow hote hue dikhti hai aur drop/stall nahi hoti.
+        if (liveNotifTimerRef.current !== null) window.clearTimeout(liveNotifTimerRef.current);
+        liveNotifTimerRef.current = window.setTimeout(() => {
+          liveNotifTimerRef.current = null;
+          void notifyAiReply('Misa Live', assistantText, LIVE_CALL_SESSION_ID, 0, true, assistantText, messages, {
+            channelId: LIVE_CHANNEL_ID,
+            preferBigText: true,
+          });
+        }, 1200);
       },
       onStatsUpdate: (newStats) => setStats(newStats),
       onExecuteTool: onExecuteTool ? (name, args) => onExecuteTool(name, args) : undefined,
@@ -271,38 +319,166 @@ export default function LiveCompanionOverlay({
     }
     clientRef.current = liveClient;
     let cancelled = false;
+    let startupAttempt: number | null = null;
+    // This mount's generation: only the newest overlay may run the SHARED native
+    // teardown (FGS stop / lifecycle clear). See module-level `overlayEpoch`.
+    const myEpoch = ++overlayEpoch;
 
-    if (!existingClient) (async () => {
+    // Review-9 P0.1: single rollback for a CANCELLED startup (not just an
+    // error). A cancelled/unmounted startup that has NOT committed must not
+    // leave any resource behind: stop the handed-off mic/camera tracks, tear
+    // down the client session + audio focus/route, stop the FGS (which also
+    // clears the persisted ARMED marker), and release the module-level
+    // singleton only when THIS mount started the call.
+    //
+    // Review-11 P1 (ownership-aware): the ENTIRE rollback is gated on
+    // `!existing`. When this mount is re-attaching to an ALREADY-established
+    // singleton call (existingClient), this component does NOT own the
+    // mic/camera streams — they belong to the running call the user is on. A
+    // cancelled idempotent arm(), a stale post-commit gate, or a transient
+    // startup error in the reattach path must NEVER call t.stop() on those
+    // streams, or the user's live audio dies mid-call while the call keeps
+    // running. Stopping tracks + disconnect + FGS release ALL belong to THIS
+    // mount's startup only.
+    function rollbackStartup(c: typeof liveClient, existing: typeof existingClient, mic: MediaStream, cam?: MediaStream) {
+      if (existing) return; // this mount doesn't own the streams/session — never touch them
+      mic.getTracks().forEach((t) => t.stop());
+      cam?.getTracks().forEach((t) => t.stop());
+      c.disconnect();
+      if (activeLiveClient === c) activeLiveClient = null;
+      // Global FGS teardown is SHARED + generation-scoped: if a newer overlay
+      // (a fresh call) has already armed the service during our cleanup, we
+      // must NOT stop it. Only the newest mount may tear down the shared FGS.
+      if (myEpoch === overlayEpoch) void stopLiveCompanionService();
+    }
+
+    (async () => {
       try {
-        await liveClient.connect(apiKey, incomingCallMeta);
-        await startLiveCompanionService();
+        // P2 + P8: arm is AWAITED and runs on EVERY overlay mount (idempotent
+        // natively). This closes the connecting-window race (the old
+        // `void armLiveCall()` could still lose a Home press taken before the
+        // native bridge round-trip finished) AND re-arms a recreated Activity:
+        // after Activity recreation the singleton live client survives but
+        // MainActivity.onDestroy() reset liveCallActive — onUserLeaveHint would
+        // otherwise silently skip auto-PiP for the whole revived call.
+        //
+        // Review-7 P0/P1 + review-9 P0.1: the startup is ONE TRANSACTION.
+        // arm → connect → voice → camera → markLiveCallConnected either all
+        // succeed (commit) or the single rollback below undoes EVERYTHING.
+        // Review-9 hardens it: `startupAttempt` is captured from the client's
+        // authoritative generation token after connect, and EVERY awaited step
+        // is gated on `!cancelled` AND `activeAttempt(startupAttempt)`. If the
+        // user cancels/mount unmounts mid-flight, the remaining awaited work is
+        // dropped and the rollback stops the mic/camera streams + tears down the
+        // session + FGS + ARMED marker — a cancelled startup can never commit a
+        // late markCallConnected or leave a half-armed service behind.
+        await armLiveCall();
+        // Review-10 P0 (arm→connect gate): if the user cancelled / unmounted
+        // DURING the arm native round-trip, do NOT proceed into connect() —
+        // otherwise a cancelled startup would still open a Gemini session
+        // (short-lived, torn down by rollback, but wasted + a visible blip).
+        // Gate here so a cancelled startup never even begins socket/audio setup.
         if (cancelled) {
+          rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
           return;
         }
-        await liveClient.startVoiceStreaming(initialMicStream);
 
-        if (cancelled) {
-          return;
-        }
-
-        if (initialCameraStream) {
-          const stream = await liveClient.startCameraStream('environment');
-          if (cancelled) {
+        if (!existingClient) {
+          // P1: the pre-capture path (permission modal / remembered fast path)
+          // already acquired native audio focus before getUserMedia. Hand that
+          // fact in so connect() does NOT request focus a second time — focus
+          // stays single-owner; connect only applies the route.
+          await liveClient.connect(apiKey, incomingCallMeta, { audioFocusAlreadyGranted });
+          // Capture the authoritative generation immediately after connect —
+          // this exact startup owns the session, and only THIS attempt may
+          // commit the persisted lifecycle or attach vision.
+          startupAttempt = liveClient.getConnectionAttempt();
+          if (cancelled || !liveClient.isCurrentAttempt(startupAttempt)) {
+            rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
             return;
           }
-          setIsCameraActive(true);
-          setIsVisionPreviewVisible(true);
-          if (videoPreviewRef.current) {
-            videoPreviewRef.current.srcObject = stream;
+
+          await liveClient.startVoiceStreaming(initialMicStream);
+          if (cancelled || !liveClient.isCurrentAttempt(startupAttempt)) {
+            rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
+            return;
+          }
+
+          if (initialCameraStream) {
+            const stream = await liveClient.startCameraStream('environment');
+            if (cancelled || !liveClient.isCurrentAttempt(startupAttempt)) {
+              rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
+              return;
+            }
+            setIsCameraActive(true);
+            setIsVisionPreviewVisible(true);
+            if (videoPreviewRef.current) {
+              videoPreviewRef.current.srcObject = stream;
+            }
+          }
+        } else {
+          // Reattaching to an established singleton call: no startup work, but
+          // still capture the current generation so the commit below is safe.
+          startupAttempt = liveClient.getConnectionAttempt();
+        }
+
+        // Review-8 P1 + review-9 P0.2: the Gemini session has committed —
+        // promote the persisted process-death lifecycle from ARMED to CONNECTED
+        // so a later kill surfaces the interruption banner accurately (never for
+        // an unfinished startup). AWAITED + generation-gated: the commit only
+        // runs while `!cancelled` AND this exact startupAttempt is still the
+        // current, un-closed one. This makes the CONNECTED write atomic with the
+        // client lifecycle — an old startup can never write CONNECTED after
+        // hangup, cancellation, Activity recreation, or a newer startup. If it
+        // fails, the rollback below still clears the ARMED marker via stop().
+        if (!cancelled && liveClient.isCurrentAttempt(startupAttempt)) {
+          await markLiveCallConnected();
+          // Review-10 P0 (post-commit gate): the CONNECTED persistence write is
+          // ASYNC — a hangup/cancel could land mid-await and the native write
+          // could still complete AFTER teardown cleared it, leaving a stale
+          // CONNECTED marker (false "previous call was interrupted" banner on
+          // next launch). If we are no longer the current attempt after the
+          // await, explicitly revert the CONNECTED marker before continuing, so
+          // the persisted lifecycle can never outlive an explicit hangup/cancel.
+          if (cancelled || !liveClient.isCurrentAttempt(startupAttempt)) {
+            // Global lifecycle clear is generation-scoped: if a newer overlay
+            // (a fresh call) already committed its own CONNECTED marker, do not
+            // wipe it with our stale revert.
+            if (myEpoch === overlayEpoch) await clearLiveCallInterrupted();
+            rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
+            return;
+          }
+          // Review-9 P1.4: verify the foreground service is ACTUALLY running
+          // (onCreate→true, onDestroy→false — clears if the OS killed it). If
+          // startForegroundService() was requested but the service died, we
+          // must not continue to claim FGS-backed background/audio-continue
+          // support. Best-effort: surface a warning instead of fabricating a
+          // background contract we no longer have.
+          const fgsActive = await isLiveCompanionServiceActive();
+          if (fgsActive === false) {
+            console.warn('[LiveCompanion] FGS not active after startup commit — background audio/PiP persistence not guaranteed.');
+            // Review-10 P1 (degraded state, not just a console warning): make the
+            // loss of FGS-backed background/PiP capability VISIBLE to the user,
+            // so they aren't surprised when audio/persistence lapses the moment
+            // they leave the app. The foreground call still works; only the
+            // background contract is revoked.
+            setFgsDegraded(true);
           }
         }
-      } catch (err: any) {
         if (!cancelled) {
-          // A denied focus or failed capture is terminal for this attempt.
-          // Do not retain a half-connected singleton or foreground service.
-          liveClient.disconnect();
-          if (activeLiveClient === liveClient) activeLiveClient = null;
-          void stopLiveCompanionService();
+          setErrorMessage(null);
+        }
+      } catch (err: any) {
+        // SINGLE ROLLBACK FINALIZER for every uncommitted startup path.
+        //   - stopLiveCompanionService(): clears the FGS + liveCallActive AND
+        //     the was_interrupted intent — a failed attempt never surfaces a
+        //     false "call was interrupted" banner on next launch.
+        //   - liveClient.disconnect(): tears down socket + audio focus + route.
+        // Only roll back when THIS mount started the call. Re-attaching to an
+        // established singleton call (existingClient) must never kill it just
+        // because the idempotent arm() hiccuped.
+        rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
+        if (!cancelled && !existingClient) {
           hapticError();
           setStatus('error');
           setErrorMessage(err?.message || 'Connection to Gemini Live failed');
@@ -324,12 +500,27 @@ export default function LiveCompanionOverlay({
         if (isActive) {
           liveClient.setBackgroundActive(false);
         } else {
-          // App background me ja raha hai — PiP enter karo taaki call live
-          // rahe. PiP mode me user abhi bhi "call me" hota hai, isliye model
-          // audio CONTINUE hota hai (WhatsApp-style) — `keepAudioPlaying=true`.
-          // Sirf jab PiP nahi ho sakta (fully hidden) tab audio discard hota.
+          // App background me ja raha hai. PiP entry ab NATIVE
+          // MainActivity.onUserLeaveHint se handle hoti hai (reliable, exact
+          // lifecycle moment pe) — yahan sirf audio-continue state set karte
+          // hain. Isse dono paths ka duplicate/racy PiP entry khatam. PiP me
+          // user abhi "call me" hota hai, isliye audio CONTINUE hota hai
+          // (WhatsApp-style, keepAudioPlaying=true). Sirf fully-hidden me
+          // audio discard hota hai.
           liveClient.setBackgroundActive(true, true);
-          void enterPictureInPicture();
+          // Review-9 P1.5 (ENFORCED background camera contract, option A —
+          // voice-only in background): the Live FGS is MICROPHONE|MEDIA_PLAYBACK
+          // and does NOT grant background camera capture, so camera/video is
+          // supported ONLY while the app is on-screen. On leaving the visible
+          // lifecycle (background OR PiP) we STOP any running camera/screen-share
+          // — not merely "not start it" — so the raw capture track can never run
+          // outside the visible window (a privacy + Android while-in-use policy
+          // boundary; no camera-type FGS is declared). Voice continues via the
+          // PiP AudioContext (keepAudioPlaying=true). Camera resumes when the
+          // user returns to the full-screen call. Screen share / MediaProjection
+          // is treated as a separate lifecycle and is stopped here too (it cannot
+          // run backgrounded without its own FGS).
+          liveClient.stopVision();
         }
       }).then(listener => {
         if (released) void listener.remove();
@@ -349,6 +540,11 @@ export default function LiveCompanionOverlay({
     return () => {
       cancelled = true;
       released = true;
+      if (endLiveCallRef) endLiveCallRef.current = null;
+      if (liveNotifTimerRef.current !== null) {
+        window.clearTimeout(liveNotifTimerRef.current);
+        liveNotifTimerRef.current = null;
+      }
       if (appStateListener) void appStateListener.remove();
       if (pipListener) pipListener();
       // Do not make React ownership equal call ownership. Explicit hangup is
@@ -469,11 +665,16 @@ export default function LiveCompanionOverlay({
   }
 
   // Audio route switch
-  function handleSelectAudioRoute(route: LiveAudioRoute) {
+  async function handleSelectAudioRoute(route: LiveAudioRoute) {
     haptic();
+    // Optimistic label so the menu Check moves instantly, then reconcile with
+    // the ACTUAL applied route (setAudioRoute is transactional: it falls back
+    // to the loudspeaker and reports reality if Bluetooth SCO can't confirm,
+    // so we never show "Bluetooth" while audio is still on the phone speaker).
     setAudioRoute(route);
     setShowAudioMenu(false);
-    clientRef.current?.setAudioRoute(route);
+    const actual = await clientRef.current?.setAudioRoute(route);
+    if (actual) setAudioRoute(actual);
   }
 
   // In-Call Live Text Message with Tool Execution
@@ -740,6 +941,11 @@ export default function LiveCompanionOverlay({
         {errorMessage && (
           <div className="absolute top-4 mx-auto max-w-sm rounded-2xl border border-danger/40 bg-danger/20 p-3 text-xs text-danger text-center">
             {errorMessage}
+          </div>
+        )}
+        {fgsDegraded && !errorMessage && (
+          <div className="absolute top-4 mx-auto max-w-sm rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-400 text-center">
+            Background call continuation ab guaranteed nahi hai (system foreground service start nahi ho saki).
           </div>
         )}
 
@@ -1122,7 +1328,23 @@ export default function LiveCompanionOverlay({
           config={config}
           onSave={(newConfig) => {
             onUpdateConfig(newConfig);
-            clientRef.current?.reconnectWithNewConfig(apiKey, initialMicStream).catch(console.warn);
+            const client = clientRef.current;
+            if (!client) return;
+            const prev = client.getConfig();
+            // Sync the NEW settings into the RUNNING client first (fixes the
+            // "live settings not linked to the live session" bug: the client
+            // held its mount-time config, so even a reconnect used stale values).
+            client.updateConfig(newConfig);
+            // Reconnect ONLY when a session-baked setting (model/voice/VAD/FPS/
+            // tokens/API-key) changed. Saving unrelated settings must NOT tear
+            // down a healthy call — that unconditional reconnect was the real
+            // "changing settings disconnects the call" bug.
+            if (requiresLiveReconnect(prev, newConfig)) {
+              client.reconnectWithNewConfig(apiKey, initialMicStream).catch(console.warn);
+            } else if (prev.defaultAudioRoute !== newConfig.defaultAudioRoute) {
+              // Route changed but the session didn't — just re-route the audio.
+              void client.setAudioRoute(newConfig.defaultAudioRoute);
+            }
           }}
           defaultApiKey={apiKey}
         />

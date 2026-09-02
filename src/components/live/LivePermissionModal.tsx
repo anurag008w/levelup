@@ -1,15 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, Camera, Monitor, ShieldCheck, AlertCircle, CheckCircle2, X } from 'lucide-react';
 import { haptic, hapticSuccess, hapticError } from '../../lib/haptics';
+import { requestNativeCallAudioFocus, setNativeAudioRoute, resetNativeAudioRoute, isNativeAudioPlatform } from '../../lib/native-audio-route';
+import type { LiveAudioRoute } from '../../core/domain/live-types';
 
 interface LivePermissionModalProps {
   isOpen: boolean;
   onClose: () => void;
   onProceed: (micStream: MediaStream, cameraStream?: MediaStream) => void;
+  /** User's configured default audio route — used instead of hardcoding 'speaker'. */
+  defaultAudioRoute?: LiveAudioRoute;
 }
 
-export default function LivePermissionModal({ isOpen, onClose, onProceed }: LivePermissionModalProps) {
+export default function LivePermissionModal({ isOpen, onClose, onProceed, defaultAudioRoute = 'speaker' }: LivePermissionModalProps) {
   const [micGranted, setMicGranted] = useState(false);
   const [cameraGranted, setCameraGranted] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -23,6 +27,33 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed }: Live
     setErrorMsg(null);
     setRequesting(true);
     try {
+      // ROOT-CAUSE FIX (mic silent bug) — see ChatScreen.handleStartLiveCall
+      // for the full explanation: AudioManager must be in
+      // MODE_IN_COMMUNICATION *before* getUserMedia opens the AudioRecord,
+      // not after the call connects, otherwise the mic capture session can
+      // go silent to the model on many Android devices.
+      const focusGranted = await requestNativeCallAudioFocus();
+      if (!focusGranted) {
+        hapticError();
+        setErrorMsg('Microphone ko audio focus nahi mila. Music/call band karke dobara try karo.');
+        setRequesting(false);
+        return;
+      }
+      // P3 + review-7 P1: verify the route was actually applied — don't start
+      // capture under a route the system refused (missing Bluetooth device
+      // etc.). Fall back to the always-available loudspeaker, and verify the
+      // FALLBACK too: if even the speaker is refused the capture must abort
+      // (never a silent "connected on bluetooth" lie). The catch below then
+      // releases the half-acquired native focus.
+      const applied = await setNativeAudioRoute(defaultAudioRoute);
+      if (!applied && defaultAudioRoute !== 'speaker') {
+        const fallback = await setNativeAudioRoute('speaker');
+        // Web: route APIs are no-ops (null) — accept. Native: a refused
+        // speaker aborts the capture so no route lie reaches the call.
+        if (!fallback && isNativeAudioPlatform()) {
+          throw new Error('No audio route available (speaker fallback failed).');
+        }
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -34,9 +65,18 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed }: Live
       setSavedMicStream(stream);
       setMicGranted(true);
       hapticSuccess();
-    } catch {
+    } catch (err: any) {
+      // Review-7 P1: on ANY capture failure (route refused, fallback refused,
+      // mic denied) release the native audio session so the modal's error
+      // state does not sit on top of a half-acquired focus/mode/route. The
+      // next retry re-acquires from a clean slate.
+      try {
+        await resetNativeAudioRoute();
+      } catch {
+        // Ignored — best-effort native teardown.
+      }
       hapticError();
-      setErrorMsg('Microphone access denied. Please allow microphone in your device settings.');
+      setErrorMsg(err?.message || 'Microphone access denied. Please allow microphone in your device settings.');
     } finally {
       setRequesting(false);
     }
@@ -62,13 +102,70 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed }: Live
     }
   }
 
+  /** Review-9 P1.13: true once the streams are handed to the live session. */
+  const [ownershipTransferred, setOwnershipTransferred] = useState(false);
+
+  // Fresh opening = fresh call attempt. This component stays mounted for the
+  // whole ChatScreen lifetime, so all internal state (saved streams, granted
+  // flags, ownershipTransfer) would otherwise persist across calls — and after
+  // a hangup the session stops the streams it was handed, leaving stale,
+  // already-ended tracks behind. Resetting on every open guarantees Call #2
+  // re-requests live media and can never receive Call #1's dead streams
+  // (next-call silent-mic regression).
+  useEffect(() => {
+    if (!isOpen) return;
+    setOwnershipTransferred(false);
+    setSavedMicStream(null);
+    setSavedCamStream(null);
+    setMicGranted(false);
+    setCameraGranted(false);
+    setErrorMsg(null);
+    setRequesting(false);
+  }, [isOpen]);
+
   function handleStart() {
     if (!savedMicStream) {
       void requestMic();
       return;
     }
+    // Review-9 P1.13: EXPLICIT ownership transfer — after this point the modal
+    // must NEVER stop these streams or reset native resources, because the live
+    // session owns them. `releasePartialResources()` below checks this flag so
+    // a later close/unmount of an already-committed call cannot tear down what
+    // the session now owns.
+    setOwnershipTransferred(true);
     hapticSuccess();
     onProceed(savedMicStream, savedCamStream || undefined);
+  }
+
+  /**
+   * Review-8 P1 (modal cancellation cleanup): closing/cancelling the modal —
+   * whether the user granted mic access or not — must release every partially
+   * acquired resource. Invariant:
+   *   modal opened → partial resources acquired → cancel/close =
+   *   stop capture tracks + reset native audio route/focus + clear saved
+   *   streams/state.
+   * Without this, a granted-rerouted mic + native focus/route would leak
+   * until the next call (silent mic + stale route claims, or a dangling
+   * MODE_IN_COMMUNICATION session).
+   * Review-9 P1.13: if ownership was already transferred to the live session
+   * (handleStart ran), this is a no-op — the session owns the streams now.
+   */
+  function releasePartialResources() {
+    if (ownershipTransferred) return;
+    savedMicStream?.getTracks().forEach((track) => track.stop());
+    savedCamStream?.getTracks().forEach((track) => track.stop());
+    setSavedMicStream(null);
+    setSavedCamStream(null);
+    void resetNativeAudioRoute().catch(() => undefined);
+    setMicGranted(false);
+    setCameraGranted(false);
+  }
+
+  function handleClose() {
+    haptic();
+    releasePartialResources();
+    onClose();
   }
 
   if (!isOpen) return null;
@@ -95,10 +192,7 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed }: Live
             </div>
             <button
               type="button"
-              onClick={() => {
-                haptic();
-                onClose();
-              }}
+              onClick={handleClose}
               className="icon-btn"
               aria-label="Close"
             >
@@ -193,10 +287,7 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed }: Live
           <div className="mt-6 flex gap-3">
             <button
               type="button"
-              onClick={() => {
-                haptic();
-                onClose();
-              }}
+              onClick={handleClose}
               className="btn btn-secondary flex-1 text-xs"
             >
               Cancel
