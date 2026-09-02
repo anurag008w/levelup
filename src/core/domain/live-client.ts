@@ -59,6 +59,9 @@ export class GeminiLiveClient {
   private silenceObserverTimer: any = null;
   private isIncomingCallSession = false;
   private incomingCallReason = '';
+  private awaitingAssistantReply = false;
+  private lastUserSpokenText = '';
+  private userSpeechEndedAt = 0;
   /** Barge-in debounce — analyser ticks jab se ~200ms tak user speech dikh rahi hai. */
   private userInterruptStreakStartedAt = 0;
 
@@ -1126,6 +1129,8 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
 
     // 1. Tool Calls from Gemini Live
     if (data.toolCall?.functionCalls) {
+      this.awaitingAssistantReply = false;
+      this.lastUserSpokenText = '';
       void this.handleToolCalls(data.toolCall.functionCalls, this.connectionAttempt);
     }
 
@@ -1146,6 +1151,8 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
     // 3. Audio parts from model turn
     const parts = data.serverContent?.modelTurn?.parts;
     if (Array.isArray(parts)) {
+      this.awaitingAssistantReply = false;
+      this.lastUserSpokenText = '';
       this.setStatus('speaking');
       this.activeUserTurnId = null;
       for (const part of parts) {
@@ -1165,6 +1172,8 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
 
     // 4. Real-time Output Transcription (Assistant subtitles)
     if (data.serverContent?.outputTranscription?.text) {
+      this.awaitingAssistantReply = false;
+      this.lastUserSpokenText = '';
       this.activeUserTurnId = null;
       this.currentAssistantMessage += data.serverContent.outputTranscription.text;
       this.updateTranscript('assistant', this.currentAssistantMessage, false);
@@ -1172,12 +1181,16 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
 
     // 5. Real-time Input Transcription (User subtitles)
     if (data.serverContent?.inputTranscription?.text) {
+      const recognized = data.serverContent.inputTranscription.text;
       this.lastUserVoiceTime = Date.now();
+      this.userSpeechEndedAt = Date.now();
+      this.awaitingAssistantReply = true;
       this.silenceStateMachine.onSpeechActivity();
       this.silenceNudgeStreak = 0; // reset silence streak on user speech
+      this.lastUserSpokenText = (this.lastUserSpokenText + ' ' + recognized).trim();
       this.activeAssistantTurnId = null;
       this.currentAssistantMessage = '';
-      this.updateTranscript('user', data.serverContent.inputTranscription.text, false);
+      this.updateTranscript('user', recognized, false);
 
       // Check if user explicitly asked for silence / quiet study / observe screen
       const txt = data.serverContent.inputTranscription.text.toLowerCase();
@@ -1289,6 +1302,9 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
     this.activeAssistantTurnId = null;
     this.activeUserTurnId = null;
     this.currentAssistantMessage = '';
+    this.silenceNudgeStreak = 0;
+    this.awaitingAssistantReply = true;
+    this.userSpeechEndedAt = Date.now();
     this.lastUserVoiceTime = Date.now();
     this.lastTurnFinishedTime = Date.now();
     this.lastSilenceNudgeAt = Date.now();
@@ -1489,6 +1505,8 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
         if (talking) {
           if (!this.userInterruptStreakStartedAt) this.userInterruptStreakStartedAt = Date.now();
           this.lastUserVoiceTime = Date.now();
+          this.userSpeechEndedAt = Date.now();
+          this.silenceNudgeStreak = 0;
           this.silenceStateMachine.onSpeechActivity();
           // Barge-in debounce: ek hi 80ms analyser spike (room echo, keyboard,
           // door) Misa ki voice nahi kaat sakta. Sustained user speech
@@ -1574,7 +1592,7 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
     if (!this.session) return;
 
     const now = Date.now();
-    const isSpeech = rmsLevel > 0.018 || this.isUserTalkingOverThreshold;
+    const isSpeech = rmsLevel > 0.032 || this.isUserTalkingOverThreshold;
 
     // Barge-in debounce (shared with the analyser path): a single transient
     // chunk (room echo, keyboard, cough) must not snip the assistant's voice.
@@ -1588,6 +1606,9 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
       this.audioStreamer.flushPlayback();
       this.setStatus('listening');
       this.lastUserVoiceTime = now;
+      this.userSpeechEndedAt = now;
+      this.silenceNudgeStreak = 0;
+      this.awaitingAssistantReply = true;
       this.silenceStateMachine.onSpeechActivity();
       while (this.audioPreRollBuffer.length > 0) {
         const bufferedChunk = this.audioPreRollBuffer.shift();
@@ -1622,6 +1643,9 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
 
     if (isSpeech) {
       this.lastUserVoiceTime = now;
+      this.userSpeechEndedAt = now;
+      this.silenceNudgeStreak = 0;
+      this.awaitingAssistantReply = true;
       this.silenceStateMachine.onSpeechActivity();
     }
 
@@ -1928,23 +1952,26 @@ HOW TO SPEAK: As the receiver answering their call, greet them warmly and natura
       );
       const silenceDurationSec = (Date.now() - lastActivityAnchor) / 1000;
 
-      // ── Reply-decay watchdog (Gemini Live silent-stall fix) ──────────────
-      // User spoke, but model didn't reply within 8s: kick stalled turn
-      const userAwaitingReply =
-        this.lastUserVoiceTime > 0 &&
-        this.lastUserVoiceTime > this.lastTurnFinishedTime &&
-        silenceDurationSec >= 8 &&
-        (Date.now() - this.lastSilenceNudgeAt > 15000);
-      if (userAwaitingReply) {
+      // ── Fast Stalled-Turn Watchdog (User Spoke but AI Didn't Reply) ──────────────
+      // In a live voice call, if the student spoke and 2.8s pass without
+      // Gemini generating a reply, kick the stalled turn immediately!
+      const userSpokeRecently = this.awaitingAssistantReply && this.userSpeechEndedAt > 0;
+      const speechWaitDurationSec = (Date.now() - this.userSpeechEndedAt) / 1000;
+      if (userSpokeRecently && speechWaitDurationSec >= 2.8 && (Date.now() - this.lastSilenceNudgeAt > 8000)) {
+        this.awaitingAssistantReply = false;
         this.lastSilenceNudgeAt = Date.now();
         this.lastTurnFinishedTime = Date.now();
+        const spokenWords = this.lastUserSpokenText.slice(-300).trim();
+        this.lastUserSpokenText = '';
         try {
           this.session.sendRealtimeInput({
-            text: '[SYSTEM EVENT: The student just spoke and is waiting for your reply — respond to their spoken message directly out loud right now!]',
+            text: spokenWords
+              ? `[SYSTEM EVENT: The student said: "${spokenWords}". Answer their spoken words directly out loud right now!]`
+              : `[SYSTEM EVENT: The student just spoke to you and is waiting for your reply — respond to their spoken words directly out loud right now!]`,
           });
-          console.info('[GeminiLive] Reply-decay nudge sent (stalled model turn)');
+          console.info(`[GeminiLive] Fast reply watchdog kicked stalled turn (text: "${spokenWords}")`);
         } catch (e) {
-          console.warn('[GeminiLive] Reply-decay nudge error:', e);
+          console.warn('[GeminiLive] Fast reply watchdog error:', e);
         }
         return;
       }
