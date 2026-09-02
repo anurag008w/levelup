@@ -95,6 +95,15 @@ export class GeminiLiveClient {
     // Calling a full disconnect here used to erase it before reconnect could restore it.
     this.disconnect(true);
     await this.connect(apiKey);
+    // connect() bumps connectionAttempt as its own generation (++this.connectionAttempt
+    // at entry). Re-capture it AFTER connect returns so isActiveAttempt refers to the
+    // session we just created. If a hangup/restart landed during connect (or between
+    // its final gate and this line), this attempt is now stale — do NOT stream against
+    // a torn-down client and risk reviving the user's just-ended mic.
+    const attempt = this.connectionAttempt;
+    if (!this.isActiveAttempt(attempt)) {
+      return;
+    }
     await this.startVoiceStreaming(micStream);
   }
 
@@ -986,7 +995,22 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       // so there is no reset/setup overlap race. If focus is denied, we fail
       // cleanly BEFORE the session is assigned: the generic catch below clears
       // connectionAttempt and throws, and no half-configured socket is leaked.
-      await this.setupCallAudio();
+      try {
+        await this.setupCallAudio();
+      } catch (e) {
+        // Audio setup failed (focus denied / route error). The SDK/WebSocket
+        // session is already established (connectPromise resolved) but is not
+        // yet assigned to this runtime. Close it so the live AI transport does
+        // not leak, then let the generic catch below invalidate the attempt
+        // and surface the error. Without this the JS side stays session-less
+        // while the underlying socket stays alive — a silent resource leak.
+        try {
+          session?.close?.();
+        } catch {
+          /* best effort close */
+        }
+        throw e;
+      }
 
       // Review-8 P1: second cancellation gate AFTER the awaited audio setup —
       // a hangup during the native focus/route round-trip must not resurrect a
@@ -1664,7 +1688,14 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   private async installAudioFocusListener(): Promise<void> {
     if (this.audioFocusListener) return;
-    this.audioFocusListener = await addNativeAudioFocusListener(async (focusChange) => {
+    // Bind this async registration to the CURRENT connection attempt. A
+    // hangup/restart can land while addNativeAudioFocusListener is still in
+    // flight (it's awaited). If so, the stale resolve must NOT be assigned —
+    // otherwise (a) the next call's registration is skipped by the guard above
+    // and (b) a stale listener could fire focus-loss against a fresh call.
+    // Resolve first, verify second, assign only if still the active attempt.
+    const attempt = this.connectionAttempt;
+    const listener = await addNativeAudioFocusListener(async (focusChange) => {
       // Review-8 P1 (focus-loss/regain authoritative lifecycle):
       // Focus is local Android audio policy — not a network error.
       // AUDIOFOCUS_LOSS (-1) is permanent: another app (phone call, navigation)
@@ -1718,6 +1749,20 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         this.audioStreamer.setOutputVolume(0.2);
       }
     });
+
+    // Post-await generation gate: if the user hung up or a new call started
+    // while registration was in flight, discard this stale listener instead of
+    // binding it to the (possibly new) runtime. Remove it so it can't leak and
+    // can't block the next call's own registration.
+    if (!this.isActiveAttempt(attempt)) {
+      try {
+        await listener.remove();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    this.audioFocusListener = listener;
   }
 
   /**

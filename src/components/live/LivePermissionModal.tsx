@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, Camera, Monitor, ShieldCheck, AlertCircle, CheckCircle2, X } from 'lucide-react';
 import { haptic, hapticSuccess, hapticError } from '../../lib/haptics';
@@ -104,6 +104,24 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed, defaul
 
   /** Review-9 P1.13: true once the streams are handed to the live session. */
   const [ownershipTransferred, setOwnershipTransferred] = useState(false);
+
+  // Fresh opening = fresh call attempt. This component stays mounted for the
+  // whole ChatScreen lifetime, so all internal state (saved streams, granted
+  // flags, ownershipTransfer) would otherwise persist across calls — and after
+  // a hangup the session stops the streams it was handed, leaving stale,
+  // already-ended tracks behind. Resetting on every open guarantees Call #2
+  // re-requests live media and can never receive Call #1's dead streams
+  // (next-call silent-mic regression).
+  useEffect(() => {
+    if (!isOpen) return;
+    setOwnershipTransferred(false);
+    setSavedMicStream(null);
+    setSavedCamStream(null);
+    setMicGranted(false);
+    setCameraGranted(false);
+    setErrorMsg(null);
+    setRequesting(false);
+  }, [isOpen]);
 
   function handleStart() {
     if (!savedMicStream) {

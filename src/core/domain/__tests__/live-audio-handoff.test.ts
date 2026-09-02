@@ -370,4 +370,29 @@ describe('Live audio ownership & startup transaction (review 7)', () => {
     // No change at all → no reconnect.
     expect(requiresLiveReconnect(base, { ...base })).toBe(false);
   });
+
+  it('16. reconnectWithNewConfig never resurrects stale streaming if a hangup lands during the reconnect', async () => {
+    const client = new GeminiLiveClient(mockConfig);
+    const streamSpy = vi.spyOn(client, 'startVoiceStreaming').mockResolvedValue(undefined);
+    // Simulate a real hangup landing WHILE the replacement session is being
+    // built: disconnect(false) bumps connectionAttempt AND marks the session
+    // explicitly closed. Both must make the post-connect check stale.
+    vi.spyOn(client, 'connect').mockImplementation(() => {
+      (client as any).connectionAttempt += 1;    // hangup bumps generation
+      (client as any).isUserExplicitlyClosed = true; // hangup closes the session
+      return Promise.resolve(undefined);
+    });
+    await (client as any).reconnectWithNewConfig('new-key', {} as MediaStream);
+    // The stale reconnect must NOT start streaming on a torn-down client.
+    expect(streamSpy).not.toHaveBeenCalled();
+  });
+
+  it('17. reconnectWithNewConfig still streams normally when no hangup lands during the reconnect', async () => {
+    const client = new GeminiLiveClient(mockConfig);
+    const streamSpy = vi.spyOn(client, 'startVoiceStreaming').mockResolvedValue(undefined);
+    // Real connect() resolves normally (no hangup) → the post-connect attempt is
+    // current → streaming must proceed.
+    await (client as any).reconnectWithNewConfig('new-key', {} as MediaStream);
+    expect(streamSpy).toHaveBeenCalledTimes(1);
+  });
 });

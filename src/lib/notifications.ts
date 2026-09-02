@@ -156,16 +156,19 @@ export async function ensureNotificationChannel(): Promise<void> {
 
 /**
  * Silently-creates the LIVE-call chat channel (LOW importance, no sound, no
- * heads-up). Like ensureNotificationChannel it's idempotent but non-blocking —
- * a failure falls back to the plugin's default channel rather than erroring
- * the call flow. Kept separate from ensureNotificationChannel because that one
- * is HIGH importance and MUST stay that way for normal chat replies.
+ * heads-up). Returns `true` when the silent LIVE channel is confirmed ready
+ * (already existed, or was just created) — and `false` when it could NOT be
+ * ensured (creation failed / non-native). The caller must only schedule the
+ * notification on LIVE_CHANNEL_ID when this returns true; otherwise it falls
+ * back to the default HIGH channel so the message is never silently dropped.
+ * Kept separate from ensureNotificationChannel because that one is HIGH
+ * importance and MUST stay that way for normal chat replies.
  */
-async function ensureLiveNotificationChannel(): Promise<void> {
-  if (!isNativePlatform()) return;
+async function ensureLiveNotificationChannel(): Promise<boolean> {
+  if (!isNativePlatform()) return false;
   try {
     const { channels } = await LocalNotifications.listChannels();
-    if (channels.some((c) => c.id === LIVE_CHANNEL_ID)) return;
+    if (channels.some((c) => c.id === LIVE_CHANNEL_ID)) return true;
     await LocalNotifications.createChannel({
       id: LIVE_CHANNEL_ID,
       name: 'Live call chat',
@@ -173,8 +176,11 @@ async function ensureLiveNotificationChannel(): Promise<void> {
       importance: 2, // IMPORTANCE_LOW — silent, drawer only
       visibility: 1, // VISIBILITY_PUBLIC — lock screen pe bhi dikhe
     });
+    return true;
   } catch {
-    // channel banana best-effort hai
+    // channel ban na paya — caller ko false return karo taaki wo default HIGH
+    // channel pe fallback kar sake aur notification silently drop na ho.
+    return false;
   }
 }
 
@@ -345,8 +351,16 @@ export async function notifyAiReply(
   // LIVE-call chat notifications use a dedicated SILENT channel (no popup/sound)
   // and must ALWAYS show, even while the app is foreground (opts.channelId +
   // caller's force=true). Normal chat replies keep the HIGH-importance channel.
-  const channelId = opts?.channelId ?? CHANNEL_ID;
-  const channelSilent = channelId !== CHANNEL_ID;
+  // The live channel is resolved DEFENSIVELY: if creating/confirming the silent
+  // channel fails (some OEMs throw on list/create), fall back to the default
+  // HIGH channel so the live reply is still delivered (never silently dropped
+  // on a channel that doesn't exist).
+  const requestedSilentChannel = opts?.channelId ?? null;
+  const effectiveChannelId =
+    requestedSilentChannel === LIVE_CHANNEL_ID
+      ? (await ensureLiveNotificationChannel() ? LIVE_CHANNEL_ID : CHANNEL_ID)
+      : CHANNEL_ID;
+  const channelSilent = effectiveChannelId === LIVE_CHANNEL_ID;
 
   const notificationId = sessionToNotificationId(sessionId);
   const tag = sessionId ? `levelup-chat-${sessionId}` : 'levelup-ai';
@@ -380,11 +394,9 @@ export async function notifyAiReply(
   // nahi dekh raha", isliye OS-level scheduling hamesha safe hai.
   if (isNativePlatform() && (force || !appActive) && delayMs > 0) {
     try {
-      if (channelSilent) {
-        await ensureLiveNotificationChannel();
-      } else {
-        await ensureNotificationChannel();
-      }
+      // Silent channel is already ensured during effectiveChannelId resolution;
+      // only the HIGH reply channel still needs creating here when not silent.
+      if (!channelSilent) await ensureNotificationChannel();
       await LocalNotifications.schedule({
         notifications: [
           {
@@ -393,7 +405,7 @@ export async function notifyAiReply(
             body,
             largeBody: expanded,
             summaryText: title,
-            channelId,
+            channelId: effectiveChannelId,
             actionTypeId: ACTION_TYPE_ID,
             extra,
             schedule: { at: new Date(Date.now() + delayMs), allowWhileIdle: true },
@@ -427,11 +439,9 @@ export async function notifyAiReply(
 
     if (isNativePlatform()) {
       try {
-        if (channelSilent) {
-          await ensureLiveNotificationChannel();
-        } else {
-          await ensureNotificationChannel();
-        }
+        // Silent channel is already ensured during effectiveChannelId resolution;
+        // only the HIGH reply channel still needs creating here when not silent.
+        if (!channelSilent) await ensureNotificationChannel();
         await LocalNotifications.schedule({
           notifications: [
             {
@@ -444,7 +454,7 @@ export async function notifyAiReply(
               // (multi-line) message dikhta hai instead of cut-off single line.
               largeBody: expanded,
               summaryText: title,
-              channelId,
+              channelId: effectiveChannelId,
               // Reply/Open actions + session id — tap/reply se app usi chat pe khule.
               actionTypeId: ACTION_TYPE_ID,
               extra,

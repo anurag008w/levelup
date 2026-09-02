@@ -52,6 +52,18 @@ public class AudioRoutePlugin extends Plugin {
      * profile falls back to speaker promptly instead of hanging the call.
      */
     private static final long SCO_CONNECT_TIMEOUT_MS = 5000;
+
+    // Cancellation generation for async Bluetooth SCO waits. Bumped on every
+    // route change / reset / teardown, so a stale sco-connect-wait thread that
+    // outlived a speaker/earpiece switch or a hangup aborts instead of
+    // re-activating SCO against a call that's already over.
+    private final java.util.concurrent.atomic.AtomicLong scoRequestGeneration = new java.util.concurrent.atomic.AtomicLong(0);
+
+    /** True when the SCO request that captured `gen` is no longer current. */
+    private boolean isScoRequestStale(long gen) {
+        return gen != scoRequestGeneration.get();
+    }
+
     private AudioFocusRequest audioFocusRequest;
     private final AudioManager.OnAudioFocusChangeListener audioFocusListener = focusChange -> {
         JSObject event = new JSObject();
@@ -237,6 +249,9 @@ public class AudioRoutePlugin extends Plugin {
 
     private void setRouteLegacy(AudioManager am, String route, PluginCall call) {
         am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+        // Any new route supersedes a pending async SCO request; bump the
+        // generation so an in-flight sco-connect-wait thread aborts.
+        scoRequestGeneration.incrementAndGet();
 
         switch (route) {
             case "earpiece":
@@ -260,10 +275,16 @@ public class AudioRoutePlugin extends Plugin {
                 // missed. If SCO never converges, revert to the loudspeaker
                 // instead of letting the app believe it is "on bluetooth".
                 call.setKeepAlive(true);
+                // Invalidate any prior outstanding SCO request, then bind THIS
+                // request to a fresh generation so a stale waiter can never
+                // outlive a later route switch / hangup and re-activate SCO.
+                final long requestGen = scoRequestGeneration.incrementAndGet();
                 final AudioManager amSco = am;
                 final PluginCall callSco = call;
                 Thread scoWaiter = new Thread(() -> {
                     boolean scoReady = waitForScoReady(amSco, () -> {
+                        // Abort if a newer route request/reset already landed.
+                        if (isScoRequestStale(requestGen)) return;
                         // Order matters on Android 8–11 OEMs: force the phone's
                         // loudspeaker OFF and enter the communication profile
                         // (mode already MODE_IN_COMMUNICATION) BEFORE signalling
@@ -273,6 +294,18 @@ public class AudioRoutePlugin extends Plugin {
                         amSco.startBluetoothSco();
                         amSco.setBluetoothScoOn(true);
                     });
+                    // If the request was superseded while waiting (reset/route
+                    // change/hangup), do NOT touch the audio route now — the
+                    // current state belongs to a newer request. Resolve without
+                    // applying anything so the JS transactional caller re-reads
+                    // reality instead of resurrecting a dead Bluetooth route.
+                    if (isScoRequestStale(requestGen)) {
+                        JSObject stale = new JSObject();
+                        stale.put("route", "speaker");
+                        stale.put("deviceType", "UNSPECIFIED");
+                        callSco.resolve(stale);
+                        return;
+                    }
                     if (scoReady) {
                         JSObject ret = new JSObject();
                         ret.put("route", "bluetooth");
@@ -398,6 +431,9 @@ public class AudioRoutePlugin extends Plugin {
     /** Reset audio mode to normal when the Live session ends. */
     @PluginMethod
     public void resetRoute(PluginCall call) {
+        // Invalidate any in-flight async SCO waiter: a hangup/teardown must
+        // never let an old thread re-activate SCO after the call is over.
+        scoRequestGeneration.incrementAndGet();
         AudioManager am = audioManager();
         if (am != null) {
             try {

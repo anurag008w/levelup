@@ -54,6 +54,15 @@ import { notifyAiReply, LIVE_CHANNEL_ID, type NotificationBubble } from '../../l
 // instance. Navigation/minimising may unmount the observer without hanging up.
 let activeLiveClient: GeminiLiveClient | null = null;
 
+// Ever-increasing overlay generation. Every overlay mount captures `++overlayEpoch`
+// as its own epoch. Global native teardown calls (stopLiveCompanionService,
+// clearLiveCallInterrupted) are SHARED — a stale/cancelled mount must never tear
+// down the FGS/lifecycle that a NEWER mount (a fresh call started while the old
+// one was still cleaning up) has already armed. Gating those global calls on
+// `myEpoch === overlayEpoch` makes the global FGS/lifecycle ownership
+// generation-scoped: only the newest overlay may touch the shared service.
+let overlayEpoch = 0;
+
 function ThinkingBlock({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -286,6 +295,9 @@ export default function LiveCompanionOverlay({
     clientRef.current = liveClient;
     let cancelled = false;
     let startupAttempt: number | null = null;
+    // This mount's generation: only the newest overlay may run the SHARED native
+    // teardown (FGS stop / lifecycle clear). See module-level `overlayEpoch`.
+    const myEpoch = ++overlayEpoch;
 
     // Review-9 P0.1: single rollback for a CANCELLED startup (not just an
     // error). A cancelled/unmounted startup that has NOT committed must not
@@ -309,7 +321,10 @@ export default function LiveCompanionOverlay({
       cam?.getTracks().forEach((t) => t.stop());
       c.disconnect();
       if (activeLiveClient === c) activeLiveClient = null;
-      void stopLiveCompanionService();
+      // Global FGS teardown is SHARED + generation-scoped: if a newer overlay
+      // (a fresh call) has already armed the service during our cleanup, we
+      // must NOT stop it. Only the newest mount may tear down the shared FGS.
+      if (myEpoch === overlayEpoch) void stopLiveCompanionService();
     }
 
     (async () => {
@@ -401,7 +416,10 @@ export default function LiveCompanionOverlay({
           // await, explicitly revert the CONNECTED marker before continuing, so
           // the persisted lifecycle can never outlive an explicit hangup/cancel.
           if (cancelled || !liveClient.isCurrentAttempt(startupAttempt)) {
-            await clearLiveCallInterrupted();
+            // Global lifecycle clear is generation-scoped: if a newer overlay
+            // (a fresh call) already committed its own CONNECTED marker, do not
+            // wipe it with our stale revert.
+            if (myEpoch === overlayEpoch) await clearLiveCallInterrupted();
             rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
             return;
           }

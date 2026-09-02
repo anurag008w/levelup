@@ -267,4 +267,26 @@ describe('notifications — chat-tab suppression', () => {
     expect(ch).toBeDefined();
     expect(ch.importance).toBe(2);
   });
+
+  it('falls back to the HIGH channel when the silent LIVE channel can NOT be ensured — the live reply is still delivered, never dropped', async () => {
+    // OEM/channel failure: creating the silent channel throws. The code must
+    // fall back to the default HIGH channel and STILL schedule the live reply,
+    // instead of leaving it on a channel that does not exist (silent drop).
+    await setNotificationPreference(true);
+    setChatTabActive(true);
+    setAppHidden(false);
+    createChannelMock.mockImplementation(() => {
+      throw new Error('channel create failed');
+    });
+
+    await notifyAiReply('Misa Live', 'reply', 'live', 0, true, 'reply', [{ text: 'reply', at: 1 }], {
+      channelId: LIVE_CHANNEL_ID,
+    });
+    await flush();
+
+    // Still delivered once — but on the default HIGH channel fallback.
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    const n = scheduleMock.mock.calls[0][0].notifications[0];
+    expect(n.channelId).toBe('levelup-ai-replies');
+  });
 });
