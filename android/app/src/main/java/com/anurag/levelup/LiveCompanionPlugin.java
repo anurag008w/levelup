@@ -13,11 +13,16 @@ public class LiveCompanionPlugin extends Plugin {
   @PluginMethod public void start(PluginCall call) {
     Intent i = new Intent(getContext(), LiveCompanionForegroundService.class);
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getContext().startForegroundService(i); else getContext().startService(i);
+    // Live call ab active hai — MainActivity ko batao taaki onUserLeaveHint
+    // (Home/Recents press) par PiP reliably trigger ho, aur API 31+ par
+    // auto-enter turant arm ho jaaye.
+    MainActivity.setLiveCallActive(true);
     call.resolve();
   }
 
   @PluginMethod public void stop(PluginCall call) {
     getContext().stopService(new Intent(getContext(), LiveCompanionForegroundService.class));
+    MainActivity.setLiveCallActive(false);
     call.resolve();
   }
 

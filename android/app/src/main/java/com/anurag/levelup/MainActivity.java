@@ -25,8 +25,39 @@ public class MainActivity extends BridgeActivity {
     /** Current Activity instance — PiP enter karne ke liye (singleTask launch mode). */
     private static MainActivity instance;
 
+    /**
+     * Live call abhi chal rahi hai ya nahi — {@link LiveCompanionPlugin#start}/
+     * {@link LiveCompanionPlugin#stop} se set hota hai. `onUserLeaveHint` isi
+     * flag ko check karta hai taaki har normal Home-press par PiP na khul jaaye,
+     * sirf active call ke dauraan.
+     */
+    private static volatile boolean liveCallActive = false;
+
     public static MainActivity getInstance() {
         return instance;
+    }
+
+    /**
+     * JS se (LiveCompanionPlugin.start/stop) call hota hai jab live call
+     * shuru/khatam hoti hai. Android 12+ (API 31+) par turant
+     * `setAutoEnterEnabled` set kar deta hai — is se PiP timing-race ke bina
+     * hi reliably trigger hoti hai (onUserLeaveHint ki wait nahi karni padti).
+     */
+    public static void setLiveCallActive(boolean active) {
+        liveCallActive = active;
+        MainActivity activity = getInstance();
+        if (activity != null) activity.updateAutoEnterPip(active);
+    }
+
+    private void updateAutoEnterPip(boolean enabled) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return; // auto-enter sirf API 31+
+        try {
+            PictureInPictureParams params = new PictureInPictureParams.Builder()
+                .setAspectRatio(new Rational(9, 16))
+                .setAutoEnterEnabled(enabled)
+                .build();
+            setPictureInPictureParams(params);
+        } catch (Exception ignored) { }
     }
 
     /** JS se call hota hai — Activity ko PiP mode me bhejta hai. */
@@ -47,6 +78,33 @@ public class MainActivity extends BridgeActivity {
     public static void enterPiPViaPlugin(LiveCompanionPlugin plugin) {
         livePlugin = plugin;
         enterPictureInPicture();
+    }
+
+    /**
+     * ROOT-CAUSE FIX: Android ka rule hai ki `enterPictureInPictureMode()`
+     * reliably sirf activity ke RESUMED state se (ya iske turant pehle,
+     * `onUserLeaveHint` ke andar) call honi chahiye — [developer.android.com
+     * PiP guide + Android 11 ke liye onUserLeaveHint pattern]. Pehle yeh call
+     * sirf JS ke `appStateChange` listener se aati thi, jo Capacitor bridge ke
+     * apne `onPause` ke *baad* async round-trip se fire hoti hai — tab tak
+     * activity already paused ho chuki hoti hai, aur `enterPictureInPictureMode()`
+     * silently IllegalStateException throw karke fail ho jaata hai (upar wale
+     * try/catch me chup jaata hai). Isi wajah se PiP kabhi khulta hi nahi tha,
+     * webview poora background me freeze ho jaata tha, aur Misa ka jawab/
+     * notification sirf app reopen karne ke baad hi aata tha.
+     *
+     * `onUserLeaveHint()` activity ke resumed-se-pause hone ke EXACT sahi
+     * moment par (Home/Recents press) fire hota hai — yahi se PiP trigger
+     * karna Android 8-11 (API 26-30) ke liye official-recommended tarika hai.
+     * Android 12+ (API 31+) par `setAutoEnterEnabled` (upar) already handle
+     * kar leta hai, is call ka wahan koi harmful effect nahi hai.
+     */
+    @Override
+    public void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (liveCallActive) {
+            enterPictureInPicture();
+        }
     }
 
     /**
