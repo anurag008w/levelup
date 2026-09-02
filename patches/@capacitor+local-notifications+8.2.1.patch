@@ -1,29 +1,75 @@
 diff --git a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
-index 0b826a5..eeb9f48 100644
+index 0b826a5..41c28fa 100644
 --- a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
 +++ b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
-@@ -17,6 +17,7 @@ import androidx.annotation.NonNull;
+@@ -15,8 +15,10 @@ import android.media.AudioAttributes;
+ import android.net.Uri;
+ import android.os.Build;
+ import android.os.Bundle;
++import android.text.Html;
+ import androidx.annotation.NonNull;
  import androidx.annotation.Nullable;
  import androidx.core.app.NotificationCompat;
  import androidx.core.app.NotificationManagerCompat;
 +import androidx.core.app.Person;
  import androidx.core.app.RemoteInput;
- import com.getcapacitor.CapConfig;
- import com.getcapacitor.JSObject;
-@@ -173,7 +174,38 @@ public class LocalNotificationManager {
+@@ -162,18 +168,78 @@ public class LocalNotificationManager {
+     // TODO expandable notification NotificationCompat.MessagingStyle
+     // TODO media style notification support NotificationCompat.MediaStyle
+     // TODO custom small/large icons
++    private CharSequence renderFormattedText(String text) {
++        if (text == null || text.isEmpty()) {
++            return "";
++        }
++        try {
++            String html = text;
++            if (!html.contains("<br>") && !html.contains("<br/>") && !html.contains("<p>") && html.contains("\n")) {
++                html = html.replace("\n", "<br>");
++            }
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
++                return Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY);
++            } else {
++                return Html.fromHtml(html);
++            }
++        } catch (Exception e) {
++            return text;
++        }
++    }
++
+     private void buildNotification(NotificationManagerCompat notificationManager, LocalNotification localNotification, PluginCall call) {
+         String channelId = DEFAULT_NOTIFICATION_CHANNEL_ID;
+         if (localNotification.getChannelId() != null) {
+             channelId = localNotification.getChannelId();
+         }
++        CharSequence formattedTitle = renderFormattedText(localNotification.getTitle());
++        CharSequence formattedBody = renderFormattedText(localNotification.getBody());
+         NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(this.context, channelId)
+-            .setContentTitle(localNotification.getTitle())
+-            .setContentText(localNotification.getBody())
++            .setContentTitle(formattedTitle)
++            .setContentText(formattedBody)
+             .setAutoCancel(localNotification.isAutoCancel())
+             .setOngoing(localNotification.isOngoing())
              .setPriority(NotificationCompat.PRIORITY_DEFAULT)
              .setGroupSummary(localNotification.isGroupSummary());
  
 -        if (localNotification.getLargeBody() != null) {
-+        // Custom: jab JS `extra.messages` bheje to WhatsApp-style MessagingStyle
-+        // use karo — expanded me poora conversation scroll hota hai. Messages na
-+        // ho to neeche ka existing BigTextStyle behavior bilkul waise hi rehta hai.
-+        // MessagingStyle ka "user" = phone owner (extra.userName, ya title
-+        // fallback) — AI ke messages "Misa" (title) se aate hain, user ke apne
-+        // messages username se.
++        // Custom: support rich Markdown/LaTeX rendering + expandable BigText style
++        // for long responses so they never get truncated or clamped by Android SystemUI.
 +        JSObject notificationExtra = localNotification.getExtra();
++        boolean preferBigText = notificationExtra != null && notificationExtra.optBoolean("preferBigText", false);
 +        JSONArray messageList = notificationExtra != null ? notificationExtra.optJSONArray("messages") : null;
-+        if (messageList != null && messageList.length() > 0) {
++
++        if (localNotification.getLargeBody() != null && (preferBigText || messageList == null || messageList.length() <= 1)) {
++            // Expandable full-length multiline formatted text (never clamped/truncated)
++            CharSequence formattedLarge = renderFormattedText(localNotification.getLargeBody());
++            CharSequence summary = localNotification.getSummaryText() != null ? renderFormattedText(localNotification.getSummaryText()) : null;
++            mBuilder.setStyle(
++                new NotificationCompat.BigTextStyle()
++                    .bigText(formattedLarge)
++                    .setSummaryText(summary)
++            );
++        } else if (messageList != null && messageList.length() > 0) {
 +            String userName = notificationExtra != null ? notificationExtra.optString("userName", "") : "";
 +            if (userName.isEmpty()) {
 +                userName = localNotification.getTitle();
@@ -39,7 +85,7 @@ index 0b826a5..eeb9f48 100644
 +                Person from = "user".equals(message.optString("sender")) ? user : aiSender;
 +                messagingStyle.addMessage(
 +                    new NotificationCompat.MessagingStyle.Message(
-+                        message.optString("text"),
++                        renderFormattedText(message.optString("text")),
 +                        message.optLong("at", System.currentTimeMillis()),
 +                        from
 +                    )
@@ -48,5 +94,16 @@ index 0b826a5..eeb9f48 100644
 +            mBuilder.setStyle(messagingStyle);
 +        } else if (localNotification.getLargeBody() != null) {
              // support multiline text
-             mBuilder.setStyle(
-                 new NotificationCompat.BigTextStyle()
+-            mBuilder.setStyle(
+-                new NotificationCompat.BigTextStyle()
+-                    .bigText(localNotification.getLargeBody())
+-                    .setSummaryText(localNotification.getSummaryText())
+-            );
++            CharSequence formattedLarge = renderFormattedText(localNotification.getLargeBody());
++            CharSequence summary = localNotification.getSummaryText() != null ? renderFormattedText(localNotification.getSummaryText()) : null;
++            mBuilder.setStyle(
++                new NotificationCompat.BigTextStyle()
++                    .bigText(formattedLarge)
++                    .setSummaryText(summary)
++            );
+         }

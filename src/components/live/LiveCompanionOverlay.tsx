@@ -266,14 +266,12 @@ export default function LiveCompanionOverlay({
         // same-id se update karke poora text dikhao.
         const lastAssistant = [...newTranscripts].reverse().find((t) => t.role === 'assistant');
         if (!lastAssistant?.text) return;
-        // Collapsed (single-line / heads-up) view: chhota rakho — Android khud
-        // ellipsize kar leta hai. Expanded (BigText) + chat bubbles me POORA
-        // reply do taaki lambe messages cut na ho ("lambe replies poore nahi
-        // aate" ka asli reason yeh 200-char cap tha).
-        const collapsed = lastAssistant.text.replace(/\n+/g, ' ').slice(0, 200);
-        const expanded = lastAssistant.text.replace(/\n+/g, '\n').slice(0, 8000);
+        // Collapsed preview + expanded full response: Markdown preserved,
+        // math formulas rendered in Unicode, code blocks readable, expandable
+        // without truncation ("long responses expandable, truncated nahi").
+        const assistantText = lastAssistant.text;
         const messages: NotificationBubble[] = newTranscripts.slice(-20).map((t) => ({
-          text: (t.text || '').replace(/\n+/g, ' ').slice(0, 8000),
+          text: t.text || '',
           at: t.timestamp ? new Date(t.timestamp).getTime() : Date.now(),
           sender: t.role === 'assistant' ? 'ai' : 'user',
         }));
@@ -291,8 +289,9 @@ export default function LiveCompanionOverlay({
         if (liveNotifTimerRef.current !== null) window.clearTimeout(liveNotifTimerRef.current);
         liveNotifTimerRef.current = window.setTimeout(() => {
           liveNotifTimerRef.current = null;
-          void notifyAiReply('Misa Live', collapsed, LIVE_CALL_SESSION_ID, 0, true, expanded, messages, {
+          void notifyAiReply('Misa Live', assistantText, LIVE_CALL_SESSION_ID, 0, true, assistantText, messages, {
             channelId: LIVE_CHANNEL_ID,
+            preferBigText: true,
           });
         }, 1200);
       },

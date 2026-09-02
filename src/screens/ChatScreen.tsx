@@ -1223,7 +1223,7 @@ export default function ChatScreen({
       // far, messages = native MessagingStyle expand ke liye (scrollable) —
       // user ka message username se, Misa ke bubbles 'ai' se.
       for (const step of buildNotificationSteps(bubbles, schedule, undefined, { text, at: Date.now() })) {
-        setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', sessionId, 0, undefined, step.text, step.messages), step.delayMs);
+        setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', sessionId, 0, undefined, step.text, step.messages, { preferBigText: true }), step.delayMs);
       }
       // Koi visible bubble nahi (sirf whitespace reply) — ek turant notification.
       if (bubbles.length === 0) {
@@ -1232,6 +1232,10 @@ export default function ChatScreen({
           assistant.content.trim() || 'Naya AI reply aaya',
           sessionId,
           0,
+          undefined,
+          assistant.content.trim() || undefined,
+          undefined,
+          { preferBigText: true },
         );
       }
     } catch (err) {
@@ -1304,7 +1308,7 @@ export default function ChatScreen({
         const schedule = computeRevealSchedule(bubbles.length);
         if (bubbles.length > 0) revealScheduleRef.current = schedule;
         for (const step of buildNotificationSteps(bubbles, schedule, undefined, { text: confirmed ? 'Confirm' : 'Cancel', at: Date.now() })) {
-          setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', active.id, 0, undefined, step.text, step.messages), step.delayMs);
+          setTimeout(() => void notifyAiReply('Misa', step.latest || 'Naya AI reply aaya', active.id, 0, undefined, step.text, step.messages, { preferBigText: true }), step.delayMs);
         }
       })
       .catch((err: unknown) => {
