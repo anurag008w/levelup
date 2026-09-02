@@ -42,6 +42,7 @@ import {
   stopLiveCompanionService,
   armLiveCall,
   markLiveCallConnected,
+  isLiveCompanionServiceActive,
   onPiPModeChanged,
 } from '../../lib/live-companion-service';
 import { setLiveCallReplyHandler, LIVE_CALL_SESSION_ID } from '../../lib/notification-actions';
@@ -274,6 +275,23 @@ export default function LiveCompanionOverlay({
     }
     clientRef.current = liveClient;
     let cancelled = false;
+    let startupAttempt: number | null = null;
+
+    // Review-9 P0.1: single rollback for a CANCELLED startup (not just an
+    // error). A cancelled/unmounted startup that has NOT committed must not
+    // leave any resource behind: stop the handed-off mic/camera tracks, tear
+    // down the client session + audio focus/route, stop the FGS (which also
+    // clears the persisted ARMED marker), and release the module-level
+    // singleton only when THIS mount started the call.
+    function rollbackStartup(c: typeof liveClient, existing: typeof existingClient, mic: MediaStream, cam?: MediaStream) {
+      mic.getTracks().forEach((t) => t.stop());
+      cam?.getTracks().forEach((t) => t.stop());
+      if (!existing) {
+        c.disconnect();
+        if (activeLiveClient === c) activeLiveClient = null;
+        void stopLiveCompanionService();
+      }
+    }
 
     (async () => {
       try {
@@ -285,16 +303,16 @@ export default function LiveCompanionOverlay({
         // MainActivity.onDestroy() reset liveCallActive — onUserLeaveHint would
         // otherwise silently skip auto-PiP for the whole revived call.
         //
-        // Review-7 P0/P1: the startup is ONE TRANSACTION. arm → connect →
-        // voice → camera either all succeed (commit) or the single catch below
-        // rolls back EVERYTHING. There is NO `return` inside the critical path,
-        // so a view unmount can never strand a half-armed foreground service:
-        // the startup either commits (the module-level singleton owns the call
-        // and a remounted overlay reattaches its callbacks) or fails and rolls
-        // back exactly once. `startLiveCompanionService()` is intentionally NOT
-        // called again here — armLiveCall() is the single FGS owner (P1); the
-        // plugin only issues start/stop requests and the Android Service
-        // lifecycle is the authority.
+        // Review-7 P0/P1 + review-9 P0.1: the startup is ONE TRANSACTION.
+        // arm → connect → voice → camera → markLiveCallConnected either all
+        // succeed (commit) or the single rollback below undoes EVERYTHING.
+        // Review-9 hardens it: `startupAttempt` is captured from the client's
+        // authoritative generation token after connect, and EVERY awaited step
+        // is gated on `!cancelled` AND `activeAttempt(startupAttempt)`. If the
+        // user cancels/mount unmounts mid-flight, the remaining awaited work is
+        // dropped and the rollback stops the mic/camera streams + tears down the
+        // session + FGS + ARMED marker — a cancelled startup can never commit a
+        // late markCallConnected or leave a half-armed service behind.
         await armLiveCall();
 
         if (!existingClient) {
@@ -303,28 +321,61 @@ export default function LiveCompanionOverlay({
           // fact in so connect() does NOT request focus a second time — focus
           // stays single-owner; connect only applies the route.
           await liveClient.connect(apiKey, incomingCallMeta, { audioFocusAlreadyGranted });
+          // Capture the authoritative generation immediately after connect —
+          // this exact startup owns the session, and only THIS attempt may
+          // commit the persisted lifecycle or attach vision.
+          startupAttempt = liveClient.getConnectionAttempt();
+          if (cancelled || !liveClient.isCurrentAttempt(startupAttempt)) {
+            rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
+            return;
+          }
+
           await liveClient.startVoiceStreaming(initialMicStream);
+          if (cancelled || !liveClient.isCurrentAttempt(startupAttempt)) {
+            rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
+            return;
+          }
 
           if (initialCameraStream) {
             const stream = await liveClient.startCameraStream('environment');
-            if (!cancelled) {
-              setIsCameraActive(true);
-              setIsVisionPreviewVisible(true);
-              if (videoPreviewRef.current) {
-                videoPreviewRef.current.srcObject = stream;
-              }
+            if (cancelled || !liveClient.isCurrentAttempt(startupAttempt)) {
+              rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
+              return;
+            }
+            setIsCameraActive(true);
+            setIsVisionPreviewVisible(true);
+            if (videoPreviewRef.current) {
+              videoPreviewRef.current.srcObject = stream;
             }
           }
+        } else {
+          // Reattaching to an established singleton call: no startup work, but
+          // still capture the current generation so the commit below is safe.
+          startupAttempt = liveClient.getConnectionAttempt();
         }
-        // Review-8 P1: the Gemini session has committed — promote the persisted
-        // process-death lifecycle from ARMED to CONNECTED so a later kill
-        // surfaces the interruption banner accurately (never for an unfinished
-        // startup). AWAITED inside the transaction (not fire-and-forget):
-        // the commit flows arm → … → markCallConnected → UI-enabled hangup, so
-        // a user hangup cannot interleave and write CONNECTED after an
-        // end-call. If this write fails the rollback below still clears the
-        // ARMED marker via stop().
-        await markLiveCallConnected();
+
+        // Review-8 P1 + review-9 P0.2: the Gemini session has committed —
+        // promote the persisted process-death lifecycle from ARMED to CONNECTED
+        // so a later kill surfaces the interruption banner accurately (never for
+        // an unfinished startup). AWAITED + generation-gated: the commit only
+        // runs while `!cancelled` AND this exact startupAttempt is still the
+        // current, un-closed one. This makes the CONNECTED write atomic with the
+        // client lifecycle — an old startup can never write CONNECTED after
+        // hangup, cancellation, Activity recreation, or a newer startup. If it
+        // fails, the rollback below still clears the ARMED marker via stop().
+        if (!cancelled && liveClient.isCurrentAttempt(startupAttempt)) {
+          await markLiveCallConnected();
+          // Review-9 P1.4: verify the foreground service is ACTUALLY running
+          // (onCreate→true, onDestroy→false — clears if the OS killed it). If
+          // startForegroundService() was requested but the service died, we
+          // must not continue to claim FGS-backed background/audio-continue
+          // support. Best-effort: surface a warning instead of fabricating a
+          // background contract we no longer have.
+          const fgsActive = await isLiveCompanionServiceActive();
+          if (fgsActive === false) {
+            console.warn('[LiveCompanion] FGS not active after startup commit — background audio/PiP persistence not guaranteed.');
+          }
+        }
         if (!cancelled) {
           setErrorMessage(null);
         }
@@ -337,11 +388,7 @@ export default function LiveCompanionOverlay({
         // Only roll back when THIS mount started the call. Re-attaching to an
         // established singleton call (existingClient) must never kill it just
         // because the idempotent arm() hiccuped.
-        if (!existingClient) {
-          liveClient.disconnect();
-          if (activeLiveClient === liveClient) activeLiveClient = null;
-          void stopLiveCompanionService();
-        }
+        rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
         if (!cancelled && !existingClient) {
           hapticError();
           setStatus('error');
@@ -372,14 +419,19 @@ export default function LiveCompanionOverlay({
           // (WhatsApp-style, keepAudioPlaying=true). Sirf fully-hidden me
           // audio discard hota hai.
           liveClient.setBackgroundActive(true, true);
-          // Review-8 P1 (background camera contract): the Live FGS is
-          // MICROPHONE|MEDIA_PLAYBACK — it does NOT grant background camera
-          // capture. We therefore deliberately do NOT keep camera running here;
-          // camera capture only continues while the app is on-screen or in PiP
-          // (the FGS keeps the process alive for JS). If background camera must
-          // one day outlive this, it needs its own camera-type FGS + full
-          // Android-version validation (a separate contract, not implied to
-          // follow from the mic FGS).
+          // Review-9 P1.5 (ENFORCED background camera contract, option A —
+          // voice-only in background): the Live FGS is MICROPHONE|MEDIA_PLAYBACK
+          // and does NOT grant background camera capture, so camera/video is
+          // supported ONLY while the app is on-screen. On leaving the visible
+          // lifecycle (background OR PiP) we STOP any running camera/screen-share
+          // — not merely "not start it" — so the raw capture track can never run
+          // outside the visible window (a privacy + Android while-in-use policy
+          // boundary; no camera-type FGS is declared). Voice continues via the
+          // PiP AudioContext (keepAudioPlaying=true). Camera resumes when the
+          // user returns to the full-screen call. Screen share / MediaProjection
+          // is treated as a separate lifecycle and is stopped here too (it cannot
+          // run backgrounded without its own FGS).
+          liveClient.stopVision();
         }
       }).then(listener => {
         if (released) void listener.remove();

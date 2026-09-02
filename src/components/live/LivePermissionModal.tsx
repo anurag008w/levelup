@@ -102,11 +102,20 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed, defaul
     }
   }
 
+  /** Review-9 P1.13: true once the streams are handed to the live session. */
+  const [ownershipTransferred, setOwnershipTransferred] = useState(false);
+
   function handleStart() {
     if (!savedMicStream) {
       void requestMic();
       return;
     }
+    // Review-9 P1.13: EXPLICIT ownership transfer — after this point the modal
+    // must NEVER stop these streams or reset native resources, because the live
+    // session owns them. `releasePartialResources()` below checks this flag so
+    // a later close/unmount of an already-committed call cannot tear down what
+    // the session now owns.
+    setOwnershipTransferred(true);
     hapticSuccess();
     onProceed(savedMicStream, savedCamStream || undefined);
   }
@@ -121,8 +130,11 @@ export default function LivePermissionModal({ isOpen, onClose, onProceed, defaul
    * Without this, a granted-rerouted mic + native focus/route would leak
    * until the next call (silent mic + stale route claims, or a dangling
    * MODE_IN_COMMUNICATION session).
+   * Review-9 P1.13: if ownership was already transferred to the live session
+   * (handleStart ran), this is a no-op — the session owns the streams now.
    */
   function releasePartialResources() {
+    if (ownershipTransferred) return;
     savedMicStream?.getTracks().forEach((track) => track.stop());
     savedCamStream?.getTracks().forEach((track) => track.stop());
     setSavedMicStream(null);

@@ -15,6 +15,16 @@ public class LiveCompanionForegroundService extends Service {
     static final String CHANNEL = "misa_live_call";
     static final int ID = 7422;
 
+    // Review-9 P1.4: authoritative ACTIVE state, written ONLY by the Service
+    // lifecycle itself (onCreate/onDestroy), never by the plugin or JS. This
+    // distinguishes "startForegroundService() was requested" (ARMING) from
+    // "the Service is actually running" (ACTIVE). Before it reads true, the JS
+    // live layer must not claim FGS-backed background support. Killed services
+    // clear it via onDestroy automatically, so it cannot drift stale.
+    private static volatile boolean active;
+
+    static boolean isActive() { return active; }
+
     @Override public void onCreate() { super.onCreate();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel c = new NotificationChannel(CHANNEL,
@@ -47,7 +57,13 @@ public class LiveCompanionForegroundService extends Service {
                 android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                     | android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
         else startForeground(ID, n);
+        active = true;
         return START_NOT_STICKY;
+    }
+
+    @Override public void onDestroy() {
+        active = false;
+        super.onDestroy();
     }
 
     @Nullable @Override public IBinder onBind(Intent intent) { return null; }

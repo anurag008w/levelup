@@ -128,6 +128,22 @@ export class GeminiLiveClient {
     return this.transcripts;
   }
 
+  /**
+   * P0.2 (generation token): expose the current startup/session generation so
+   * callers (e.g. the overlay's persisted-lifecycle commit) can verify they are
+   * still acting on the authoritative attempt before firing side effects. An
+   * old startup can never continue after hangup/recreation — it must first pass
+   * isCurrentAttempt(saved) on THIS method's return value.
+   */
+  getConnectionAttempt(): number {
+    return this.connectionAttempt;
+  }
+
+  /** P0.2/P1.14: true only while `attempt` is the current, un-closed one. */
+  isCurrentAttempt(attempt: number): boolean {
+    return this.isActiveAttempt(attempt);
+  }
+
   getVisionStreamer(): VisionStreamer {
     return this.visionStreamer;
   }
@@ -209,6 +225,19 @@ export class GeminiLiveClient {
     const hadActiveSession = this.session !== null;
     const skipNativeAudioReset = options?.audioFocusAlreadyGranted === true && !hadActiveSession;
     this.disconnect(true, skipNativeAudioReset);
+    // P0.3 (transactional focus ownership): when a FRESH start is handed a
+    // pre-captured native focus (audioFocusAlreadyGranted), any stale
+    // pendingAudioReset left over from a PRIOR call's teardown must be
+    // DISCARDED, not awaited. If we kept it, setupCallAudio() would later run
+    // resetNativeAudioRoute() → abandonCallAudioFocus(), silently revoking the
+    // very focus the upstream path (ChatScreen/permission modal) just acquired —
+    // leaving the call connected with NO native focus. Discarding is safe: the
+    // prior lifecycle already abandoned its own focus when it ended; this fresh
+    // acquisition supersedes it. (A reconnect — hadActiveSession — keeps the
+    // chain so an in-flight teardown still settles before new setup.)
+    if (skipNativeAudioReset) {
+      this.pendingAudioReset = null;
+    }
     // SINGLE-SOURCE FOCUS (Review 4 / P1): the pre-capture path (permission
     // modal / remembered fast path) already acquired native audio focus BEFORE
     // getUserMedia. Inherit that fact ONLY when no native reset ran — a reset
@@ -1635,7 +1664,7 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
   private async installAudioFocusListener(): Promise<void> {
     if (this.audioFocusListener) return;
-    this.audioFocusListener = await addNativeAudioFocusListener((focusChange) => {
+    this.audioFocusListener = await addNativeAudioFocusListener(async (focusChange) => {
       // Review-8 P1 (focus-loss/regain authoritative lifecycle):
       // Focus is local Android audio policy — not a network error.
       // AUDIOFOCUS_LOSS (-1) is permanent: another app (phone call, navigation)
@@ -1671,9 +1700,13 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         this.audioFocusPaused = false;
         this.applyMicrophoneMute();
         this.audioStreamer.setOutputVolume(1);
-        // Restore the configured audio route (may have been reset by another
-        // app claiming speaker/BT during the loss window).
-        void this.setAudioRoute(this.config.defaultAudioRoute);
+        // Review-9 P1.12: route restoration is TRANSACTIONAL — request the
+        // desired route, VERIFY what native actually applied, then update JS
+        // state; if it failed, deterministically fall back to the loudspeaker.
+        // Never resume "listening" while JS claims one route and native is on
+        // the other/unknown route. (The route may have been reset by another
+        // app claiming speaker/BT during the loss window.)
+        await this.restoreAudioRouteTransactional();
         if (this.session) this.setStatus('listening');
       } else if (focusChange === -3) {
         // CAN_DUCK: lower output volume; capture stays active.
@@ -1689,6 +1722,38 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
       await setNativeAudioRoute(route);
     } catch (err) {
       console.warn('[GeminiLive] setAudioRoute failed:', err);
+    }
+  }
+
+  /**
+   * Review-9 P1.12: transactional route restoration (used on focus regain and
+   * explicit switches). request → VERIFY what native actually applied → update
+   * JS state. If the desired route failed to apply, deterministically fall back
+   * to the loudspeaker and VERIFY that too. Never leave JS believing a route is
+   * active when native landed on another/unknown route.
+   */
+  private async restoreAudioRouteTransactional(): Promise<void> {
+    const desired = this.config.defaultAudioRoute ?? 'speaker';
+    let applied = await setNativeAudioRoute(desired);
+    if (applied) {
+      this.currentAudioRoute = (applied.route as LiveAudioRoute) || desired;
+      return;
+    }
+    if (desired !== 'speaker') {
+      console.warn(`[GeminiLive] Route "${desired}" not confirmed on restore — falling back to speaker.`);
+      const fallback = await setNativeAudioRoute('speaker');
+      if (fallback) {
+        this.currentAudioRoute = (fallback.route as LiveAudioRoute) || 'speaker';
+      } else if (!isNativeAudioPlatform()) {
+        this.currentAudioRoute = 'speaker';
+      } else {
+        // Native and even the speaker fallback refused — terminal audio error.
+        this.setStatus('error');
+        this.callbacks.onError?.('Audio route could not be restored. Please retry.');
+      }
+    } else {
+      // Speaker requested but not confirmed (web no-op is acceptable).
+      this.currentAudioRoute = 'speaker';
     }
   }
 
@@ -1780,7 +1845,12 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
 
     this.isReconnecting = true;
     this.reconnectAttempts += 1;
-    console.info(`[GeminiLive] reconnect attempt=${this.reconnectAttempts} lastTransportActivity=${this.lastWsActivity}`);
+    // Review-9 P2.17 observability: reconnect attempt + generation/epoch + the
+    // terminal-retry distinction are all surfaced so prolonged failure is
+    // diagnosable; the safety-valve exhaustion sets status 'error' (distinct
+    // from 'reconnecting') above/below — never silently retry forever while
+    // looking "connected".
+    console.info(`[GeminiLive] reconnect attempt=${this.reconnectAttempts} gen=${this.connectionAttempt} epoch=${this.reconnectEpoch} lastTransportActivity=${this.lastWsActivity}`);
     this.setStatus('reconnecting');
 
     if (this.silenceObserverTimer) { clearInterval(this.silenceObserverTimer); this.silenceObserverTimer = null; }

@@ -277,4 +277,26 @@ describe('Live audio ownership & startup transaction (review 7)', () => {
     expect((client as any).connectionAttempt).toBeGreaterThanOrEqual(attemptBefore);
     client.disconnect(false);
   });
+
+  it('13. Fresh handed-off startup discards a stale pending reset — focus is never abandoned by a prior teardown (review-9 P0.3 transactional focus)', async () => {
+    const client = new GeminiLiveClient(mockConfig);
+    // A PRIOR call's teardown left a scheduled native reset pending (simulating
+    // the async reset chain from the old session).
+    (client as any).pendingAudioReset = Promise.resolve().then(() => {
+      native.plugin.resetRoute();
+    });
+
+    // Now the FRESH start is handed a pre-captured focus: skipNativeAudioReset
+    // is set, and the stale pending reset must be DISCARDED so it can never
+    // run resetRoute() → abandonCallAudioFocus() after the fresh handoff.
+    await client.connect('test-key', undefined, { audioFocusAlreadyGranted: true });
+
+    // The stale reset chain was discarded: the fresh connect threw it away and
+    // did NOT run the prior reset (which would have abandoned the handed-off focus).
+    expect((client as any).pendingAudioReset).toBeNull();
+    // Focus kept through the handoff without a second request AND without the
+    // stale reset nuking it.
+    expect(native.plugin.requestAudioFocus).not.toHaveBeenCalled();
+    client.disconnect(false);
+  });
 });

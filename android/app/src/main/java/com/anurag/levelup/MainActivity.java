@@ -141,6 +141,18 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(LiveCompanionPlugin.class);
         super.onCreate(savedInstanceState);
         hideStatusBar();
+        // Review-9 P1.6 (Activity recreation / PiP native-safe restore): when a
+        // recreated Activity comes up while the Live FGS is STILL running (the
+        // process survived via the foreground service), restore PiP eligibility
+        // from the AUTHORITATIVE native source (the Service's own ACTIVE flag)
+        // instead of depending on a racy JS re-arm. This way, onUserLeaveHint
+        // auto-PiP works again the moment the recreated Activity resumes — even
+        // before the JS overlay has finished re-attaching to the singleton call.
+        // When the FGS is gone (true task kill), liveCallActive stays false so
+        // no spurious PiP entry can occur.
+        if (LiveCompanionForegroundService.isActive()) {
+            liveCallActive = true;
+        }
     }
 
     @Override

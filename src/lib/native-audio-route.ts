@@ -58,7 +58,17 @@ export async function resetNativeAudioRoute(): Promise<void> {
   }
 }
 
-/** Acquire Android voice-communication focus for the duration of a Live call. */
+/**
+ * Acquire Android voice-communication focus for the duration of a Live call.
+ * Review-9 P1.11 (documented decision): AUDIOFOCUS_REQUEST_DELAYED is treated
+ * as a STARTUP FAILURE (returns false), never collapsed into ambiguous boolean
+ * behavior — a delayed grant arrives with no deterministic timing, so for a
+ * live session we reject immediately and let the caller surface a clear error /
+ * fall back to the permission modal, which re-requests from a clean slate. We
+ * deliberately do NOT implement a pending-delay resume state: the added async
+ * complexity is not worth it for the rare delayed-grant case, and a rejected
+ * call is always retryable by the user.
+ */
 export async function requestNativeCallAudioFocus(): Promise<boolean> {
   if (!Capacitor.isNativePlatform()) return true;
   try {

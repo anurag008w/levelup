@@ -6,6 +6,7 @@ interface NativeLiveCompanion {
   stop(): Promise<void>;
   armLiveCall(): Promise<void>;
   markCallConnected(): Promise<void>;
+  isServiceActive(): Promise<{ active: boolean }>;
   enterPiP(): Promise<void>;
   isLiveCallInterrupted(): Promise<{ interrupted: boolean; attempted: boolean }>;
   clearLiveCallInterrupted(): Promise<void>;
@@ -48,6 +49,24 @@ export async function enterPictureInPicture(): Promise<void> {
  */
 export async function markLiveCallConnected(): Promise<void> {
   if (Capacitor.isNativePlatform()) await LiveCompanion.markCallConnected();
+}
+
+/**
+ * Review-9 P1.4: query whether the Live foreground service is ACTUALLY running
+ * (not merely "startForegroundService() was requested"). The Service's own
+ * lifecycle flag (onCreate→true, onDestroy→false) is authoritative and clears
+ * when the service dies — so the JS live layer can detect a died FGS and stop
+ * claiming FGS-backed background support. Returns null when not native.
+ */
+export async function isLiveCompanionServiceActive(): Promise<boolean | null> {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    const { active } = await LiveCompanion.isServiceActive();
+    return active;
+  } catch (err) {
+    console.warn('[LiveCompanion] isServiceActive failed:', err);
+    return null;
+  }
 }
 
 /**

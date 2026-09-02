@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.util.Log;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -92,6 +93,8 @@ public class LiveCompanionPlugin extends Plugin {
     // Live call ab active hai — MainActivity ko batao taaki onUserLeaveHint
     // (Home/Recents press) par PiP reliably trigger ho, aur API 31+ par
     // auto-enter turant arm ho jaaye.
+    // Review-9 P2.17 observability: log FGS arm request + API level (no secrets).
+    Log.i(TAG, "FGS arm requested api=" + Build.VERSION.SDK_INT);
     markCallInterrupted();
     ensureForegroundService();
     MainActivity.setLiveCallActive(true);
@@ -100,6 +103,7 @@ public class LiveCompanionPlugin extends Plugin {
 
   @PluginMethod public void stop(PluginCall call) {
     // stopService() on a non-running service is a no-op — no flag to reset.
+    Log.i(TAG, "FGS stop requested api=" + Build.VERSION.SDK_INT + " active=" + LiveCompanionForegroundService.isActive());
     getContext().stopService(new Intent(getContext(), LiveCompanionForegroundService.class));
     MainActivity.setLiveCallActive(false);
     clearCallInterrupted();
@@ -126,6 +130,19 @@ public class LiveCompanionPlugin extends Plugin {
   @PluginMethod public void markCallConnected(PluginCall call) {
     markCallConnected();
     call.resolve();
+  }
+
+  /**
+   * Review-9 P1.4: authoritative FGS ACTIVE state, queried from the Service's
+   * own lifecycle flag (onCreate→true, onDestroy→false). Lets JS distinguish
+   * "startForegroundService() was requested" (ARMING) from "actually running"
+   * (ACTIVE) — so the live layer never claims FGS-backed background support
+   * when the service died unexpectedly.
+   */
+  @PluginMethod public void isServiceActive(PluginCall call) {
+    JSObject ret = new JSObject();
+    ret.put("active", LiveCompanionForegroundService.isActive());
+    call.resolve(ret);
   }
 
   /** PiP mode — foreground service active hai, background me bhi mic + audio chalta rahe. */

@@ -108,6 +108,11 @@ public class AudioRoutePlugin extends Plugin {
             }
             if (targetDevice != null) {
                 boolean ok = am.setCommunicationDevice(targetDevice);
+                // Review-9 P1.9: confirm with getCommunicationDevice() (authoritative).
+                if (ok && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    AudioDeviceInfo actual = am.getCommunicationDevice();
+                    ok = actual != null && actual.getId() == targetDevice.getId();
+                }
                 if (ok) {
                     JSObject ret = new JSObject();
                     ret.put("route", "speaker");
@@ -177,6 +182,15 @@ public class AudioRoutePlugin extends Plugin {
             return;
         }
         boolean ok = am.setCommunicationDevice(targetDevice);
+        // Review-9 P1.9: setCommunicationDevice() returning true is the apply;
+        // getCommunicationDevice() (API 31+) is the AUTHORITATIVE confirmation
+        // that the system actually switched. A true-but-unchanged apply (or a
+        // device that detached between the call and now) must never let JS claim
+        // a route the system did not land on.
+        if (ok && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            AudioDeviceInfo actual = am.getCommunicationDevice();
+            ok = actual != null && actual.getId() == targetDevice.getId();
+        }
         if (ok) {
             JSObject ret = new JSObject();
             ret.put("route", route);
@@ -185,6 +199,8 @@ public class AudioRoutePlugin extends Plugin {
                 ? targetDevice.getProductName().toString() : route);
             call.resolve(ret);
         } else {
+            Log.w(TAG, "setRouteApi31 apply/confirm failed for " + route
+                + " (device " + (targetDevice.getProductName() != null ? targetDevice.getProductName() : targetDevice.getId()) + ")");
             call.reject("Audio route could not be applied: " + route);
         }
     }
@@ -273,22 +289,24 @@ public class AudioRoutePlugin extends Plugin {
     /**
      * Android 7–11 sticky-SCO state machine, per Android's documented flow:
      *
-     *   register receiver → read current sticky SCO state → if already
-     *   CONNECTED (or isBluetoothScoOn()), keep/start SCO and resolve →
-     *   otherwise startBluetoothSco() → wait CONNECTING → CONNECTED →
-     *   timeout/failure cleanup (stop SCO, disable SCO, speaker).
+     *   register receiver → read the STICKY state returned by registration →
+     *   if already CONNECTED (broadcast sticky OR isBluetoothScoOn()), keep/use
+     *   it and resolve → otherwise startBluetoothSco() → wait CONNECTING →
+     *   CONNECTED → timeout/failure cleanup (stop SCO, disable SCO, speaker).
      *
      * The receiver is registered BEFORE startBluetoothSco() (final-audit race:
      * a fast headset can emit CONNECTED between startBluetoothSco() returning
      * and a post-hoc registration, so registering first guarantees that
      * transition is never missed). SCO establishment can take several seconds,
-     * so the wait is bounded at 3s. The `startSco` Runnable is only invoked
-     * when SCO is not already on.
+     * so the wait is bounded (review-9 P1.8: 3s is a conservative floor derived
+     * from the documented multi-second establishment window; timeout + failure
+     * paths log diagnostics below for real-device validation).
      *
      * Receives on BOTH the current action (ACTION_SCO_AUDIO_STATE_UPDATED) and
-     * the older ACTION_SCO_AUDIO_STATE_CHANGED, because OEMs vary: some still
-     * broadcast the deprecated action only. Returns true only when the physical
-     * Bluetooth communication path is verified active (isBluetoothScoOn()).
+     * the older ACTION_SCO_AUDIO_STATE_CHANGED (kept as compatibility fallback),
+     * because OEMs vary: some still broadcast the deprecated action only.
+     * Returns true only when the physical Bluetooth communication path is
+     * verified active (isBluetoothScoOn()).
      */
     private boolean waitForScoReady(AudioManager am, Runnable startSco) {
         final Object lock = new Object();
@@ -305,20 +323,35 @@ public class AudioRoutePlugin extends Plugin {
         IntentFilter filter = new IntentFilter();
         filter.addAction(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED);
         filter.addAction(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED);
+        // Review-9 P1.7: `registerReceiver` RETURNS the sticky Intent for the
+        // matching action(s). The sticky state reflects what the framework
+        // considers the current SCO state, independent of our local calls —
+        // reading it here (rather than only isBluetoothScoOn(), which some
+        // OEMs report late) closes the "already connected before we registered
+        // / became connected before we observed it" race.
+        Intent sticky = null;
         try {
             // SYSTEM broadcast (framework-SCO state): must be EXPORTED so the
             // Android framework can deliver it on every OEM/skin. App-private
             // broadcasts stay NOT_EXPORTED instead — only this system broadcast
             // is intentionally exported. Guarded so pre-33 need no flag at all.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                getContext().registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
+                sticky = getContext().registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
             } else {
-                getContext().registerReceiver(receiver, filter);
+                sticky = getContext().registerReceiver(receiver, filter);
             }
-            // Read the STICKY state: SCO may already be connected before us, or
-            // connect in the small window after registration. isBluetoothScoOn()
-            // is the authoritative physical check; only start SCO when it is off.
-            if (am.isBluetoothScoOn()) {
+            // Authoritative current state: sticky broadcast state takes
+            // precedence (it reflects framework truth); isBluetoothScoOn() is a
+            // cross-check for the window where the sticky intent has not yet been
+            // delivered on some OEMs. Only start SCO when NOT already connected.
+            int stickyState = AudioManager.SCO_AUDIO_STATE_ERROR;
+            if (sticky != null) {
+                stickyState = sticky.getIntExtra(
+                    AudioManager.EXTRA_SCO_AUDIO_STATE, AudioManager.SCO_AUDIO_STATE_ERROR);
+            }
+            boolean alreadyConnected =
+                stickyState == AudioManager.SCO_AUDIO_STATE_CONNECTED || am.isBluetoothScoOn();
+            if (alreadyConnected) {
                 ready[0] = true;
             } else {
                 startSco.run();
@@ -336,6 +369,11 @@ public class AudioRoutePlugin extends Plugin {
         } finally {
             try { getContext().unregisterReceiver(receiver); } catch (Exception ignored) { }
         }
+        // Review-9 P1.8 observability: log the SCO outcome so real-device
+        // timeouts/failures are diagnosable without a debugger. No sensitive
+        // data — only route state + whether SCO converged.
+        Log.i(TAG, "SCO wait result=" + (ready[0] ? "CONNECTED" : "TIMEOUT/FAILURE")
+            + " isBluetoothScoOn=" + am.isBluetoothScoOn());
         // Final physical verification (P1): a CONNECTED state is only meaningful
         // if the communication path is actually active on the headset.
         return ready[0] && am.isBluetoothScoOn();
@@ -372,6 +410,12 @@ public class AudioRoutePlugin extends Plugin {
         int result = requestCallAudioFocus(am);
         JSObject response = new JSObject();
         boolean granted = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        // Review-9 P2.17 observability: log the focus outcome (no sensitive data).
+        // Review-9 P1.11: DELAYED is reported distinctly (status="delayed") so
+        // the JS layer rejects deterministically rather than treating it as a
+        // grant or a plain denial.
+        Log.i(TAG, "audio focus result=GRANTED:" + granted
+            + " status=" + (granted ? "granted" : result == AudioManager.AUDIOFOCUS_REQUEST_DELAYED ? "delayed" : "failed"));
         response.put("granted", granted);
         response.put("status", granted ? "granted" : result == AudioManager.AUDIOFOCUS_REQUEST_DELAYED ? "delayed" : "failed");
         call.resolve(response);
@@ -383,6 +427,14 @@ public class AudioRoutePlugin extends Plugin {
                 .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build();
+            // Review-9 P1.10 (documented decision): AUDIOFOCUS_GAIN_TRANSIENT is
+            // the correct policy for a phone-like voice-communication session —
+            // this is what real voice calls use (not full GAIN). It lets us
+            // duck gracefully under navigation (CAN_DUCK) and pause under short
+            // interruptions (LOSS_TRANSIENT), while permanent LOSS (-1) is
+            // deliberately handled as terminal in the JS layer (the session
+            // cannot continue without audio). GAIN would be wrong here: it would
+            // assert sole ownership and other apps cannot politely duck us.
             audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
                 .setAudioAttributes(attributes)
                 .setOnAudioFocusChangeListener(audioFocusListener)
