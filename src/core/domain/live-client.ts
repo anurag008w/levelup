@@ -1720,10 +1720,15 @@ Rule: When asked what time it is ("kitne baje hai", "kya time ho raha hai", etc.
         // and the native focus is abandoned on teardown.
         this.disconnect(false);
       } else if (focusChange === -2) {
-        // Transient loss: keep the session alive but mute capture + flush.
+        // Transient loss (e.g. a short notification): keep the session alive
+        // and mute capture, but DO NOT flush the in-flight speech.
+        // Flushing here was the "notification aate hi voice cut" bug: a brief
+        // notification blip chops the whole sentence being spoken mid-word.
+        // Let the already-scheduled speech finish (~<600ms), then resume
+        // cleanly on regain — that keeps the live voice stable through a
+        // notification without dropping what Misa is currently saying.
         this.audioFocusPaused = true;
         this.applyMicrophoneMute();
-        this.audioStreamer.flushPlayback();
         this.setStatus('background-active');
       } else if (focusChange === 1) {
         // Regain: restore capture + full volume.  Do NOT re-request focus —

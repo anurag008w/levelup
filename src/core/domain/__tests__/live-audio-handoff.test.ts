@@ -240,6 +240,29 @@ describe('Live audio ownership & startup transaction (review 7)', () => {
     disconnectSpy.mockRestore();
   });
 
+  it('10c. TRANSIENT (-2) does NOT flush in-flight speech; PERMANENT (-1) still does (notification must not cut the voice)', async () => {
+    const client = new GeminiLiveClient(mockConfig);
+    await client.connect('test-key');
+    const flushSpy = vi.spyOn((client as any).audioStreamer, 'flushPlayback');
+
+    const focusHandler = native.plugin.addListener.mock.calls[0][1] as (event: { focusChange: number }) => void;
+
+    // A short notification interruption (-2) must NOT chop the sentence that is
+    // currently being spoken — that was the "notification ke wajah se voice
+    // cut" bug. Capture pauses, but playback is left stable so speech continues.
+    focusHandler({ focusChange: -2 });
+    expect((client as any).audioFocusPaused).toBe(true);
+    expect(flushSpy).not.toHaveBeenCalled();
+
+    // A real permanent focus loss (-1) still ends the call and flushes.
+    const disconnectSpy = vi.spyOn(client, 'disconnect');
+    focusHandler({ focusChange: -1 });
+    expect(disconnectSpy).toHaveBeenCalledWith(false);
+    expect((client as any).audioFocusPaused).toBe(true);
+    disconnectSpy.mockRestore();
+    flushSpy.mockRestore();
+  });
+
   it('10b. Focus regain does NOT clobber terminal route-restore error with "listening" (review-10 P1 focus-regain overwrite)', async () => {
     // Focus regain must only resume 'listening' when the route actually restored.
     // If native refuses BOTH the desired route and the speaker fallback,
