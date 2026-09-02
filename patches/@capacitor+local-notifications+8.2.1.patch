@@ -1,8 +1,7 @@
 diff --git a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
-index 0b826a5..41c28fa 100644
 --- a/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
 +++ b/node_modules/@capacitor/local-notifications/android/src/main/java/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.java
-@@ -15,8 +15,10 @@ import android.media.AudioAttributes;
+@@ -13,10 +13,12 @@
  import android.net.Uri;
  import android.os.Build;
  import android.os.Bundle;
@@ -13,7 +12,9 @@ index 0b826a5..41c28fa 100644
  import androidx.core.app.NotificationManagerCompat;
 +import androidx.core.app.Person;
  import androidx.core.app.RemoteInput;
-@@ -162,18 +168,78 @@ public class LocalNotificationManager {
+ import com.getcapacitor.CapConfig;
+ import com.getcapacitor.JSObject;
+@@ -160,25 +162,86 @@
      // TODO expandable notification NotificationCompat.MessagingStyle
      // TODO media style notification support NotificationCompat.MediaStyle
      // TODO custom small/large icons
@@ -94,16 +95,14 @@ index 0b826a5..41c28fa 100644
 +            mBuilder.setStyle(messagingStyle);
 +        } else if (localNotification.getLargeBody() != null) {
              // support multiline text
--            mBuilder.setStyle(
--                new NotificationCompat.BigTextStyle()
--                    .bigText(localNotification.getLargeBody())
--                    .setSummaryText(localNotification.getSummaryText())
--            );
 +            CharSequence formattedLarge = renderFormattedText(localNotification.getLargeBody());
 +            CharSequence summary = localNotification.getSummaryText() != null ? renderFormattedText(localNotification.getSummaryText()) : null;
-+            mBuilder.setStyle(
-+                new NotificationCompat.BigTextStyle()
+             mBuilder.setStyle(
+                 new NotificationCompat.BigTextStyle()
+-                    .bigText(localNotification.getLargeBody())
+-                    .setSummaryText(localNotification.getSummaryText())
 +                    .bigText(formattedLarge)
 +                    .setSummaryText(summary)
-+            );
+             );
          }
+ 
