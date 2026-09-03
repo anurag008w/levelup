@@ -21,6 +21,28 @@ export class AudioStreamer {
   // calls. Bump the window high enough (60s) to cover any legitimately long
   // spoken reply without cutting it mid-sentence.
   private static readonly MAX_PLAYBACK_BACKLOG_SECONDS = 60;
+  // ── Weak-network / long-reply stutter guard ──
+  // Gemini streams audio as many small PCM chunks split across many WebSocket
+  // messages. On a weak link those messages arrive in bursts with silent gaps.
+  // If we schedule each chunk back-to-back off a single `nextPlayTime` chain,
+  // the queue drains to `currentTime` mid-gap, then the next burst re-starts
+  // with only ~25ms of lead → the hardware DAC underruns and you hear the
+  // "cut cut" clicks, worst on long replies that span many messages.
+  //
+  // Proven architecture (community / WebAudio spec / Google Live API docs):
+  //   • MDN: AudioBufferSourceNode is NOT built for network streaming; gapless
+  //     joining of separate sources is not spec-guaranteed.
+  //   • Use a receiver-side JITTER BUFFER: queue incoming chunks, feed the
+  //     hardware on a smooth clock so irregular network arrival becomes uniform
+  //     playback (WebRTC NetEQ pattern).
+  //   • Startup/underrun guard: don't schedule a chunk that will end before the
+  //     next one is ready — that clicks on every chunk boundary. Buffer a
+  //     minimum first, then run with a comfortable lead over the DAC.
+  private static readonly PRE_ROLL_MS = 160; // desired scheduler lead over the DAC
+  private static readonly MIN_CHAIN_LEAD_MS = 20; // never schedule a burst dead-on `now`
+  private static readonly SCHEDULE_AHEAD_SECONDS = 0.9; // keep ~900ms of audio pre-scheduled
+  private static readonly STARTUP_BUFFER_COUNT = 3; // wait for ~3 chunks before first playback
+
   private audioContext: AudioContext | null = null;
   private micStream: MediaStream | null = null;
   private inputSource: MediaStreamAudioSourceNode | null = null;
@@ -41,6 +63,10 @@ export class AudioStreamer {
   private onPlaybackEnded?: () => void;
   private outputVolume = 1;
   private outputGainNode: GainNode | null = null;
+  // Receive-side jitter buffer: incoming decoded chunks wait here until the
+  // scheduler feeds them to the DAC gaplessly. Absorbs weak-network gaps.
+  private pendingChunks: AudioBuffer[] = [];
+  private scheduleTimer: number | null = null;
 
   setOutputVolume(volume: number): void {
     this.outputVolume = Math.max(0, Math.min(1, volume));
@@ -229,9 +255,7 @@ export class AudioStreamer {
     const ctx = this.audioContext || this.getContext();
     if (!ctx || ctx.state === 'closed') return;
     // Autoplay-safety: agar AudioContext abhi bhi suspended ho (kuch ROMs pe
-    // first resume pending), turant continue karo. `startRecording` ne pehle
-    // hi ensureRunning kiya hai, isliye yahan usually running hota hai — hame
-    // har chunk ko async wrapper me koi race/order hazard nahi chaahiye.
+    // first resume pending), turant continue karo.
     if (ctx.state === 'suspended') {
       void ctx.resume();
     }
@@ -250,54 +274,112 @@ export class AudioStreamer {
     const audioBuffer = ctx.createBuffer(1, rawSamples.length, 24000);
     audioBuffer.getChannelData(0).set(rawSamples);
 
-    const source = ctx.createBufferSource();
-    source.buffer = audioBuffer;
+    // Jitter-buffer: decode inline (cheap), then push to the queue and let the
+    // scheduler feed the DAC gaplessly. Decoding a chunk on every WebSocket
+    // message was never the bottleneck — the DRAINT-to-underrun scheduling was.
+    this.pendingChunks.push(audioBuffer);
+    this.kickScheduler();
+  }
+
+  // Schedule queued chunks onto the hardware clock. Runs the actual
+  // source.start() work on a short timer so bursts of WebSocket messages that
+  // arrive in the same tick are coalesced into ONE scheduling pass (fewer
+  // source nodes, fewer boundaries) instead of one pass per chunk.
+  private kickScheduler(): void {
+    if (this.scheduleTimer !== null) return;
+    this.scheduleTimer = window.setTimeout(() => {
+      this.scheduleTimer = null;
+      this.drainPendingChunks();
+    }, 8);
+  }
+
+  private drainPendingChunks(): void {
+    if (this.pendingChunks.length === 0) return;
+    const ctx = this.audioContext;
+    if (!ctx || ctx.state === 'closed') return;
 
     const speed = this.playbackSpeed && this.playbackSpeed > 0 ? this.playbackSpeed : 1.0;
-    source.playbackRate.value = speed;
 
     if (!this.outputGainNode) {
       this.outputGainNode = ctx.createGain();
       this.outputGainNode.gain.value = this.outputVolume;
       this.outputGainNode.connect(this.outputAnalyser!);
     }
-    source.connect(this.outputGainNode);
 
-    const playDuration = audioBuffer.duration / speed;
     const now = ctx.currentTime;
-
+    // Stale-backlog safety: never play audio that is absurdly far behind.
     if (this.nextPlayTime - now > AudioStreamer.MAX_PLAYBACK_BACKLOG_SECONDS) {
       this.flushPlayback(false);
     }
 
-    // Gapless continuous playback:
-    // If starting fresh or recovering from an underrun (nextPlayTime < now),
-    // give 25ms lead time so the Android hardware DAC / Bluetooth radio buffer
-    // initializes smoothly without audio clicks or underruns.
-    // If consecutive chunks arrive in a stream (nextPlayTime >= now),
-    // schedule seamlessly with EXACTLY 0ms gap.
-    if (this.nextPlayTime < now) {
-      this.nextPlayTime = now + 0.025;
+    // Startup / underrun guard (proven jitter-buffer behaviour): don't fire the
+    // first chunk until enough audio is buffered, otherwise a lone chunk plays
+    // and ends before the next WS message (with weak-network delay) arrives →
+    // click on every boundary. We start only once STARTUP_BUFFER_COUNT chunks
+    // are queued, and open the chain with a comfortable PRE_ROLL lead.
+    const isColdStart = this.nextPlayTime <= 0 || this.nextPlayTime < now;
+    const buffersNow = isColdStart ? this.pendingChunks.length : Number.POSITIVE_INFINITY;
+    if (isColdStart && buffersNow < AudioStreamer.STARTUP_BUFFER_COUNT) {
+      // Not enough audio yet — hold. kickScheduler() will be re-fired when more
+      // chunks land, and the guard re-checks then.
+      return;
     }
 
-    source.start(this.nextPlayTime);
-    this.nextPlayTime += playDuration;
+    if (this.nextPlayTime < now + AudioStreamer.MIN_CHAIN_LEAD_MS / 1000) {
+      this.nextPlayTime = now + AudioStreamer.PRE_ROLL_MS / 1000;
+    }
+    if (this.nextPlayTime <= 0) {
+      this.nextPlayTime = now + AudioStreamer.PRE_ROLL_MS / 1000;
+    }
 
-    this.activeSources.push(source);
-    source.onended = () => {
-      const idx = this.activeSources.indexOf(source);
-      if (idx !== -1) {
-        this.activeSources.splice(idx, 1);
-      }
-      if (this.activeSources.length === 0) {
-        this.nextPlayTime = 0;
-        this.onPlaybackEnded?.();
-      }
-    };
+    // Feed the DAC at most SCHEDULE_AHEAD_SECONDS into the future so we never
+    // over-buffer a long reply; remaining chunks stay in the jitter queue until
+    // the next scheduling pass (which the natural beat of incoming WS messages
+    // or a trailing timer re-triggers).
+    let scheduled = 0;
+    while (this.pendingChunks.length > 0) {
+      const audioBuffer = this.pendingChunks[0];
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.playbackRate.value = speed;
+      source.connect(this.outputGainNode);
+
+      const playDuration = audioBuffer.duration / speed;
+      source.start(this.nextPlayTime);
+      this.nextPlayTime += playDuration;
+      scheduled += playDuration;
+
+      this.pendingChunks.shift();
+      this.activeSources.push(source);
+      source.onended = () => {
+        const idx = this.activeSources.indexOf(source);
+        if (idx !== -1) this.activeSources.splice(idx, 1);
+        if (this.activeSources.length === 0) {
+          this.nextPlayTime = 0;
+          this.onPlaybackEnded?.();
+        }
+      };
+
+      if (scheduled >= AudioStreamer.SCHEDULE_AHEAD_SECONDS) break;
+    }
+
+    // If more audio remains queued, keep draining on a short timer — this also
+    // re-arms the startup/underrun guard if a gap drained the chain to silence.
+    if (this.pendingChunks.length > 0 && this.scheduleTimer === null) {
+      this.scheduleTimer = window.setTimeout(() => {
+        this.scheduleTimer = null;
+        this.drainPendingChunks();
+      }, 16);
+    }
   }
 
   /** Immediately flush and stop active playback (e.g. on user interruption). */
   flushPlayback(notifyEnded = true): void {
+    if (this.scheduleTimer !== null) {
+      clearTimeout(this.scheduleTimer);
+      this.scheduleTimer = null;
+    }
+    this.pendingChunks = [];
     for (const source of this.activeSources) {
       try {
         source.stop();

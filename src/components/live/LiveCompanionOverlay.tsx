@@ -245,6 +245,15 @@ export default function LiveCompanionOverlay({
   // drawer notification grows with the full long reply instead of being
   // flooded with schedule() calls that can drop / stall).
   const liveNotifTimerRef = useRef<number | null>(null);
+  // Stutter guard: weak-network replies arrive in bursts with gaps LONGER than
+  // the fg debounce, so the trailing-debounce would re-fire `notifyAiReply` on
+  // every gap → repeated same-id Android notification rebuilds (bridge+IPC,
+  // main-thread churn) that stall the shared audio thread → "cut cut" stutter.
+  // A minimum inter-notification gap collapses those into a single refresh per
+  // sustained reply window; the DEDUPE_WINDOW below still lets genuine new
+  // turns notify (user restarts a fresh reply every ~N seconds).
+  const liveNotifMinGapRef = useRef(0);
+  const LIVE_NOTIF_MIN_GAP_MS = 12_000;
 
   // Initialize and connect Gemini Live
   useEffect(() => {
@@ -269,6 +278,14 @@ export default function LiveCompanionOverlay({
       onTranscriptUpdate: (newTranscripts) => {
         setTranscripts(newTranscripts);
         onTranscriptUpdate?.(newTranscripts);
+        // User-turn boundary: when a fresh USER item appears, the previous
+        // assistant turn is done — reset the notification min-gap so the NEXT
+        // assistant reply can notify again (otherwise a long call could lock
+        // the live notification to "sent once" forever).
+        const lastTx = newTranscripts[newTranscripts.length - 1];
+        if (lastTx && lastTx.role === 'user') {
+          liveNotifMinGapRef.current = 0;
+        }
         // Notification chat trick: sirf assistant ka latest message notification
         // me dikhao (WhatsApp style), aur jaise-jaise reply stream hota hai
         // same-id se update karke poora text dikhao.
@@ -297,6 +314,13 @@ export default function LiveCompanionOverlay({
         if (liveNotifTimerRef.current !== null) window.clearTimeout(liveNotifTimerRef.current);
         liveNotifTimerRef.current = window.setTimeout(() => {
           liveNotifTimerRef.current = null;
+          // Min-gap stutter guard (see LIVE_NOTIF_MIN_GAP_MS above): a weak link
+          // lets the debounce fire many same-id notification rebuilds within a
+          // single sustained reply. Skip refreshes that arrive too soon after the
+          // last one; the very first notification of a turn is still delivered.
+          const now = Date.now();
+          if (now - liveNotifMinGapRef.current < LIVE_NOTIF_MIN_GAP_MS) return;
+          liveNotifMinGapRef.current = now;
           void notifyAiReply('Misa Live', assistantText, LIVE_CALL_SESSION_ID, 0, true, assistantText, messages, {
             channelId: LIVE_CHANNEL_ID,
             preferBigText: true,
@@ -549,6 +573,7 @@ export default function LiveCompanionOverlay({
         window.clearTimeout(liveNotifTimerRef.current);
         liveNotifTimerRef.current = null;
       }
+      liveNotifMinGapRef.current = 0;
       if (appStateListener) void appStateListener.remove();
       if (pipListener) pipListener();
       // Do not make React ownership equal call ownership. Explicit hangup is

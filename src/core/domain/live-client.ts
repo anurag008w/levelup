@@ -1990,11 +1990,18 @@ STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said som
         return;
       }
 
-      // Calculate silence elapsed strictly from the moment either user or assistant stopped speaking
-      const lastActivityAnchor = Math.max(
-        this.lastTurnFinishedTime || 0,
-        this.lastUserVoiceTime || 0
-      );
+      // Calculate silence elapsed CONVERSATIONALLY — from the last real turn
+      // boundary (user finished speaking / assistant finished talking / a text
+      // message was sent). We intentionally do NOT anchor on `lastUserVoiceTime`
+      // here: that field is advanced by every live microphone frame while
+      // `isSpeech` is true, and on a weak/marginal link room noise / encoder
+      // artifacts can keep `rmsLevel` crossing the speech threshold frame after
+      // frame, keeping `lastUserVoiceTime` freshly-pinned forever so the silence
+      // nudge can never fire. The turn anchor is only advanced by genuine
+      // communicative boundaries, so true conversational silence (the condition
+      // this observer exists to detect) is measured correctly even when ambient
+      // mic noise is present.
+      const lastActivityAnchor = this.lastTurnFinishedTime || 0;
       const silenceDurationSec = (Date.now() - lastActivityAnchor) / 1000;
 
       // ── Fast Stalled-Turn Watchdog (User Spoke Real Words but Model Didn't Reply) ──
