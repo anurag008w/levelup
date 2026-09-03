@@ -1,4 +1,9 @@
 import { Capacitor } from '@capacitor/core';
+import {
+  ensureNativeAudioTrack,
+  flushNativeAudioTrack,
+  writeNativeAudioChunk,
+} from '../../lib/gapless-audio-native';
 
 // WebAudio Streamer for Gemini Live
 // High-performance real-time audio pipeline:
@@ -63,6 +68,10 @@ export class AudioStreamer {
   private onPlaybackEnded?: () => void;
   private outputVolume = 1;
   private outputGainNode: GainNode | null = null;
+  // Track whether the native gapless AudioTrack path is active (true when the
+  // native plugin opened successfully and is the current playback sink). A null
+  // means "not yet decided" — we try native on the first chunk, then commit.
+  private nativeReady: boolean | null = null;
   // Receive-side jitter buffer: incoming decoded chunks wait here until the
   // scheduler feeds them to the DAC gaplessly. Absorbs weak-network gaps.
   private pendingChunks: AudioBuffer[] = [];
@@ -252,6 +261,36 @@ export class AudioStreamer {
 
   /** Direct hardware DAC scheduling with clean linear PCM streaming. */
   playAudioChunk(pcm24kBase64: string): void {
+    // ── Native gapless path (Android) ──
+    // On native, route the PCM to our GaplessAudioTrack plugin. AudioTrack
+    // MODE_STREAM glues consecutive writes together so there are NO per-chunk
+    // boundaries — the real "bubble-end / bade messages" stutter fix, which
+    // WebAudio AudioBufferSourceNode chaining can not guarantee. Once native is
+    // confirmed we deliberately bypass the WebAudio scheduler + jitter-buffer.
+    if (Capacitor.isNativePlatform()) {
+      if (this.nativeReady === null) {
+        // First chunk on native: kick off the plugin open. Until it resolves we
+        // fall through to WebAudio below so nothing is lost; once open, future
+        // chunks stream gaplessly through native.
+        this.nativeReady = false;
+        void ensureNativeAudioTrack()
+          .then((ok) => {
+            this.nativeReady = ok;
+            if (ok) {
+              // Native came up after we may have buffered a couple WebAudio
+              // chunks — they already played via the fallback, that's fine.
+              this.pendingChunks = [];
+            }
+          })
+          .catch(() => { this.nativeReady = false; });
+      } else if (this.nativeReady) {
+        // Native is live: enqueue fire-and-forget. If a write happens to fail,
+        // the module already logged it; we keep the native path (best-effort).
+        void writeNativeAudioChunk(pcm24kBase64);
+        return;
+      }
+    }
+
     const ctx = this.audioContext || this.getContext();
     if (!ctx || ctx.state === 'closed') return;
     // Autoplay-safety: agar AudioContext abhi bhi suspended ho (kuch ROMs pe
@@ -313,14 +352,22 @@ export class AudioStreamer {
     }
 
     // ── Cold start vs. recovery ──
-    // Cold start = first chunk of a fresh reply (no active chain, e.g. right after
-    // a flush/interruption/hang-up reply). Recovery = the chain drained below our
-    // lead on a weak network while a reply is still streaming.
-    let isColdStart = this.nextPlayTime <= 0 || this.nextPlayTime < now;
+    // Cold start = a brand new reply: nextPlayTime was zeroed — either never
+    // started, or the previous reply was flushed/interrupted/hung-up
+    // (flushPlayback() zeroes it on turn boundary / interruption / hang-up).
+    // Recovery = the ACTIVE chain drained below `now` mid-reply on a weak
+    // network. The two differ: a fresh reply opens the DAC with a short PRE_ROLL
+    // to avoid the very first click; a drained mid-reply CONTINUES with only a
+    // minimal MIN_CHAIN_LEAD, deliberately NOT re-adding the full PRE_ROLL —
+    // re-buffering on every gap was exactly what caused the mid-stream "cut cut".
+    // Crucially, a drained mid-reply still has nextPlayTime > 0 (we never reset
+    // it in onended), so it is NOT a cold start even though it is behind `now`.
+    const isColdStart = this.nextPlayTime <= 0;
 
     // Don't fire a lone cold-start chunk until we're confident the next WS message
     // is coming — otherwise one chunk plays-and-ends before the next arrives.
-    if (isColdStart && this.pendingChunks.length < AudioStreamer.STARTUP_BUFFER_COUNT) {
+    // (weak-network mid-reply recovery still starts immediately from `now`.)
+    if (isColdStart && !this.activeSources.length && this.pendingChunks.length < AudioStreamer.STARTUP_BUFFER_COUNT) {
       return; // hold; kickScheduler() re-fires when more chunks arrive
     }
 
@@ -329,7 +376,7 @@ export class AudioStreamer {
       // warms up smoothly and the very first source.start() doesn't click.
       this.nextPlayTime = now + AudioStreamer.PRE_ROLL_MS / 1000;
     } else if (this.nextPlayTime < now + AudioStreamer.MIN_CHAIN_LEAD_MS / 1000) {
-      // Weak-network recovery: the chain just drained to (or near) `now`. Re-open
+      // Weak-network recovery: the chain drained to (or near) `now`. Re-open
       // directly with a small MIN_CHAIN_LEAD — we deliberately do NOT re-add the
       // full PRE_ROLL here, because re-buffering on every gap is what caused the
       // mid-stream "cut cut". Continuing with minimal lead keeps playback gapless.
@@ -382,6 +429,11 @@ export class AudioStreamer {
 
   /** Immediately flush and stop active playback (e.g. on user interruption). */
   flushPlayback(notifyEnded = true): void {
+    // Native gapless path: drop any PCM still queued on the AudioTrack and
+    // reset the sink so a new reply starts from a clean gapless stream.
+    if (this.nativeReady) {
+      void flushNativeAudioTrack();
+    }
     if (this.scheduleTimer !== null) {
       clearTimeout(this.scheduleTimer);
       this.scheduleTimer = null;

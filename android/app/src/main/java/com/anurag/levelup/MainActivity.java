@@ -139,6 +139,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(AudioRoutePlugin.class);
         registerPlugin(ScreenSharePlugin.class);
         registerPlugin(LiveCompanionPlugin.class);
+        registerPlugin(GaplessAudioTrackPlugin.class);
         super.onCreate(savedInstanceState);
         hideStatusBar();
         // Review-9 P1.6 (Activity recreation / PiP native-safe restore): when a

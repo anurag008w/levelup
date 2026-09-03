@@ -198,4 +198,33 @@ describe('AudioStreamer jitter-buffer scheduling', () => {
     // Re-armed chain should be ≥ MIN_CHAIN_LEAD (20ms) ahead of the new currentTime (1000).
     expect(startCalls[startCalls.length - 1]).toBeGreaterThan(1000 + 0.02);
   });
+
+  it('a drained mid-reply chain recovers with MIN_CHAIN_LEAD, not a cold PRE_ROLL', async () => {
+    await loadStreamer();
+    const streamer = new AudioStreamer();
+    // Start a reply; chain opens with PRE_ROLL and streams forward.
+    for (let i = 0; i < 4; i++) {
+      streamer.playAudioChunk(toPcm24kBase64(new Float32Array((0.2 * 24000) | 0)));
+      flushTimers();
+    }
+    expect(startCalls.length).toBeGreaterThan(0);
+    const beforeRecovery = startCalls.length;
+    // Simulate a weak-network gap that drained playback: the chain sat behind
+    // currentTime (active sources all ended) but nextPlayTime is still > 0
+    // (we intentionally do NOT reset it in onended).
+    (streamer as any).activeSources = [];
+    ctx.currentTime = 500;
+    (streamer as any).nextPlayTime = 400; // chain behind `now` => mid-reply drain
+    // New burst arrives mid-reply — must recover with MIN_CHAIN_LEAD (20ms),
+    // NOT re-add the full 60ms cold PRE_ROLL (that re-buffer was the stutter).
+    for (let i = 0; i < 4; i++) {
+      streamer.playAudioChunk(toPcm24kBase64(new Float32Array((0.2 * 24000) | 0)));
+      flushTimers();
+    }
+    // The FIRST chunk of the recovery burst must resume with the 20ms lead
+    // (≈ currentTime + 0.02), never the 60ms cold-start PRE_ROLL (currentTime+0.06).
+    const firstRecovery = startCalls[beforeRecovery];
+    expect(firstRecovery).toBeGreaterThanOrEqual(500 + 0.02);
+    expect(firstRecovery).toBeLessThan(500 + 0.06);
+  });
 });
