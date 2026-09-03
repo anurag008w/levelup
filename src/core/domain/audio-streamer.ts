@@ -38,10 +38,10 @@ export class AudioStreamer {
   //   • Startup/underrun guard: don't schedule a chunk that will end before the
   //     next one is ready — that clicks on every chunk boundary. Buffer a
   //     minimum first, then run with a comfortable lead over the DAC.
-  private static readonly PRE_ROLL_MS = 160; // desired scheduler lead over the DAC
+  private static readonly PRE_ROLL_MS = 60; // small initial lead so the DAC ramps smoothly
   private static readonly MIN_CHAIN_LEAD_MS = 20; // never schedule a burst dead-on `now`
-  private static readonly SCHEDULE_AHEAD_SECONDS = 0.9; // keep ~900ms of audio pre-scheduled
-  private static readonly STARTUP_BUFFER_COUNT = 3; // wait for ~3 chunks before first playback
+  private static readonly SCHEDULE_AHEAD_SECONDS = 1.2; // keep ~1.2s of audio pre-scheduled
+  private static readonly STARTUP_BUFFER_COUNT = 1; // start as soon as the first chunk is decoded
 
   private audioContext: AudioContext | null = null;
   private micStream: MediaStream | null = null;
@@ -312,24 +312,28 @@ export class AudioStreamer {
       this.flushPlayback(false);
     }
 
-    // Startup / underrun guard (proven jitter-buffer behaviour): don't fire the
-    // first chunk until enough audio is buffered, otherwise a lone chunk plays
-    // and ends before the next WS message (with weak-network delay) arrives →
-    // click on every boundary. We start only once STARTUP_BUFFER_COUNT chunks
-    // are queued, and open the chain with a comfortable PRE_ROLL lead.
-    const isColdStart = this.nextPlayTime <= 0 || this.nextPlayTime < now;
-    const buffersNow = isColdStart ? this.pendingChunks.length : Number.POSITIVE_INFINITY;
-    if (isColdStart && buffersNow < AudioStreamer.STARTUP_BUFFER_COUNT) {
-      // Not enough audio yet — hold. kickScheduler() will be re-fired when more
-      // chunks land, and the guard re-checks then.
-      return;
+    // ── Cold start vs. recovery ──
+    // Cold start = first chunk of a fresh reply (no active chain, e.g. right after
+    // a flush/interruption/hang-up reply). Recovery = the chain drained below our
+    // lead on a weak network while a reply is still streaming.
+    let isColdStart = this.nextPlayTime <= 0 || this.nextPlayTime < now;
+
+    // Don't fire a lone cold-start chunk until we're confident the next WS message
+    // is coming — otherwise one chunk plays-and-ends before the next arrives.
+    if (isColdStart && this.pendingChunks.length < AudioStreamer.STARTUP_BUFFER_COUNT) {
+      return; // hold; kickScheduler() re-fires when more chunks arrive
     }
 
-    if (this.nextPlayTime < now + AudioStreamer.MIN_CHAIN_LEAD_MS / 1000) {
+    if (isColdStart) {
+      // Fresh reply: open the chain with a short PRE_ROLL so the DAC output graph
+      // warms up smoothly and the very first source.start() doesn't click.
       this.nextPlayTime = now + AudioStreamer.PRE_ROLL_MS / 1000;
-    }
-    if (this.nextPlayTime <= 0) {
-      this.nextPlayTime = now + AudioStreamer.PRE_ROLL_MS / 1000;
+    } else if (this.nextPlayTime < now + AudioStreamer.MIN_CHAIN_LEAD_MS / 1000) {
+      // Weak-network recovery: the chain just drained to (or near) `now`. Re-open
+      // directly with a small MIN_CHAIN_LEAD — we deliberately do NOT re-add the
+      // full PRE_ROLL here, because re-buffering on every gap is what caused the
+      // mid-stream "cut cut". Continuing with minimal lead keeps playback gapless.
+      this.nextPlayTime = now + AudioStreamer.MIN_CHAIN_LEAD_MS / 1000;
     }
 
     // Feed the DAC at most SCHEDULE_AHEAD_SECONDS into the future so we never
@@ -354,8 +358,12 @@ export class AudioStreamer {
       source.onended = () => {
         const idx = this.activeSources.indexOf(source);
         if (idx !== -1) this.activeSources.splice(idx, 1);
+        // NOTE: we intentionally do NOT reset nextPlayTime here. The gapless chain
+        // timeline (`nextPlayTime`) stays monotonic across the whole reply so a
+        // weak-network gap doesn't force a cold re-buffer mid-stream (the cause of
+        // stutter). nextPlayTime is only zeroed by flushPlayback() (interruption,
+        // turn boundary, hang-up) — the correct place to reset the timeline.
         if (this.activeSources.length === 0) {
-          this.nextPlayTime = 0;
           this.onPlaybackEnded?.();
         }
       };
@@ -363,8 +371,7 @@ export class AudioStreamer {
       if (scheduled >= AudioStreamer.SCHEDULE_AHEAD_SECONDS) break;
     }
 
-    // If more audio remains queued, keep draining on a short timer — this also
-    // re-arms the startup/underrun guard if a gap drained the chain to silence.
+    // If more audio remains queued, keep draining on a short timer.
     if (this.pendingChunks.length > 0 && this.scheduleTimer === null) {
       this.scheduleTimer = window.setTimeout(() => {
         this.scheduleTimer = null;

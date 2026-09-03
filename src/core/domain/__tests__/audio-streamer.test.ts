@@ -134,13 +134,13 @@ async function loadStreamer() {
 }
 
 describe('AudioStreamer jitter-buffer scheduling', () => {
-  it('defers first chunk until STARTUP_BUFFER_COUNT chunks are queued (startup guard)', async () => {
+  it('starts playback as soon as the first chunk is decoded (no long startup wait)', async () => {
     await loadStreamer();
     const streamer = new AudioStreamer();
+    // STARTUP_BUFFER_COUNT=1: a single decoded chunk is enough to open the chain.
     streamer.playAudioChunk(toPcm24kBase64(new Float32Array((0.2 * 24000) | 0)));
-    // Startup waits for 3 chunks: after 1 chunk, nothing scheduled yet.
     flushTimers();
-    expect(startCalls.length).toBe(0);
+    expect(startCalls.length).toBe(1);
     void streamer;
   });
 
@@ -152,10 +152,10 @@ describe('AudioStreamer jitter-buffer scheduling', () => {
       streamer.playAudioChunk(toPcm24kBase64(new Float32Array((0.2 * 24000) | 0)));
       flushTimers();
     }
-    // First source should have a lead ≥ PRE_ROLL (160ms) over currentTime (100).
+    // First source gets a small PRE_ROLL lead (60ms) over currentTime (100).
     expect(startCalls.length).toBeGreaterThan(0);
     const first = startCalls[0];
-    expect(first).toBeGreaterThanOrEqual(100 + 0.16);
+    expect(first).toBeGreaterThanOrEqual(100 + 0.06);
     // Subsequent chunks must be gapless (exactly `duration` apart at playbackRate 1).
     const gap = startCalls[1] - startCalls[0];
     expect(gap).toBeCloseTo(0.2, 2);
@@ -187,14 +187,15 @@ describe('AudioStreamer jitter-buffer scheduling', () => {
     // Simulate a network gap by advancing currentTime far beyond nextPlayTime.
     ctx.currentTime = 1000;
     (streamer as any).nextPlayTime = 10; // artificially far behind => under-run
-    // After an under-run, a new burst must re-arm with a fresh PRE_ROLL lead.
-    // (Startup guard requires ≥3 chunks before re-arming, so push a full burst.)
+    // After an under-run, a new burst re-arms directly with a MIN_CHAIN_LEAD
+    // (~20ms) — NOT a full PRE_ROLL — so playback continues gaplessly across a
+    // weak-network gap instead of re-buffering (which caused the "cut cut").
     for (let i = 0; i < 4; i++) {
       streamer.playAudioChunk(toPcm24kBase64(new Float32Array((0.2 * 24000) | 0)));
       flushTimers();
     }
     expect(startCalls.length).toBeGreaterThan(before);
-    // Re-armed chain should be ≥ PRE_ROLL ahead of the new currentTime (1000).
-    expect(startCalls[startCalls.length - 1]).toBeGreaterThan(1000 + 0.16);
+    // Re-armed chain should be ≥ MIN_CHAIN_LEAD (20ms) ahead of the new currentTime (1000).
+    expect(startCalls[startCalls.length - 1]).toBeGreaterThan(1000 + 0.02);
   });
 });
