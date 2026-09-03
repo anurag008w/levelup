@@ -245,6 +245,15 @@ export default function LiveCompanionOverlay({
   // drawer notification grows with the full long reply instead of being
   // flooded with schedule() calls that can drop / stall).
   const liveNotifTimerRef = useRef<number | null>(null);
+  // Live-call stat tick throttle. `live-client` pushes `onStatsUpdate` from the
+  // main-thread analyser path about every 80ms (12.5Hz). Committing straight to
+  // `setStats` re-renders this whole overlay that fast, which competes with
+  // keystrokes (typing delay / hang). We buffer the LATEST stats and only commit
+  // to React at ~5Hz (200ms) — the visualizer stays smooth but re-render churn
+  // drops ~60%, freeing the shared main thread for typing + voice scheduling.
+  const statsThrottleMs = 200;
+  const statsTimerRef = useRef<number | null>(null);
+  const statsPendingRef = useRef<LiveStreamStats | null>(null);
 
   // Initialize and connect Gemini Live
   useEffect(() => {
@@ -303,7 +312,16 @@ export default function LiveCompanionOverlay({
           });
         }, notifDelay);
       },
-      onStatsUpdate: (newStats) => setStats(newStats),
+      onStatsUpdate: (newStats) => {
+        // Throttle: keep the latest, but flush to React at statsThrottleMs ticks.
+        statsPendingRef.current = newStats;
+        if (statsTimerRef.current === null) {
+          statsTimerRef.current = window.setTimeout(() => {
+            statsTimerRef.current = null;
+            if (statsPendingRef.current) setStats(statsPendingRef.current);
+          }, statsThrottleMs);
+        }
+      },
       onExecuteTool: onExecuteTool ? (name, args) => onExecuteTool(name, args) : undefined,
       onToolCall: (name, args) => {
         setActiveTool({ name, args, status: 'running' });
@@ -549,6 +567,11 @@ export default function LiveCompanionOverlay({
         window.clearTimeout(liveNotifTimerRef.current);
         liveNotifTimerRef.current = null;
       }
+      if (statsTimerRef.current !== null) {
+        window.clearTimeout(statsTimerRef.current);
+        statsTimerRef.current = null;
+      }
+      statsPendingRef.current = null;
       if (appStateListener) void appStateListener.remove();
       if (pipListener) pipListener();
       // Do not make React ownership equal call ownership. Explicit hangup is

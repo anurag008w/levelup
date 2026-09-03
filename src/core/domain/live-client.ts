@@ -10,7 +10,7 @@ import type {
 import { AudioStreamer } from './audio-streamer';
 import { VisionStreamer } from './vision-streamer';
 import { MISA_IDENTITY_GUARD, ROMAN_SCRIPT_RULE, type ChatToolCallRecord } from './chat';
-import { setNativeAudioRoute, resetNativeAudioRoute, requestNativeCallAudioFocus, addNativeAudioFocusListener, isNativeAudioPlatform } from '../../lib/native-audio-route';
+import { setNativeAudioRoute, resetNativeAudioRoute, requestNativeCallAudioFocus, addNativeAudioFocusListener, isNativeAudioPlatform, getAvailableNativeAudioRoutes } from '../../lib/native-audio-route';
 import { deviceTimeZone } from '../ports/clock';
 import { LiveSilenceStateMachine } from './live-silence-state-machine';
 import { canRetryLiveConnection, isPermanentLiveConnectionError } from './live-connection-policy';
@@ -1603,7 +1603,26 @@ STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said som
     // resolves null on native failure (missing Bluetooth device for the
     // requested route, etc.). A requested route that was never applied must
     // not silently pass as "connected on bluetooth".
-    const desiredRoute = this.config.defaultAudioRoute ?? 'speaker';
+    // ── Auto-route: NEVER default the call to the loudspeaker ──
+    // If no explicit route was pinned (stock default 'speaker' means "auto"),
+    // auto-prefer a Bluetooth headset, then the phone earpiece, and only fall
+    // back to the loudspeaker when NO other device is available. The stock
+    // default `'speaker'` is treated as AUTO here so a connected Bluetooth
+    // headset "just works" instead of blasting the call out of the phone
+    // speaker. A route the user EXPLICITLY chose in settings (non-default) or
+    // via the in-call menu is honored verbatim below.
+    let desiredRoute: LiveAudioRoute = this.config.defaultAudioRoute ?? 'speaker';
+    if (desiredRoute === 'speaker') {
+      // Treat the stock 'speaker' default as AUTO at call start so a connected
+      // Bluetooth headset (then earpiece) is preferred over blasting the call
+      // out of the phone speaker. Config is left untouched — currentAudioRoute
+      // below records the ACTUAL applied device.
+      const available = await getAvailableNativeAudioRoutes();
+      if (available) {
+        if (available.bluetooth) desiredRoute = 'bluetooth';
+        else if (available.earpiece) desiredRoute = 'earpiece';
+      }
+    }
     const applied = await setNativeAudioRoute(desiredRoute);
     if (applied) {
       this.currentAudioRoute = (applied.route as LiveAudioRoute) || desiredRoute;
