@@ -40,9 +40,18 @@ export class AudioStreamer {
   private levelInterval: number | null = null;
   private onPlaybackEnded?: () => void;
   private outputVolume = 1;
+  private outputGainNode: GainNode | null = null;
+  private pendingAudioQueue: Float32Array[] = [];
+  private jitterBufferTimer: number | null = null;
+  private isStreamingPlaying = false;
 
   setOutputVolume(volume: number): void {
     this.outputVolume = Math.max(0, Math.min(1, volume));
+    if (this.outputGainNode && this.audioContext) {
+      try {
+        this.outputGainNode.gain.setValueAtTime(this.outputVolume, this.audioContext.currentTime);
+      } catch {}
+    }
   }
 
   setOnPlaybackEnded(cb?: () => void): void {
@@ -142,6 +151,10 @@ export class AudioStreamer {
       this.outputAnalyser.fftSize = 256;
       this.outputAnalyser.smoothingTimeConstant = 0.8;
       this.outputAnalyser.connect(this.audioContext.destination);
+
+      this.outputGainNode = this.audioContext.createGain();
+      this.outputGainNode.gain.value = this.outputVolume;
+      this.outputGainNode.connect(this.outputAnalyser);
     }
     if (this.audioContext.state === 'suspended') {
       void this.audioContext.resume();
@@ -225,10 +238,6 @@ export class AudioStreamer {
     if (ctx.state === 'suspended') {
       void ctx.resume();
     }
-    this.playAudioChunkInternal(ctx, pcm24kBase64);
-  }
-
-  private playAudioChunkInternal(ctx: AudioContext, pcm24kBase64: string): void {
 
     const binary = atob(pcm24kBase64);
     const numSamples = Math.floor(binary.length / 2);
@@ -241,6 +250,47 @@ export class AudioStreamer {
       rawSamples[i] = sample / 32768;
     }
 
+    if (!this.isStreamingPlaying) {
+      // Jitter buffer queue at the start of speech:
+      // Accumulate ~80-100ms cushion so network packet jitter never starves playback
+      this.pendingAudioQueue.push(rawSamples);
+      let totalSamples = 0;
+      for (let j = 0; j < this.pendingAudioQueue.length; j++) {
+        totalSamples += this.pendingAudioQueue[j].length;
+      }
+      // 2400 samples at 24kHz = 100ms cushion
+      if (totalSamples >= 2400) {
+        this.drainPendingAudioQueue(ctx);
+      } else if (this.jitterBufferTimer === null) {
+        this.jitterBufferTimer = window.setTimeout(() => {
+          this.jitterBufferTimer = null;
+          this.drainPendingAudioQueue(ctx);
+        }, 40);
+      }
+    } else {
+      // Normal continuous streaming: schedule directly into hardware with zero gap
+      this.scheduleBuffer(ctx, rawSamples);
+    }
+  }
+
+  private drainPendingAudioQueue(ctx: AudioContext): void {
+    if (this.jitterBufferTimer !== null) {
+      window.clearTimeout(this.jitterBufferTimer);
+      this.jitterBufferTimer = null;
+    }
+    const chunks = this.pendingAudioQueue;
+    this.pendingAudioQueue = [];
+    if (chunks.length === 0) return;
+
+    this.isStreamingPlaying = true;
+    for (let i = 0; i < chunks.length; i++) {
+      this.scheduleBuffer(ctx, chunks[i]);
+    }
+  }
+
+  private scheduleBuffer(ctx: AudioContext, rawSamples: Float32Array): void {
+    if (rawSamples.length === 0) return;
+
     const audioBuffer = ctx.createBuffer(1, rawSamples.length, 24000);
     audioBuffer.getChannelData(0).set(rawSamples);
 
@@ -249,31 +299,27 @@ export class AudioStreamer {
 
     const speed = this.playbackSpeed && this.playbackSpeed > 0 ? this.playbackSpeed : 1.0;
     source.playbackRate.value = speed;
-    // Keep a single output chain; gain must be connected to analyser.
-    const gain = ctx.createGain();
-    gain.gain.value = this.outputVolume;
-    source.connect(gain);
-    gain.connect(this.outputAnalyser!);
+
+    if (!this.outputGainNode) {
+      this.outputGainNode = ctx.createGain();
+      this.outputGainNode.gain.value = this.outputVolume;
+      this.outputGainNode.connect(this.outputAnalyser!);
+    }
+    source.connect(this.outputGainNode);
 
     const playDuration = audioBuffer.duration / speed;
     const now = ctx.currentTime;
 
-    // Seamless continuous playback:
-    // If consecutive chunks stream in continuously (nextPlayTime >= now), schedule seamlessly with 0ms gap.
-    // If audio buffer underruns or starting initial speech, buffer with 100ms lead to avoid audio chop/jitter.
-    if (this.nextPlayTime < now) {
-      this.nextPlayTime = now + 0.100;
-    } else if (this.nextPlayTime - now > AudioStreamer.MAX_PLAYBACK_BACKLOG_SECONDS) {
-      // Only defensive purge for genuinely stale queued audio (now 60s — so an
-      // ordinary long reply streams-to-play seamlessly instead of being cut).
-      // Turn interruptions are already handled by explicit flushPlayback() calls
-      // at each boundary, so we don't aggressively drop long replies here.
+    if (this.nextPlayTime - now > AudioStreamer.MAX_PLAYBACK_BACKLOG_SECONDS) {
       this.flushPlayback(false);
-      this.nextPlayTime = now + 0.030;
     }
 
-    source.start(this.nextPlayTime);
-    this.nextPlayTime += playDuration;
+    // Zero-gap continuous playback:
+    // If nextPlayTime is in the future, schedule exactly at nextPlayTime (0ms gap).
+    // If underrun occurs (nextPlayTime < now), start immediately with a minimal 5ms DAC safety lead.
+    const startTime = Math.max(this.nextPlayTime, now + 0.005);
+    source.start(startTime);
+    this.nextPlayTime = startTime + playDuration;
 
     this.activeSources.push(source);
     source.onended = () => {
@@ -281,7 +327,8 @@ export class AudioStreamer {
       if (idx !== -1) {
         this.activeSources.splice(idx, 1);
       }
-      if (this.activeSources.length === 0) {
+      if (this.activeSources.length === 0 && this.pendingAudioQueue.length === 0) {
+        this.isStreamingPlaying = false;
         this.nextPlayTime = 0;
         this.onPlaybackEnded?.();
       }
@@ -290,6 +337,13 @@ export class AudioStreamer {
 
   /** Immediately flush and stop active playback (e.g. on user interruption). */
   flushPlayback(notifyEnded = true): void {
+    if (this.jitterBufferTimer !== null) {
+      window.clearTimeout(this.jitterBufferTimer);
+      this.jitterBufferTimer = null;
+    }
+    this.pendingAudioQueue = [];
+    this.isStreamingPlaying = false;
+    this.nextPlayTime = 0;
     for (const source of this.activeSources) {
       try {
         source.stop();
@@ -299,7 +353,6 @@ export class AudioStreamer {
       }
     }
     this.activeSources = [];
-    this.nextPlayTime = 0;
     if (notifyEnded) this.onPlaybackEnded?.();
   }
 
@@ -349,6 +402,10 @@ export class AudioStreamer {
 
   close(): void {
     this.stopRecording(true);
+    if (this.outputGainNode) {
+      try { this.outputGainNode.disconnect(); } catch {}
+      this.outputGainNode = null;
+    }
     if (this.outputAnalyser) {
       try { this.outputAnalyser.disconnect(); } catch {}
       this.outputAnalyser = null;
