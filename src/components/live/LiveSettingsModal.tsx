@@ -21,6 +21,7 @@ import type { GeminiLiveVoice, LiveSettingsConfig } from '../../core/domain/live
 import { OFFICIAL_GEMINI_VOICES } from '../../core/domain/live-types';
 import { GeminiLiveClient } from '../../core/domain/live-client';
 import { container } from '../../di/container';
+import { normalizeServerRoot } from '../../lib/auth';
 import { haptic, hapticSuccess, hapticError } from '../../lib/haptics';
 
 interface LiveSettingsModalProps {
@@ -41,6 +42,12 @@ export default function LiveSettingsModal({
   const hiddenDefault = container.providerSettings.getHiddenDefaultFull();
   const activeProv = container.providerSettings.getActiveProvider();
   const storedProviders = container.providerSettings.listStoredProviders();
+
+  // "App Default" maps to the logged-in gateway (SmartRotator) when the active /
+  // hidden default is NOT the native Google endpoint.
+  const gatewayDefault = hiddenDefault || activeProv;
+  const isSmartRotatorDefault =
+    !!gatewayDefault?.baseUrl && !gatewayDefault.baseUrl.includes('generativelanguage.googleapis.com');
 
   const [currentConfig, setCurrentConfig] = useState<LiveSettingsConfig>({
     ...config,
@@ -148,12 +155,36 @@ export default function LiveSettingsModal({
     setPlayingVoice(voice);
     try {
       const keyToUse = apiKeyInput.trim() || defaultApiKey.trim() || hiddenDefault?.apiKey || activeProv?.apiKey || '';
-      await GeminiLiveClient.previewVoice(keyToUse, voice, text, currentConfig.model);
+      const baseUrlToUse = selectedProviderBaseUrl();
+      await GeminiLiveClient.previewVoice(keyToUse, voice, text, currentConfig.model, baseUrlToUse);
     } catch {
       // Ignored
     } finally {
       setPlayingVoice(null);
     }
+  }
+
+  /**
+   * Resolve the server root the Live WebSocket should target for the currently
+   * selected provider. SmartRotator-backed providers (App Default / stored
+   * gateway providers) return the gateway root (no /v1) so the Google GenAI SDK
+   * dials our Google-compatible /ws/...BidiGenerateContent relay. The native
+   * "gemini" provider returns undefined → SDK uses Google's default Live endpoint.
+   */
+  function selectedProviderBaseUrl(): string | undefined {
+    if (selectedProviderId === 'app-default') {
+      const base = hiddenDefault?.baseUrl || activeProv?.baseUrl;
+      return base ? normalizeServerRoot(base) : undefined;
+    }
+    if (selectedProviderId === 'gemini') {
+      // Native Google key — always the real Google Live endpoint.
+      return undefined;
+    }
+    if (selectedProviderId === 'custom') {
+      return config.baseUrl ? normalizeServerRoot(config.baseUrl) : undefined;
+    }
+    const p = storedProviders.find((pp) => pp.id === selectedProviderId);
+    return p?.baseUrl ? normalizeServerRoot(p.baseUrl) : config.baseUrl ? normalizeServerRoot(config.baseUrl) : undefined;
   }
 
   function handleSave() {
@@ -200,6 +231,7 @@ export default function LiveSettingsModal({
       providerId: selectedProviderId,
       model: currentConfig.model || 'gemini-3.1-flash-live-preview',
       apiKey: cleanKey || undefined,
+      baseUrl: selectedProviderBaseUrl(),
     };
     onSave(finalCfg);
     onClose();
@@ -264,7 +296,9 @@ export default function LiveSettingsModal({
                   className="w-full rounded-xl border border-border bg-bg/80 px-3 py-2 text-xs font-semibold text-text focus:border-l focus:outline-none"
                 >
                   <option value="app-default">
-                    ⭐ App Default Provider ({hiddenDefault?.label || activeProv?.label || 'Default Gateway'})
+                    {isSmartRotatorDefault
+                      ? `🔄 SmartRotator (App Default)`
+                      : `⭐ App Default Provider (${hiddenDefault?.label || activeProv?.label || 'Default Gateway'})`}
                   </option>
                   <option value="gemini">
                     🔷 Google Gemini (google / gemini)

@@ -156,6 +156,13 @@ export interface LiveTranscriptItem {
 export interface LiveSettingsConfig {
   providerId?: string; // e.g. 'app-default', 'gemini', 'custom', or stored provider id
   apiKey?: string;
+  /**
+   * Server root used to reach the Gemini Live WebSocket endpoint.
+   * - SmartRotator providers: the bare gateway root (e.g. https://smartrotator.onrender.com)
+   *   so the Google GenAI SDK connects to our Google-compatible /ws/... BidiGenerateContent relay.
+   * - "gemini" / Google direct: undefined → SDK uses Google's default Live endpoint.
+   */
+  baseUrl?: string;
   model: string;
   voice: GeminiLiveVoice;
   playbackSpeed?: number; // e.g. 0.85 (default)
@@ -200,14 +207,15 @@ const LIVE_SESSION_BAKED_KEYS: ReadonlyArray<keyof LiveSettingsConfig> = [
   'temperature',
   'maxOutputTokens',
   'thinkingBudget',
+  'baseUrl',
 ];
 
 /**
  * True when switching from `prev` to `next` changes any session-baked setting
- * (model/voice/VAD/FPS/tokens/API-key), i.e. when the running Gemini session
- * must be re-established for the change to take effect. Used by the live
- * overlay so saving unrelated settings (speed, prompts) does NOT tear down a
- * healthy call — the "changing settings disconnects the call" bug.
+ * (model/voice/VAD/FPS/tokens/API-key/baseUrl/endpoint), i.e. when the running
+ * Gemini session must be re-established for the change to take effect. Used by
+ * the live overlay so saving unrelated settings (speed, prompts) does NOT tear
+ * down a healthy call — the "changing settings disconnects the call" bug.
  */
 export function requiresLiveReconnect(prev: LiveSettingsConfig, next: LiveSettingsConfig): boolean {
   return LIVE_SESSION_BAKED_KEYS.some((key) => prev[key] !== next[key]);

@@ -390,6 +390,10 @@ describe('Live audio ownership & startup transaction (review 7)', () => {
     expect(requiresLiveReconnect(base, { ...base, vadSensitivity: 'low' })).toBe(true);
     expect(requiresLiveReconnect(base, { ...base, videoFps: 10 })).toBe(true);
     expect(requiresLiveReconnect(base, { ...base, apiKey: 'different-key' })).toBe(true);
+    // Changing the gateway endpoint (baseUrl) also needs a fresh session.
+    expect(
+      requiresLiveReconnect(base, { ...base, baseUrl: 'https://smartrotator.onrender.com' }),
+    ).toBe(true);
     // No change at all → no reconnect.
     expect(requiresLiveReconnect(base, { ...base })).toBe(false);
   });
@@ -417,5 +421,18 @@ describe('Live audio ownership & startup transaction (review 7)', () => {
     // current → streaming must proceed.
     await (client as any).reconnectWithNewConfig('new-key', {} as MediaStream);
     expect(streamSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('18. switching back to native Gemini clears the relay baseUrl (no stale endpoint leak)', async () => {
+    const client = new GeminiLiveClient(mockConfig);
+    // 1) SmartRotator relay session → activeBaseUrl set.
+    await client.connect('test-key', undefined, { baseUrl: 'https://smartrotator.onrender.com' });
+    expect((client as any).activeBaseUrl).toBe('https://smartrotator.onrender.com');
+    // 2) User switches to native Gemini → baseUrl deliberately undefined.
+    //    activeBaseUrl MUST be cleared, not retain the SmartRotator endpoint
+    //    (otherwise the next call would dial the old relay, not Google).
+    await client.connect('test-key');
+    expect((client as any).activeBaseUrl).toBeNull();
+    client.disconnect(false);
   });
 });

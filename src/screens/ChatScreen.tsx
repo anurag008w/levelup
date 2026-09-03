@@ -76,6 +76,7 @@ import LivePermissionModal from '../components/live/LivePermissionModal';
 import LiveCompanionOverlay from '../components/live/LiveCompanionOverlay';
 import { requestNativeCallAudioFocus, setNativeAudioRoute, resetNativeAudioRoute, isNativeAudioPlatform } from '../lib/native-audio-route';
 import { isLiveCallInterrupted, clearLiveCallInterrupted } from '../lib/live-companion-service';
+import { normalizeServerRoot } from '../lib/auth';
 
 interface DraftAttachment {
   id: string;
@@ -483,6 +484,24 @@ export default function ChatScreen({
     const anyKey = providers.find((p) => p.apiKey?.trim())?.apiKey?.trim();
     if (anyKey) return anyKey;
     return '';
+  };
+
+  /**
+   * Server root (no /v1) the Live WebSocket must target, so the Google GenAI
+   * SDK dials OUR Google-exact /ws/...BidiGenerateContent relay instead of
+   * Google. Only SmartRotator-backed providers route through the app's gateway:
+   * - "gemini" (native Google key) → undefined → SDK uses Google's Live endpoint.
+   * - "app-default" / "custom" / stored providers on the gateway → SmartRotator root.
+   * Respects an explicit baseUrl already saved in live settings.
+   */
+  const getLiveBaseUrl = (): string | undefined => {
+    if (liveConfig.baseUrl?.trim()) return normalizeServerRoot(liveConfig.baseUrl);
+    const provId = liveConfig.providerId || 'app-default';
+    if (provId === 'gemini') return undefined;
+    const provider = container.providerSettings.getProviderById(provId)
+      ?? container.providerSettings.getActiveProvider()
+      ?? container.providerSettings.getHiddenDefaultFull();
+    return provider?.baseUrl ? normalizeServerRoot(provider.baseUrl) : undefined;
   };
 
   const handleStartLiveCall = async (meta?: { reason?: string; isIncomingCall?: boolean }) => {
@@ -1989,6 +2008,7 @@ export default function ChatScreen({
           endLiveCallRef={endLiveCallRef}
           config={{
             ...liveConfig,
+            baseUrl: getLiveBaseUrl(),
             enable90DayTrack: container.store.get().enable90DayTrack !== false,
             timeZone: container.store.get().timeZone ?? deviceTimeZone(),
           }}

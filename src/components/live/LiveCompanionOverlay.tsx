@@ -398,7 +398,7 @@ export default function LiveCompanionOverlay({
           // already acquired native audio focus before getUserMedia. Hand that
           // fact in so connect() does NOT request focus a second time — focus
           // stays single-owner; connect only applies the route.
-          await liveClient.connect(apiKey, incomingCallMeta, { audioFocusAlreadyGranted });
+          await liveClient.connect(apiKey, incomingCallMeta, { audioFocusAlreadyGranted, baseUrl: config.baseUrl });
           if (cancelled || liveClient.isClosed()) {
             rollbackStartup(liveClient, existingClient, initialMicStream, initialCameraStream);
             if (!cancelled) {
