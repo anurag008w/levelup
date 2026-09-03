@@ -430,6 +430,19 @@ export default function ChatScreen({
   const [liveCallInterrupted, setLiveCallInterrupted] = useState(false);
   const [liveCamStream, setLiveCamStream] = useState<MediaStream | null>(null);
   const liveCallSessionIdRef = useRef<string | null>(null);
+  /**
+   * Live-call transcript sink is coalesced: Gemini streams transcript chunks
+   * continuously during a reply. Writing every chunk straight into the chat
+   * store (full-state JSON.stringify + localStorage + markDirty), then
+   * deep-cloning every session and setSessions()-ing the whole ChatScreen,
+   * saturates the main thread mid-call — stalling the text composer AND
+   * starving the Live audio scheduler (ScriptProcessor capture + playback
+   * chunk scheduling both live on the same thread). Trailing-coalesce to one
+   * flush per quiet window; appends are idempotent by message id and the
+   * hang-up path (handleLiveOverlayClose) re-applies the final transcript.
+   */
+  const liveTranscriptTimerRef = useRef<number | null>(null);
+  const liveTranscriptSnapshotRef = useRef<LiveTranscriptItem[] | null>(null);
   const [liveIncomingMeta, setLiveIncomingMeta] = useState<{ isIncomingCall: boolean; reason?: string } | undefined>(undefined);
   const [liveConfig, setLiveConfig] = useState<LiveSettingsConfig>(() => {
     const liveFromStore = container.store.get()?.aiSettings?.live;
@@ -942,26 +955,47 @@ export default function ChatScreen({
     const targetSessionId = liveCallSessionIdRef.current || active?.id;
     if (!targetSessionId) return;
 
-    for (const t of transcripts) {
-      if (!t || typeof t.text !== 'string' || !t.text.trim()) continue;
-      const msg: ChatMessage = {
-        id: t.id,
-        role: t.role,
-        content: t.text,
-        createdAt: t.timestamp,
-        model: t.role === 'assistant' ? liveConfig.model : undefined,
-        toolCalls: t.toolCalls,
-        reasoning: t.reasoning,
-      };
-      container.chat.appendMessage(targetSessionId, msg);
-    }
-    const all = container.chat.listSessions();
-    setSessions(all);
+    // Coalesce the per-chunk flush: keep the latest snapshot, but only run the
+    // expensive sync work (appendMessage→full-store persist, listSessions deep
+    // clone, setSessions) once per quiet window — never once per streamed chunk.
+    liveTranscriptSnapshotRef.current = transcripts;
+    if (liveTranscriptTimerRef.current !== null) return;
+    liveTranscriptTimerRef.current = window.setTimeout(() => {
+      liveTranscriptTimerRef.current = null;
+      const latest = liveTranscriptSnapshotRef.current;
+      liveTranscriptSnapshotRef.current = null;
+      if (!latest || latest.length === 0) return;
+      const sid = liveCallSessionIdRef.current || active?.id;
+      if (!sid) return;
+      for (const t of latest) {
+        if (!t || typeof t.text !== 'string' || !t.text.trim()) continue;
+        const msg: ChatMessage = {
+          id: t.id,
+          role: t.role,
+          content: t.text,
+          createdAt: t.timestamp,
+          model: t.role === 'assistant' ? liveConfig.model : undefined,
+          toolCalls: t.toolCalls,
+          reasoning: t.reasoning,
+        };
+        container.chat.appendMessage(sid, msg);
+      }
+      const all = container.chat.listSessions();
+      setSessions(all);
+    }, 250);
     // Never hijack activeId if the user navigated to another chat during the call
   };
 
   const handleLiveOverlayClose = (transcripts: LiveTranscriptItem[]) => {
     setShowLiveOverlay(false);
+    // Cancel any pending coalesced transcript flush — the final transcript
+    // array is re-applied idempotently below, so the timer must not fire later
+    // against a call that has already been torn down.
+    if (liveTranscriptTimerRef.current !== null) {
+      window.clearTimeout(liveTranscriptTimerRef.current);
+      liveTranscriptTimerRef.current = null;
+    }
+    liveTranscriptSnapshotRef.current = null;
     // Streams are acquired by this screen, so explicitly release hardware on
     // a user hang-up. The live client intentionally preserves tracks while it
     // reconnects, but an ended call must not leave the microphone/camera live.

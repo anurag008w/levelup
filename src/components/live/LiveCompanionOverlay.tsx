@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, memo, type MutableRefObject } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback, memo, type MutableRefObject } from 'react';
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -682,7 +682,12 @@ export default function LiveCompanionOverlay({
   }
 
   // In-Call Live Text Message with Tool Execution
-  async function handleSendChatMessage(rawText: string, selectedTools: string[]) {
+  // Stable identity (useCallback) so the memoized LiveChatComposer — the Live
+  // textbox — does NOT re-render on the high-frequency overlay re-renders that
+  // the live stats/analyser ticks and per-chunk transcript updates trigger.
+  // Keystrokes then only re-render the composer subtree, keeping typing
+  // responsive while the call streams.
+  const handleSendChatMessage = useCallback(async (rawText: string, selectedTools: string[]) => {
     const text = rawText.trim();
     if (!text && selectedTools.length === 0) return;
     haptic();
@@ -775,7 +780,7 @@ export default function LiveCompanionOverlay({
         clientRef.current.sendTextMessage(userPrompt, userPrompt);
       }
     }
-  }
+  }, [toolCatalog, onExecuteTool]);
 
   // End Call & Return Transcripts
   function handleEndCall() {
