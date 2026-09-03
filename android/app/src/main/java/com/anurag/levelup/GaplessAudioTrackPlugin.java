@@ -61,9 +61,10 @@ public class GaplessAudioTrackPlugin extends Plugin {
     /**
      * Open a MODE_STREAM AudioTrack and start the background writer thread.
      * Repeated calls (e.g. reconnect) tear down any previous track first so we
-     * never leak native audio resources. Uses USAGE_MEDIA so live reply audio
-     * reaches the shared media sink (speaker) like the WebAudio path — no
-     * call-routing/earpiece quirks that could add latency or glitches.
+     * never leak native audio resources. Uses USAGE_VOICE_COMMUNICATION so the
+     * track plays under the same audio-focus (voice-communication) the live call
+     * already holds — a USAGE_MEDIA track would be silenced because the call's
+     * full AUDIOFOCUS_GAIN on voice-communication blocks the media stream.
      */
     @PluginMethod
     public void open(PluginCall call) {
@@ -80,7 +81,7 @@ public class GaplessAudioTrackPlugin extends Plugin {
 
             audioTrack = new AudioTrack.Builder()
                 .setAudioAttributes(new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build())
                 .setAudioFormat(new AudioFormat.Builder()
