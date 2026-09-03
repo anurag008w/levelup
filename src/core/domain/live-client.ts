@@ -106,7 +106,7 @@ export class GeminiLiveClient {
     // Preserve the media stream until the replacement session is established.
     // Calling a full disconnect here used to erase it before reconnect could restore it.
     this.disconnect(true);
-    await this.connect(apiKey);
+    await this.connect(apiKey, undefined, { baseUrl: this.config.baseUrl });
     // connect() bumps connectionAttempt as its own generation (++this.connectionAttempt
     // at entry). Re-capture it AFTER connect returns so isActiveAttempt refers to the
     // session we just created. If a hangup/restart landed during connect (or between
@@ -258,9 +258,12 @@ export class GeminiLiveClient {
     }
     this.isUserExplicitlyClosed = false;
     this.activeApiKey = apiKey;
-    // Persist the SmartRotator root; reconnects re-use it (GoogleGenAI SDK
-    // honours httpOptions.baseUrl when building the Live WebSocket URL).
-    if (options?.baseUrl) this.activeBaseUrl = options.baseUrl;
+    // Persist the gateway root; reconnects re-use it (GoogleGenAI SDK honours
+    // httpOptions.baseUrl when building the Live WebSocket URL). Assign on every
+    // connect() — including an explicit undefined (native Gemini) — so switching
+    // from SmartRotator back to Google clears any previous relay baseUrl instead
+    // of leaking the stale endpoint into the next live call.
+    this.activeBaseUrl = options?.baseUrl ?? null;
     this.setStatus('connecting');
     this.framesSentCount = 0;
     this.silenceNudgeStreak = 0;
@@ -1495,8 +1498,12 @@ STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said som
     const base = this.activeBaseUrl?.trim();
     if (base) {
       try {
+        // baseUrl is already normalized upstream (normalizeServerRoot strips
+        // /v1, /api/v1, query & hash, trailing slashes). Do NOT blank the
+        // pathname — a gateway deployed under a path prefix (e.g. /my-gateway)
+        // must keep that prefix; only drop query/hash and a trailing slash so
+        // the SDK appends its own /ws/...BidiGenerateContent path.
         const u = new URL(base);
-        u.pathname = ''; // strip any /v1 or /v1beta — SDK appends /ws/... itself
         u.search = '';
         u.hash = '';
         u.pathname = u.pathname.replace(/\/+$/, '');

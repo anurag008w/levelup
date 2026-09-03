@@ -207,14 +207,15 @@ const LIVE_SESSION_BAKED_KEYS: ReadonlyArray<keyof LiveSettingsConfig> = [
   'temperature',
   'maxOutputTokens',
   'thinkingBudget',
+  'baseUrl',
 ];
 
 /**
  * True when switching from `prev` to `next` changes any session-baked setting
- * (model/voice/VAD/FPS/tokens/API-key), i.e. when the running Gemini session
- * must be re-established for the change to take effect. Used by the live
- * overlay so saving unrelated settings (speed, prompts) does NOT tear down a
- * healthy call — the "changing settings disconnects the call" bug.
+ * (model/voice/VAD/FPS/tokens/API-key/baseUrl/endpoint), i.e. when the running
+ * Gemini session must be re-established for the change to take effect. Used by
+ * the live overlay so saving unrelated settings (speed, prompts) does NOT tear
+ * down a healthy call — the "changing settings disconnects the call" bug.
  */
 export function requiresLiveReconnect(prev: LiveSettingsConfig, next: LiveSettingsConfig): boolean {
   return LIVE_SESSION_BAKED_KEYS.some((key) => prev[key] !== next[key]);
