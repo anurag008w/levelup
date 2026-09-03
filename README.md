@@ -8,6 +8,9 @@
 
 ### 🎙️ Misa Live Voice & Multimodal AI
 - **Real-Time Bidirectional Voice**: Ultra-low-latency conversational AI with native Audio Worklet streaming.
+- **Stutter-Proof Playback (Jitter Buffer)**: A receiver-side jitter buffer feeds decoded PCM chunks to the hardware on a smooth clock with pre-roll lead + startup/underrun guard — so long replies on weak networks stay silky-smooth with no "cut-cut" clicks.
+- **Smart Notification Batching**: Streaming replies collapse repeated live-notification rebuilds into a single refresh per turn, keeping the main thread free of bridge/IPC churn for uninterrupted audio on low-signal links.
+- **Proactive Silence Companion**: If the call falls quiet, Misa naturally speaks up on her own — ~25s on audio, ~22s in background, ~20s with camera/screen active — with escalating playful friend-like pacing (from a casual check-in to a good-natured "gussa").
 - **Voice Activity Detection (VAD) & Interruptions**: Speak naturally; Misa pauses and listens the moment you talk.
 - **Dynamic Audio Routing**: Seamless switching between device earpiece, speakerphone, wired headphones, and Bluetooth earbuds (`RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, `BLUETOOTH_CONNECT`).
 - **Camera & Vision Understanding**: Snap photos of textbook problems or handwritten equations for instant step-by-step guidance.
@@ -50,7 +53,7 @@
 - **Native Runtime**: Capacitor 8 (Filesystem, Local Notifications, Intent Launcher, Share, App, Device).
 - **Math & Markdown**: KaTeX (inline & display LaTeX math), Rehype/Remark GFM, Highlight.js.
 - **State & Storage**: Offline-first LocalStorage & IndexedDB with optimistic UI updates and reactive listeners.
-- **Testing & Quality**: Vitest, React Testing Library, Oxlint (100% pass across 89 test suites and 1,150+ tests).
+- **Testing & Quality**: Vitest, React Testing Library, Oxlint (94 test suites / 1,100+ tests). Live audio, silence-proactive, and jitter-buffer streaming pipelines are covered by dedicated suites.
 
 ---
 
@@ -78,7 +81,7 @@ npm run dev
 # Run ultra-fast oxlint
 npm run lint
 
-# Run all 89 test suites (1,150+ tests)
+# Run all 94 test suites (1,100+ tests)
 npm test
 ```
 
