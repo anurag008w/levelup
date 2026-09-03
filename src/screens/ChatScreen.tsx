@@ -49,6 +49,7 @@ import { container } from '../di/container';
 import { redoLastAiAction, undoLastAiAction } from '../core/domain/ai-actions';
 import { proactiveAgentService } from '../features/ai/proactive-agent.service';
 import ChatMarkdown from '../components/ChatMarkdown';
+import { useAppState } from '../lib/useAppState';
 import FileCard from '../components/FileCard';
 import FileKindBadge from '../components/FileKindBadge';
 import { useMenuFocus } from '../components/useMenuFocus';
@@ -135,6 +136,7 @@ export default function ChatScreen({
 }) {
   const [sessions, setSessions] = useState<ChatSession[]>(() => container.chat.listSessions());
   const [activeId, setActiveId] = useState<string | null>(null);
+  const { state: appState } = useAppState();
   /** Stable ref for the memoized MessageBubble's action callbacks. The
    *  callbacks close over mutable state (draft, active, streaming), so they
    *  live behind a ref: the ref identity never changes, letting React.memo
@@ -178,8 +180,12 @@ export default function ChatScreen({
   const revealScheduleRef = useRef<RevealSchedule | null>(null);
 
   const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? null, [sessions, activeId]);
-  // User-pickable AI tools for the "@" composer picker (filtered dynamically by 90-day track setting).
-  const toolCatalog = useMemo(() => container.chat.listTools(), []);
+  // User-pickable AI tools for the "@" composer picker. Driven by the shared
+  // state so a live 90-day track toggle (ON ↔ OFF) immediately re-renders the
+  // catalog — 90-day tools vanish the instant flexible mode is on, and return
+  // as soon as the track is back on. (container.chat.listTools() already
+  // filters by enable90DayTrack; this dep just makes the memo re-evaluate.)
+  const toolCatalog = useMemo(() => container.chat.listTools(), [appState.enable90DayTrack]);
   const filteredTools = useMemo(() => {
     if (toolQuery === null) return [];
     const q = toolQuery.toLowerCase().trim();

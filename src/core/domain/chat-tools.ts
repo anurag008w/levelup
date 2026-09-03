@@ -385,8 +385,19 @@ AVAILABLE TOOLS:
 - searchMemory — Search saved memory: {"action":"searchMemory","query":"physics"}
 - readMemory — Read saved memory facts: {"action":"readMemory"}
 - addMemory — Save fact to memory: {"action":"addMemory","content":"Physics formulas revision daily"}
+- editMemory — Edit a saved memory entry: {"action":"editMemory","id":"<entryId>","content":"<new text>"}
+- deleteMemory — Delete a saved memory entry (confirmation required): {"action":"deleteMemory","id":"<entryId>"}
+- pinMemory — Pin a memory entry to long-term: {"action":"pinMemory","id":"<entryId>"}
+- unpinMemory — Unpin a memory entry from long-term: {"action":"unpinMemory","id":"<entryId>"}
 - getContext — Get overview of student's current status and to-dos: {"action":"getContext"}
 - listPlanners / getSubject / getPlanner / getTest / getTests / getRoutine / getDay — uploaded coaching planners (read-only).
+
+Only when the student EXPLICITLY asks to schedule/call:
+- scheduleMessage — Schedule a future reminder message: {"action":"scheduleMessage","text":"Aaj ka revision karo!","scheduledAtISO":"2026-09-03T18:30:00+05:30","topic":"revision"}
+- scheduleCall — Schedule a future voice-call check-in: {"action":"scheduleCall","reason":"Weekly progress check","scheduledAtISO":"2026-09-04T20:00:00+05:30"}
+- makeCall — Call the student right now: {"action":"makeCall","reason":"Study check-in"}
+- listScheduled — List pending scheduled messages/calls: {"action":"listScheduled"}
+- cancelScheduled — Cancel a scheduled message/call: {"action":"cancelScheduled","id":"<id>"}
 
 JSON FORMAT ONLY: Emit JSON directly without backticks or extra words.`;
 
@@ -550,10 +561,18 @@ export function getAvailableChatTools(enable90DayTrack = true): ChatToolMeta[] {
  * list; when it is the ONLY pinned tool the model replies normally (grounded,
  * never JSON). When pinned alongside JSON tools it stays available for the
  * final answer while the JSON tools run the plan work.
+ *
+ * Defense-in-depth: 90-day-only tools are ALWAYS stripped from the scope here,
+ * even if a caller hands them in directly. A 90-day tool must never appear in
+ * the decision prompt, so a model cannot be tempted to emit one while the
+ * track is off. (Normally `resolveToolScope` already filters these out; this
+ * is an independent guarantee for any future caller.)
  */
 export function chatToolScopeInstructions(onlyTools: string[]): string {
   const hasWebSearch = onlyTools.includes('websearch');
-  const selected = CHAT_TOOL_CATALOG.filter((t) => onlyTools.includes(t.id) && t.id !== 'websearch');
+  const selected = CHAT_TOOL_CATALOG.filter(
+    (t) => onlyTools.includes(t.id) && t.id !== 'websearch' && !NINETY_DAY_ONLY_ACTION_SET.has(t.id),
+  );
   const webSearchLine = hasWebSearch
     ? `\nWEB SEARCH is enabled for this run: you can pull CURRENT/recent information (news, syllabus changes, NTA updates, results, dates) with live Google Search grounding. Use it whenever the user's request needs fresh info. Raw search results are internal — the user sees only your synthesized answer.`
     : '';
