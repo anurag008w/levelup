@@ -212,7 +212,7 @@ export class GeminiLiveClient {
   async connect(
     apiKey: string,
     incomingCallMeta?: { isIncomingCall?: boolean; reason?: string },
-    options?: { audioFocusAlreadyGranted?: boolean },
+    options?: { audioFocusAlreadyGranted?: boolean; baseUrl?: string },
   ): Promise<void> {
     if (!apiKey) {
       throw new Error('Google Gemini API Key is required for Live Voice.');
@@ -258,6 +258,9 @@ export class GeminiLiveClient {
     }
     this.isUserExplicitlyClosed = false;
     this.activeApiKey = apiKey;
+    // Persist the SmartRotator root; reconnects re-use it (GoogleGenAI SDK
+    // honours httpOptions.baseUrl when building the Live WebSocket URL).
+    if (options?.baseUrl) this.activeBaseUrl = options.baseUrl;
     this.setStatus('connecting');
     this.framesSentCount = 0;
     this.silenceNudgeStreak = 0;
@@ -945,7 +948,7 @@ ${this.recentChatSummary}
     ];
 
     try {
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI(this.buildGenAiOptions(apiKey));
       const connectPromise = ai.live.connect({
         model: this.config.model,
         config: {
@@ -1429,6 +1432,8 @@ STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said som
   private reconnectEpoch = 0;
   private currentMediaStream: MediaStream | null = null;
   private activeApiKey: string | null = null;
+  /** SmartRotator server root (no /v1) used for the Live WebSocket relay. */
+  private activeBaseUrl: string | null = null;
   private isUserExplicitlyClosed = false;
   private lastWsActivity = Date.now(); // diagnostic only; silence is not a transport failure
   private audioFocusListener: { remove: () => Promise<void> } | null = null;
@@ -1477,6 +1482,31 @@ STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said som
       return `Selected Live model “${this.config.model}” is unavailable. Choose another Live-compatible model and try again.`;
     }
     return message;
+  }
+
+  /**
+   * Build the GoogleGenAI constructor options. When connecting through
+   * SmartRotator we pass httpOptions.baseUrl = the bare gateway root, which the
+   * SDK uses to form wss://<root>/ws/google.ai.generativelanguage.v1beta.
+   * GenerativeService.BidiGenerateContent?key=<apiKey> (our Google-exact relay).
+   * For the native Google provider baseUrl stays undefined → SDK default.
+   */
+  private buildGenAiOptions(apiKey: string): { apiKey: string; httpOptions?: { baseUrl: string } } {
+    const base = this.activeBaseUrl?.trim();
+    if (base) {
+      try {
+        const u = new URL(base);
+        u.pathname = ''; // strip any /v1 or /v1beta — SDK appends /ws/... itself
+        u.search = '';
+        u.hash = '';
+        u.pathname = u.pathname.replace(/\/+$/, '');
+        return { apiKey, httpOptions: { baseUrl: u.toString().replace(/\/+$/, '') } };
+      } catch {
+        // Invalid URL — let the SDK route to the Google default.
+        return { apiKey };
+      }
+    }
+    return { apiKey };
   }
 
   private isModelAvailabilityError(error: any): boolean {
@@ -2333,11 +2363,15 @@ HOW TO SPEAK: Break the silence naturally like a real friend on phone. Make a fr
   }
 
   /** Static helper to play a voice preview using GoogleGenAI SDK and Audio element. */
-  static async previewVoice(apiKey: string, voice: string, sampleText: string, model = 'gemini-3.1-flash-live-preview'): Promise<void> {
+  static async previewVoice(apiKey: string, voice: string, sampleText: string, model = 'gemini-3.1-flash-live-preview', baseUrl?: string): Promise<void> {
     if (apiKey) {
       // 1. Try Live WebSocket connection using the exact selected Live Model (e.g. gemini-3.1-flash-live-preview)
       try {
-        const ai = new GoogleGenAI({ apiKey });
+        const ai = new GoogleGenAI(
+          baseUrl?.trim()
+            ? { apiKey, httpOptions: { baseUrl: baseUrl.trim().replace(/\/+$/, '') } }
+            : { apiKey }
+        );
         const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
         if (AudioCtxClass) {
           const audioCtx = new AudioCtxClass({ sampleRate: 24000 });
@@ -2411,7 +2445,11 @@ HOW TO SPEAK: Break the silence naturally like a real friend on phone. Make a fr
       );
       for (const m of candidates) {
         try {
-          const ai = new GoogleGenAI({ apiKey });
+          const ai = new GoogleGenAI(
+            baseUrl?.trim()
+              ? { apiKey, httpOptions: { baseUrl: baseUrl.trim().replace(/\/+$/, '') } }
+              : { apiKey }
+          );
           const response = await ai.models.generateContent({
             model: m,
             contents: sampleText,

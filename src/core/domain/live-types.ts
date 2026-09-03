@@ -156,6 +156,13 @@ export interface LiveTranscriptItem {
 export interface LiveSettingsConfig {
   providerId?: string; // e.g. 'app-default', 'gemini', 'custom', or stored provider id
   apiKey?: string;
+  /**
+   * Server root used to reach the Gemini Live WebSocket endpoint.
+   * - SmartRotator providers: the bare gateway root (e.g. https://smartrotator.onrender.com)
+   *   so the Google GenAI SDK connects to our Google-compatible /ws/... BidiGenerateContent relay.
+   * - "gemini" / Google direct: undefined → SDK uses Google's default Live endpoint.
+   */
+  baseUrl?: string;
   model: string;
   voice: GeminiLiveVoice;
   playbackSpeed?: number; // e.g. 0.85 (default)
