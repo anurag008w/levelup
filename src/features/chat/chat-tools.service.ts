@@ -5,7 +5,7 @@ import type { Difficulty, EnergyLevel, JeeRelevance, PhaseId, TaskBankEntry, Tas
 import { DEFAULT_PROGRESSION_CONFIG, type DailyPlan, type ProgressionConfig } from '../../core/domain/progress';
 import type { StateStore } from '../../core/ports/repositories';
 import type { ChatToolAction, ChatToolActionResult, ChatToolResult } from '../../core/domain/chat-tools';
-import { chatToolActionSchema, chatToolBatchSchema, getAvailableChatTools, type ChatToolMeta } from '../../core/domain/chat-tools';
+import { NINETY_DAY_ONLY_ACTION_SET, chatToolActionSchema, chatToolBatchSchema, getAvailableChatTools, type ChatToolMeta } from '../../core/domain/chat-tools';
 import { AiActionRegistry, executeAiAction } from '../../core/domain/ai-actions';
 import type { HabitProgressionService } from '../habit-engine/planner';
 import type { TaskBankService } from '../task-bank/task-bank.service';
@@ -514,6 +514,23 @@ export class ChatToolsService {
    */
   async runMany(actions: ChatToolAction[]): Promise<ChatToolResult> {
     if (actions.length === 0) return { ok: false, summary: 'Koi tool action nahi mila.' };
+    // Capability-level 90-day gate (single source of truth). Independent of the
+    // catalog filter, so even a model/deterministic path that produced a
+    // 90-day action while the track is OFF is refused HERE at the execution
+    // boundary — not just hidden from the UI picker. Read the state fresh each
+    // call so a mid-run toggle is honored immediately.
+    const blockedActions = this.blocked(actions);
+    if (blockedActions.length > 0) {
+      return {
+        ok: false,
+        summary: '90-day track is disabled. 90-day tools are unavailable.',
+        results: blockedActions.map((a) => ({
+          action: a.action,
+          ok: false,
+          summary: 'Blocked because 90-day track is OFF.',
+        })),
+      };
+    }
     const needsConfirm = actions.filter((a) => {
       const meta = ACTIONS.list().find((x) => x.id === a.action);
       return meta?.confirmationRequired === true && !('confirmed' in a && a.confirmed === true);
@@ -574,8 +591,26 @@ export class ChatToolsService {
     return unique.map((d) => this.getPlan(state, d).summary).join('\n\n');
   }
 
+  /**
+   * Capability boundary for the 90-day track. Reads the CURRENT toggle fresh
+   * from state and returns the subset of actions that are 90-day-only tools
+   * blocked while the track is OFF. Backed by the shared NINETY_DAY_ONLY_ACTION_SET
+   * so it always agrees with getAvailableChatTools (single source of truth).
+   */
+  private blocked(actions: ChatToolAction[]): ChatToolAction[] {
+    const state = this.store.get();
+    if (state.enable90DayTrack !== false) return [];
+    return actions.filter((a) => NINETY_DAY_ONLY_ACTION_SET.has(a.action));
+  }
+
   async run(action: ChatToolAction): Promise<ChatToolResult> {
     const state = this.store.get();
+    // Defense-in-depth: a direct single-action run() must respect the same
+    // 90-day capability gate as runMany(), so no caller can bypass the batch
+    // boundary by executing an action one-at-a-time.
+    if (this.blocked([action]).length > 0) {
+      return { ok: false, summary: '90-day track is disabled. 90-day tools are unavailable.' };
+    }
     try {
       switch (action.action) {
         case 'getPlan':

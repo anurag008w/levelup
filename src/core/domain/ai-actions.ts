@@ -1,3 +1,4 @@
+import { NINETY_DAY_ONLY_ACTION_SET } from './chat-tools';
 import type { AppState } from './state';
 
 export type AiActionPermission = 'read' | 'create' | 'edit' | 'delete' | 'bulk-edit' | 'admin';
@@ -125,6 +126,19 @@ export interface AiActionExecutionResult {
 }
 
 export function executeAiAction(input: AiActionExecutionInput): AiActionExecutionResult {
+  // Capability boundary: when the 90-day track is OFF, a 90-day-only action can
+  // never reach the permission/execution layer — regardless of which caller
+  // (chat decision hop, future route, etc.) produced it. This is the domain-level
+  // source of truth that a UI catalog filter alone can never replace: even if a
+  // caller bypasses the chat layer, execution is refused right here.
+  if (state90DayOnlyBlocked(input.state, input.action.id)) {
+    return {
+      state: input.state,
+      ok: false,
+      summary: '90-day track is disabled. 90-day tools are unavailable.',
+    };
+  }
+
   const permission = (input.permissionEngine ?? new AiPermissionEngine()).can(input.action.permissions);
   if (!permission.allowed) return { state: input.state, ok: false, summary: permission.message ?? 'AI permission denied' };
 
@@ -159,6 +173,16 @@ export function executeAiAction(input: AiActionExecutionInput): AiActionExecutio
 
 
 const DESTRUCTIVE_PERMISSIONS = new Set<AiActionPermission>(['delete', 'bulk-edit', 'admin']);
+
+/**
+ * Domain-level capability check: is this action a 90-day-only tool that must be
+ * blocked because the 90-day track is currently OFF? Shared by executeAiAction
+ * so any route that reaches the execution layer is still refused.
+ */
+export function state90DayOnlyBlocked(state: Pick<AppState, 'enable90DayTrack'>, actionId: string): boolean {
+  if (state.enable90DayTrack !== false) return false;
+  return NINETY_DAY_ONLY_ACTION_SET.has(actionId);
+}
 
 export function emptyAiActionHistory(): AiActionHistoryState {
   return { versions: [], undone: [] };

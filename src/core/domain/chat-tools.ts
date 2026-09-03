@@ -484,34 +484,58 @@ export const CHAT_TOOL_CATALOG: ChatToolMeta[] = [
 ];
 
 /**
- * Returns available chat tools based on whether the 90-day challenge track is active.
- * When 90-day track is OFF, 90-day curriculum/day-specific tools are cleanly hidden.
+ * Tool actions that belong to the 90-day curriculum track. These are the ONLY
+ * tools gated off when `enable90DayTrack` is OFF: the rest (to-dos, memory,
+ * chat history, study vault, coaching planners, scheduler/calls, web search)
+ * are mode-independent and stay available in flexible mode.
+ *
+ * This array is the SINGLE source of truth for the 90-day capability boundary.
+ * The UI catalog filtering (`getAvailableChatTools`) is derived from it, AND the
+ * execution layer gate (`ChatToolsService.runMany`/`run`/`executeAiAction`)
+ * consults it — so the two can never drift apart and a toggle-off is enforced
+ * at the capability level, not just cosmetically in the picker.
+ */
+export const NINETY_DAY_ONLY_ACTIONS: readonly string[] = [
+  'getPlan',
+  'getRange',
+  'getAllTasks',
+  'getTaskBank',
+  'addTask',
+  'bulkAddTasks',
+  'editTask',
+  'editAnyTask',
+  'removeTask',
+  'bulkRemoveTasks',
+  'deleteAnyTask',
+  'markDone',
+  'bulkMarkDone',
+  'setDayMode',
+  'listBlocks',
+  'createBlock',
+  'editBlock',
+  'extendBlock',
+  'activateBlock',
+  'deleteBlock',
+];
+
+/** Set form of NINETY_DAY_ONLY_ACTIONS for O(1) membership checks. */
+export const NINETY_DAY_ONLY_ACTION_SET: ReadonlySet<string> = new Set(NINETY_DAY_ONLY_ACTIONS);
+
+/** Every catalog action NOT gated to the 90-day track — i.e. what stays
+ *  available when the track is OFF (flexible mode). Derived so the gate and the
+ *  flexible-mode boundary always agree with the catalog. */
+export const FLEXIBLE_SAFE_ACTIONS: readonly string[] = CHAT_TOOL_CATALOG.map((t) => t.id).filter(
+  (id) => !NINETY_DAY_ONLY_ACTION_SET.has(id),
+);
+
+/**
+ * Returns available chat tools based on whether the 90-day challenge track is
+ * active. Derived from NINETY_DAY_ONLY_ACTIONS, so it always mirrors the
+ * execution-layer capability gate (single source of truth).
  */
 export function getAvailableChatTools(enable90DayTrack = true): ChatToolMeta[] {
   if (!enable90DayTrack) {
-    const excluded90DayToolIds = new Set([
-      'getPlan',
-      'getRange',
-      'getAllTasks',
-      'getTaskBank',
-      'addTask',
-      'bulkAddTasks',
-      'editTask',
-      'editAnyTask',
-      'removeTask',
-      'bulkRemoveTasks',
-      'deleteAnyTask',
-      'markDone',
-      'bulkMarkDone',
-      'setDayMode',
-      'listBlocks',
-      'createBlock',
-      'editBlock',
-      'extendBlock',
-      'activateBlock',
-      'deleteBlock',
-    ]);
-    return CHAT_TOOL_CATALOG.filter((t) => !excluded90DayToolIds.has(t.id));
+    return CHAT_TOOL_CATALOG.filter((t) => !NINETY_DAY_ONLY_ACTION_SET.has(t.id));
   }
   return CHAT_TOOL_CATALOG;
 }

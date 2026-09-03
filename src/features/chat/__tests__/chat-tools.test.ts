@@ -16,7 +16,7 @@ import { ProviderSettingsService } from '../../ai/provider-settings.service';
 import { ChatService } from '../chat.service';
 import { ChatToolsService } from '../chat-tools.service';
 import { DEFAULT_PROGRESSION_CONFIG } from '../../../core/domain/progress';
-import { undoLastAiAction, redoLastAiAction } from '../../../core/domain/ai-actions';
+import { undoLastAiAction, redoLastAiAction, state90DayOnlyBlocked } from '../../../core/domain/ai-actions';
 import { PlannerService, PlannerToolsService } from '../../planner/planner.service';
 import type { TaskGenerationService } from '../../ai/task-generation.service';
 import { MemoryService } from '../../ai/memory.service';
@@ -55,6 +55,13 @@ function makeStore(): StateStore {
       state = s;
     },
   };
+}
+
+/** Store with the 90-day track toggled OFF (flexible mode). */
+function makeFlexibleStore(): StateStore {
+  const store = makeStore();
+  store.save({ ...store.get(), enable90DayTrack: false });
+  return store;
 }
 
 function makeTools(store: StateStore, chatSessionsProvider?: () => ChatSession[]): { tools: ChatToolsService; taskGeneration: TaskGenerationService } {
@@ -2439,6 +2446,93 @@ describe('notification reply flow', () => {
       expect(delRes.ok).toBe(true);
       expect(store.get().customTodos).toHaveLength(1);
     });
+  });
+});
+
+describe('90-day capability gate (toggle OFF = hard block at execution layer)', () => {
+  it('runMany blocks every 90-day-only action when the track is OFF', async () => {
+    const store = makeFlexibleStore();
+    const { tools } = makeTools(store);
+    const result = await tools.runMany([
+      { action: 'addTask', day: 3, intent: 'revision', durationMin: 20 },
+      { action: 'markDone', day: 1, taskId: 'd1_t1' },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.summary).toContain('90-day track is disabled');
+    expect(result.results).toHaveLength(2);
+    for (const r of result.results!) {
+      expect(r.ok).toBe(false);
+      expect(r.summary).toContain('Blocked because 90-day track is OFF');
+    }
+    // Nothing was applied.
+    expect(store.get().dynamicTaskBank.some((t) => t.id === 'ai-chat-test')).toBe(false);
+  });
+
+  it('runMany still allows flexible-mode actions when the track is OFF', async () => {
+    const store = makeFlexibleStore();
+    const { tools } = makeTools(store);
+    // A mixed batch of a blocked 90-day action + a flexible-safe addTodo is an
+    // all-or-nothing block (the 90-day action poisons the batch).
+    const result = await tools.runMany([
+      { action: 'addTask', day: 3, intent: 'revision', durationMin: 20 },
+      { action: 'addTodo', title: 'flexible task', priority: 'high', estimatedMinutes: 30 },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(store.get().customTodos ?? []).toHaveLength(0);
+
+    // A batch of ONLY flexible-safe actions proceeds normally.
+    const ok = await tools.runMany([{ action: 'addTodo', title: 'flexible task', priority: 'high', estimatedMinutes: 30 }]);
+    expect(ok.ok).toBe(true);
+    expect(store.get().customTodos).toHaveLength(1);
+  });
+
+  it('run() blocks a direct single 90-day action too (defense-in-depth)', async () => {
+    const store = makeFlexibleStore();
+    const { tools } = makeTools(store);
+    const res = await tools.run({ action: 'getPlan', day: 3 });
+    expect(res.ok).toBe(false);
+    expect(res.summary).toContain('90-day track is disabled');
+    expect(store.get().dynamicTaskBank.some((t) => t.id === 'ai-chat-test')).toBe(false);
+  });
+
+  it('run() still allows flexible-safe actions when the track is OFF', async () => {
+    const store = makeFlexibleStore();
+    const { tools } = makeTools(store);
+    const res = await tools.run({ action: 'listTodos', filter: 'pending' });
+    expect(res.ok).toBe(true);
+    const ctx = await tools.run({ action: 'getContext' });
+    expect(ctx.ok).toBe(true);
+    expect(ctx.summary).toContain('Flexible Study Planner');
+  });
+
+  it('domain-level state90DayOnlyBlocked refuses 90-day actions when OFF, allows when ON', () => {
+    const off = { enable90DayTrack: false };
+    const on = { enable90DayTrack: true };
+    expect(state90DayOnlyBlocked(off, 'addTask')).toBe(true);
+    expect(state90DayOnlyBlocked(off, 'getPlan')).toBe(true);
+    expect(state90DayOnlyBlocked(off, 'deleteBlock')).toBe(true);
+    // Flexible-safe actions are never blocked by the 90-day gate.
+    expect(state90DayOnlyBlocked(off, 'addTodo')).toBe(false);
+    expect(state90DayOnlyBlocked(off, 'getContext')).toBe(false);
+    expect(state90DayOnlyBlocked(off, 'listPlanners')).toBe(false);
+    // Track ON → nothing blocked.
+    expect(state90DayOnlyBlocked(on, 'addTask')).toBe(false);
+  });
+
+  it('listTools hides 90-day tools when OFF but keeps flexible-safe ones', () => {
+    const off = makeFlexibleStore();
+    const { tools: offTools } = makeTools(off);
+    const offIds = offTools.listTools().map((t) => t.id);
+    for (const id of ['addTask', 'getPlan', 'markDone', 'deleteBlock']) expect(offIds).not.toContain(id);
+    for (const id of ['addTodo', 'listTodos', 'getContext', 'listPlanners', 'searchChatHistory', 'scheduleMessage']) {
+      expect(offIds).toContain(id);
+    }
+
+    const on = makeStore();
+    const { tools: onTools } = makeTools(on);
+    const onIds = onTools.listTools().map((t) => t.id);
+    expect(onIds).toContain('addTask');
+    expect(onIds).toContain('getPlan');
   });
 });
 
