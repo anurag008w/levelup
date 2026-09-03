@@ -498,6 +498,11 @@ export default function ChatScreen({
     if (liveConfig.baseUrl?.trim()) return normalizeServerRoot(liveConfig.baseUrl);
     const provId = liveConfig.providerId || 'app-default';
     if (provId === 'gemini') return undefined;
+    // If the active key is a native Google Gemini key (AIzaSy...), connect directly to Google
+    // to avoid proxy latency and packet chunking on live audio.
+    const key = getGeminiLiveApiKey();
+    if (key.startsWith('AIzaSy')) return undefined;
+
     const provider = container.providerSettings.getProviderById(provId)
       ?? container.providerSettings.getActiveProvider()
       ?? container.providerSettings.getHiddenDefaultFull();

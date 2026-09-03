@@ -41,9 +41,6 @@ export class AudioStreamer {
   private onPlaybackEnded?: () => void;
   private outputVolume = 1;
   private outputGainNode: GainNode | null = null;
-  private pendingAudioQueue: Float32Array[] = [];
-  private jitterBufferTimer: number | null = null;
-  private isStreamingPlaying = false;
 
   setOutputVolume(volume: number): void {
     this.outputVolume = Math.max(0, Math.min(1, volume));
@@ -250,47 +247,6 @@ export class AudioStreamer {
       rawSamples[i] = sample / 32768;
     }
 
-    if (!this.isStreamingPlaying) {
-      // Jitter buffer queue at the start of speech:
-      // Accumulate ~80-100ms cushion so network packet jitter never starves playback
-      this.pendingAudioQueue.push(rawSamples);
-      let totalSamples = 0;
-      for (let j = 0; j < this.pendingAudioQueue.length; j++) {
-        totalSamples += this.pendingAudioQueue[j].length;
-      }
-      // 2400 samples at 24kHz = 100ms cushion
-      if (totalSamples >= 2400) {
-        this.drainPendingAudioQueue(ctx);
-      } else if (this.jitterBufferTimer === null) {
-        this.jitterBufferTimer = window.setTimeout(() => {
-          this.jitterBufferTimer = null;
-          this.drainPendingAudioQueue(ctx);
-        }, 40);
-      }
-    } else {
-      // Normal continuous streaming: schedule directly into hardware with zero gap
-      this.scheduleBuffer(ctx, rawSamples);
-    }
-  }
-
-  private drainPendingAudioQueue(ctx: AudioContext): void {
-    if (this.jitterBufferTimer !== null) {
-      window.clearTimeout(this.jitterBufferTimer);
-      this.jitterBufferTimer = null;
-    }
-    const chunks = this.pendingAudioQueue;
-    this.pendingAudioQueue = [];
-    if (chunks.length === 0) return;
-
-    this.isStreamingPlaying = true;
-    for (let i = 0; i < chunks.length; i++) {
-      this.scheduleBuffer(ctx, chunks[i]);
-    }
-  }
-
-  private scheduleBuffer(ctx: AudioContext, rawSamples: Float32Array): void {
-    if (rawSamples.length === 0) return;
-
     const audioBuffer = ctx.createBuffer(1, rawSamples.length, 24000);
     audioBuffer.getChannelData(0).set(rawSamples);
 
@@ -314,12 +270,18 @@ export class AudioStreamer {
       this.flushPlayback(false);
     }
 
-    // Zero-gap continuous playback:
-    // If nextPlayTime is in the future, schedule exactly at nextPlayTime (0ms gap).
-    // If underrun occurs (nextPlayTime < now), start immediately with a minimal 5ms DAC safety lead.
-    const startTime = Math.max(this.nextPlayTime, now + 0.005);
-    source.start(startTime);
-    this.nextPlayTime = startTime + playDuration;
+    // Gapless continuous playback:
+    // If starting fresh or recovering from an underrun (nextPlayTime < now),
+    // give 25ms lead time so the Android hardware DAC / Bluetooth radio buffer
+    // initializes smoothly without audio clicks or underruns.
+    // If consecutive chunks arrive in a stream (nextPlayTime >= now),
+    // schedule seamlessly with EXACTLY 0ms gap.
+    if (this.nextPlayTime < now) {
+      this.nextPlayTime = now + 0.025;
+    }
+
+    source.start(this.nextPlayTime);
+    this.nextPlayTime += playDuration;
 
     this.activeSources.push(source);
     source.onended = () => {
@@ -327,8 +289,7 @@ export class AudioStreamer {
       if (idx !== -1) {
         this.activeSources.splice(idx, 1);
       }
-      if (this.activeSources.length === 0 && this.pendingAudioQueue.length === 0) {
-        this.isStreamingPlaying = false;
+      if (this.activeSources.length === 0) {
         this.nextPlayTime = 0;
         this.onPlaybackEnded?.();
       }
@@ -337,13 +298,6 @@ export class AudioStreamer {
 
   /** Immediately flush and stop active playback (e.g. on user interruption). */
   flushPlayback(notifyEnded = true): void {
-    if (this.jitterBufferTimer !== null) {
-      window.clearTimeout(this.jitterBufferTimer);
-      this.jitterBufferTimer = null;
-    }
-    this.pendingAudioQueue = [];
-    this.isStreamingPlaying = false;
-    this.nextPlayTime = 0;
     for (const source of this.activeSources) {
       try {
         source.stop();
@@ -353,6 +307,7 @@ export class AudioStreamer {
       }
     }
     this.activeSources = [];
+    this.nextPlayTime = 0;
     if (notifyEnded) this.onPlaybackEnded?.();
   }
 
