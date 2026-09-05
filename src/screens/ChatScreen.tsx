@@ -184,8 +184,12 @@ export default function ChatScreen({
   // state so a live 90-day track toggle (ON ↔ OFF) immediately re-renders the
   // catalog — 90-day tools vanish the instant flexible mode is on, and return
   // as soon as the track is back on. (container.chat.listTools() already
-  // filters by enable90DayTrack; this dep just makes the memo re-evaluate.)
-  const toolCatalog = useMemo(() => container.chat.listTools(), [appState.enable90DayTrack]);
+  // filters by enable90DayTrack; the reference below makes that dependency
+  // explicit so the memo re-evaluates when the track toggles.)
+  const toolCatalog = useMemo(() => {
+    void appState.enable90DayTrack;
+    return container.chat.listTools();
+  }, [appState.enable90DayTrack]);
   const filteredTools = useMemo(() => {
     if (toolQuery === null) return [];
     const q = toolQuery.toLowerCase().trim();

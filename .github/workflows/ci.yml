@@ -71,7 +71,6 @@ jobs:
           VITE_DEFAULT_AI_API_KEY: ${{ secrets.VITE_DEFAULT_AI_API_KEY }}
           VITE_DEFAULT_AI_MODEL: ${{ secrets.VITE_DEFAULT_AI_MODEL }}
           VITE_DEFAULT_AI_MODELS: ${{ secrets.VITE_DEFAULT_AI_MODELS }}
-          VITE_DEFAULT_AI_AUTH: ${{ secrets.VITE_DEFAULT_AI_AUTH }}
         run: npm run build
 
   android-build:
