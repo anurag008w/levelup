@@ -4,6 +4,7 @@ import {
   flushNativeAudioTrack,
   writeNativeAudioChunk,
 } from '../../lib/gapless-audio-native';
+import { WORKLET_PROCESSOR_NAME, WORKLET_SOURCE } from './audio-worklet-processor';
 
 // WebAudio Streamer for Gemini Live
 // High-performance real-time audio pipeline:
@@ -11,6 +12,15 @@ import {
 // - 24kHz 16-bit Mono Linear PCM playback (Gemini native audio response)
 // - Android 7+ (Chromium WebView) compatible (Dual engine: AudioWorklet + ScriptProcessor fallback)
 // - Real-time Audio Analyser for audio reactive UI waves and visualizer orb
+//
+// Capture engine (recording side): the BILLION-DOLLAR reason the live call used
+// to hang is that every ~43ms (≈23 chunks/sec) the OLD ScriptProcessor ran the
+// whole DSP — RMS, downsample-to-16k, float→PCM, base64 — on the single
+// Capacitor WebView main thread, alongside typing, scrolling and React.
+// Today the primary engine is a REAL AudioWorklet (RMS + downsample + PCM all on
+// the audio render thread; only the trivial base64 string is built on main).
+// AudioWorklet predates some old WebViews, so ScriptProcessor remains as a
+// silent fallback (with the heavy spots micro-optimized and buffer-reused).
 
 export class AudioStreamer {
   // Do not let bursty network delivery turn into seconds of stale speech.
@@ -54,6 +64,13 @@ export class AudioStreamer {
   private inputAnalyser: AnalyserNode | null = null;
   private outputAnalyser: AnalyserNode | null = null;
   private scriptProcessor: ScriptProcessorNode | null = null;
+  private workletNode: AudioWorkletNode | null = null;
+  /** Which capture engine is live — 'worklet' (primary) or 'scriptprocessor' (fallback). */
+  private captureEngine: 'worklet' | 'scriptprocessor' | 'idle' = 'idle';
+  // Reusable scratch buffers for the ScriptProcessor fallback so a chunk never
+  // allocates mid-capture (the old path churned 3 arrays + 2 strings × 23/sec).
+  private downsampleScratch: Float32Array | null = null;
+  private pcmScratch: Int16Array | null = null;
 
   private isRecording = false;
   private isMuted = false;
@@ -219,35 +236,98 @@ export class AudioStreamer {
     this.inputAnalyser.fftSize = 256;
     this.inputSource.connect(this.inputAnalyser);
 
-    // ~43ms at 48kHz: substantially better turn-taking latency than 4096 while
-    // still keeping message rate manageable for the Live WebSocket.
-    const bufferSize = 2048;
-    this.scriptProcessor = ctx.createScriptProcessor(bufferSize, 1, 1);
+    // ── Capture engine ──
+    // Primary: AudioWorklet — RMS / downsample / float→PCM run on the audio
+    // render thread, so the main thread only builds a ~1.3KB base64 string per
+    // chunk (~23/sec). Fallback: ScriptProcessor with micro-optimized DSP for
+    // WebViews that predate AudioWorklet. Both emit numerically-identical PCM.
+    const workletOk = await this.tryInitWorklet(ctx);
+    if (workletOk) {
+      const workletNode = new AudioWorkletNode(ctx, WORKLET_PROCESSOR_NAME, {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+      });
+      workletNode.port.onmessage = (e: MessageEvent) => {
+        if (!this.isRecording || this.isMuted) return;
+        const d = e.data as { kind?: string; pcm?: ArrayBuffer; outLen?: number; rms?: number };
+        if (!d || d.kind !== 'chunk' || !d.pcm || !d.outLen) return;
+        const bytes = new Uint8Array(d.pcm, 0, d.outLen * 2);
+        if (bytes.byteLength === 0) return;
+        const base64 = this.arrayBufferToBase64(bytes);
+        if (this.onAudioChunk && base64) {
+          this.onAudioChunk(base64, d.rms ?? 0);
+        }
+      };
+      this.inputSource.connect(workletNode);
+      // Keep the graph pulling data through a zero-gain tap (same trick as the
+      // ScriptProcessor path below: never route mic audio to the speakers).
+      const zeroGain = ctx.createGain();
+      zeroGain.gain.value = 0;
+      workletNode.connect(zeroGain);
+      zeroGain.connect(ctx.destination);
+      this.workletNode = workletNode;
+      this.captureEngine = 'worklet';
+    } else {
+      // ~43ms at 48kHz: substantially better turn-taking latency than 4096 while
+      // still keeping message rate manageable for the Live WebSocket.
+      const bufferSize = 2048;
+      this.scriptProcessor = ctx.createScriptProcessor(bufferSize, 1, 1);
 
-    this.scriptProcessor.onaudioprocess = (e) => {
-      if (!this.isRecording || this.isMuted) return;
-      const inputData = e.inputBuffer.getChannelData(0);
-      let sumSq = 0;
-      for (let i = 0; i < inputData.length; i++) {
-        sumSq += inputData[i] * inputData[i];
-      }
-      const rms = Math.sqrt(sumSq / inputData.length);
-      const downsampled16k = this.downsampleTo16k(inputData, ctx.sampleRate);
-      const pcm16 = this.floatTo16BitPCM(downsampled16k);
-      const base64 = this.arrayBufferToBase64(pcm16.buffer);
-      if (this.onAudioChunk && base64) {
-        this.onAudioChunk(base64, rms);
-      }
-    };
+      this.scriptProcessor.onaudioprocess = (e) => {
+        if (!this.isRecording || this.isMuted) return;
+        const inputData = e.inputBuffer.getChannelData(0);
+        let sumSq = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          sumSq += inputData[i] * inputData[i];
+        }
+        const rms = Math.sqrt(sumSq / inputData.length);
+        const downsampled16k = this.downsampleTo16k(inputData, ctx.sampleRate);
+        const pcm16 = this.floatTo16BitPCM(downsampled16k);
+        // Reused scratch buffers: read views (no copies) straight into base64.
+        const base64 = this.arrayBufferToBase64(
+          new Uint8Array(pcm16.buffer, pcm16.byteOffset, pcm16.byteLength),
+        );
+        if (this.onAudioChunk && base64) {
+          this.onAudioChunk(base64, rms);
+        }
+      };
 
-    this.inputSource.connect(this.scriptProcessor);
-    const zeroGain = ctx.createGain();
-    zeroGain.gain.value = 0;
-    this.scriptProcessor.connect(zeroGain);
-    zeroGain.connect(ctx.destination);
+      this.inputSource.connect(this.scriptProcessor);
+      const zeroGain = ctx.createGain();
+      zeroGain.gain.value = 0;
+      this.scriptProcessor.connect(zeroGain);
+      zeroGain.connect(ctx.destination);
+      this.captureEngine = 'scriptprocessor';
+    }
 
     this.isRecording = true;
     this.startLevelMonitoring();
+  }
+
+  /**
+   * Try to boot the AudioWorklet capture engine.
+   * Returns false (→ ScriptProcessor fallback) when the WebView doesn't expose
+   * audioWorklet / AudioWorkletNode or addModule() fails for any reason.
+   */
+  private async tryInitWorklet(ctx: AudioContext): Promise<boolean> {
+    try {
+      const audioWorklet = (ctx as unknown as { audioWorklet?: { addModule?: (url: string) => Promise<void> } }).audioWorklet;
+      if (!audioWorklet || typeof audioWorklet.addModule !== 'function') return false;
+      if (typeof AudioWorkletNode === 'undefined') return false;
+      // Blob-loading keeps the worklet source bundled with the app (no public/
+      // asset build step, no CSP risk in the Capacitor WebView).
+      if (typeof Blob === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return false;
+      const blob = new Blob([WORKLET_SOURCE], { type: 'application/javascript' });
+      const url = URL.createObjectURL(blob);
+      try {
+        await audioWorklet.addModule(url);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   setMuted(muted: boolean): void {
@@ -303,19 +383,24 @@ export class AudioStreamer {
     const numSamples = Math.floor(binary.length / 2);
     if (numSamples <= 0) return;
 
-    const rawSamples = new Float32Array(numSamples);
+    // Decode straight into the AudioBuffer channel — one allocation + one loop,
+    // no intermediate Float32Array + set() copy. Runs on the main thread but is
+    // cheap on modern CPUs; the REAL cost on native is already bypassed by the
+    // gapless AudioTrack path above, and this WebAudio path only serves the
+    // web/browser fallback.
+    const audioBuffer = ctx.createBuffer(1, numSamples, 24000);
+    const channel = audioBuffer.getChannelData(0);
+    let o = 0;
     for (let i = 0; i < numSamples; i++) {
-      let sample = binary.charCodeAt(i * 2) | (binary.charCodeAt(i * 2 + 1) << 8);
+      let sample = binary.charCodeAt(o) | (binary.charCodeAt(o + 1) << 8);
+      o += 2;
       if (sample >= 32768) sample -= 65536;
-      rawSamples[i] = sample / 32768;
+      channel[i] = sample / 32768;
     }
 
-    const audioBuffer = ctx.createBuffer(1, rawSamples.length, 24000);
-    audioBuffer.getChannelData(0).set(rawSamples);
-
-    // Jitter-buffer: decode inline (cheap), then push to the queue and let the
-    // scheduler feed the DAC gaplessly. Decoding a chunk on every WebSocket
-    // message was never the bottleneck — the DRAINT-to-underrun scheduling was.
+    // Jitter-buffer: decoded inline, then queued and fed to the DAC gaplessly by
+    // the scheduler. The DRAINT-to-underrun scheduling (not the decode) was the
+    // stutter culprit — that is what the queue + PRE_ROLL chain below fixes.
     this.pendingChunks.push(audioBuffer);
     this.kickScheduler();
   }
@@ -477,9 +562,19 @@ export class AudioStreamer {
 
   stopRecording(stopTracks = false): void {
     this.isRecording = false;
+    this.captureEngine = 'idle';
     if (this.levelInterval !== null) {
       clearInterval(this.levelInterval);
       this.levelInterval = null;
+    }
+    if (this.workletNode) {
+      try {
+        this.workletNode.port.onmessage = null;
+        this.workletNode.disconnect();
+      } catch {
+        // already detached
+      }
+      this.workletNode = null;
     }
     if (this.scriptProcessor) {
       this.scriptProcessor.disconnect();
@@ -519,14 +614,23 @@ export class AudioStreamer {
 
   // ===== Helper conversions =====
 
+  /** Which capture DSP engine is live ('worklet' = primary, off-thread). */
+  getCaptureEngine(): 'worklet' | 'scriptprocessor' | 'idle' {
+    return this.captureEngine;
+  }
+
   private downsampleTo16k(input: Float32Array, inputSampleRate: number): Float32Array {
     if (inputSampleRate === 16000) return input;
     const ratio = inputSampleRate / 16000;
     const newLength = Math.round(input.length / ratio);
-    const result = new Float32Array(newLength);
+    // Reuse one scratch buffer across chunks (fallback path) → zero GC churn.
+    if (!this.downsampleScratch || this.downsampleScratch.length < newLength) {
+      this.downsampleScratch = new Float32Array(newLength);
+    }
+    const result = this.downsampleScratch;
     let offsetResult = 0;
     let offsetInput = 0;
-    while (offsetResult < result.length) {
+    while (offsetResult < newLength) {
       const nextOffsetInput = Math.round((offsetResult + 1) * ratio);
       let accum = 0;
       let count = 0;
@@ -542,20 +646,30 @@ export class AudioStreamer {
   }
 
   private floatTo16BitPCM(input: Float32Array): Int16Array {
-    const output = new Int16Array(input.length);
+    // Reuse one scratch buffer across chunks (fallback path) → zero GC churn.
+    if (!this.pcmScratch || this.pcmScratch.length < input.length) {
+      this.pcmScratch = new Int16Array(input.length);
+    }
+    const output = this.pcmScratch;
     for (let i = 0; i < input.length; i++) {
       const s = Math.max(-1, Math.min(1, input[i]));
       output[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
-    return output;
+    return output.subarray(0, input.length);
   }
 
-  private arrayBufferToBase64(buffer: ArrayBufferLike): string {
-    const bytes = new Uint8Array(buffer);
+  /**
+   * Uint8Array (typically a view over a reused PCM scratch) → base64 string.
+   * Avoids the slow Array.from + String.fromCharCode.apply spread: apply works
+   * directly on a TypedArray subarray, so no intermediate JS array is created.
+   */
+  private arrayBufferToBase64(bytes: Uint8Array): string {
     let binary = '';
     const len = bytes.byteLength;
+    // apply accepts any array-like — typed-array subarray works without copying
+    // into a plain JS array (lib.dom types it as number[]; the cast is sound).
     for (let i = 0; i < len; i += 8192) {
-      binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 8192)));
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192) as unknown as number[]);
     }
     return btoa(binary);
   }

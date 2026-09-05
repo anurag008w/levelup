@@ -55,14 +55,19 @@ let startCalls: number[] = [];
 let ctx: any;
 
 // Silently no-op anything the mock AudioContext doesn't implement.
+const createMediaStreamSource = vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() }));
+const createScriptProcessor = vi.fn(() => ({ onaudioprocess: null, connect: vi.fn(), disconnect: vi.fn() }));
 const mockAudioContext = () => ({
   state: 'running',
   currentTime: 100,
+  sampleRate: 48000,
   destination,
   createBuffer,
   createBufferSource,
   createGain,
   createAnalyser,
+  createMediaStreamSource,
+  createScriptProcessor,
   resume: vi.fn().mockResolvedValue(undefined),
   close: vi.fn().mockResolvedValue(undefined),
 });
@@ -71,6 +76,8 @@ beforeEach(() => {
   startCalls = [];
   createBuffer.mockClear();
   createBufferSource.mockClear();
+  createMediaStreamSource.mockClear();
+  createScriptProcessor.mockClear();
   // Reset mock timers: preset real window-ish setTimeout (auto-run immediately
   // in tests so scheduling coalescing still resolves synchronously per tick).
   (globalThis as any).__timeouts = [];
@@ -226,5 +233,85 @@ describe('AudioStreamer jitter-buffer scheduling', () => {
     const firstRecovery = startCalls[beforeRecovery];
     expect(firstRecovery).toBeGreaterThanOrEqual(500 + 0.02);
     expect(firstRecovery).toBeLessThan(500 + 0.06);
+  });
+});
+
+describe('AudioStreamer capture engine', () => {
+  it('ScriptProcessor fallback engages when AudioWorklet is unavailable and encodes byte-exact PCM', async () => {
+    await loadStreamer();
+    const streamer = new AudioStreamer();
+    const chunks: Array<{ b64: string; rms?: number }> = [];
+    const stream = { getAudioTracks: () => [], getTracks: () => [] };
+    await streamer.startRecording(stream, (b64: string, rms?: number) => chunks.push({ b64, rms }), undefined, undefined);
+    expect(streamer.getCaptureEngine()).toBe('scriptprocessor');
+
+    // Feed one 2048-sample block @48kHz: 0.5 DC → 683 samples of 16383 PCM16 LE.
+    const sp = createScriptProcessor.mock.results[0].value;
+    sp.onaudioprocess!({ inputBuffer: { getChannelData: () => new Float32Array(2048).fill(0.5) } });
+    expect(chunks.length).toBe(1);
+    const bytes = Uint8Array.from(atob(chunks[0].b64), (c) => c.charCodeAt(0));
+    expect(bytes.length).toBe(683 * 2);
+    expect(bytes[0]).toBe(0xff); // 16383 (0x3FFF) LE low byte
+    expect(bytes[1]).toBe(0x3f); // 16383 (0x3FFF) LE high byte
+    expect(chunks[0].rms).toBeCloseTo(0.5, 5);
+    void streamer;
+  });
+
+  it('worklet capture engine routes worklet postMessage chunks into onAudioChunk base64', async () => {
+    await loadStreamer();
+
+    // Provide the pieces startRecording needs to boot the REAL worklet path:
+    // ctx.audioWorklet.addModule, a global AudioWorkletNode, and Blob URLs.
+    const addModule = vi.fn().mockResolvedValue(undefined);
+    ctx.audioWorklet = { addModule };
+    const fakePort: { onmessage: ((e: MessageEvent) => void) | null; postMessage: ReturnType<typeof vi.fn> } = { onmessage: null, postMessage: vi.fn() };
+    const FakeWorkletNode = class {
+      port = fakePort;
+      connect = vi.fn();
+      disconnect = vi.fn();
+    };
+    (globalThis as any).AudioWorkletNode = FakeWorkletNode;
+    const origURL = (globalThis as any).URL;
+    const urlMock = vi.fn(() => 'blob:fake-worklet');
+    (globalThis as any).URL = { ...origURL, createObjectURL: urlMock, revokeObjectURL: vi.fn() };
+
+    const streamer = new AudioStreamer();
+    const chunks: Array<{ b64: string; rms?: number }> = [];
+    const stream = { getAudioTracks: () => [], getTracks: () => [] };
+    await streamer.startRecording(stream, (b64: string, rms?: number) => chunks.push({ b64, rms }), undefined, undefined);
+
+    expect(addModule).toHaveBeenCalledWith('blob:fake-worklet');
+    expect(streamer.getCaptureEngine()).toBe('worklet');
+
+    // The worklet posts a 2048-int16 ring buffer; main reads outLen=683 samples.
+    const pcm = new Int16Array(2048).fill(16383).buffer;
+    fakePort.onmessage!({ data: { kind: 'chunk', pcm, outLen: 683, rms: 0.5 } } as MessageEvent);
+
+    expect(chunks.length).toBe(1);
+    const bytes = Uint8Array.from(atob(chunks[0].b64), (c) => c.charCodeAt(0));
+    expect(bytes.length).toBe(683 * 2);
+    expect(bytes[0]).toBe(0xff);
+    expect(bytes[1]).toBe(0x3f);
+    expect(chunks[0].rms).toBeCloseTo(0.5, 5);
+    void streamer;
+
+    delete (globalThis as any).AudioWorkletNode;
+    delete ctx.audioWorklet;
+    (globalThis as any).URL = origURL;
+  });
+
+  it('muted capture skips sending chunks to onAudioChunk', async () => {
+    await loadStreamer();
+    const streamer = new AudioStreamer();
+    const chunks: Array<{ b64: string; rms?: number }> = [];
+    const stream = { getAudioTracks: () => [], getTracks: () => [] };
+    await streamer.startRecording(stream, (b64: string, rms?: number) => chunks.push({ b64, rms }), undefined, undefined);
+    expect(streamer.getCaptureEngine()).toBe('scriptprocessor');
+
+    streamer.setMuted(true);
+    const sp = createScriptProcessor.mock.results[0].value;
+    sp.onaudioprocess({ inputBuffer: { getChannelData: () => new Float32Array(2048).fill(0.5) } });
+    expect(chunks.length).toBe(0); // muted → no chunk emitted
+    void streamer;
   });
 });
