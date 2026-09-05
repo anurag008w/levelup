@@ -50,6 +50,7 @@ import { container } from '../di/container';
 import { redoLastAiAction, undoLastAiAction } from '../core/domain/ai-actions';
 import { proactiveAgentService } from '../features/ai/proactive-agent.service';
 import ChatMarkdown from '../components/ChatMarkdown';
+import StreamingText from '../components/StreamingText';
 import { useAppState } from '../lib/useAppState';
 import FileCard from '../components/FileCard';
 import FileKindBadge from '../components/FileKindBadge';
@@ -981,9 +982,10 @@ export default function ChatScreen({
       if (!latest || latest.length === 0) return;
       const sid = liveCallSessionIdRef.current || active?.id;
       if (!sid) return;
+      const msgs: ChatMessage[] = [];
       for (const t of latest) {
         if (!t || typeof t.text !== 'string' || !t.text.trim()) continue;
-        const msg: ChatMessage = {
+        msgs.push({
           id: t.id,
           role: t.role,
           content: t.text,
@@ -991,9 +993,11 @@ export default function ChatScreen({
           model: t.role === 'assistant' ? liveConfig.model : undefined,
           toolCalls: t.toolCalls,
           reasoning: t.reasoning,
-        };
-        container.chat.appendMessage(sid, msg);
+        });
       }
+      // One persist for the whole flush instead of one JSON.stringify +
+      // localStorage write per chunk (N × full-store cost mid-call).
+      container.chat.appendMessages(sid, msgs);
       const all = container.chat.listSessions();
       setSessions(all);
       // Streaming-tail tracking: only the CURRENTLY growing assistant reply stays
@@ -1031,9 +1035,10 @@ export default function ChatScreen({
     void resetNativeAudioRoute().catch(() => undefined);
     const targetSessionId = liveCallSessionIdRef.current || active?.id;
     if (transcripts?.length > 0 && targetSessionId) {
+      const finalMsgs: ChatMessage[] = [];
       for (const t of transcripts) {
         if (!t || typeof t.text !== 'string' || !t.text.trim()) continue;
-        const msg: ChatMessage = {
+        finalMsgs.push({
           id: t.id,
           role: t.role,
           content: t.text,
@@ -1041,9 +1046,10 @@ export default function ChatScreen({
           model: t.role === 'assistant' ? liveConfig.model : undefined,
           toolCalls: t.toolCalls,
           reasoning: t.reasoning,
-        };
-        container.chat.appendMessage(targetSessionId, msg);
+        });
       }
+      // Single persist for the final transcript (idempotent by id).
+      container.chat.appendMessages(targetSessionId, finalMsgs);
     }
     liveCallSessionIdRef.current = null;
     const all = container.chat.listSessions();
@@ -2491,16 +2497,6 @@ function ThinkingBlock({ text, streaming = false }: { text: string; streaming?: 
       )}
     </div>
   );
-}
-
-/**
- * Live-streaming placeholder for a still-growing reply. While the message text
- * keeps changing we render the cheapest possible thing (whitespace-pre-wrap
- * div) instead of re-parsing react-markdown → GFM → KaTeX → highlight on every
- * flush. The full parse happens exactly once, when the message is final.
- */
-function StreamingText({ text }: { text: string }) {
-  return <div className="md-plain-stream">{text}</div>;
 }
 
 /**

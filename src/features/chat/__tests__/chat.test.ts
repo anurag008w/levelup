@@ -338,6 +338,38 @@ describe('ChatService', () => {
     expect(stored.messages.map((m) => m.content)).toEqual(['hello', 'reply']);
   });
 
+  it('appendMessages persists the whole flush ONCE (live-call transcript sink)', () => {
+    class CountingRepo extends MemoryChatRepository {
+      saves = 0;
+      save(state: ChatStoreState): void {
+        this.saves += 1;
+        super.save(state);
+      }
+    }
+    const counting = new CountingRepo();
+    const { chat } = buildService({ repo: counting });
+    const session = chat.createSession();
+    // createSession already persisted once; measure only the flush below.
+    counting.saves = 0;
+
+    // One flush = 3 chunks (same growing id) → exactly ONE persist, not three.
+    chat.appendMessages(session.id, [
+      { id: 'a1', role: 'assistant', content: 'Hello!', createdAt: '2026-01-01T10:00:00.000Z' },
+      { id: 'a1', role: 'assistant', content: 'Hello! How can', createdAt: '2026-01-01T10:00:01.000Z' },
+      { id: 'a1', role: 'assistant', content: 'Hello! How can I help?', createdAt: '2026-01-01T10:00:02.000Z' },
+    ]);
+    expect(counting.saves).toBe(1);
+    const got1 = chat.getSession(session.id)!;
+    expect(got1.messages).toHaveLength(1);
+    // Same id re-flush replaces content in place (idempotent grow).
+    chat.appendMessages(session.id, [
+      { id: 'a1', role: 'assistant', content: 'Hello! How can I help today?', createdAt: '2026-01-01T10:00:03.000Z' },
+    ]);
+    expect(counting.saves).toBe(2);
+    expect(chat.getSession(session.id)!.messages[0].content).toBe('Hello! How can I help today?');
+    expect(chat.getSession(session.id)!.messages).toHaveLength(1);
+  });
+
   it('persists the raw transcript of a finished session into memory on new chat', async () => {
     const { chat, store } = buildService({ replies: ['reply-one', 'reply-two'], withMemory: true });
     const s1 = chat.createSession();

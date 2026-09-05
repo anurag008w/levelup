@@ -271,6 +271,30 @@ export class ChatService {
     this.persist();
   }
 
+  /**
+   * Append or live-update SEVERAL messages with ONE persist. The live-call
+   * transcript sink flushes a batch of chunks per quiet window — persisting
+   * per message meant N × (JSON.stringify + localStorage) on the main thread
+   * mid-call, which starved the audio/typing thread. Keeps the same idempotent
+   * by-id semantics as appendMessage.
+   */
+  appendMessages(sessionId: string, messages: ChatMessage[]): void {
+    const session = this.getSession(sessionId);
+    if (!session || messages.length === 0) return;
+    for (const message of messages) {
+      const existingIdx = session.messages.findIndex((m) => m.id === message.id);
+      if (existingIdx >= 0) {
+        session.messages[existingIdx] = message;
+      } else {
+        session.messages.push(message);
+        const overflow = session.messages.length - MAX_MESSAGES_PER_SESSION;
+        if (overflow > 0) session.messages.splice(0, overflow);
+      }
+    }
+    session.updatedAt = this.clock.now().toISOString();
+    this.persist();
+  }
+
   deleteSession(id: string): void {
     const state = this.state();
     // Deleting a chat removes its memory footprint too: the raw transcript

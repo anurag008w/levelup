@@ -38,6 +38,7 @@ import { GeminiLiveClient, type LiveClientCallbacks } from '../../core/domain/li
 import { proactiveAgentService } from '../../features/ai/proactive-agent.service';
 import { haptic, hapticError } from '../../lib/haptics';
 import ChatMarkdown from '../ChatMarkdown';
+import StreamingText from '../StreamingText';
 import LiveSettingsModal from './LiveSettingsModal';
 import {
   stopLiveCompanionService,
@@ -64,7 +65,7 @@ let activeLiveClient: GeminiLiveClient | null = null;
 // generation-scoped: only the newest overlay may touch the shared service.
 let overlayEpoch = 0;
 
-function ThinkingBlock({ text }: { text: string }) {
+function ThinkingBlock({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="mb-2 overflow-hidden rounded-lg border border-peak/20 bg-peak/5">
@@ -81,7 +82,7 @@ function ThinkingBlock({ text }: { text: string }) {
       </button>
       {open && (
         <div className="max-h-48 overflow-y-auto border-t border-peak/15 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
-          <ChatMarkdown text={text} />
+          {streaming ? <StreamingText text={text} /> : <ChatMarkdown text={text} />}
         </div>
       )}
     </div>
@@ -254,6 +255,13 @@ export default function LiveCompanionOverlay({
   const statsThrottleMs = 200;
   const statsTimerRef = useRef<number | null>(null);
   const statsPendingRef = useRef<LiveStreamStats | null>(null);
+  // Transcript commit coalesce: Gemini live pushes transcript chunks MANY times
+  // per second. Committing each one straight to setTranscripts re-renders the
+  // whole overlay per chunk (visualizer + list + composer). Keep the latest
+  // snapshot and commit at ~200ms (5Hz) — same cadence as stats — so the text
+  // still feels live while render churn drops ~80%.
+  const transcriptsTimerRef = useRef<number | null>(null);
+  const transcriptsPendingRef = useRef<LiveTranscriptItem[] | null>(null);
 
   // Initialize and connect Gemini Live
   useEffect(() => {
@@ -276,7 +284,8 @@ export default function LiveCompanionOverlay({
         if (newStatus === 'connected') setErrorMessage(null);
       },
       onTranscriptUpdate: (newTranscripts) => {
-        setTranscripts(newTranscripts);
+        // Parent (chat history sink) + notification debounce get every update
+        // immediately; only THIS overlay's DOM commit is coalesced below.
         onTranscriptUpdate?.(newTranscripts);
         // Notification chat trick: sirf assistant ka latest message notification
         // me dikhao (WhatsApp style), aur jaise-jaise reply stream hota hai
@@ -311,6 +320,17 @@ export default function LiveCompanionOverlay({
             preferBigText: true,
           });
         }, notifDelay);
+
+        // Coalesced commit to the overlay's own transcript DOM.
+        transcriptsPendingRef.current = newTranscripts;
+        if (transcriptsTimerRef.current === null) {
+          transcriptsTimerRef.current = window.setTimeout(() => {
+            transcriptsTimerRef.current = null;
+            const latest = transcriptsPendingRef.current;
+            transcriptsPendingRef.current = null;
+            if (latest) setTranscripts(latest);
+          }, 200);
+        }
       },
       onStatsUpdate: (newStats) => {
         // Throttle: keep the latest, but flush to React at statsThrottleMs ticks.
@@ -572,6 +592,11 @@ export default function LiveCompanionOverlay({
         statsTimerRef.current = null;
       }
       statsPendingRef.current = null;
+      if (transcriptsTimerRef.current !== null) {
+        window.clearTimeout(transcriptsTimerRef.current);
+        transcriptsTimerRef.current = null;
+      }
+      transcriptsPendingRef.current = null;
       if (appStateListener) void appStateListener.remove();
       if (pipListener) pipListener();
       // Do not make React ownership equal call ownership. Explicit hangup is
@@ -835,6 +860,13 @@ export default function LiveCompanionOverlay({
 
   // Active latest subtitle
   const latestMessage = transcripts.at(-1);
+  // The transcript tail is a live, still-growing assistant reply. It renders
+  // as cheap plain text — the full markdown parse happens exactly once, when
+  // the tail is superseded (user turn) or the call ends. Kills the per-chunk
+  // ChatMarkdown re-parse inside this overlay (the SAME streaming hang fixed
+  // for the chat bubbles, now covered on the overlay's own transcript list).
+  const streamTailId = latestMessage && latestMessage.role === 'assistant' ? latestMessage.id : null;
+  const isStreamingTail = (t: LiveTranscriptItem) => t.id === streamTailId;
 
   // Dynamic visualizer size from audio output/input levels
   const glowScale = 1 + Math.max(stats.inputVolume, stats.outputVolume) * 0.45;
@@ -1263,10 +1295,10 @@ export default function LiveCompanionOverlay({
                     </div>
                     {t.role === 'assistant' ? (
                       <div className="flex flex-col items-start gap-1 max-w-[92%]">
-                        {t.reasoning && <ThinkingBlock text={t.reasoning} />}
+                        {t.reasoning && <ThinkingBlock text={t.reasoning} streaming={isStreamingTail(t)} />}
                         {t.toolCalls && t.toolCalls.length > 0 && <ToolCallsBlock calls={t.toolCalls} />}
                         <div className="rounded-2xl border border-l/30 bg-l/10 px-3.5 py-2 text-xs leading-relaxed text-text shadow-sm markdown-body">
-                          <ChatMarkdown text={t.text} />
+                          {isStreamingTail(t) ? <StreamingText text={t.text} /> : <ChatMarkdown text={t.text} />}
                         </div>
                       </div>
                     ) : (
