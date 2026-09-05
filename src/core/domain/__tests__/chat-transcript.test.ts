@@ -7,6 +7,7 @@ import {
   parseChatTranscript,
   extractBlockTitle,
   stripBlockTitle,
+  liveStreamingTailId,
 } from '../chat-transcript';
 import type { ChatSession, ChatPreferences } from '../chat';
 
@@ -165,5 +166,30 @@ describe('chat-transcript encoding', () => {
     expect(stripBlockTitle('[Aim]\nTarget IIT Delhi')).toBe('Target IIT Delhi');
     expect(stripBlockTitle('No header here')).toBe('No header here');
     expect(stripBlockTitle('')).toBe('');
+  });
+
+  it('liveStreamingTailId points at a growing assistant tail', () => {
+    const latest = [
+      { id: 'u1', role: 'user' as const, text: 'hi' },
+      { id: 'a1', role: 'assistant' as const, text: 'Hello! How can I help?' },
+    ];
+    expect(liveStreamingTailId(latest)).toBe('a1');
+  });
+
+  it('liveStreamingTailId returns null on a user turn (reply is final)', () => {
+    const latest = [
+      { id: 'a1', role: 'assistant' as const, text: 'Physics derivation...' },
+      { id: 'u2', role: 'user' as const, text: 'thanks' },
+    ];
+    expect(liveStreamingTailId(latest)).toBeNull();
+  });
+
+  it('liveStreamingTailId tolerates empty snapshots', () => {
+    expect(liveStreamingTailId([])).toBeNull();
+  });
+
+  it('liveStreamingTailId ignores entries with no id', () => {
+    const latest = [{ role: 'assistant' as const, id: '', text: 'x' }];
+    expect(liveStreamingTailId(latest)).toBeNull();
   });
 });

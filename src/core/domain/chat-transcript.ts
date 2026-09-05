@@ -150,3 +150,14 @@ export function extractBlockTitle(content: string): string | null {
 export function stripBlockTitle(content: string): string {
   return content.replace(/^\[[^\]]+\]\s*\n?/, '');
 }
+
+/**
+ * Id of the transcript message that is STILL GROWING — the tail of the latest
+ * snapshot when it is an assistant utterance. A user turn (or any non-assistant
+ * tail) means the previous reply is final and returns null, so the UI flips its
+ * bubble from cheap plain text to the single markdown parse.
+ */
+export function liveStreamingTailId(latest: { id: string; role: 'user' | 'assistant' }[]): string | null {
+  const tail = latest[latest.length - 1];
+  return tail && tail.role === 'assistant' && tail.id ? tail.id : null;
+}

@@ -42,6 +42,7 @@ import { getVaultFileBlob } from '../infra/storage/vault-db';
 import type { ChatAttachment, ChatMessage, ChatPreferences, ChatSession, ChatToolCallRecord } from '../core/domain/chat';
 import { TOOL_LABELS, type ChatToolMeta } from '../core/domain/chat-tools';
 import type { ArchivedConversation } from '../core/domain/chat-transcript';
+import { liveStreamingTailId } from '../core/domain/chat-transcript';
 import { isAbortError, type ModelInfo } from '../core/domain/llm';
 import { defaultChatPrefs, globalChatPrefsFromSettings } from '../core/domain/chat';
 import { deviceTimeZone } from '../core/ports/clock';
@@ -434,6 +435,15 @@ export default function ChatScreen({
   const [liveCallInterrupted, setLiveCallInterrupted] = useState(false);
   const [liveCamStream, setLiveCamStream] = useState<MediaStream | null>(null);
   const liveCallSessionIdRef = useRef<string | null>(null);
+  /**
+   * Id of the assistant transcript message whose text is STILL GROWING during a
+   * live call (the tail of the transcript snapshot). Its bubble renders as
+   * cheap plain text — ChatMarkdown's full parse (GFM + KaTeX + highlight)
+   * only runs ONCE, when the message is superseded (new user turn) or the call
+   * ends. This kills the streaming re-parse hang: every coalesced transcript
+   * flush used to re-parse the whole growing reply from scratch.
+   */
+  const [liveStreamingMsgId, setLiveStreamingMsgId] = useState<string | null>(null);
   /**
    * Live-call transcript sink is coalesced: Gemini streams transcript chunks
    * continuously during a reply. Writing every chunk straight into the chat
@@ -986,6 +996,10 @@ export default function ChatScreen({
       }
       const all = container.chat.listSessions();
       setSessions(all);
+      // Streaming-tail tracking: only the CURRENTLY growing assistant reply stays
+      // plain-text. Once a user turn lands (or the reply id is superseded), the
+      // flag drops and that bubble gets its single markdown parse.
+      setLiveStreamingMsgId(liveStreamingTailId(latest));
     }, 250);
     // Never hijack activeId if the user navigated to another chat during the call
   };
@@ -1034,6 +1048,9 @@ export default function ChatScreen({
     liveCallSessionIdRef.current = null;
     const all = container.chat.listSessions();
     setSessions(all);
+    // Call over — no message is growing anymore; every live reply renders its
+    // single markdown parse now (the idempotent re-apply above is final text).
+    setLiveStreamingMsgId(null);
   };
 
   const refresh = useCallback(() => {
@@ -1739,6 +1756,7 @@ export default function ChatScreen({
                 showThinking={showThinking}
                 reveal={m.id === revealId}
                 revealSchedule={m.id === revealId ? revealScheduleRef.current : undefined}
+                streaming={m.id === liveStreamingMsgId}
                 scrollRef={scrollRef}
                 onRevealDone={handleRevealDone}
                 actionsRef={actionsRef}
@@ -2184,6 +2202,7 @@ const MessageBubble = memo(function MessageBubble(props: {
   showThinking?: boolean;
   reveal?: boolean;
   revealSchedule?: RevealSchedule | null;
+  streaming?: boolean;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   onRevealDone?: () => void;
   actionsRef: React.RefObject<MessageActions>;
@@ -2203,6 +2222,7 @@ const StandardMessageBubble = memo(function StandardMessageBubble({
   showThinking,
   reveal = false,
   revealSchedule,
+  streaming = false,
   scrollRef,
   onRevealDone,
   actionsRef,
@@ -2212,6 +2232,7 @@ const StandardMessageBubble = memo(function StandardMessageBubble({
   showThinking?: boolean;
   reveal?: boolean;
   revealSchedule?: RevealSchedule | null;
+  streaming?: boolean;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   onRevealDone?: () => void;
   actionsRef: React.RefObject<MessageActions>;
@@ -2363,7 +2384,7 @@ const StandardMessageBubble = memo(function StandardMessageBubble({
         <div className="flex flex-col items-start gap-1.5">
           {(message.reasoning && showThinking !== false) || message.tool || (message.toolCalls && message.toolCalls.length > 0) ? (
             <div className="message-card relative rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-ai">
-              {message.reasoning && showThinking !== false && <ThinkingBlock text={message.reasoning} />}
+              {message.reasoning && showThinking !== false && <ThinkingBlock text={message.reasoning} streaming={streaming} />}
               {message.toolCalls && message.toolCalls.length > 0 ? (
                 <ToolCallsBlock calls={message.toolCalls} />
               ) : (
@@ -2391,9 +2412,13 @@ const StandardMessageBubble = memo(function StandardMessageBubble({
                 key={i}
                 className="message-card relative rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed bubble-ai"
               >
-                <div className="markdown-body">
-                  <ChatMarkdown text={seg} />
-                </div>
+                {streaming ? (
+                  <StreamingText text={seg} />
+                ) : (
+                  <div className="markdown-body">
+                    <ChatMarkdown text={seg} />
+                  </div>
+                )}
               </div>
             ))}
           {reveal && thinking && (
@@ -2444,7 +2469,7 @@ const StandardMessageBubble = memo(function StandardMessageBubble({
   );
 });
 
-function ThinkingBlock({ text }: { text: string }) {
+function ThinkingBlock({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="mb-2 overflow-hidden rounded-lg border border-peak/20 bg-peak/5">
@@ -2461,11 +2486,21 @@ function ThinkingBlock({ text }: { text: string }) {
       </button>
       {open && (
         <div className="max-h-48 overflow-y-auto border-t border-peak/15 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
-          <ChatMarkdown text={text} />
+          {streaming ? <StreamingText text={text} /> : <ChatMarkdown text={text} />}
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * Live-streaming placeholder for a still-growing reply. While the message text
+ * keeps changing we render the cheapest possible thing (whitespace-pre-wrap
+ * div) instead of re-parsing react-markdown → GFM → KaTeX → highlight on every
+ * flush. The full parse happens exactly once, when the message is final.
+ */
+function StreamingText({ text }: { text: string }) {
+  return <div className="md-plain-stream">{text}</div>;
 }
 
 /**

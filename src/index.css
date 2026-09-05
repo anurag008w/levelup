@@ -1299,6 +1299,14 @@ label.field-label {
   overflow-wrap: break-word;
 }
 
+/* Live-streaming bubble placeholder: plain growable text while a live-call
+   reply is still being collected — no markdown/KaTeX parse per flush. */
+.md-plain-stream {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
 /* Strike-through animation for completed tasks. Uses real text-decoration so
    multi-line (wrapped) titles are struck on every line, not just the middle. */
 .strike {
