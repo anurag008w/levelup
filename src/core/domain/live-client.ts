@@ -50,6 +50,13 @@ export class GeminiLiveClient {
   private transcripts: LiveTranscriptItem[] = [];
   private pendingToolCalls: ChatToolCallRecord[] = [];
   private currentAssistantMessage = '';
+  /**
+   * Accumulated thinking/reasoning text for the current assistant turn. Set
+   * only when thinking is enabled (live `part.thought` parts). Flushed onto the
+   * transcript item's `reasoning` so the UI shows a thinking box — mirroring how
+   * non-live chat models expose their chain-of-thought.
+   */
+  private pendingReasoning = '';
   private framesSentCount = 0;
   private lastUserVoiceTime = 0;
   private lastTurnFinishedTime = 0;
@@ -969,9 +976,15 @@ ${this.recentChatSummary}
             ...(this.config.temperature !== undefined ? { temperature: this.config.temperature } : {}),
             ...(this.config.maxOutputTokens !== undefined ? { maxOutputTokens: this.config.maxOutputTokens } : {}),
           },
-          ...(this.config.thinkingBudget !== undefined && this.config.thinkingBudget > 0
-            ? { thinkingConfig: { thinkingBudget: this.config.thinkingBudget } }
-            : {}),
+          // Send thinkingConfig ALWAYS. When budget is 0/undefined we explicitly
+          // pass { thinkingBudget: 0 } to force thinking OFF. Gemini 2.x native
+          // audio models default thinking ON when the field is omitted, which
+          // leaks internal reasoning ("thinking box") into the transcript/audio.
+          thinkingConfig: {
+            ...(this.config.thinkingBudget !== undefined && this.config.thinkingBudget > 0
+              ? { thinkingBudget: this.config.thinkingBudget }
+              : { thinkingBudget: 0 }),
+          },
           systemInstruction: {
             parts: [{ text: fullSystemInstruction }],
           },
@@ -1174,6 +1187,16 @@ STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said som
       this.setStatus('speaking');
       this.activeUserTurnId = null;
       for (const part of parts) {
+        // Thinking / reasoning parts. NEVER shown as spoken text.
+        //   * Thinking ON  (budget > 0): accumulate into `pendingReasoning` so the
+        //     transcript renders a collapsible thinking box (same as other models).
+        //   * Thinking OFF (budget 0): suppress entirely — nothing leaks.
+        if (part.thought) {
+          if ((this.config.thinkingBudget ?? 0) > 0 && part.text) {
+            this.pendingReasoning += part.text;
+          }
+          continue;
+        }
         if (part.inlineData && part.inlineData.data) {
           if (this.pendingResponseSince) {
             this.measuredResponseLatencyMs = Date.now() - this.pendingResponseSince;
@@ -1209,6 +1232,7 @@ STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said som
         this.lastUserSpokenText = (this.lastUserSpokenText + ' ' + recognized).trim();
         this.activeAssistantTurnId = null;
         this.currentAssistantMessage = '';
+        this.pendingReasoning = '';
         this.updateTranscript('user', recognized, false);
       }
 
@@ -1230,6 +1254,7 @@ STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said som
     // 6. Turn complete — seal the assistant turn so next turn is a new bubble!
     if (data.serverContent?.turnComplete) {
       this.currentAssistantMessage = '';
+      this.pendingReasoning = '';
       this.activeAssistantTurnId = null;
       this.setStatus('listening');
       this.lastTurnFinishedTime = Date.now();
@@ -1322,6 +1347,7 @@ STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said som
     this.activeAssistantTurnId = null;
     this.activeUserTurnId = null;
     this.currentAssistantMessage = '';
+    this.pendingReasoning = '';
     this.silenceNudgeStreak = 0;
     this.awaitingAssistantReply = true;
     this.userSpeechEndedAt = Date.now();
@@ -1370,6 +1396,10 @@ STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said som
       if (existingItem && !existingItem.isInterrupted) {
         existingItem.text = text;
         existingItem.isInterrupted = isInterrupted;
+        if (this.pendingReasoning) {
+          existingItem.reasoning = (existingItem.reasoning || '') + this.pendingReasoning;
+          this.pendingReasoning = '';
+        }
         if (this.pendingToolCalls.length > 0) {
           existingItem.toolCalls = [...(existingItem.toolCalls || []), ...this.pendingToolCalls];
           this.pendingToolCalls = [];
@@ -1378,13 +1408,16 @@ STRICT RULE: The student has NOT spoken anything yet. NEVER assume they said som
         const id = `tr-asst-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         this.activeAssistantTurnId = id;
         const activeCalls = this.pendingToolCalls.length > 0 ? [...this.pendingToolCalls] : undefined;
+        const reason = this.pendingReasoning || undefined;
         this.pendingToolCalls = [];
+        this.pendingReasoning = '';
         this.transcripts.push({
           id,
           role: 'assistant',
           text,
           timestamp: new Date().toISOString(),
           isInterrupted,
+          reasoning: reason,
           toolCalls: activeCalls,
         });
       }
