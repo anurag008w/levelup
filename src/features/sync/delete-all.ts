@@ -4,6 +4,7 @@ import { ensureV1Base } from '../../lib/auth';
 import type { AppState } from '../../core/domain/state';
 import { emptyAppState } from '../../core/domain/state';
 import type { ChatSession } from '../../core/domain/chat';
+import { relationshipManager } from '../ai/relationship-state';
 
 /**
  * Everything needed to restore the app if the wipe sequence fails part-way
@@ -64,6 +65,13 @@ export async function deleteAllData(container: AppContainer, session: AuthSessio
 
     container.chat.replaceStore([]);
     container.store.save(emptyAppState());
+
+    // Misa's relationship memory + proactive prefs/scheduled reminders also
+    // live in their own localStorage blobs. Wipe them too, else the next
+    // misa-scope push (after re-attach) would resurrect wiped data.
+    relationshipManager.resetLocal();
+    // Lazy import: proactive-agent.service imports container (cycle risk).
+    await import('../ai/proactive-agent.service').then((m) => m.proactiveAgentService.resetLocal());
 
     // The wiped store now belongs to whoever stays signed in (or guest), so a
     // later switch to a different account still triggers account isolation.

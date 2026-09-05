@@ -23,6 +23,7 @@ import { extractFileText } from '../lib/fileText';
 import { LocalChatRepository } from '../infra/storage/chat-repository';
 import { SyncService } from '../features/sync/sync.service';
 import { SyncCoordinator } from '../features/sync/sync-coordinator';
+import { relationshipManager, type RelationshipState } from '../features/ai/relationship-state';
 import { buildBackupPayload, parseBackup, serializeBackup, applyBackup, type BackupScope, type BackupSummary } from '../features/backup/backup.service';
 import { TaskBankRepositoryImpl } from '../features/task-bank/task-bank.repository';
 import { TaskBankServiceImpl, type TaskBankService } from '../features/task-bank/task-bank.service';
@@ -112,6 +113,18 @@ export function createContainer(
   // wrapper via innerStore to avoid pushing back what it just pulled.
   const sync = new SyncService(http);
   let chatRef: ChatService | null = null;
+  // Proactive agent uchit: proactive-agent.service imports container (runtime),
+  // so a static import here would create a cycle. Lazy-import like chat-tools.
+  let proactiveSvcPromise: Promise<typeof import('../features/ai/proactive-agent.service').proactiveAgentService> | null = null;
+  const getProactiveSvc = (): Promise<typeof import('../features/ai/proactive-agent.service').proactiveAgentService> => {
+    proactiveSvcPromise ??= import('../features/ai/proactive-agent.service').then((m) => {
+      // Persist changes on this device → mark the misa scope dirty on the hub.
+      m.proactiveAgentService.setOnChange(() => syncCoordinator.markDirty('misa'));
+      return m.proactiveAgentService;
+    });
+    return proactiveSvcPromise;
+  };
+  relationshipManager.setOnChange(() => syncCoordinator.markDirty('misa'));
   const syncCoordinator = new SyncCoordinator(
     sync,
     {
@@ -119,6 +132,20 @@ export function createContainer(
       getChatSessions: () => (chatRef ? chatRef.listSessions() : []),
       replaceStore: (sessions) => chatRef?.replaceStore(sessions),
       replaceState: (state) => innerStore.save(normalizeState(state)),
+      // Misa's relationship + proactive prefs/scheduled reminders ride a
+      // dedicated `misa` scope so a device change restores Misa's memory.
+      getMisaData: async () => {
+        const proactive = await getProactiveSvc();
+        return {
+          version: 1,
+          relationship: relationshipManager.getState() as RelationshipState,
+          proactive: proactive.getSyncBlob(),
+        };
+      },
+      replaceMisaData: (data) => {
+        relationshipManager.replaceFromSync(data.relationship);
+        void getProactiveSvc().then((proactive) => proactive.replaceFromSync(data.proactive));
+      },
     },
     { debounceMs: opts.syncDebounceMs },
   );

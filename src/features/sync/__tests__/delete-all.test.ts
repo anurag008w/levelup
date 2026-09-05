@@ -131,6 +131,9 @@ describe('delete all data — logged-in user', () => {
   });
 
   afterEach(() => {
+    try {
+      app?.syncCoordinator?.detach();
+    } catch {}
     vi.resetModules();
     localStorage.clear();
   });
@@ -213,6 +216,9 @@ describe('delete all data — guest (no session)', () => {
   });
 
   afterEach(() => {
+    try {
+      app?.syncCoordinator?.detach();
+    } catch {}
     vi.resetModules();
     localStorage.clear();
   });
@@ -249,6 +255,9 @@ describe('delete all data — transactional rollback (N3)', () => {
   });
 
   afterEach(() => {
+    try {
+      app?.syncCoordinator?.detach();
+    } catch {}
     vi.resetModules();
     localStorage.clear();
   });

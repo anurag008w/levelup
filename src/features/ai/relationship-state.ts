@@ -117,9 +117,19 @@ export const DEFAULT_RELATIONSHIP_STATE: RelationshipState = {
 
 export class RelationshipManager {
   private state: RelationshipState;
+  private onChange: (() => void) | null = null;
 
   constructor() {
     this.state = this.load();
+  }
+
+  /**
+   * Registers a callback fired after every persisted mutation. The sync layer
+   * uses it to mark the `misa` scope dirty so relationship changes propagate
+   * across devices. Set to null to unregister.
+   */
+  setOnChange(fn: (() => void) | null): void {
+    this.onChange = fn;
   }
 
   private load(): RelationshipState {
@@ -145,6 +155,7 @@ export class RelationshipManager {
     if (typeof localStorage === 'undefined') return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+      this.onChange?.();
     } catch (e) {
       console.warn('[RelationshipManager] Save failed:', e);
     }
@@ -152,6 +163,31 @@ export class RelationshipManager {
 
   getState(): Readonly<RelationshipState> {
     return this.state;
+  }
+
+  /**
+   * Replaces the persisted state from a synced (already-merged) snapshot.
+   * Used by the sync coordinator after pulling the `misa` scope from a fresh
+   * device. Merges against defaults so partial/legacy payloads stay valid.
+   */
+  replaceFromSync(remote: Partial<RelationshipState>): void {
+    this.state = {
+      ...DEFAULT_RELATIONSHIP_STATE,
+      ...remote,
+      boundaries: {
+        ...DEFAULT_RELATIONSHIP_STATE.boundaries,
+        ...(remote.boundaries ?? {}),
+      },
+      fatigue: {
+        ...DEFAULT_RELATIONSHIP_STATE.fatigue,
+        ...(remote.fatigue ?? {}),
+      },
+      commitments: Array.isArray(remote.commitments) ? remote.commitments : [],
+      pendingPromises: Array.isArray(remote.pendingPromises) ? remote.pendingPromises : [],
+      durableMemories: Array.isArray(remote.durableMemories) ? remote.durableMemories : [],
+      recentSentMessages: Array.isArray(remote.recentSentMessages) ? remote.recentSentMessages : [],
+    };
+    this.save();
   }
 
   update(fn: (s: RelationshipState) => void): void {
@@ -385,6 +421,14 @@ export class RelationshipManager {
       wasUserIdleOrIgnoring: false,
     };
     this.save();
+  }
+
+  /**
+   * Wipes Misa's relationship memory back to factory defaults — used by the
+   * delete-all flow so a later sync push can never resurrect wiped data.
+   */
+  resetLocal(): void {
+    this.resetForTesting();
   }
 }
 

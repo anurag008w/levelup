@@ -13,8 +13,8 @@
 import type { AuthSession } from '../../lib/auth';
 import type { AppState } from '../../core/domain/state';
 import type { ChatSession } from '../../core/domain/chat';
-import { SyncService, stateSyncPayload, type SyncScope, type SyncScopeState } from './sync.service';
-import { mergeAppState, mergeChatSessions } from './sync-merge';
+import { SyncService, stateSyncPayload, misaSyncPayload, misaFromSync, type SyncScope, type SyncScopeState, type MisaSyncPayload } from './sync.service';
+import { mergeAppState, mergeChatSessions, mergeMisaData } from './sync-merge';
 
 /** Push coalescing window — mutations within this span ride one request. */
 const PUSH_DEBOUNCE_MS = 2_000;
@@ -27,6 +27,8 @@ export class SyncCoordinator {
   private readonly getChatSessions: () => ChatSession[];
   private readonly replaceStore: (sessions: ChatSession[]) => void;
   private readonly replaceState: (state: unknown) => void;
+  private readonly getMisaData: () => MisaSyncPayload | null | Promise<MisaSyncPayload | null>;
+  private readonly replaceMisaData: (data: MisaSyncPayload) => void;
   private readonly debounceMs: number;
 
   private session: AuthSession | null = null;
@@ -36,6 +38,11 @@ export class SyncCoordinator {
   private inFlight = false;
   /** True while restoring / merging server data — suppress dirty so a pull never pushes back. */
   private restoring = false;
+  /**
+   * Bumped on detach/wipe so in-flight async pushes (e.g. a slow misa push that
+   * resolved after delete-all) abort instead of resurrecting wiped data.
+   */
+  private generation = 0;
   /**
    * True once the initial reconcile (pull on fresh install / merge / seed for existing
    * users) has run for the current session.
@@ -52,6 +59,8 @@ export class SyncCoordinator {
       getChatSessions: () => ChatSession[];
       replaceStore: (sessions: ChatSession[]) => void;
       replaceState: (state: unknown) => void;
+      getMisaData?: () => MisaSyncPayload | null | Promise<MisaSyncPayload | null>;
+      replaceMisaData?: (data: MisaSyncPayload) => void;
     },
     opts: { debounceMs?: number } = {},
   ) {
@@ -60,6 +69,8 @@ export class SyncCoordinator {
     this.getChatSessions = deps.getChatSessions;
     this.replaceStore = deps.replaceStore;
     this.replaceState = deps.replaceState;
+    this.getMisaData = deps.getMisaData ?? (() => null);
+    this.replaceMisaData = deps.replaceMisaData ?? (() => undefined);
     this.debounceMs = opts.debounceMs ?? PUSH_DEBOUNCE_MS;
     if (typeof window !== 'undefined') {
       window.addEventListener('online', () => this.handleOnline());
@@ -100,7 +111,7 @@ export class SyncCoordinator {
   }
 
   /** Attach after login. Reconciles with server data cleanly. */
-  attach(session: AuthSession, opts: { skipInitialSync?: boolean } = {}): void {
+  attach(session: AuthSession, opts: { skipInitialSync?: boolean } = {}): Promise<void> | void {
     this.session = session;
     this.dirty.clear();
     this.scopeStates.clear();
@@ -112,11 +123,14 @@ export class SyncCoordinator {
     }
     if (this.online) {
       this.initialSyncDone = true;
-      void this.initialSync(session);
+      // Return the promise so callers (login flows, tests) can await the
+      // initial reconcile/seed; fire-and-forget callers are unaffected.
+      return this.initialSync(session);
     }
   }
 
   detach(): void {
+    this.generation += 1;
     if (this.timer) clearTimeout(this.timer);
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.timer = null;
@@ -166,6 +180,7 @@ export class SyncCoordinator {
     await this.reconcileIfStale();
     this.dirty.add('state');
     this.dirty.add('chat');
+    this.dirty.add('misa');
     await this.flush();
     const session = this.session;
     if (session?.isSuperAdmin) {
@@ -213,6 +228,8 @@ export class SyncCoordinator {
           }
         }
       }
+
+      await this.reconcileMisaIfStale(session);
       this.emit();
     } catch {
       // Best-effort background reconcile
@@ -237,6 +254,8 @@ export class SyncCoordinator {
       for (const scope of scopes) {
         if (scope === 'chat') {
           await this.pushChat(session);
+        } else if (scope === 'misa') {
+          await this.pushMisa(session);
         } else {
           await this.pushState(session);
         }
@@ -248,8 +267,10 @@ export class SyncCoordinator {
   }
 
   private async pushState(session: AuthSession): Promise<void> {
+    const gen = this.generation;
     const now = new Date().toISOString();
     const res = await this.sync.push(session, 'state', stateSyncPayload(this.getState()), now);
+    if (gen !== this.generation) return; // detached/wipe while in flight — abort
     if (res.ok) {
       this.setScopeState('state', { state: 'online', lastSyncedAt: now, lastError: null });
     } else {
@@ -259,14 +280,55 @@ export class SyncCoordinator {
   }
 
   private async pushChat(session: AuthSession): Promise<void> {
+    const gen = this.generation;
     const now = new Date().toISOString();
     const payload = { version: 1, sessions: this.getChatSessions() };
     const res = await this.sync.push(session, 'chat', payload, now);
+    if (gen !== this.generation) return;
     if (res.ok) {
       this.setScopeState('chat', { state: 'online', lastSyncedAt: now, lastError: null });
     } else {
       this.setScopeState('chat', { state: 'error', lastError: res.message ?? 'Sync failed' });
       this.dirty.add('chat');
+    }
+  }
+
+  private async pushMisa(session: AuthSession): Promise<void> {
+    const gen = this.generation;
+    const data = await this.getMisaData();
+    if (!data || gen !== this.generation) return;
+    const now = new Date().toISOString();
+    const res = await this.sync.push(session, 'misa', misaSyncPayload(data), now);
+    if (gen !== this.generation) return;
+    if (res.ok) {
+      this.setScopeState('misa', { state: 'online', lastSyncedAt: now, lastError: null });
+    } else {
+      this.setScopeState('misa', { state: 'error', lastError: res.message ?? 'Sync failed' });
+      this.dirty.add('misa');
+    }
+  }
+
+  /** Pulls and merges Misa's relationship + proactive state when the server copy is newer. */
+  private async reconcileMisaIfStale(session: AuthSession): Promise<void> {
+    const status = await this.sync.status(session, 'misa');
+    if (!status.exists || !status.updatedAt) return;
+    const cur = this.getScopeState('misa');
+    if (status.updatedAt <= (cur.lastSyncedAt || '')) return;
+
+    const remote = await this.sync.pull(session, 'misa');
+    if (!remote) return;
+    const parsed = misaFromSync(remote.state);
+    if (!parsed) return;
+
+    this.restoring = true;
+    try {
+      const merged = mergeMisaData(await this.getMisaData(), parsed);
+      if (merged) {
+        this.replaceMisaData(merged);
+        this.setScopeState('misa', { state: 'online', lastSyncedAt: remote.updatedAt ?? status.updatedAt, lastError: null });
+      }
+    } finally {
+      this.restoring = false;
     }
   }
 
@@ -304,6 +366,13 @@ export class SyncCoordinator {
           const merged = mergeChatSessions(this.getChatSessions(), remoteSessions);
           this.replaceStore(merged);
           this.setScopeState('chat', { state: 'online', lastSyncedAt: remote.updatedAt, lastError: null });
+        } else if (scope === 'misa') {
+          const parsed = misaFromSync(remote.state);
+          const merged = mergeMisaData(await this.getMisaData(), parsed);
+          if (merged) {
+            this.replaceMisaData(merged);
+            this.setScopeState('misa', { state: 'online', lastSyncedAt: remote.updatedAt, lastError: null });
+          }
         } else {
           const merged = mergeAppState(this.getState(), remote.state as AppState);
           this.replaceState(merged);
@@ -318,6 +387,7 @@ export class SyncCoordinator {
     // Push the unified merge back to cloud
     this.dirty.add('state');
     this.dirty.add('chat');
+    this.dirty.add('misa');
     void this.flush();
   }
 
@@ -350,6 +420,12 @@ export class SyncCoordinator {
           const sessions = Array.isArray(store?.sessions) ? store.sessions : [];
           if (sessions.length > 0) this.replaceStore(sessions);
           this.setScopeState('chat', { state: 'online', lastSyncedAt: remote.updatedAt, lastError: null });
+        } else if (scope === 'misa') {
+          const parsed = misaFromSync(remote.state);
+          if (parsed) {
+            this.replaceMisaData(parsed);
+            this.setScopeState('misa', { state: 'online', lastSyncedAt: remote.updatedAt, lastError: null });
+          }
         } else {
           this.replaceState(remote.state);
           this.setScopeState('state', { state: 'online', lastSyncedAt: remote.updatedAt, lastError: null });
@@ -363,20 +439,33 @@ export class SyncCoordinator {
 
   /** Existing user: push local data up once so the server has a backup. */
   private async seedServer(session: AuthSession): Promise<void> {
+    const gen = this.generation;
     const now = new Date().toISOString();
     const stateRes = await this.sync.push(session, 'state', stateSyncPayload(this.getState()), now);
+    if (gen !== this.generation) return; // detached/wipe mid-seed — abort (never resurrect)
     if (stateRes.ok) {
       this.setScopeState('state', { state: 'online', lastSyncedAt: now, lastError: null });
     } else {
       this.setScopeState('state', { state: 'error', lastError: stateRes.message ?? 'Sync failed' });
     }
     const sessions = this.getChatSessions();
-    if (sessions.length > 0) {
+    if (sessions.length > 0 && gen === this.generation) {
       const chatRes = await this.sync.push(session, 'chat', { version: 1, sessions }, now);
+      if (gen !== this.generation) return;
       if (chatRes.ok) {
         this.setScopeState('chat', { state: 'online', lastSyncedAt: now, lastError: null });
       } else {
         this.setScopeState('chat', { state: 'error', lastError: chatRes.message ?? 'Sync failed' });
+      }
+    }
+    const misaData = await this.getMisaData();
+    if (misaData && gen === this.generation) {
+      const misaRes = await this.sync.push(session, 'misa', misaSyncPayload(misaData), now);
+      if (gen !== this.generation) return;
+      if (misaRes.ok) {
+        this.setScopeState('misa', { state: 'online', lastSyncedAt: now, lastError: null });
+      } else {
+        this.setScopeState('misa', { state: 'error', lastError: misaRes.message ?? 'Sync failed' });
       }
     }
     this.emit();

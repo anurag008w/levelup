@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { mergeAppState, mergeChatSessions } from '../sync-merge';
+import { mergeAppState, mergeChatSessions, mergeMisaData } from '../sync-merge';
 import { emptyAppState, type AppState } from '../../../core/domain/state';
 import type { ChatSession } from '../../../core/domain/chat';
+import { DEFAULT_RELATIONSHIP_STATE } from '../../ai/relationship-state';
+import type { ProactivePreferences } from '../../ai/proactive-agent.service';
+import type { MisaSyncPayload } from '../sync.service';
 
 describe('sync-merge — multi-device smart merge', () => {
   it('merges task logs from two devices non-destructively', () => {
@@ -140,5 +143,92 @@ describe('sync-merge — multi-device smart merge', () => {
     const s1 = merged.find((s) => s.id === 'session-1');
     expect(s1?.messages).toHaveLength(3);
     expect(s1?.messages.map((m) => m.id)).toEqual(['msg-1', 'msg-2', 'msg-3']);
+  });
+});
+
+describe('sync-merge — misa relationship + proactive merge', () => {
+  const prefs = (over: Partial<ProactivePreferences> = {}): ProactivePreferences => ({
+    enabled: true,
+    callsEnabled: true,
+    callFrequency: 'balanced',
+    quietHoursStart: '01:00',
+    quietHoursEnd: '07:00',
+    ringtonePreset: 'soft_chime',
+    activeGraceMinutes: 30,
+    ...over,
+  });
+
+  const misa = (over: Partial<MisaSyncPayload> = {}): MisaSyncPayload => ({
+    version: 1,
+    relationship: {
+      ...DEFAULT_RELATIONSHIP_STATE,
+      currentGoal: 'JEE Main & Advanced Mastery',
+      currentSubject: 'General',
+      currentMoodContext: 'neutral',
+      currentProblemArea: undefined,
+      preferredInteractionStyle: 'gentle_encouragement',
+    },
+    proactive: {
+      prefs: prefs(),
+      lastActiveTimestamp: 0,
+      lastUserChatTimestamp: 0,
+      lastCallTimestamp: 0,
+      lastCallDeclinedTimestamp: 0,
+      consecutiveCallDeclines: 0,
+      dndUntilTimestamp: 0,
+      coldStartDone: false,
+      pendingTriggers: [],
+      scheduledMessages: [],
+      missedInteractions: [],
+    },
+    ...over,
+  });
+
+  it('unions commitments and promises from both devices by id', () => {
+    const local = misa();
+    local.relationship.commitments = [
+      { id: 'c1', sourceText: 'finish kinematics', topic: 'kinematics', subject: 'Physics', targetDate: '2026-01-10', state: 'STARTED', createdAt: 1, updatedAt: 1, postponedCount: 0 },
+    ];
+    const remote = misa();
+    remote.relationship.commitments = [
+      { id: 'c2', sourceText: 'finish electrostatics', topic: 'electrostatics', subject: 'Physics', targetDate: '2026-01-15', state: 'PLANNED', createdAt: 2, updatedAt: 2, postponedCount: 0 },
+    ];
+
+    const merged = mergeMisaData(local, remote)!;
+    expect(merged.relationship.commitments.map((c) => c.id).sort()).toEqual(['c1', 'c2']);
+    expect(merged.relationship.currentGoal).toBe('JEE Main & Advanced Mastery');
+  });
+
+  it('keeps the most recent lastInteractionTimestamp', () => {
+    const local = misa();
+    local.relationship.lastInteractionTimestamp = 100;
+    const remote = misa();
+    remote.relationship.lastInteractionTimestamp = 200;
+
+    const merged = mergeMisaData(local, remote)!;
+    expect(merged.relationship.lastInteractionTimestamp).toBe(200);
+  });
+
+  it('preserves both devices scheduled messages without duplicates', () => {
+    const local = misa();
+    local.proactive.scheduledMessages = [
+      { id: 's1', kind: 'message', text: 'revision?', scheduledTime: 100, topic: 'optics', createdAt: 10 },
+    ];
+    const remote = misa();
+    remote.proactive.scheduledMessages = [
+      { id: 's2', kind: 'call', reason: 'check-in', scheduledTime: 200, createdAt: 20 },
+    ];
+
+    const merged = mergeMisaData(local, remote)!;
+    expect(merged.proactive.scheduledMessages).toHaveLength(2);
+  });
+
+  it('feature ON on either device stays ON after merge', () => {
+    const local = misa({ proactive: { ...misa().proactive, prefs: prefs({ enabled: true, callsEnabled: false }) } });
+    const remote = misa({ proactive: { ...misa().proactive, prefs: prefs({ enabled: false, callsEnabled: true }) } });
+
+    const merged = mergeMisaData(local, remote)!;
+    expect(merged.proactive.prefs.enabled).toBe(true);
+    expect(merged.proactive.prefs.callsEnabled).toBe(true);
   });
 });

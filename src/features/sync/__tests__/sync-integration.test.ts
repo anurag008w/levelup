@@ -404,6 +404,9 @@ describe('sync integration — failures, offline, wipe', () => {
   });
 
   afterEach(() => {
+    try {
+      app?.syncCoordinator?.detach();
+    } catch {}
     vi.resetModules();
     localStorage.clear();
   });

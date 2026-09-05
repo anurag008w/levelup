@@ -80,6 +80,25 @@ export interface ScheduledProactiveMessage {
   cancelled?: boolean;
 }
 
+/**
+ * Persisted proactive-agent snapshot that rides the `misa` sync scope.
+ * Mirrors exactly what saveState() writes so a device change restores
+ * prefs + scheduled reminders/calls + follow-up memory losslessly.
+ */
+export interface MisaProactiveBlob {
+  prefs: ProactivePreferences;
+  lastActiveTimestamp: number;
+  lastUserChatTimestamp: number;
+  lastCallTimestamp: number;
+  lastCallDeclinedTimestamp: number;
+  consecutiveCallDeclines: number;
+  dndUntilTimestamp: number;
+  coldStartDone: boolean;
+  pendingTriggers: ProactiveTrigger[];
+  scheduledMessages: ScheduledProactiveMessage[];
+  missedInteractions: Array<{ kind: 'call' | 'message'; at: number; detail: string; followedUpAt: number | null }>;
+}
+
 export interface IncomingCallEvent {
   callId: string;
   reason: string;
@@ -271,9 +290,17 @@ class ProactiveAgentService {
   /** AI tools ke liye scheduled message/call store (persisted). */
   private scheduledMessages: ScheduledProactiveMessage[] = [];
 
+  /** Sync layer hook — har persist ke baad fire hota hai (misa scope dirty mark karne ke liye). */
+  private onChange: (() => void) | null = null;
+
   constructor() {
     this.loadState();
     this.initPlatformNotifications();
+  }
+
+  /** Registers a callback fired after every persisted mutation (sync markDirty). */
+  setOnChange(fn: (() => void) | null): void {
+    this.onChange = fn;
   }
 
   private loadState(): void {
@@ -318,9 +345,50 @@ class ProactiveAgentService {
           missedInteractions: this.missedInteractions,
         })
       );
+      this.onChange?.();
     } catch (e) {
       console.warn('[ProactiveAgent] Failed to save state:', e);
     }
+  }
+
+  /**
+   * Full persisted snapshot for the `misa` sync scope. Mirrors exactly what
+   * saveState writes so `misaSyncPayload` is lossless.
+   */
+  getSyncBlob(): MisaProactiveBlob {
+    return {
+      prefs: { ...this.prefs },
+      lastActiveTimestamp: this.lastActiveTimestamp,
+      lastUserChatTimestamp: this.lastUserChatTimestamp,
+      lastCallTimestamp: this.lastCallTimestamp,
+      lastCallDeclinedTimestamp: this.lastCallDeclinedTimestamp,
+      consecutiveCallDeclines: this.consecutiveCallDeclines,
+      dndUntilTimestamp: this.dndUntilTimestamp,
+      coldStartDone: this.coldStartDone,
+      pendingTriggers: this.pendingTriggers.map((t) => ({ ...t })),
+      scheduledMessages: this.scheduledMessages.map((s) => ({ ...s })),
+      missedInteractions: this.missedInteractions.map((m) => ({ ...m })),
+    };
+  }
+
+  /**
+   * Applies a synced (already-merged) snapshot — used after pulling the `misa`
+   * scope from the server on a fresh device. Defaults protect against partial
+   * payloads, then local state is replaced and persisted.
+   */
+  replaceFromSync(blob: Partial<MisaProactiveBlob>): void {
+    this.prefs = { ...DEFAULT_PROACTIVE_PREFS, ...(blob.prefs || {}) };
+    this.lastActiveTimestamp = blob.lastActiveTimestamp || Date.now();
+    this.lastUserChatTimestamp = blob.lastUserChatTimestamp || 0;
+    this.lastCallTimestamp = blob.lastCallTimestamp || 0;
+    this.lastCallDeclinedTimestamp = blob.lastCallDeclinedTimestamp || 0;
+    this.consecutiveCallDeclines = blob.consecutiveCallDeclines || 0;
+    this.dndUntilTimestamp = blob.dndUntilTimestamp || 0;
+    this.coldStartDone = Boolean(blob.coldStartDone);
+    this.pendingTriggers = Array.isArray(blob.pendingTriggers) ? blob.pendingTriggers : [];
+    this.scheduledMessages = Array.isArray(blob.scheduledMessages) ? blob.scheduledMessages : [];
+    this.missedInteractions = Array.isArray(blob.missedInteractions) ? blob.missedInteractions : [];
+    this.saveState();
   }
 
   getPreferences(): ProactivePreferences {
@@ -1751,6 +1819,26 @@ Instructions:
       s.boundaries.quietHoursStart = '03:00';
       s.boundaries.quietHoursEnd = '06:00';
     });
+    this.saveState();
+  }
+
+  /**
+   * Wipes proactive prefs + scheduled reminders/calls back to factory defaults.
+   * Used by the delete-all flow so a later sync push can never resurrect
+   * wiped data (the `misa` scope now rides the same localStorage blob).
+   */
+  resetLocal(): void {
+    this.prefs = { ...DEFAULT_PROACTIVE_PREFS };
+    this.lastActiveTimestamp = Date.now();
+    this.lastUserChatTimestamp = 0;
+    this.lastCallTimestamp = 0;
+    this.lastCallDeclinedTimestamp = 0;
+    this.consecutiveCallDeclines = 0;
+    this.dndUntilTimestamp = 0;
+    this.coldStartDone = false;
+    this.pendingTriggers = [];
+    this.scheduledMessages = [];
+    this.missedInteractions = [];
     this.saveState();
   }
 }

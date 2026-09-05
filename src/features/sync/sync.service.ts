@@ -23,10 +23,12 @@ import type { HttpClient } from '../../infra/ai/http';
 import type { AuthSession } from '../../lib/auth';
 import type { AppState } from '../../core/domain/state';
 import type { ChatStoreState } from '../../core/domain/chat';
+import type { RelationshipState } from '../ai/relationship-state';
+import type { MisaProactiveBlob } from '../ai/proactive-agent.service';
 import { normalizeState } from '../../infra/storage/state-repository';
 import { normalizeChatSessions } from '../backup/backup.service';
 
-export type SyncScope = 'state' | 'chat' | 'settings';
+export type SyncScope = 'state' | 'chat' | 'settings' | 'misa';
 
 export interface SyncStatus {
   exists: boolean;
@@ -117,7 +119,7 @@ export class SyncService {
         timeoutMs: 10_000,
         retries: 1,
       });
-      const known: SyncScope[] = ['state', 'chat', 'settings'];
+      const known: SyncScope[] = ['state', 'chat', 'settings', 'misa'];
       return (res.scopes ?? []).filter((s): s is SyncScope => (known as string[]).includes(s));
     } catch {
       return [];
@@ -216,4 +218,35 @@ export function chatSyncPayload(chat: ChatStoreState): unknown {
 export function chatFromSync(raw: unknown): ChatStoreState {
   const sessions = normalizeChatSessions(raw);
   return { version: 1, sessions };
+}
+
+/**
+ * Snapshot of Misa's persistent personal state + proactive agent runtime that
+ * must survive a device change: relationship memory (commitments, promises,
+ * struggle memories, fatigue, boundaries) and the proactive agent prefs +
+ * scheduled reminders/calls. Both live in raw localStorage today (not synced);
+ * this bundle travels under the `misa` scope so Misa "remembers" on any device.
+ */
+export interface MisaSyncPayload {
+  version: number;
+  relationship: RelationshipState;
+  proactive: MisaProactiveBlob;
+}
+
+/** Builds the `misa` scope payload pushed to the server. */
+export function misaSyncPayload(data: MisaSyncPayload): unknown {
+  return { ...data };
+}
+
+/** Defensively validates a server `misa` payload back into a usable shape. */
+export function misaFromSync(raw: unknown): MisaSyncPayload | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Partial<MisaSyncPayload>;
+  if (typeof r.relationship !== 'object' || r.relationship === null) return null;
+  if (typeof r.proactive !== 'object' || r.proactive === null) return null;
+  return {
+    version: r.version ?? 1,
+    relationship: r.relationship as RelationshipState,
+    proactive: r.proactive as MisaSyncPayload['proactive'],
+  };
 }
