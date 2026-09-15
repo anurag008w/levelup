@@ -216,7 +216,7 @@ export function applyBackup(payload: BackupPayload, targets: ApplyBackupTargets,
   return summarizeBackup(merged, [], bytes, scope);
 }
 
-function summarizeBackup(state: AppState, sessions: ChatSession[], bytes: number, scope: BackupScope): BackupSummary {
+export function summarizeBackup(state: AppState, sessions: ChatSession[], bytes: number, scope: BackupScope): BackupSummary {
   const dynamicTasks = Array.isArray(state.dynamicTaskBank) ? state.dynamicTaskBank.length : 0;
   const dynamicPhases = Array.isArray(state.dynamicTaskBank) ? [...new Set(state.dynamicTaskBank.map((task) => task.phase).filter(Boolean))] : [];
   const planDays = state.planCache && typeof state.planCache === 'object' ? Object.keys(state.planCache).length : 0;
