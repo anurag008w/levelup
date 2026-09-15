@@ -7,13 +7,13 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 5
-- Fix iterations this turn: 3
+- Audit turn: 6
+- Fix iterations this turn: 1
 - Status: CONTINUING
 - Main baseline observed this turn: `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`
-- Latest fix commits: `7cff9e8473f49d0621b17864bfe780c87fb5f5e2`, `438d31e08b5d60b5f9a47bbc9905bf39b5a79e43`, `3ea081ddba588db8603f0a342bf2f6aae31e8d2f`
+- Latest fix commit: `20b47e118259e3caf912f35956fdf6d97db938e2`
 - Open PR: #34 (`misa-work` -> `main`), not merged, no auto-merge
-- Next audit target: startup/lifecycle, Android process-death/FGS/camera/screen-share, then notification/session boundaries
+- Next audit target: notification/session/auth boundaries, then startup/lifecycle and Android process-death/FGS/camera/screen-share
 
 ## Turn 5 — First Audit
 
@@ -78,15 +78,44 @@ This file is the persistent handoff for the hourly production-audit loop.
 ### Device verification
 - No physical Android/API-matrix/device verification available.
 
+## Turn 6 — First Audit
+
+### Scope
+- Read the persistent state first, then re-read `AGENTS.md` and `README.md`.
+- Compared `main...misa-work`; `misa-work` is 15 commits ahead and 0 behind `main` at audit time.
+- Rotated into startup/lifecycle and Android Live/screen-share ownership, with CI regression review of the previous backup changes.
+
+### Findings
+- P1 — The latest CI run for PR #34 at merge commit `c2fd8ad67e637bfa164ec41a09349ab6df0a24ea` failed two backup tests because `summarizeBackup` was not exported from `src/features/backup/backup.service.ts`. This was a concrete regression on the active audit branch, not a speculative warning.
+- The same CI log also showed the existing `AudioRoute.getAvailableRoutes is not a function` warnings in Live tests, but the affected tests passed and the repository intentionally mocks/guards native audio-route availability in the web test environment; classified UNPROVEN/ENVIRONMENTAL and not changed.
+
+## Turn 6 — Fix iteration 1
+
+### Fix
+- Restored the required public `summarizeBackup` export in `src/features/backup/backup.service.ts`.
+- Commit: `20b47e118259e3caf912f35956fdf6d97db938e2`.
+
+### Verification
+- Re-read the modified file and confirmed a single exported `summarizeBackup` implementation exists and all call sites resolve to it.
+- Re-read `AGENTS.md` immediately before the state commit; required co-author attribution preserved.
+- A new CI run was not yet exposed by GitHub for `20b47e118259e3caf912f35956fdf6d97db938e2` at state-recording time, so CI is pending and no green claim is made.
+
+### POST-FIX / LAST AUDIT
+- Re-audited the changed backup export and adjacent `applyBackup`, summary tests, and prior credential-redaction changes.
+- Rechecked Android Live FGS, Activity recreation, screen-share MediaProjection startup ordering, and manifest/service declarations.
+- No new proven actionable bug found.
+- FINAL AUDIT: CLEAN for proven actionable findings; CI verification remains pending externally.
+
 ## Remaining Risks / Not Verified
 
-- CI completion for the final Turn 5 head remains pending at the time of state recording.
+- CI for the Turn 6 fix commit `20b47e118259e3caf912f35956fdf6d97db938e2` had not yet appeared at state-recording time.
 - Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
 - `LiveCompanionForegroundService` camera+microphone+mediaPlayback type combinations still require Android-version/permission matrix verification.
 - `ScreenSharePlugin` capture state is still Activity/plugin-process owned rather than FGS-owned; process death/recreation needs device evidence.
 - `android:usesCleartextTraffic="true"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
 - `VITE_DEFAULT_AI_API_KEY` build-time exposure remains UNPROVEN as a security defect because the actual configured credential scope is not observable through repository access.
+- Existing CI logs contain repeated `AudioRoute.getAvailableRoutes is not a function` warnings in tests; tests pass around this guarded native/web boundary, so this remains UNPROVEN/ENVIRONMENTAL pending native-runtime evidence.
 
 ## Next Turn
 
-Fresh first audit of startup/lifecycle and Android process-death/FGS/camera/screen-share ownership. Then rotate through notification/session/auth boundaries. Continue the same-turn audit/fix/re-audit loop for every newly proven actionable finding.
+Fresh first audit of notification/session/auth boundaries, then startup/lifecycle and Android process-death/FGS/camera/screen-share ownership. Continue the same-turn audit/fix/re-audit loop for every newly proven actionable finding.
