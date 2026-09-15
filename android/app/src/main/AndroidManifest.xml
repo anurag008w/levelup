@@ -1,9 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Android 11+ (API 30+) package visibility: bina iske system package
-         installer / settings / browser intents resolve nahi hote, isliye APK
-         install start nahi hota aur app browser fallback par chala jata tha. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.VIEW" />
@@ -18,9 +16,6 @@
         </intent>
     </queries>
 
-    <!-- Android 11+ package visibility: OEM autostart settings screens ko
-         resolve/launch karne ke liye in packages ko explicitly declare karte
-         hain (Xiaomi, Huawei, Oppo, Vivo, OnePlus, Samsung...). -->
     <queries>
         <package android:name="com.miui.securitycenter" />
         <package android:name="com.huawei.systemmanager" />
@@ -53,12 +48,10 @@
             android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize"
             android:exported="true">
-
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-
         </activity>
 
         <provider
@@ -68,55 +61,44 @@
             android:grantUriPermissions="true">
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths"></meta-data>
+                android:resource="@xml/file_paths" />
         </provider>
 
         <service
             android:name=".ScreenShareForegroundService"
             android:foregroundServiceType="mediaProjection"
             android:exported="false" />
-        <service android:name=".LiveCompanionForegroundService"
-            android:foregroundServiceType="microphone|mediaPlayback" android:exported="false" />
+        <service
+            android:name=".LiveCompanionForegroundService"
+            android:foregroundServiceType="microphone|camera|mediaPlayback"
+            android:exported="false" />
     </application>
 
-    <!-- Permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Android 13+ (API 33) ke liye runtime notification permission — bina iske
-         dialog kabhi nahi dikhta aur notifications silently block ho jati hain. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Scheduled notifications ko device reboot ke baad bhi fire karne ke liye. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Battery optimization exemption request (system dialog) — background mein
-         AI replies continue rahein. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-
-    <!-- In-app APK Update & System Package Installer (Android 8.0+ / API 26 to Android 15+) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
-    <!-- Misa Live: Real-time Audio, Camera and Speaker Routing Permissions (Android 7 to Android 15+) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-
-    <!-- Audio Route: Bluetooth headset / earbuds routing -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- Screen Share & Audio Foreground Services -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
 
-    <!-- Misa Autonomous Engine: Exact Alarms, Full-screen Incoming Calls, Vibration & WakeLock -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- Optional Hardware Features for universal compatibility -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
