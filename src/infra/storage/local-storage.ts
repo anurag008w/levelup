@@ -17,25 +17,21 @@ class PersistentKeyValueStore implements KeyValueRepository {
    * Re-reads storage into the cache. Also used at boot (via reloadPersistentStore)
    * and on visibilitychange → visible so another tab's writes become visible.
    *
-   * NOTE: persistentStorage.get() JSON.parses localStorage values, so a value
-   * written as a STRING (our state/chat blobs — LocalStateRepository passes a
-   * serialized string, then persistentStorage.set JSON.stringify's it again)
-   * comes back as a string, but a value written single-encoded (direct
-   * localStorage write, legacy path, external tool) comes back as an OBJECT.
-   * The cache is typed Map<string,string> and LocalStateRepository JSON.parses
-   * getItem() AGAIN — caching a raw object here would make repo.load() throw
-   * and silently return a fresh (empty) state, wiping the user's data on the
-   * next cold start. Re-stringify non-strings so BOTH encodings survive.
+   * Build a fresh map first, then swap it atomically. Clearing the live cache
+   * before awaiting persistent reads creates a window where getItem() returns
+   * null; a concurrent setItem() can then be overwritten by a stale value from
+   * the still-running reload loop.
    */
   async reload() {
-    this.cache.clear();
+    const next = new Map<string, string>();
     const keys = await persistentStorage.keys();
     for (const key of keys) {
       const value = await persistentStorage.get<string>(key);
       if (value !== null) {
-        this.cache.set(key, typeof value === 'string' ? value : JSON.stringify(value));
+        next.set(key, typeof value === 'string' ? value : JSON.stringify(value));
       }
     }
+    this.cache = next;
   }
 
   getItem(key: string): string | null {
@@ -76,7 +72,7 @@ export const persistentStoreReady: Promise<void> = initPromise.catch(() => {
  * so the state/chat repositories see data written by another tab or process.
  */
 export async function reloadPersistentStore(): Promise<void> {
-  persistentStorage.reload();
+  await persistentStorage.reload();
   await persistentStore.reload();
 }
 
