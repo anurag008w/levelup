@@ -76,15 +76,6 @@ jobs:
           echo "PREVIOUS_TAG=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
           echo "📎 Previous tag for changelog comparison: $PREVIOUS_TAG"
 
-      - name: Create tag
-        if: github.event_name != 'push'
-        run: |
-          if git tag | grep -q "^${{ steps.version.outputs.VERSION }}$"; then
-            git tag -d "${{ steps.version.outputs.VERSION }}"
-          fi
-          git tag -a "${{ steps.version.outputs.VERSION }}" -m "Release ${{ steps.version.outputs.VERSION }}"
-          git push origin "${{ steps.version.outputs.VERSION }}"
-
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
@@ -172,6 +163,17 @@ jobs:
           fi
           echo "apk_path=release-out/${APK_NAME}" >> $GITHUB_OUTPUT
           echo "apk_name=${APK_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Create tag
+        if: github.event_name != 'push'
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "❌ Tag $VERSION already exists on origin; refusing to overwrite it."
+            exit 1
+          fi
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"
 
       - name: Generate changelog
         run: |
