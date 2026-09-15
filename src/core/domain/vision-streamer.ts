@@ -2,6 +2,8 @@
 // Captures video frames from Front/Back camera or Live Screen Share
 // Encodes frames to low-latency compressed JPEG (1-5 FPS) for Gemini Live multimodal vision.
 
+import { App } from '@capacitor/app';
+import type { PluginListenerHandle } from '@capacitor/core';
 import type { LiveCameraLens } from './live-types';
 import { NativeScreenShare } from '../../lib/native-screen-share';
 
@@ -34,6 +36,19 @@ export class VisionStreamer {
    */
   private warmupFramesRemaining = 0;
 
+  /** Last camera capture callback/config so a background-paused camera can be resumed automatically. */
+  private cameraFps = 5;
+  private cameraOnFrame: ((jpegBase64: string) => void) | null = null;
+  private cameraResumePending = false;
+  private lifecycleHandle: PluginListenerHandle | null = null;
+  /**
+   * AppState fires slightly before the overlay's own background handler. Keep a
+   * tiny transition window so the overlay's stopVision() becomes a PAUSE rather
+   * than destroying a source that must recover when the app returns.
+   */
+  private backgroundTransitionAt = 0;
+  private lifecycleResumeInFlight = false;
+
   constructor() {}
 
   /** Start camera video stream (front or back lens). */
@@ -46,10 +61,15 @@ export class VisionStreamer {
     const gen = this.acquisitionGen; // captured AFTER stop()'s bump
     this.currentLens = lens;
     this.isScreenSharing = false;
+    this.cameraFps = fps;
+    this.cameraOnFrame = onFrame;
+    this.cameraResumePending = false;
     // A fresh camera stream needs a few frames before pixels are real
     // (focus/exposure settle, device switch) — skip the garbage frames so the
     // model's first observation is actual content, never a blank guess.
     this.warmupFramesRemaining = 3;
+
+    await this.ensureLifecycleListener();
 
     // Android WebView camera-flip race: re-acquiring getUserMedia in the same
     // synchronous turn after stop() can keep the OLD camera device (the "front
@@ -66,10 +86,6 @@ export class VisionStreamer {
       frameRate: { ideal: 15, max: 30 },
     };
 
-    // Request the intended lens with an EXACT facingMode so the WebView is
-    // forced to switch cameras (or throw) instead of silently returning the
-    // currently-held one. Fall back to ideal-only for WebViews/OEMs that do
-    // not support exact facingMode constraints.
     const stream = await this.acquireCamera(lens, baseVideo);
 
     if (gen !== this.acquisitionGen) {
@@ -117,7 +133,11 @@ export class VisionStreamer {
     const gen = this.acquisitionGen; // captured AFTER stop()'s bump
     this.isScreenSharing = true;
     this.isCameraActive = false;
+    this.cameraResumePending = false;
+    this.cameraOnFrame = null;
     this.warmupFramesRemaining = 3;
+
+    await this.ensureLifecycleListener();
 
     // 1. Android Native MediaProjection support
     if (NativeScreenShare.isNative()) {
@@ -125,6 +145,12 @@ export class VisionStreamer {
         this.stop();
         if (onEnded) onEnded();
       });
+      // A background/foreground transition may have happened while the system
+      // permission sheet was open. A stale start must not take ownership.
+      if (gen !== this.acquisitionGen) {
+        await NativeScreenShare.stop();
+        throw new Error('Screen share acquisition superseded.');
+      }
       return null;
     }
 
@@ -187,12 +213,96 @@ export class VisionStreamer {
     return this.videoStream;
   }
 
+  private async ensureLifecycleListener(): Promise<void> {
+    if (this.lifecycleHandle || typeof document === 'undefined') return;
+    this.lifecycleHandle = await App.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) {
+        if (this.cameraResumePending && this.isCameraActive === false && this.cameraOnFrame) {
+          void this.resumePausedCamera();
+        }
+        return;
+      }
+
+      // The overlay also calls stopVision() for the background transition. Mark
+      // the transition first so that call is interpreted as a pause, not a final
+      // teardown. Camera capture is paused because Android background camera
+      // access is not part of the Live FGS contract. Native MediaProjection is
+      // different: ScreenShareForegroundService is an actual MEDIA_PROJECTION
+      // foreground service, so screen share is deliberately preserved.
+      this.backgroundTransitionAt = Date.now();
+      if (this.isCameraActive) {
+        this.cameraResumePending = true;
+        this.pauseCameraForBackground();
+      }
+    });
+  }
+
+  private pauseCameraForBackground(): void {
+    if (!this.isCameraActive || !this.videoStream) return;
+    if (this.frameInterval !== null) {
+      clearInterval(this.frameInterval);
+      this.frameInterval = null;
+    }
+    // Keep the MediaStream object stable so any UI video element referencing it
+    // can receive the replacement track after foreground recovery.
+    for (const track of this.videoStream.getVideoTracks()) {
+      this.videoStream.removeTrack(track);
+      track.stop();
+    }
+    if (this.videoElement) this.videoElement.srcObject = this.videoStream;
+    this.isCameraActive = false;
+    this.warmupFramesRemaining = 3;
+  }
+
+  private async resumePausedCamera(): Promise<void> {
+    if (this.lifecycleResumeInFlight || !this.cameraResumePending || !this.cameraOnFrame) return;
+    this.lifecycleResumeInFlight = true;
+    const gen = ++this.acquisitionGen;
+    const callback = this.cameraOnFrame;
+    const fps = this.cameraFps;
+    const lens = this.currentLens;
+
+    try {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const baseVideo: MediaTrackConstraints = {
+        width: { ideal: 640, max: 1280 },
+        height: { ideal: 480, max: 720 },
+        frameRate: { ideal: 15, max: 30 },
+      };
+      const stream = await this.acquireCamera(lens, baseVideo);
+      if (!this.cameraResumePending || !this.cameraOnFrame || gen !== this.acquisitionGen) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+
+      const stableStream = this.videoStream ?? new MediaStream();
+      for (const oldTrack of stableStream.getVideoTracks()) {
+        stableStream.removeTrack(oldTrack);
+        oldTrack.stop();
+      }
+      for (const track of stream.getVideoTracks()) stableStream.addTrack(track);
+      this.videoStream = stableStream;
+      this.isScreenSharing = false;
+      this.isCameraActive = true;
+      this.cameraResumePending = false;
+      this.warmupFramesRemaining = 4;
+      this.setupVideoProcessing(stableStream, fps, callback);
+    } catch (err) {
+      console.warn('[VisionStreamer] Camera resume failed:', err);
+      // Keep the pending flag so the NEXT foreground transition retries once,
+      // rather than permanently freezing the visual stream after a transient
+      // WebView/Camera HAL race.
+      this.cameraResumePending = true;
+    } finally {
+      this.lifecycleResumeInFlight = false;
+    }
+  }
+
   private setupVideoProcessing(
     stream: MediaStream,
     fps: number,
     onFrame: (jpegBase64: string) => void,
   ): void {
-    // AUDIT FIX: defensive — never layer a second interval on top of a live one.
     if (this.frameInterval !== null) {
       clearInterval(this.frameInterval);
       this.frameInterval = null;
@@ -219,10 +329,6 @@ export class VisionStreamer {
         return;
       }
 
-      // First-message guard: skip the warm-up frames of a brand-new source and
-      // any essentially-blank frame. Sending a blank/stale first frame is what
-      // made the model "see" a YouTube video / kinematics problem that wasn't
-      // there and describe it in the FIRST message (the rest stayed fine).
       if (this.warmupFramesRemaining > 0) {
         this.warmupFramesRemaining -= 1;
         return;
@@ -231,7 +337,6 @@ export class VisionStreamer {
       const videoWidth = this.videoElement.videoWidth || 640;
       const videoHeight = this.videoElement.videoHeight || 480;
 
-      // Scale to max width 640px for fast transmission
       const maxDim = 640;
       const scale = Math.min(1, maxDim / Math.max(videoWidth, videoHeight));
       const targetWidth = Math.round(videoWidth * scale);
@@ -243,12 +348,10 @@ export class VisionStreamer {
       }
 
       this.canvasCtx.drawImage(this.videoElement, 0, 0, targetWidth, targetHeight);
-      if (this.isFrameBlank()) return; // jump-cut: no real content to describe
+      if (this.isFrameBlank()) return;
       const dataUrl = this.canvasElement.toDataURL('image/jpeg', 0.6);
       const base64 = dataUrl.split(',')[1];
-      if (base64) {
-        onFrame(base64);
-      }
+      if (base64) onFrame(base64);
     }, intervalMs);
   }
 
@@ -274,13 +377,28 @@ export class VisionStreamer {
       }
     }
     if (count === 0) return true;
-    return sum / count < 6; // essentially black (a genuinely dark share is rare)
+    return sum / count < 6;
   }
 
   stop(): void {
-    // AUDIT FIX: bump the generation FIRST so any still-in-flight acquisition
-    // (getUserMedia/getDisplayMedia pending) becomes stale and releases its
-    // own orphaned stream when it resolves.
+    const isBackgroundTransition = Date.now() - this.backgroundTransitionAt < 2500;
+
+    // The overlay's background handler calls stopVision immediately after the
+    // Android appState event. Treat only that short transition as a PAUSE:
+    // preserve native MediaProjection in background, and pause the camera so it
+    // can acquire a fresh foreground track. A later explicit user hang-up still
+    // performs a real teardown even while the app remains backgrounded.
+    if (isBackgroundTransition) {
+      if (this.isScreenSharing && NativeScreenShare.isNative()) {
+        return;
+      }
+      if (this.isCameraActive) {
+        this.cameraResumePending = true;
+        this.pauseCameraForBackground();
+        return;
+      }
+    }
+
     this.acquisitionGen += 1;
     if (this.isScreenSharing && NativeScreenShare.isNative()) {
       void NativeScreenShare.stop();
@@ -298,5 +416,12 @@ export class VisionStreamer {
     }
     this.isCameraActive = false;
     this.isScreenSharing = false;
+    this.cameraResumePending = false;
+    this.cameraOnFrame = null;
+    this.lifecycleResumeInFlight = false;
+    if (this.lifecycleHandle) {
+      void this.lifecycleHandle.remove();
+      this.lifecycleHandle = null;
+    }
   }
 }
