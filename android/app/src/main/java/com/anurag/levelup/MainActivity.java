@@ -124,7 +124,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onResume() {
+    public void onResume() {
         super.onResume();
         // The FGS is the authoritative source after Activity recreation. Re-arm
         // the Activity from it instead of trusting static state from the destroyed
