@@ -244,7 +244,3 @@ export function formatBytes(bytes: number): string {
   while (value >= 1024 && index < units.length - 1) { value /= 1024; index++; }
   return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[index]}`;
 }
-
-export function summarizeBackup(state: AppState, sessions: ChatSession[], bytes: number, scope: BackupScope): BackupSummary {
-  return summarizeBackup(state, sessions, bytes, scope);
-}
