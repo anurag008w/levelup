@@ -1,6 +1,6 @@
-// Vision & Screen Streamer for Gemini Live
-// Captures video frames from Front/Back camera or Live Screen Share
-// Encodes frames to low-latency compressed JPEG (1-5 FPS) for Gemini Live multimodal vision.
+// Vision & Screen Streamer for Gemini Live.
+// Camera + native MediaProjection screen share continue while an active Live call
+// moves to background/PiP. Explicit Stop still tears down the source.
 
 import { App } from '@capacitor/app';
 import type { PluginListenerHandle } from '@capacitor/core';
@@ -20,34 +20,25 @@ export class VisionStreamer {
   private acquisitionGen = 0;
   private warmupFramesRemaining = 0;
 
-  /** Last camera capture callback/config so a background-paused camera can be resumed automatically. */
-  private cameraFps = 5;
-  private cameraOnFrame: ((jpegBase64: string) => void) | null = null;
-  private cameraResumePending = false;
-  private lifecycleHandle: PluginListenerHandle | null = null;
-  /** AppState fires slightly before the overlay's own background handler. */
+  /** Used only to distinguish Android lifecycle cleanup from an explicit user Stop. */
   private backgroundTransitionAt = 0;
-  private lifecycleResumeInFlight = false;
+  private lifecycleHandle: PluginListenerHandle | null = null;
 
   constructor() {}
 
-  /** Start camera video stream (front or back lens). */
   async startCamera(
     lens: LiveCameraLens,
     fps: number,
     onFrame: (jpegBase64: string) => void,
   ): Promise<MediaStream> {
-    // An explicit source change is a real teardown/restart. Do not let the
-    // short background-transition grace window turn this into a pause.
+    // Explicit camera start/switch is always a real teardown/restart.
     this.backgroundTransitionAt = 0;
     this.stop();
     const gen = this.acquisitionGen;
     this.currentLens = lens;
     this.isScreenSharing = false;
-    this.cameraFps = fps;
-    this.cameraOnFrame = onFrame;
-    this.cameraResumePending = false;
-    this.warmupFramesRemaining = 3;
+    this.isCameraActive = false;
+    this.warmupFramesRemaining = 4;
 
     await this.ensureLifecycleListener();
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -61,7 +52,7 @@ export class VisionStreamer {
     const stream = await this.acquireCamera(lens, baseVideo);
 
     if (gen !== this.acquisitionGen) {
-      stream.getTracks().forEach((t) => t.stop());
+      stream.getTracks().forEach((track) => track.stop());
       throw new Error('Camera acquisition superseded.');
     }
 
@@ -83,33 +74,33 @@ export class VisionStreamer {
       });
     } catch {
       return await navigator.mediaDevices.getUserMedia({
-        video: { ...baseVideo, facingMode: lens === 'user' ? 'user' : { ideal: 'environment' } },
+        video: {
+          ...baseVideo,
+          facingMode: lens === 'user' ? 'user' : { ideal: 'environment' },
+        },
         audio: false,
       });
     }
   }
 
-  /** Start screen sharing stream (displays PDF, coaching apps, browser, etc.). */
   async startScreenShare(
     fps: number,
     onFrame: (jpegBase64: string) => void,
     onEnded?: () => void,
   ): Promise<MediaStream | null> {
-    // An explicit source change is a real teardown/restart, never a background pause.
+    // Explicit source change is always a real teardown/restart.
     this.backgroundTransitionAt = 0;
     this.stop();
     const gen = this.acquisitionGen;
     this.isScreenSharing = true;
     this.isCameraActive = false;
-    this.cameraResumePending = false;
-    this.cameraOnFrame = null;
-    this.warmupFramesRemaining = 3;
+    this.warmupFramesRemaining = 4;
 
     await this.ensureLifecycleListener();
 
     if (NativeScreenShare.isNative()) {
       await NativeScreenShare.start(fps, onFrame, () => {
-        this.stop();
+        this.stop(true);
         if (onEnded) onEnded();
       });
       if (gen !== this.acquisitionGen) {
@@ -133,7 +124,7 @@ export class VisionStreamer {
     });
 
     if (gen !== this.acquisitionGen) {
-      stream.getTracks().forEach((t) => t.stop());
+      stream.getTracks().forEach((track) => track.stop());
       throw new Error('Screen share acquisition superseded.');
     }
 
@@ -141,7 +132,7 @@ export class VisionStreamer {
     const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack) {
       videoTrack.onended = () => {
-        this.stop();
+        this.stop(true);
         if (onEnded) onEnded();
       };
     }
@@ -150,7 +141,6 @@ export class VisionStreamer {
     return stream;
   }
 
-  /** Switch between Front ('user') and Back ('environment') camera. */
   async switchLens(
     fps: number,
     onFrame: (jpegBase64: string) => void,
@@ -175,83 +165,19 @@ export class VisionStreamer {
     return this.videoStream;
   }
 
+  /** Track Android background/foreground only as state. Never stop vision here. */
   private async ensureLifecycleListener(): Promise<void> {
     if (this.lifecycleHandle || typeof document === 'undefined') return;
     this.lifecycleHandle = await App.addListener('appStateChange', ({ isActive }) => {
-      if (isActive) {
-        if (this.cameraResumePending && this.isCameraActive === false && this.cameraOnFrame) {
-          void this.resumePausedCamera();
-        }
-        return;
+      if (!isActive) {
+        // The overlay may call stopVision() in the same lifecycle turn. Keep a
+        // short grace marker so that call is treated as lifecycle noise instead
+        // of a destructive user action.
+        this.backgroundTransitionAt = Date.now();
+      } else {
+        this.backgroundTransitionAt = 0;
       }
-
-      // The overlay calls stopVision() for the same transition. Record it first
-      // so stopVision becomes a reversible PAUSE instead of a permanent teardown.
-      this.backgroundTransitionAt = Date.now();
-      if (this.isCameraActive) {
-        this.cameraResumePending = true;
-        this.pauseCameraForBackground();
-      }
-      // Native MediaProjection is backed by ScreenShareForegroundService, so
-      // native screen sharing stays alive while the Activity is backgrounded.
-      // Browser getDisplayMedia remains governed by the browser lifecycle.
     });
-  }
-
-  private pauseCameraForBackground(): void {
-    if (!this.isCameraActive || !this.videoStream) return;
-    if (this.frameInterval !== null) {
-      clearInterval(this.frameInterval);
-      this.frameInterval = null;
-    }
-    for (const track of this.videoStream.getVideoTracks()) {
-      this.videoStream.removeTrack(track);
-      track.stop();
-    }
-    if (this.videoElement) this.videoElement.srcObject = this.videoStream;
-    this.isCameraActive = false;
-    this.warmupFramesRemaining = 3;
-  }
-
-  private async resumePausedCamera(): Promise<void> {
-    if (this.lifecycleResumeInFlight || !this.cameraResumePending || !this.cameraOnFrame) return;
-    this.lifecycleResumeInFlight = true;
-    const gen = ++this.acquisitionGen;
-    const callback = this.cameraOnFrame;
-    const fps = this.cameraFps;
-    const lens = this.currentLens;
-
-    try {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      const baseVideo: MediaTrackConstraints = {
-        width: { ideal: 640, max: 1280 },
-        height: { ideal: 480, max: 720 },
-        frameRate: { ideal: 15, max: 30 },
-      };
-      const stream = await this.acquireCamera(lens, baseVideo);
-      if (!this.cameraResumePending || !this.cameraOnFrame || gen !== this.acquisitionGen) {
-        stream.getTracks().forEach((t) => t.stop());
-        return;
-      }
-
-      const stableStream = this.videoStream ?? new MediaStream();
-      for (const oldTrack of stableStream.getVideoTracks()) {
-        stableStream.removeTrack(oldTrack);
-        oldTrack.stop();
-      }
-      for (const track of stream.getVideoTracks()) stableStream.addTrack(track);
-      this.videoStream = stableStream;
-      this.isScreenSharing = false;
-      this.isCameraActive = true;
-      this.cameraResumePending = false;
-      this.warmupFramesRemaining = 4;
-      this.setupVideoProcessing(stableStream, fps, callback);
-    } catch (err) {
-      console.warn('[VisionStreamer] Camera resume failed:', err);
-      this.cameraResumePending = true;
-    } finally {
-      this.lifecycleResumeInFlight = false;
-    }
   }
 
   private setupVideoProcessing(
@@ -263,6 +189,7 @@ export class VisionStreamer {
       clearInterval(this.frameInterval);
       this.frameInterval = null;
     }
+
     if (!this.videoElement) {
       this.videoElement = document.createElement('video');
       this.videoElement.autoplay = true;
@@ -276,11 +203,19 @@ export class VisionStreamer {
     }
 
     this.videoElement.srcObject = stream;
-    void this.videoElement.play();
+    void this.videoElement.play().catch(() => undefined);
 
     const intervalMs = Math.max(200, Math.floor(1000 / Math.max(1, fps)));
     this.frameInterval = window.setInterval(() => {
-      if (!this.videoElement || !this.canvasElement || !this.canvasCtx || this.videoElement.readyState < 2) return;
+      if (
+        !this.videoElement ||
+        !this.canvasElement ||
+        !this.canvasCtx ||
+        this.videoElement.readyState < 2
+      ) {
+        return;
+      }
+
       if (this.warmupFramesRemaining > 0) {
         this.warmupFramesRemaining -= 1;
         return;
@@ -290,8 +225,8 @@ export class VisionStreamer {
       const videoHeight = this.videoElement.videoHeight || 480;
       const maxDim = 640;
       const scale = Math.min(1, maxDim / Math.max(videoWidth, videoHeight));
-      const targetWidth = Math.round(videoWidth * scale);
-      const targetHeight = Math.round(videoHeight * scale);
+      const targetWidth = Math.max(1, Math.round(videoWidth * scale));
+      const targetHeight = Math.max(1, Math.round(videoHeight * scale));
 
       if (this.canvasElement.width !== targetWidth || this.canvasElement.height !== targetHeight) {
         this.canvasElement.width = targetWidth;
@@ -300,22 +235,24 @@ export class VisionStreamer {
 
       this.canvasCtx.drawImage(this.videoElement, 0, 0, targetWidth, targetHeight);
       if (this.isFrameBlank()) return;
+
       const dataUrl = this.canvasElement.toDataURL('image/jpeg', 0.6);
       const base64 = dataUrl.split(',')[1];
       if (base64) onFrame(base64);
     }, intervalMs);
   }
 
-  /** Cheap luminance sample over a coarse grid. */
   private isFrameBlank(): boolean {
     if (!this.canvasCtx || !this.canvasElement) return false;
     const w = this.canvasElement.width;
     const h = this.canvasElement.height;
     if (w === 0 || h === 0) return true;
+
     const stepX = Math.max(1, Math.floor(w / 16));
     const stepY = Math.max(1, Math.floor(h / 16));
     let sum = 0;
     let count = 0;
+
     for (let y = 0; y < h; y += stepY) {
       for (let x = 0; x < w; x += stepX) {
         const d = this.canvasCtx.getImageData(x, y, 1, 1).data;
@@ -323,43 +260,44 @@ export class VisionStreamer {
         count += 1;
       }
     }
+
     if (count === 0) return true;
     return sum / count < 6;
   }
 
-  stop(): void {
-    const isBackgroundTransition = Date.now() - this.backgroundTransitionAt < 2500;
-
-    if (isBackgroundTransition) {
-      if (this.isScreenSharing && NativeScreenShare.isNative()) {
-        return;
-      }
-      if (this.isCameraActive) {
-        this.cameraResumePending = true;
-        this.pauseCameraForBackground();
-        return;
-      }
-    }
+  /**
+   * `force=true` is used only by explicit user/source-ended teardown. The
+   * no-arg path is also called by the background lifecycle bridge; during the
+   * short lifecycle window that call must be a no-op so the source remains live.
+   */
+  stop(force = false): void {
+    const lifecycleNoise = !force && Date.now() - this.backgroundTransitionAt < 2500;
+    if (lifecycleNoise) return;
 
     this.acquisitionGen += 1;
     if (this.isScreenSharing && NativeScreenShare.isNative()) {
       void NativeScreenShare.stop();
     }
+
     if (this.frameInterval !== null) {
       clearInterval(this.frameInterval);
       this.frameInterval = null;
     }
+
     if (this.videoStream) {
       this.videoStream.getTracks().forEach((track) => track.stop());
       this.videoStream = null;
     }
-    if (this.videoElement) this.videoElement.srcObject = null;
+
+    if (this.videoElement) {
+      this.videoElement.srcObject = null;
+    }
+
     this.isCameraActive = false;
     this.isScreenSharing = false;
-    this.cameraResumePending = false;
-    this.cameraOnFrame = null;
-    this.lifecycleResumeInFlight = false;
+    this.warmupFramesRemaining = 0;
     this.backgroundTransitionAt = 0;
+
     if (this.lifecycleHandle) {
       void this.lifecycleHandle.remove();
       this.lifecycleHandle = null;
