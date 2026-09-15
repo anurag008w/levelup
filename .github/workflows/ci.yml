@@ -97,8 +97,8 @@ jobs:
           # avoiding unrelated add-ons (such as Google TV) that can introduce
           # unnecessary license prompts on developer machines.
           packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
-          accept-android-sdk-licenses: 'yes'
-          log-accepted-android-sdk-licenses: 'false'
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
       - name: Install dependencies
         run: npm ci
       - name: Build web app
