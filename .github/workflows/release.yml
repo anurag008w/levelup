@@ -50,8 +50,6 @@ jobs:
           fi
           VERSION_NAME="${VERSION#v}"
 
-          # Android versionCode: YYYYMMDDSS (10 digits). Day-only tags use SS=00;
-          # sequenced same-day tags preserve their two-digit sequence.
           YEAR="${VERSION_NAME%%.*}"
           REST="${VERSION_NAME#*.}"
           MONTH="${REST%%.*}"
@@ -94,7 +92,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
-          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: false
 
@@ -151,23 +149,11 @@ jobs:
             -PversionName="${{ steps.version.outputs.VERSION_NAME }}" \
             -PversionCode="${{ steps.version.outputs.VERSION_CODE }}"
 
-      # Only create the manual-run tag after the complete Android build succeeds.
-      # This prevents a failed SDK/build setup from leaving an unusable release tag.
-      - name: Create tag
-        if: github.event_name != 'push'
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          if git ls-remote --exit-code --tags origin "refs/tags/${VERSION}" >/dev/null 2>&1; then
-            echo "❌ Release tag ${VERSION} already exists on origin; refusing to overwrite it."
-            exit 1
-          fi
-          git tag -a "${VERSION}" -m "Release ${VERSION}"
-          git push origin "${VERSION}"
-
       - name: Prepare APK
         id: prepare
         run: |
           mkdir -p release-out
+
           if [[ "${{ steps.setup_signing.outputs.SIGNED }}" == "true" ]]; then
             APK_NAME="levelup-${{ steps.version.outputs.VERSION_NAME }}-signed.apk"
             cp android/app/build/outputs/apk/release/app-release.apk "release-out/${APK_NAME}"
@@ -177,6 +163,17 @@ jobs:
           fi
           echo "apk_path=release-out/${APK_NAME}" >> $GITHUB_OUTPUT
           echo "apk_name=${APK_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Create tag
+        if: github.event_name != 'push'
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "❌ Tag $VERSION already exists on origin; refusing to overwrite it."
+            exit 1
+          fi
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"
 
       - name: Generate changelog
         run: |
