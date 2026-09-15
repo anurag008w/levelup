@@ -17,23 +17,7 @@ export class VisionStreamer {
   private currentLens: LiveCameraLens = 'environment';
   private isScreenSharing = false;
   private isCameraActive = false;
-  /** AUDIT FIX (round 1, MEDIUM): acquisition generation. startCamera /
-   *  startScreenShare are ASYNC — a second start while the first is still
-   *  inside getUserMedia used to overwrite frameInterval/videoStream, leaking
-   *  the first stream (camera LED stayed on) and double-harvesting frames.
-   *  stop() and each new start bump the generation; a stale acquisition that
-   *  resolves later stops its orphaned stream and aborts without touching the
-   *  current owner's state. */
   private acquisitionGen = 0;
-  /**
-   * Frames skipped right after a NEW source starts (camera switch / screen
-   * share). The very first frames of a fresh display-capture or camera stream
-   * are often blank, stale, or a transition flash — if they are sent to the
-   * model, its FIRST observation is garbage and it confidently describes
-   * hallucinated content ("YouTube chalu kiya kya?", "kinematics solve kar
-   * rahe ho?") in the first message. We only forward a frame once the source
-   * has had TIME to produce real pixels.
-   */
   private warmupFramesRemaining = 0;
 
   /** Last camera capture callback/config so a background-paused camera can be resumed automatically. */
@@ -41,11 +25,7 @@ export class VisionStreamer {
   private cameraOnFrame: ((jpegBase64: string) => void) | null = null;
   private cameraResumePending = false;
   private lifecycleHandle: PluginListenerHandle | null = null;
-  /**
-   * AppState fires slightly before the overlay's own background handler. Keep a
-   * tiny transition window so the overlay's stopVision() becomes a PAUSE rather
-   * than destroying a source that must recover when the app returns.
-   */
+  /** AppState fires slightly before the overlay's own background handler. */
   private backgroundTransitionAt = 0;
   private lifecycleResumeInFlight = false;
 
@@ -57,27 +37,20 @@ export class VisionStreamer {
     fps: number,
     onFrame: (jpegBase64: string) => void,
   ): Promise<MediaStream> {
+    // An explicit source change is a real teardown/restart. Do not let the
+    // short background-transition grace window turn this into a pause.
+    this.backgroundTransitionAt = 0;
     this.stop();
-    const gen = this.acquisitionGen; // captured AFTER stop()'s bump
+    const gen = this.acquisitionGen;
     this.currentLens = lens;
     this.isScreenSharing = false;
     this.cameraFps = fps;
     this.cameraOnFrame = onFrame;
     this.cameraResumePending = false;
-    // A fresh camera stream needs a few frames before pixels are real
-    // (focus/exposure settle, device switch) — skip the garbage frames so the
-    // model's first observation is actual content, never a blank guess.
     this.warmupFramesRemaining = 3;
 
     await this.ensureLifecycleListener();
-
-    // Android WebView camera-flip race: re-acquiring getUserMedia in the same
-    // synchronous turn after stop() can keep the OLD camera device (the "front
-    // camera sometimes doesn't switch" bug) because the previous device isn't
-    // released yet. Yield a macrotask so the WebView actually frees the camera
-    // before we request a new one.
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    // A newer start/stop landed while we yielded — this attempt is stale.
     if (gen !== this.acquisitionGen) throw new Error('Camera acquisition superseded.');
 
     const baseVideo: MediaTrackConstraints = {
@@ -85,13 +58,9 @@ export class VisionStreamer {
       height: { ideal: 480, max: 720 },
       frameRate: { ideal: 15, max: 30 },
     };
-
     const stream = await this.acquireCamera(lens, baseVideo);
 
     if (gen !== this.acquisitionGen) {
-      // A newer start/stop landed while getUserMedia was in flight — release
-      // the orphaned stream so the camera LED never stays on, and do NOT touch
-      // the current owner's state (videoStream/interval/sourceObject).
       stream.getTracks().forEach((t) => t.stop());
       throw new Error('Camera acquisition superseded.');
     }
@@ -113,9 +82,6 @@ export class VisionStreamer {
         audio: false,
       });
     } catch {
-      // Some WebViews expose facingMode only as a soft hint (or not at all) —
-      // exact throws OverconstrainedError there. Retry with ideal so switching
-      // still works on those devices.
       return await navigator.mediaDevices.getUserMedia({
         video: { ...baseVideo, facingMode: lens === 'user' ? 'user' : { ideal: 'environment' } },
         audio: false,
@@ -129,8 +95,10 @@ export class VisionStreamer {
     onFrame: (jpegBase64: string) => void,
     onEnded?: () => void,
   ): Promise<MediaStream | null> {
+    // An explicit source change is a real teardown/restart, never a background pause.
+    this.backgroundTransitionAt = 0;
     this.stop();
-    const gen = this.acquisitionGen; // captured AFTER stop()'s bump
+    const gen = this.acquisitionGen;
     this.isScreenSharing = true;
     this.isCameraActive = false;
     this.cameraResumePending = false;
@@ -139,14 +107,11 @@ export class VisionStreamer {
 
     await this.ensureLifecycleListener();
 
-    // 1. Android Native MediaProjection support
     if (NativeScreenShare.isNative()) {
       await NativeScreenShare.start(fps, onFrame, () => {
         this.stop();
         if (onEnded) onEnded();
       });
-      // A background/foreground transition may have happened while the system
-      // permission sheet was open. A stale start must not take ownership.
       if (gen !== this.acquisitionGen) {
         await NativeScreenShare.stop();
         throw new Error('Screen share acquisition superseded.');
@@ -154,7 +119,6 @@ export class VisionStreamer {
       return null;
     }
 
-    // 2. Web browser getDisplayMedia fallback
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       throw new Error('Screen sharing is not supported by your current browser.');
     }
@@ -169,10 +133,8 @@ export class VisionStreamer {
     });
 
     if (gen !== this.acquisitionGen) {
-      // A newer start/stop landed while the picker was open — release the
-      // orphaned display stream instead of leaking it.
       stream.getTracks().forEach((t) => t.stop());
-      throw new Error('Screen share superseded.');
+      throw new Error('Screen share acquisition superseded.');
     }
 
     this.videoStream = stream;
@@ -223,17 +185,16 @@ export class VisionStreamer {
         return;
       }
 
-      // The overlay also calls stopVision() for the background transition. Mark
-      // the transition first so that call is interpreted as a pause, not a final
-      // teardown. Camera capture is paused because Android background camera
-      // access is not part of the Live FGS contract. Native MediaProjection is
-      // different: ScreenShareForegroundService is an actual MEDIA_PROJECTION
-      // foreground service, so screen share is deliberately preserved.
+      // The overlay calls stopVision() for the same transition. Record it first
+      // so stopVision becomes a reversible PAUSE instead of a permanent teardown.
       this.backgroundTransitionAt = Date.now();
       if (this.isCameraActive) {
         this.cameraResumePending = true;
         this.pauseCameraForBackground();
       }
+      // Native MediaProjection is backed by ScreenShareForegroundService, so
+      // native screen sharing stays alive while the Activity is backgrounded.
+      // Browser getDisplayMedia remains governed by the browser lifecycle.
     });
   }
 
@@ -243,8 +204,6 @@ export class VisionStreamer {
       clearInterval(this.frameInterval);
       this.frameInterval = null;
     }
-    // Keep the MediaStream object stable so any UI video element referencing it
-    // can receive the replacement track after foreground recovery.
     for (const track of this.videoStream.getVideoTracks()) {
       this.videoStream.removeTrack(track);
       track.stop();
@@ -289,9 +248,6 @@ export class VisionStreamer {
       this.setupVideoProcessing(stableStream, fps, callback);
     } catch (err) {
       console.warn('[VisionStreamer] Camera resume failed:', err);
-      // Keep the pending flag so the NEXT foreground transition retries once,
-      // rather than permanently freezing the visual stream after a transient
-      // WebView/Camera HAL race.
       this.cameraResumePending = true;
     } finally {
       this.lifecycleResumeInFlight = false;
@@ -323,12 +279,8 @@ export class VisionStreamer {
     void this.videoElement.play();
 
     const intervalMs = Math.max(200, Math.floor(1000 / Math.max(1, fps)));
-
     this.frameInterval = window.setInterval(() => {
-      if (!this.videoElement || !this.canvasElement || !this.canvasCtx || this.videoElement.readyState < 2) {
-        return;
-      }
-
+      if (!this.videoElement || !this.canvasElement || !this.canvasCtx || this.videoElement.readyState < 2) return;
       if (this.warmupFramesRemaining > 0) {
         this.warmupFramesRemaining -= 1;
         return;
@@ -336,7 +288,6 @@ export class VisionStreamer {
 
       const videoWidth = this.videoElement.videoWidth || 640;
       const videoHeight = this.videoElement.videoHeight || 480;
-
       const maxDim = 640;
       const scale = Math.min(1, maxDim / Math.max(videoWidth, videoHeight));
       const targetWidth = Math.round(videoWidth * scale);
@@ -355,11 +306,7 @@ export class VisionStreamer {
     }, intervalMs);
   }
 
-  /**
-   * Cheap luminance sample over a coarse grid. Returns true when the captured
-   * frame is essentially black/blank — such frames are skipped so the model
-   * never interprets "nothing" as content.
-   */
+  /** Cheap luminance sample over a coarse grid. */
   private isFrameBlank(): boolean {
     if (!this.canvasCtx || !this.canvasElement) return false;
     const w = this.canvasElement.width;
@@ -383,11 +330,6 @@ export class VisionStreamer {
   stop(): void {
     const isBackgroundTransition = Date.now() - this.backgroundTransitionAt < 2500;
 
-    // The overlay's background handler calls stopVision immediately after the
-    // Android appState event. Treat only that short transition as a PAUSE:
-    // preserve native MediaProjection in background, and pause the camera so it
-    // can acquire a fresh foreground track. A later explicit user hang-up still
-    // performs a real teardown even while the app remains backgrounded.
     if (isBackgroundTransition) {
       if (this.isScreenSharing && NativeScreenShare.isNative()) {
         return;
@@ -411,14 +353,13 @@ export class VisionStreamer {
       this.videoStream.getTracks().forEach((track) => track.stop());
       this.videoStream = null;
     }
-    if (this.videoElement) {
-      this.videoElement.srcObject = null;
-    }
+    if (this.videoElement) this.videoElement.srcObject = null;
     this.isCameraActive = false;
     this.isScreenSharing = false;
     this.cameraResumePending = false;
     this.cameraOnFrame = null;
     this.lifecycleResumeInFlight = false;
+    this.backgroundTransitionAt = 0;
     if (this.lifecycleHandle) {
       void this.lifecycleHandle.remove();
       this.lifecycleHandle = null;
