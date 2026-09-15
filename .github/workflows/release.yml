@@ -39,8 +39,6 @@ jobs:
           if [[ "${{ github.event_name }}" == "push" ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
           else
-            # Manual run: jo version tum daloge wohi tag hoga. Koi auto-
-            # default nahi — khali chhoda toh clear error.
             VERSION="${{ github.event.inputs.version }}"
             if [[ -z "$VERSION" ]]; then
               echo "❌ Manual workflow run ke liye version chahiye (e.g. 2026.09.7004)"
@@ -52,14 +50,8 @@ jobs:
           fi
           VERSION_NAME="${VERSION#v}"
 
-          # versionCode: always YYYYMMDDSS (10-digit, zero-padded) so it can
-          # only go up. Day-only tags (vYYYY.MM.DD) get SEQ=00; same-day
-          # sequenced tags (vYYYY.MM.DDSS) keep their real SEQ. Naively
-          # stripping dots (old approach) breaks monotonicity the moment a
-          # plain-date tag follows a same-day-sequence tag — e.g.
-          # 2026.08.0503 -> code 2026080503, then 2026.08.06 -> code
-          # 20260806, a DECREASE — and Android's downgrade protection then
-          # silently refuses to install the "update" over the existing app.
+          # Android versionCode: YYYYMMDDSS (10 digits). Day-only tags use SS=00;
+          # sequenced same-day tags preserve their two-digit sequence.
           YEAR="${VERSION_NAME%%.*}"
           REST="${VERSION_NAME#*.}"
           MONTH="${REST%%.*}"
@@ -86,15 +78,6 @@ jobs:
           echo "PREVIOUS_TAG=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
           echo "📎 Previous tag for changelog comparison: $PREVIOUS_TAG"
 
-      - name: Create tag
-        if: github.event_name != 'push'
-        run: |
-          if git tag | grep -q "^${{ steps.version.outputs.VERSION }}$"; then
-            git tag -d "${{ steps.version.outputs.VERSION }}"
-          fi
-          git tag -a "${{ steps.version.outputs.VERSION }}" -m "Release ${{ steps.version.outputs.VERSION }}"
-          git push origin "${{ steps.version.outputs.VERSION }}"
-
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
@@ -110,6 +93,10 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
 
       - name: Install dependencies
         run: npm ci
@@ -164,12 +151,23 @@ jobs:
             -PversionName="${{ steps.version.outputs.VERSION_NAME }}" \
             -PversionCode="${{ steps.version.outputs.VERSION_CODE }}"
 
+      # Only create the manual-run tag after the complete Android build succeeds.
+      # This prevents a failed SDK/build setup from leaving an unusable release tag.
+      - name: Create tag
+        if: github.event_name != 'push'
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${VERSION}" >/dev/null 2>&1; then
+            echo "❌ Release tag ${VERSION} already exists on origin; refusing to overwrite it."
+            exit 1
+          fi
+          git tag -a "${VERSION}" -m "Release ${VERSION}"
+          git push origin "${VERSION}"
+
       - name: Prepare APK
         id: prepare
         run: |
           mkdir -p release-out
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          
           if [[ "${{ steps.setup_signing.outputs.SIGNED }}" == "true" ]]; then
             APK_NAME="levelup-${{ steps.version.outputs.VERSION_NAME }}-signed.apk"
             cp android/app/build/outputs/apk/release/app-release.apk "release-out/${APK_NAME}"
@@ -183,7 +181,7 @@ jobs:
       - name: Generate changelog
         run: |
           LAST_TAG="${{ steps.prev_tag.outputs.PREVIOUS_TAG }}"
-          
+
           cat > changelog.md << 'CHANGELOG'
           # Release ${{ steps.version.outputs.VERSION }}
 
@@ -215,8 +213,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: levelup-${{ steps.version.outputs.VERSION_NAME }}-apk
-          path: |
-            ${{ steps.prepare.outputs.apk_path }}
+          path: ${{ steps.prepare.outputs.apk_path }}
           retention-days: 30
 
       - name: Create release
@@ -225,8 +222,7 @@ jobs:
           tag_name: ${{ steps.version.outputs.VERSION }}
           name: "LevelUp ${{ steps.version.outputs.VERSION }}"
           body_path: changelog.md
-          files: |
-            ${{ steps.prepare.outputs.apk_path }}
+          files: ${{ steps.prepare.outputs.apk_path }}
 
       - name: Done
         run: |
