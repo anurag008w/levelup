@@ -65,10 +65,6 @@ public class MainActivity extends BridgeActivity {
         MainActivity activity = getInstance();
         if (activity == null) return;
         try {
-            // Defensive: jab apne aap already PiP mode me ho (dono paths —
-            // appStateChange + onUserLeaveHint — ek saath fire ho sakte hain)
-            // toh duplicate entry attempt na karo (API 26-30 par IllegalStateException
-            // throw hota hai agar already PiP me ho).
             if (activity.isInPictureInPictureMode()) return;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 PictureInPictureParams params = new PictureInPictureParams.Builder()
@@ -91,23 +87,9 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * ROOT-CAUSE FIX: Android ka rule hai ki `enterPictureInPictureMode()`
-     * reliably sirf activity ke RESUMED state se (ya iske turant pehle,
-     * `onUserLeaveHint` ke andar) call honi chahiye — [developer.android.com
-     * PiP guide + Android 11 ke liye onUserLeaveHint pattern]. Pehle yeh call
-     * sirf JS ke `appStateChange` listener se aati thi, jo Capacitor bridge ke
-     * apne `onPause` ke *baad* async round-trip se fire hoti hai — tab tak
-     * activity already paused ho chuki hoti hai, aur `enterPictureInPictureMode()`
-     * silently IllegalStateException throw karke fail ho jaata hai (upar wale
-     * try/catch me chup jaata hai). Isi wajah se PiP kabhi khulta hi nahi tha,
-     * webview poora background me freeze ho jaata tha, aur Misa ka jawab/
-     * notification sirf app reopen karne ke baad hi aata tha.
-     *
-     * `onUserLeaveHint()` activity ke resumed-se-pause hone ke EXACT sahi
-     * moment par (Home/Recents press) fire hota hai — yahi se PiP trigger
-     * karna Android 8-11 (API 26-30) ke liye official-recommended tarika hai.
-     * Android 12+ (API 31+) par `setAutoEnterEnabled` (upar) already handle
-     * kar leta hai, is call ka wahan koi harmful effect nahi hai.
+     * PiP mode enter/exit callback — isme koi sensitive UI hide nahi karna
+     * (live call overlay PiP me bhi dikhna chahiye). JS ko notify karte hain
+     * taaki background logic chalu rahe.
      */
     @Override
     public void onUserLeaveHint() {
@@ -117,15 +99,9 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
-    /**
-     * PiP mode enter/exit callback — isme koi sensitive UI hide nahi karna
-     * (live call overlay PiP me bhi dikhna chahiye). JS ko notify karte hain
-     * taaki background logic chalu ho.
-     */
     @Override
     public void onPictureInPictureModeChanged(boolean inPictureInPictureMode, android.content.res.Configuration newConfig) {
         super.onPictureInPictureModeChanged(inPictureInPictureMode, newConfig);
-        // Plugin ko notify karo (agar alive hai)
         LiveCompanionPlugin plugin = livePlugin;
         if (plugin != null) {
             plugin.onPiPModeChanged(inPictureInPictureMode);
@@ -142,77 +118,56 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(GaplessAudioTrackPlugin.class);
         super.onCreate(savedInstanceState);
         hideStatusBar();
-        // Review-9 P1.6 (Activity recreation / PiP native-safe restore): when a
-        // recreated Activity comes up while the Live FGS is STILL running (the
-        // process survived via the foreground service), restore PiP eligibility
-        // from the AUTHORITATIVE native source (the Service's own ACTIVE flag)
-        // instead of depending on a racy JS re-arm. This way, onUserLeaveHint
-        // auto-PiP works again the moment the recreated Activity resumes — even
-        // before the JS overlay has finished re-attaching to the singleton call.
-        // When the FGS is gone (true task kill), liveCallActive stays false so
-        // no spurious PiP entry can occur.
         if (LiveCompanionForegroundService.isActive()) {
             liveCallActive = true;
         }
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        // The FGS is the authoritative source after Activity recreation. Re-arm
+        // the Activity from it instead of trusting static state from the destroyed
+        // Activity/old JS bridge.
+        if (LiveCompanionForegroundService.isActive()) {
+            liveCallActive = true;
+            updateAutoEnterPip(true);
+        }
+        hideStatusBar();
+    }
+
+    @Override
     public void onDestroy() {
-        // CRITICAL: reset the stale flag. If the activity is destroyed mid-call
-        // (task kill / OEM swipe) while the FGS keeps the process alive, the
-        // static liveCallActive would otherwise stay true and any Home press on
-        // a freshly recreated non-call Activity would spuriously enter PiP.
-        liveCallActive = false;
-        instance = null;
+        // A destroyed Activity must not be allowed to clear state belonging to a
+        // newer Activity instance created during rotation/PiP/split-screen.
+        if (instance == this) {
+            instance = null;
+            // Only clear the process-local flag when this Activity is still the
+            // current owner AND the authoritative FGS is no longer active.
+            if (!LiveCompanionForegroundService.isActive()) {
+                liveCallActive = false;
+                livePlugin = null;
+            }
+        }
         super.onDestroy();
     }
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        // Focus wapas aane par (dialog/notification shade/keyboard band) bars
-        // system se wapas aa sakte hain — immersive sticky dobaara apply karo.
         if (hasFocus) {
             hideStatusBar();
         }
     }
 
-    /**
-     * Status bar (time/battery/icons wala top bar) auto-hide karta hai.
-     *
-     * Immersive sticky: user top se swipe kare toh bar transient dikhta hai,
-     * 2-3 second baad apne aap wapas chala jata hai — "auto-hide".
-     *
-     * Compatibility (har Android pe supported):
-     *  - API 21-29 (Android 5-10): WindowInsetsControllerCompat legacy System UI
-     *    flags use karta hai — bina kisi issue ke.
-     *  - API 30+ (Android 11+): native WindowInsetsController.
-     *  - Android 15/16 (API 35/36) edge-to-edge enforcement ke saath bhi
-     *    hide() supported hai (official immersive-mode docs).
-     *  - Navigation bar (bottom) intentionally untouched — app ka existing
-     *    layout/logic waisa hi rehta hai.
-     *
-     * Transient bar (swipe pe aata hai) app ke dark theme se match karta hai:
-     *  - Background: STATUS_BAR_COLOR (app ka --color-bg) — API 34 tak direct;
-     *    Android 15+ pe edge-to-edge enforced hai, isliye status bar
-     *    transparent hi rehta hai aur webview ka dark background dikhta hai.
-     *  - Icons: light (white) — setAppearanceLightStatusBars(false), jo
-     *    dark background pe readable rehte hain (API 23+).
-     */
     private void hideStatusBar() {
         Window window = getWindow();
         if (window == null) return;
         WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, window.getDecorView());
         if (controller == null) return;
-
-        // Dark bg pe light icons — Android 15/16 pe bhi icons sahi dikhein.
         controller.setAppearanceLightStatusBars(false);
-
-        // Transient bar ka background app ke dark theme se match karo.
         window.setStatusBarColor(STATUS_BAR_COLOR);
-
         controller.hide(WindowInsetsCompat.Type.statusBars());
-        // Transient bars: swipe se dikhe, timeout ke baad auto-hide.
         controller.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
     }
 }

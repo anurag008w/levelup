@@ -129,7 +129,9 @@ export function friendlyAuthError(err: unknown): Error {
     if (/401|invalid username|invalid credentials|wrong password/i.test(msg)) {
       return new Error('Username ya password galat hai. Agar account exist nahi karta, "Register" tab use karo.');
     }
-    if (/409|already taken|exists/i.test(msg)) {
+    // Do not match a bare "exists": login errors like "User does not exist"
+    // are not conflicts and must not be presented as "username already taken".
+    if (/409|already taken|already exists|username .*exists/i.test(msg)) {
       return new Error('Username pehle se exist karta hai — "Login" tab se sign in karo.');
     }
     if (/network|failed to fetch|load failed|socket/i.test(msg)) {

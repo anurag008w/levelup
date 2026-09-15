@@ -134,8 +134,8 @@ export function normalizeMemoryStore(raw: unknown): MemoryStore {
   const entries = Array.isArray(r.entries) ? r.entries.filter(isValidMemoryEntry) : [];
   const summaries = Array.isArray(r.summaries) ? r.summaries.filter(isValidMemoryEntry) : [];
   return {
-    entries: entries.slice(0, MEMORY_MAX_ENTRIES),
-    summaries: summaries.slice(0, MEMORY_MAX_SUMMARIES),
+    entries: entries.slice(-MEMORY_MAX_ENTRIES),
+    summaries: summaries.slice(-MEMORY_MAX_SUMMARIES),
     lastSummarizedAt: typeof r.lastSummarizedAt === 'string' ? r.lastSummarizedAt : null,
   };
 }
