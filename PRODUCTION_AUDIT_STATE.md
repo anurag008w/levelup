@@ -7,13 +7,13 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 2
-- Fix iterations this turn: 1
+- Audit turn: 3
+- Fix iterations this turn: 2
 - Status: CONTINUING
 - Main baseline observed this turn: `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`
-- Latest audit fix commit: `08200480d992476b8a7d13e6d74f56ef84c21cc8`
+- Latest audit fix commits: `7b0bfd5f2d5c59dc51cb7a6cbfe71469b4d9e295`, `ba034c7254e4cded70d5f2241d96434d2c749564`
 - Open PR: #34 (`misa-work` -> `main`), not merged, no auto-merge
-- Next audit target: startup/lifecycle plus Android native/FGS, camera/screen-share, and storage/security regression surfaces
+- Next audit target: storage/security/privacy plus startup/lifecycle and Android process-death regression surfaces
 
 ## Turn 1 — First Audit
 
@@ -109,7 +109,7 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Published release `v2026.09.9003` exists on main with a successfully uploaded signed APK, confirming the corrected SDK/release workflow completed end-to-end after the earlier release-flow fix.
 
 ### Device verification
-- No physical Android device/API-matrix verification was available.
+- No physical Android device verification was available.
 
 ## Turn 2 — POST-FIX / LAST AUDIT
 
@@ -120,6 +120,74 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Confirmed the release version parser matches the observed `v2026.09.9000`, `v2026.09.9001`, and `v2026.09.9003` release naming pattern sufficiently for the current evidence; no speculative version-code change was made.
 - No new proven actionable unintentional bug was found after the fix. FINAL AUDIT: CLEAN for the audited surfaces.
 
+## Turn 3 — First Audit
+
+### Scope
+1. Read persistent state from `misa-work` first and verified root repository instructions.
+2. Rechecked current `main`, `misa-work`, PR #34, and divergence before touching files.
+3. Rotated into Android native screen-share lifecycle, MediaProjection ordering, foreground-service startup, cleanup, and adjacent manifest configuration.
+4. Audited Android storage/backup exposure because the previous state explicitly marked `allowBackup` as a pending security/privacy risk.
+5. Rechecked existing Live FGS and Activity lifecycle code for regressions adjacent to the screen-share path.
+
+### Findings
+- P1 — Screen-share initialization race: `ScreenSharePlugin.startCapture()` called `startForegroundService()` and then immediately called `MediaProjectionManager.getMediaProjection()`. `startForegroundService()` is asynchronous, so the MediaProjection request could occur before the `mediaProjection` foreground service had actually entered the foreground state, violating the Android 14+ ordering requirement and causing an intermittent initialization failure.
+- P2 — Android backup privacy: the application manifest had `android:allowBackup="true"` while the app persists user/application state in WebView `localStorage`. The repository already has explicit import/export backup functionality, so allowing automatic OS app-data backup creates an unnecessary second persistence path for potentially sensitive local state.
+
+### Evidence
+- `ScreenSharePlugin.startCapture()` previously started `ScreenShareForegroundService` and immediately called `getMediaProjection()` in the same synchronous method.
+- `ScreenShareForegroundService.onStartCommand()` only calls `startForeground()` when Android dispatches the service start, proving the original call sequence had a real asynchronous gap.
+- `ScreenShareForegroundService` is specifically declared with `mediaProjection` foreground-service type and its `onStartCommand()` is where foreground promotion occurs.
+- `AndroidManifest.xml` previously declared `android:allowBackup="true"`.
+- `persistent-storage.ts` stores application state in browser `localStorage`, and the repository's backup service provides explicit user-controlled export/import.
+
+## Turn 3 — Fix Iteration 1
+
+### Fix
+- Added a static foreground-service active flag to `ScreenShareForegroundService`, set only after successful `startForeground()` and cleared in `onDestroy()`.
+- Changed `ScreenSharePlugin.startCapture()` to wait asynchronously until the screen-share FGS is actually active before calling `getMediaProjection()`.
+- Added a bounded 3-second timeout; timeout rejects the call and stops the service instead of proceeding in an invalid state.
+- Preserved the Android 14+ requirement to register the MediaProjection callback before `createVirtualDisplay()`.
+
+### Commits
+- `15565e5ab18902a7077c2c71fb3130c5673657f0` — implementation in `ScreenShareForegroundService.java`.
+- `7b0bfd5f2d5c59dc51cb7a6cbfe71469b4d9e295` — `ScreenSharePlugin.java` ordering/timeout fix.
+
+## Turn 3 — Fix Iteration 2
+
+### Fix
+- Changed `android/app/src/main/AndroidManifest.xml` from `android:allowBackup="true"` to `android:allowBackup="false"`.
+- Kept explicit user-controlled backup/export features untouched.
+
+### Commit
+- `ba034c7254e4cded70d5f2241d96434d2c749564` — `fix(android): disable automatic app-data backup`
+
+## Turn 3 — Verification
+
+### Repository/config verification
+- Re-read `AGENTS.md` before the fixes and again before recording the final state.
+- Compared `misa-work` before/after the fixes; the first two fix commits changed only `ScreenShareForegroundService.java` and `ScreenSharePlugin.java`, and the second fix changed only `AndroidManifest.xml`.
+- Re-read all three changed files after modification.
+- Confirmed PR #34 remains the single open `misa-work` -> `main` PR, unmerged.
+
+### Static/CI verification
+- The GitHub connector did not report a workflow run for commit `7b0bfd5f2d5c59dc51cb7a6cbfe71469b4d9e295` and the commit status was pending with zero checks at audit time; therefore no CI/build success is claimed for these changes.
+- No local Android build/device test was available in this turn.
+- Static review confirmed the new wait path is asynchronous (no blocking main-thread sleep), has a bounded timeout, and does not call `getMediaProjection()` until the service reports active.
+
+### Device verification
+- No physical Android/API-matrix verification was available.
+
+## Turn 3 — POST-FIX / LAST AUDIT
+
+- Re-read the complete changed screen-share service/plugin path and adjacent manifest declarations.
+- Confirmed foreground-service promotion happens before `getMediaProjection()` in the new control flow.
+- Confirmed `registerCallback()` still precedes `createVirtualDisplay()`.
+- Confirmed timeout/error paths stop the service and reject the original plugin call.
+- Confirmed `teardown()` remains responsible for VirtualDisplay, ImageReader, MediaProjection, capture thread, and service cleanup.
+- Confirmed automatic Android app-data backup is disabled while explicit app backup/export code remains unchanged.
+- Rechecked the existing Live companion FGS and Activity lifecycle surfaces; no additional proven actionable regression was found in this static audit.
+- No new proven actionable unintentional bug was found after the fixes. FINAL AUDIT: CLEAN for the audited surfaces.
+
 ## PR State
 
 - PR #34: `misa-work` -> `main`
@@ -127,16 +195,18 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Merge performed: NO
 - Auto-merge: NOT ENABLED
 - Base SHA observed: `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`
+- Head SHA after Turn 3 fixes: `ba034c7254e4cded70d5f2241d96434d2c749564`
 - Branch remains the single long-lived production audit/fix branch.
 
 ## Remaining Risks / Not Verified
 
 - Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
 - `LiveCompanionForegroundService` still declares microphone+camera+mediaPlayback together; Android version/permission combinations need real device/API-matrix verification before changing it.
-- The Android CI run for the latest release-sequencing fix was cancelled rather than completed; the successful published `v2026.09.9003` release provides stronger end-to-end release evidence but is not a substitute for every PR check.
-- Android backup/privacy behavior (`allowBackup=true`), cleartext traffic configuration, and sensitive local persistence need a dedicated security/privacy audit with evidence before any change.
-- Main/misa-work history is divergent even though the relevant release workflow content is synchronized; preserve existing misa-work work and avoid destructive ref movement.
+- `ScreenSharePlugin` capture state is still owned by the Capacitor plugin/Activity process rather than by the native FGS itself; Activity recreation/process death needs device-level verification before any architectural change.
+- `android:usesCleartextTraffic="true"` remains enabled. Built-in provider endpoints observed in the provider factory are HTTPS, but custom/local HTTP provider support needs a dedicated compatibility audit before restricting cleartext traffic.
+- Android backup is now disabled; users should continue using the app's explicit export/import path for portable backups.
+- Latest screen-share/manifest fixes do not yet have a completed GitHub Actions build result at the time of this state write.
 
 ## Next Turn
 
-Start with startup/lifecycle and Android native FGS/camera/screen-share surfaces, including process death, Activity recreation, explicit stop/hang-up, MediaProjection cleanup, and permission/type requirements. Then rotate into storage/security/privacy and backup behavior. Continue the same-turn audit/fix/re-audit loop for every newly proven actionable finding.
+Start with storage/security/privacy and backup/sync boundaries, then audit startup/process-death and Android FGS/camera/screen-share state ownership. Verify sensitive persistence, cleartext transport compatibility, notification/permission behavior, Activity recreation, service death, and cleanup. Continue the same-turn audit/fix/re-audit loop for every newly proven actionable finding.
