@@ -7,74 +7,86 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 4
-- Fix iterations this turn: 0
+- Audit turn: 5
+- Fix iterations this turn: 3
 - Status: CONTINUING
 - Main baseline observed this turn: `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`
-- Latest audit fix commits: `7b0bfd5f2d5c59dc51cb7a6cbfe71469b4d9e295`, `ba034c7254e4cded70d5f2241d96434d2c749564`
+- Latest fix commits: `7cff9e8473f49d0621b17864bfe780c87fb5f5e2`, `438d31e08b5d60b5f9a47bbc9905bf39b5a79e43`, `3ea081ddba588db8603f0a342bf2f6aae31e8d2f`
 - Open PR: #34 (`misa-work` -> `main`), not merged, no auto-merge
-- Next audit target: AI/provider secret boundaries, storage/sync, then startup/lifecycle and Android process-death regression surfaces
+- Next audit target: startup/lifecycle, Android process-death/FGS/camera/screen-share, then notification/session boundaries
 
-## Turn 4 — First Audit
+## Turn 5 — First Audit
 
 ### Scope
-1. Read persistent audit state first and re-read root `AGENTS.md` and `README.md` before any repository mutation.
-2. Inspected current `main`, `misa-work`, repository metadata, recent commits, and PR #34 state.
-3. Verified the latest `misa-work` CI run and all three jobs: lint/tests/type-check, web build, and Android SDK/build/unit-test/debug APK.
-4. Rotated into storage/security/privacy and AI/provider configuration, with special attention to the known build-time `VITE_DEFAULT_AI_*` boundary.
-5. Rechecked the already-fixed Android backup and screen-share surfaces on `misa-work` for regression.
+- Read the persistent audit state from `misa-work` first.
+- Re-read root `AGENTS.md` and `README.md` before repository mutation.
+- Compared `main` and `misa-work`; `misa-work` was ahead by 11 commits and not behind `main` at audit start.
+- Audited AI/provider credential boundaries, backup/import/export, and sync merge behavior.
 
 ### Findings
-- No new proven actionable P0/P1/P2/P3 bug was established in this turn.
-- UNPROVEN — `VITE_DEFAULT_AI_API_KEY` is intentionally supplied to Vite build environments and therefore can be embedded in the shipped client bundle. The repository's provider factory calls this configuration a hidden default and the README/.env example describe the value as a placeholder, but the actual privilege/scope of the configured GitHub secret is not observable through repository access. Do not change this behavior speculatively; next audit should establish whether the configured credential is intended to be public/client-scoped or must be kept server-side.
+- P2 — Full backup import preserved the current provider API key but discarded the current provider `customHeaders` after the backup intentionally redacted both fields. Custom headers can be required for authentication or routing on OpenAI-compatible providers, so a full restore could silently break a previously working provider.
+- P1 — Sync pull/merge could install the literal `REDACTED_IN_SYNC` sentinel as the Gemini Live `apiKey` when the remote state had a redacted Live credential and the local device had no Live credential. This is a concrete credential-boundary/restore bug and can cause broken Live authentication on a fresh device.
 
-## Turn 4 — Verification
+## Turn 5 — Fix iteration 1
 
-### Repository/config verification
-- Re-read `AGENTS.md`; required AI-agent commit attribution remains the Misa co-author trailer, and Misa Live/Memory/Proactive features remain development-only.
-- Re-read `README.md`; development-status wording remains consistent.
-- Confirmed `main` remains the source baseline at `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481` and `misa-work` remains the single audit/fix branch represented by PR #34.
-- Rechecked `AndroidManifest.xml` on `misa-work`: automatic backup remains disabled while explicit app export/import remains available.
-- Rechecked release workflow and the previously fixed Android SDK configuration; no duplicate SDK workaround was introduced.
+### Fix
+- Updated `src/features/backup/backup.service.ts` so when a full backup contains a redacted provider credential, the import preserves BOTH the current local `apiKey` and current local `customHeaders` rather than only the key.
+- This keeps secret material device-local while making full backup re-import idempotent for custom provider authentication configuration.
+- Commit: `7cff9e8473f49d0621b17864bfe780c87fb5f5e2`.
 
-### GitHub Actions verification
-- `misa-work` commit `e14bbd7d9d4c763c30d75664ce371958d8a0005e` has completed CI run `35020711281` with overall conclusion `success`.
-- `test` job succeeded: dependency install, lint, tests, and type check all completed successfully.
-- `web-build` job succeeded: web application build completed successfully.
-- `android-build` job succeeded: Node/JDK setup, explicit Android SDK setup, dependency install, web build, Capacitor sync, Android unit tests/debug APK build, and APK artifact upload all completed successfully.
-- This is the first recorded completed CI result for the Turn 3 screen-share/manifest changes, so those changes now have CI build/test evidence; no device-level claim is made.
+### Post-fix audit / regression check
+- Immediately re-read the changed backup service and adjacent backup tests.
+- A malformed duplicate `summarizeBackup` export was detected in the newly written file during verification. Classification: P0 compile-time regression introduced by the fix operation itself.
 
-### Device verification
-- No physical Android/API-matrix/device verification was available in this turn.
+## Turn 5 — Fix iteration 2
 
-## Turn 4 — POST-FIX / LAST AUDIT
+### Fix
+- Removed the duplicate recursive `summarizeBackup` export, restoring the original single implementation.
+- Commit: `438d31e08b5d60b5f9a47bbc9905bf39b5a79e43`.
 
-- No code fix was made, so the mandatory post-fix audit was performed as a final regression audit of the rotated security/provider surface plus the adjacent Android/release surfaces.
-- Rechecked `provider-factory.ts`, CI/release build environment references to `VITE_DEFAULT_AI_*`, Android manifest backup state, release SDK configuration, and current CI results.
-- The build-time API-key exposure concern remains classified UNPROVEN with respect to severity/intent because the actual secret's privilege and intended client exposure cannot be observed from the repository connector. No speculative change was made.
-- No new proven actionable unintentional regression was found.
+### Post-fix audit
+- Re-read the resulting blob and verified the duplicate export is gone.
+- Audited sync merge adjacent to the backup credential boundary.
+- The independent P1 sync redaction-sentinel bug remained actionable and was fixed next.
+
+## Turn 5 — Fix iteration 3
+
+### Fix
+- Updated `src/features/sync/sync-merge.ts` so remote `live.apiKey` values equal to `REDACTED_IN_SYNC` or `REDACTED_IN_BACKUP` are sanitized to `undefined` before merge.
+- Local credentials still win when present; a fresh device can no longer persist a redaction sentinel as a real API credential.
+- Commit: `3ea081ddba588db8603f0a342bf2f6aae31e8d2f`.
+
+### Post-fix / LAST AUDIT
+- Rechecked backup redaction/import behavior, sync Live merge behavior, provider header preservation, and adjacent provider request headers.
+- Rechecked the release SDK workflow and Android backup hardening for regression.
+- No new proven actionable bug found after the final fixes.
 - FINAL AUDIT: CLEAN for proven actionable findings.
 
-## PR State
+## Turn 5 — Verification
 
-- PR #34: `misa-work` -> `main`
-- State: OPEN
-- Merge performed: NO
-- Auto-merge: NOT ENABLED
-- Base SHA observed: `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`
-- Head SHA before Turn 4 state commit: `e14bbd7d9d4c763c30d75664ce371958d8a0005e`
-- Branch remains the single long-lived production audit/fix branch.
+### Repository verification
+- Re-read `AGENTS.md` before mutation and preserved the required Misa co-author trailer on every AI-authored commit.
+- Re-read `README.md`; Misa Live/Memory/Proactive features remain marked development-only.
+- GitHub comparison confirmed `misa-work` is not behind `main` at the start of the turn.
+- PR #34 remains the single open `misa-work -> main` review PR; no merge or auto-merge performed.
+
+### CI verification
+- A push-triggered CI run `35031727399` was created for head commit `438d31e08b5d60b5f9a47bbc9905bf39b5a79e43` and was still `in_progress` when this state was recorded.
+- At last inspection, the `test` job had completed checkout, Node setup, dependency install, and lint successfully; its test step was still running. Type check had not yet run.
+- Therefore no green CI claim is made for Turn 5.
+
+### Device verification
+- No physical Android/API-matrix/device verification available.
 
 ## Remaining Risks / Not Verified
 
+- CI completion for the final Turn 5 head remains pending at the time of state recording.
 - Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
-- `LiveCompanionForegroundService` still declares microphone+camera+mediaPlayback together; Android version/permission combinations need real device/API-matrix verification before changing it.
-- `ScreenSharePlugin` capture state is still owned by the Capacitor plugin/Activity process rather than by the native FGS itself; Activity recreation/process death needs device-level verification before any architectural change.
-- `android:usesCleartextTraffic="true"` remains enabled. Built-in provider endpoints observed in the provider factory are HTTPS, but custom/local HTTP provider support needs a dedicated compatibility audit before restricting cleartext traffic.
-- Automatic Android app-data backup is disabled on `misa-work`; users should continue using the app's explicit export/import path for portable backups.
-- The `VITE_DEFAULT_AI_API_KEY` build-time exposure requires confirmation of credential scope before any security fix is safely actionable; do not assume the GitHub secret is privileged.
-- Device-level Android testing remains unavailable in the current environment.
+- `LiveCompanionForegroundService` camera+microphone+mediaPlayback type combinations still require Android-version/permission matrix verification.
+- `ScreenSharePlugin` capture state is still Activity/plugin-process owned rather than FGS-owned; process death/recreation needs device evidence.
+- `android:usesCleartextTraffic="true"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
+- `VITE_DEFAULT_AI_API_KEY` build-time exposure remains UNPROVEN as a security defect because the actual configured credential scope is not observable through repository access.
 
 ## Next Turn
 
-Start with AI/provider credential boundaries: determine whether the build-time default credential is intentionally client-scoped or is a privileged secret, trace all persistence/sync paths for provider credentials, then audit storage/import/export and notification/session boundaries. After that rotate back into startup/process-death and Android FGS/camera/screen-share state ownership. Continue the same-turn audit/fix/re-audit loop for every newly proven actionable finding.
+Fresh first audit of startup/lifecycle and Android process-death/FGS/camera/screen-share ownership. Then rotate through notification/session/auth boundaries. Continue the same-turn audit/fix/re-audit loop for every newly proven actionable finding.
