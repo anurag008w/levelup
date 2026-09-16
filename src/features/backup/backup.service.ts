@@ -6,6 +6,24 @@ import { defaultChatPrefs, MAX_MESSAGES_PER_SESSION, MAX_SESSIONS, type ChatMess
 import type { StateStore } from '../../core/ports/repositories';
 import { normalizeState } from '../../infra/storage/state-repository';
 
+/**
+ * Backup files use a small, versioned envelope so imports can be validated before
+ * any application state is changed. The envelope contains the app identifier,
+ * backup kind/version, scope, export timestamp, and the serialized data payload.
+ *
+ * Scopes:
+ * - full: exports the complete normalized app state plus chat sessions.
+ * - tasks: exports task/planner-related state without unrelated level progress.
+ * - levels: exports cleared levels, reviews, assessments, and post-journey state.
+ *
+ * Full backups deliberately redact provider/web-search/live secrets. Imports keep
+ * the current device's working secrets when the backup contains a redacted value,
+ * so moving a backup between devices cannot accidentally erase local credentials.
+ *
+ * Imports are validated and size-limited before writes. State and chat are prepared
+ * and normalized before the store is updated, keeping the import operation atomic
+ * from the service's point of view: invalid input never partially replaces state.
+ */
 export const BACKUP_APP = 'levelup';
 export const BACKUP_KIND = 'levelup-backup';
 export const BACKUP_VERSION = 1;
@@ -41,6 +59,7 @@ export interface BackupSummary {
   bytes: number;
 }
 
+/** Error raised when a backup cannot be parsed, validated, or safely imported. */
 export class BackupError extends Error {
   readonly code: 'INVALID_JSON' | 'INVALID_ENVELOPE' | 'TOO_LARGE' | 'INVALID_STATE' | 'INVALID_CHAT';
   constructor(message: string, code: 'INVALID_JSON' | 'INVALID_ENVELOPE' | 'TOO_LARGE' | 'INVALID_STATE' | 'INVALID_CHAT') {
@@ -81,21 +100,7 @@ function normalizeChatMessage(raw: unknown): ChatMessage | null {
   return message;
 }
 
-function normalizeChatPrefs(raw: unknown): ChatPreferences {
-  const defaults = defaultChatPrefs();
-  if (!isRecord(raw)) return defaults;
-  return {
-    providerId: typeof raw.providerId === 'string' ? raw.providerId : null,
-    model: typeof raw.model === 'string' ? raw.model : null,
-    temperature: clampNumber(raw.temperature, defaults.temperature, 0, 2),
-    maxTokens: Math.floor(clampNumber(raw.maxTokens, defaults.maxTokens, 1, 100_000)),
-    systemPrompt: typeof raw.systemPrompt === 'string' ? raw.systemPrompt : defaults.systemPrompt,
-    userPersona: typeof raw.userPersona === 'string' ? raw.userPersona : defaults.userPersona,
-    includeContext: typeof raw.includeContext === 'boolean' ? raw.includeContext : defaults.includeContext,
-    ...(typeof raw.thinking === 'string' && (THINKING_LEVELS as readonly string[]).includes(raw.thinking) ? { thinking: raw.thinking as ChatPreferences['thinking'] } : {}),
-  };
-}
-
+/** Normalize imported chat sessions and enforce the application's session/message limits. */
 export function normalizeChatSessions(raw: unknown): ChatSession[] {
   if (!isRecord(raw) || !Array.isArray(raw.sessions)) return [];
   const sessions: ChatSession[] = [];
@@ -118,6 +123,7 @@ export function normalizeChatSessions(raw: unknown): ChatSession[] {
   return sessions;
 }
 
+/** Build a versioned backup envelope for the requested export scope. */
 export function buildBackupPayload(state: AppState, chat: ChatStoreState | null, scope: BackupScope = 'full'): BackupPayload {
   const data: BackupPayload['data'] = { state: {} };
   if (scope === 'full') {
@@ -155,8 +161,10 @@ export function buildBackupPayload(state: AppState, chat: ChatStoreState | null,
   return { app: BACKUP_APP, kind: BACKUP_KIND, version: BACKUP_VERSION, scope, exportedAt: new Date().toISOString(), data };
 }
 
+/** Serialize a validated backup payload into its portable JSON representation. */
 export function serializeBackup(payload: BackupPayload): string { return JSON.stringify(payload, null, 2); }
 
+/** Parse and validate a backup envelope before it can reach the import path. */
 export function parseBackup(json: string): BackupPayload {
   let parsed: unknown;
   try { parsed = JSON.parse(cleanImportText(json)); }
@@ -169,6 +177,7 @@ export function parseBackup(json: string): BackupPayload {
 export interface ApplyBackupOptions { maxBytes?: number; }
 export interface ApplyBackupTargets { store: StateStore; chat?: { replaceStore(sessions: ChatSession[]): void } }
 
+/** Validate and atomically apply a backup to the supplied state/chat targets. */
 export function applyBackup(payload: BackupPayload, targets: ApplyBackupTargets, opts: ApplyBackupOptions = {}): BackupSummary {
   const bytes = serializeBackup(payload).length;
   const maxBytes = opts.maxBytes ?? IMPORT_BUDGET_BYTES;
@@ -215,6 +224,7 @@ export function applyBackup(payload: BackupPayload, targets: ApplyBackupTargets,
   return summarizeBackup(merged, [], bytes, scope);
 }
 
+/** Summarize the state and chat contents represented by a backup operation. */
 export function summarizeBackup(state: AppState, sessions: ChatSession[], bytes: number, scope: BackupScope = 'full'): BackupSummary {
   const dynamicTasks = Array.isArray(state.dynamicTaskBank) ? state.dynamicTaskBank.length : 0;
   const dynamicPhases = Array.isArray(state.dynamicTaskBank) ? [...new Set(state.dynamicTaskBank.map((task) => task.phase).filter(Boolean))] : [];
@@ -234,6 +244,7 @@ export function summarizeBackup(state: AppState, sessions: ChatSession[], bytes:
   };
 }
 
+/** Format a byte count for human-readable backup UI. */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
   if (bytes < 1024) return `${bytes} B`;
