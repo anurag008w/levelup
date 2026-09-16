@@ -97,7 +97,13 @@ export class PlannerService {
 
   /** Toggles the "done" flag of one planner item. */
   toggleItem(plannerId: string, itemId: string, done: boolean): boolean {
-    const next = this.list().map((p) => {
+    const planners = this.list();
+    const planner = planners.find((p) => p.id === plannerId);
+    if (!planner) return false;
+    // Reject stale/invalid item ids instead of reporting success and rewriting
+    // the planner unchanged. This keeps callers' mutation contract truthful.
+    if (!planner.items.some((item) => item.id === itemId)) return false;
+    const next = planners.map((p) => {
       if (p.id !== plannerId) return p;
       return {
         ...p,
@@ -105,7 +111,6 @@ export class PlannerService {
         items: p.items.map((i) => (i.id === itemId ? { ...i, done } : i)),
       };
     });
-    if (!next.some((p) => p.id === plannerId)) return false;
     this.save(next);
     return true;
   }
