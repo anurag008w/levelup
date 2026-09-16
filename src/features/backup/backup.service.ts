@@ -5,6 +5,7 @@ import type { ProviderConfig } from '../../core/domain/llm';
 import { defaultChatPrefs, MAX_MESSAGES_PER_SESSION, MAX_SESSIONS, type ChatMessage, type ChatPreferences, type ChatSession, type ChatStoreState } from '../../core/domain/chat';
 import type { StateStore } from '../../core/ports/repositories';
 import { normalizeState } from '../../infra/storage/state-repository';
+import { mergeAppState } from '../sync/sync-merge';
 
 /**
  * Backup files use a small, versioned envelope so imports can be validated before
@@ -229,9 +230,17 @@ export function applyBackup(payload: BackupPayload, targets: ApplyBackupTargets,
   const current = targets.store.get();
   if (scope === 'tasks') {
     const incoming = normalizeState(rawState);
-    const merged: AppState = { ...current, dynamicTaskBank: incoming.dynamicTaskBank, customTodos: incoming.customTodos, studyVault: incoming.studyVault, customHabits: incoming.customHabits, taskLogs: incoming.taskLogs, planCache: incoming.planCache, restDays: incoming.restDays, testDays: incoming.testDays, masteryPlacement: incoming.masteryPlacement };
-    targets.store.save(merged);
-    return summarizeBackup(merged, [], bytes, scope);
+    const merged = mergeAppState(current, incoming);
+    // mergeAppState intentionally preserves local generated plans/placements when
+    // both devices have values for the same key. Union the task-specific maps here
+    // so a scoped backup cannot erase dates/placements that exist only on the backup.
+    const taskMerged: AppState = {
+      ...merged,
+      planCache: { ...incoming.planCache, ...current.planCache },
+      masteryPlacement: { ...incoming.masteryPlacement, ...current.masteryPlacement },
+    };
+    targets.store.save(taskMerged);
+    return summarizeBackup(taskMerged, [], bytes, scope);
   }
   const incoming = normalizeState(rawState);
   const merged: AppState = { ...current, clearedLevels: incoming.clearedLevels, weeklyReviews: incoming.weeklyReviews, monthlyAssessments: incoming.monthlyAssessments, postJourney: incoming.postJourney };
