@@ -52,9 +52,12 @@ if ! git diff-index --quiet HEAD --; then
     fi
 fi
 
-# Pull latest
-echo "📥 Pulling latest changes..."
-git pull origin main
+# Pull latest only for a real release. Dry-run must remain observational and
+# must not mutate the checkout through a network update.
+if [[ "$DRY_RUN" != "1" ]]; then
+  echo "📥 Pulling latest changes..."
+  git pull origin main
+fi
 
 # Run tests first
 echo ""
@@ -106,7 +109,7 @@ echo "   1. Go to GitHub Actions:"
 echo "      https://github.com/anurag008w/levelup/actions"
 echo ""
 echo "   2. Click 'Release' workflow"
-echo ""
+ echo ""
 echo "   3. Click 'Run workflow'"
 echo ""
 echo "   4. Enter version: $VERSION"
