@@ -48,12 +48,15 @@ export function currentDayNumberFor(dateISO: string, startDateISO: string, total
 
 /** Sorted calendar positions (raw day numbers) of the rest days. */
 export function restRawPositions(restDays: number[]): number[] {
-  const sorted = [...restDays].sort((a, b) => a - b);
+  // `restDays` is persisted and can also arrive from AI/import/sync paths. It
+  // represents a set of content-day numbers, so duplicate entries must not
+  // create extra calendar slots and shift the entire journey.
+  const sorted = [...new Set(restDays)].sort((a, b) => a - b);
   return sorted.map((d, i) => d + i);
 }
 
 /** Content day number for a raw calendar day. On a rest slot this returns the
- *  content day that is rested that day. */
+ * content day that is rested that day. */
 export function contentDayForRaw(raw: number, restDays: number[]): number {
   const rests = restRawPositions(restDays);
   let before = 0;
@@ -93,9 +96,9 @@ export function dateForRestDay(restDay: number, startDateISO: string, restDays: 
 }
 
 /** Calendar date for a day number. Rested content days map to their REST slot
- *  (the actual calendar day off), every other day to its content date. This is
- *  what UIs (DaySwitcher, chat tools) need: jumping to a rested content day
- *  must land on the real rest day, not the shifted day after it. */
+ * (the actual calendar day off), every other day to its content date. This is
+ * what UIs (DaySwitcher, chat tools) need: jumping to a rested content day
+ * must land on the real rest day, not the shifted day after it. */
 export function dateForDayNumber(dayNumber: number, startDateISO: string, restDays: number[]): string {
   return restDays.includes(dayNumber)
     ? dateForRestDay(dayNumber, startDateISO, restDays)
