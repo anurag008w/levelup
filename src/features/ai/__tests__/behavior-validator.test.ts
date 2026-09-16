@@ -77,4 +77,26 @@ describe('BehaviorValidator', () => {
     expect(result.valid).toBe(false);
     expect(result.reason).toContain('duplicate');
   });
+
+  it('fails closed when persisted quiet-hour boundaries are malformed', () => {
+    mockState.boundaries.quietHoursStart = 'not-a-clock';
+    const result = validateProactiveDelivery(
+      { id: '1', type: 'check_in', urgency: 0.8, relevance: 0.8, confidence: 0.8, freshness: 0.8, offlineText: 'Test' },
+      mockState,
+      { lastActiveTimestamp: afternoonTimestamp - 45 * 60000, now: afternoonTimestamp }
+    );
+    expect(result.valid).toBe(false);
+    expect(result.reason).toContain('quiet hours');
+  });
+
+  it('fails closed for out-of-range quiet-hour clocks', () => {
+    mockState.boundaries.quietHoursEnd = '24:00';
+    const result = validateProactiveDelivery(
+      { id: '1', type: 'check_in', urgency: 0.8, relevance: 0.8, confidence: 0.8, freshness: 0.8, offlineText: 'Test' },
+      mockState,
+      { lastActiveTimestamp: afternoonTimestamp - 45 * 60000, now: afternoonTimestamp }
+    );
+    expect(result.valid).toBe(false);
+    expect(result.reason).toContain('quiet hours');
+  });
 });
