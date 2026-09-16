@@ -13,8 +13,27 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Main baseline observed this turn: `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`
 - Turn-13 starting head: `915caaeb4d405b9a14c1b8184493378071cf1ed4`
 - Latest fix commit: `7070f929928d200601369de832920060cea14679`
+- Latest state commit: `fa44223a370830d0b8c5ad6db6bd5d0fc808208a`
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
 - Next audit target: Android process-death/FGS/camera/screen-share lifecycle ownership, then planner/tasks/habits/exams persistence/concurrency rotation
+
+## Turn 13 — Final CI closure
+
+- State-update push CI `35104481669` / run #457 — terminal SUCCESS.
+- State-update PR CI `35104487577` / run #458 — terminal SUCCESS.
+- Both runs were for state commit `fa44223a370830d0b8c5ad6db6bd5d0fc808208a`; test, web-build, and Android-build completed successfully.
+- Android job completed Java setup, Android SDK setup, dependencies, web build, Capacitor sync, Android unit tests/debug APK, and artifact upload successfully.
+
+## Turn 13 — Final State
+
+- Final audit result: CLEAN for proven actionable findings in the planner surfaces audited this turn.
+- Planner stale-item toggle contract was hardened and covered by regression testing.
+- No speculative changes made for unproven concurrency/device/deployment concerns.
+- `misa-work` remains the sole hardening branch; PR #34 remains the single open review PR targeting `main`; no merge, auto-merge, rebase, squash, or force-push performed.
+
+## Historical Audit/Fix Record
+
+The complete historical record below is preserved unchanged from the prior persistent state.
 
 ## Turn 8 — First Audit
 
@@ -270,16 +289,6 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Vite `base: './'` combined with root-absolute service-worker/manifest/notification paths remains UNPROVEN without deployment-topology evidence.
 - Android physical/API-matrix verification remains unavailable even though CI Android build/static checks are green.
 
-## Turn 12 — Final State
-
-- Final audit result: CLEAN for proven actionable findings in the release/versioning surfaces audited this turn.
-- No speculative changes made for unproven secret-scope, deployment-topology, native-runtime, or physical-device concerns.
-- `misa-work` remains the sole hardening branch; PR #34 remains the single open review PR targeting `main`; no merge, auto-merge, rebase, squash, or force-push performed.
-
-## Turn 12 — Next Turn
-
-Fresh first audit of planner/tasks/habits/exams persistence and concurrency, then continue rotation through Android process-death/FGS/camera/screen-share lifecycle ownership. Continue the same-turn AUDIT -> FIX -> VERIFY -> AUDIT loop for every newly proven actionable finding.
-
 ## Turn 13 — First Audit
 
 ### Scope
@@ -326,11 +335,11 @@ Fresh first audit of planner/tasks/habits/exams persistence and concurrency, the
 - `35103866808` — CANCELLED: superseded by the next planner test commit; not treated as a code failure.
 - `35103878999` — SUCCESS: test, web-build, Android-build all successful.
 
-## Turn 13 — Final State
+## Turn 13 — State-update CI evidence
 
-- Final audit result: CLEAN for proven actionable findings in the planner surfaces audited this turn.
-- No speculative changes made for unproven concurrency/device/deployment concerns.
-- `misa-work` remains the sole hardening branch; PR #34 remains the single open review PR targeting `main`; no merge, auto-merge, rebase, squash, or force-push performed.
+- `35104481669` / run #457 — SUCCESS: push-triggered CI for `fa44223a370830d0b8c5ad6db6bd5d0fc808208a`.
+- `35104487577` / run #458 — SUCCESS: PR-triggered CI for `fa44223a370830d0b8c5ad6db6bd5d0fc808208a`.
+- Both terminal-success runs validated test, web-build, and Android-build.
 
 ## Remaining Risks / Not Verified after Turn 13
 
