@@ -19,10 +19,10 @@
  *    shade se reply kar raha hai. Isliye send shuru karte hi chhota grace
  *    (REPLY_GRACE_MS) dekar app turant minimize ho jaati hai (~1s). Capacitor
  *    default `KeepRunning=true` hai, isliye WebView background me JS timers aur
- *    fetch-streams continue karta hai — send minimize ke BAAD bhi complete
- *    hota hai. (Pehle "minimize karne se send freeze ho jaata hai" maana jaata
- *    tha; v0605/0606 ka stuck asli me broadcast path ki headless delivery ka
- *    issue tha, minimize ka nahi.)
+ *    fetch-streams continue karta hai — send minimize ke BAAD bhi complete hota
+ *    hai. (Pehle "minimize karne se send freeze ho jaata hai" maana jaata tha;
+ *    v0605/0606 ka stuck asli me broadcast path ki headless delivery ka issue
+ *    tha, minimize ka nahi.)
  *
  *    Note: "reply se pehle app already foreground thi" wala check (`isAppActive`)
  *    reliable nahi hai — reply action Activity ko launch/resume kar deta hai,
@@ -214,14 +214,13 @@ export function setupNotificationActions(): void {
           const bubbles = splitReplyIntoBubbles(assistant.content);
           const schedule = computeRevealSchedule(bubbles.length);
           if (bubbles.length > 0) {
-            // HAR bubble apne reveal moment pe JS timer se fire hota
+            // HAR bubble apne reveal moment pe JS timer se fire hota hai
             // (delayMs=0 + force=true → turant show/update, same sessionId =
-            // same notification id = purana merge hoke update hota hai), bilkul
-            // ChatScreen ke normal flow jaisa. OS-level pre-scheduling yahan
-            // kaam nahi karta — Android plugin same id ke pending alarms cancel
-            // kar deta hai, isliye pehle se schedule kiye steps me se sirf aakhri
-            // fire hota (poora reply, total reveal delay ke baad) aur bubble
-            // reveal kabhi dikhta nahi.
+            // same id = merge). OS-level pre-scheduling yahan
+            // use nahi hota — Android plugin same id ke pending alarms cancel
+            // kar deta hai, isliye pehle se schedule kiye steps me se sirf
+            // aakhri fire hota tha (poora reply, total delay ke baad — bubble reveal
+            // kabhi dikhta hi nahi tha).
             //
             // Body = latest bubble (collapsed/heads-up — warna Android har
             // popup me cumulative text ka pehla line dikhata, "pehla message
