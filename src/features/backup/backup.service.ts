@@ -4,7 +4,6 @@ import type { AppState } from '../../core/domain/state';
 import type { ProviderConfig } from '../../core/domain/llm';
 import { defaultChatPrefs, MAX_MESSAGES_PER_SESSION, MAX_SESSIONS, type ChatMessage, type ChatPreferences, type ChatSession, type ChatStoreState } from '../../core/domain/chat';
 import type { StateStore } from '../../core/ports/repositories';
-import { isPhaseId, type PhaseId } from '../../core/domain/task-bank';
 import { normalizeState } from '../../infra/storage/state-repository';
 
 export const BACKUP_APP = 'levelup';
@@ -216,7 +215,7 @@ export function applyBackup(payload: BackupPayload, targets: ApplyBackupTargets,
   return summarizeBackup(merged, [], bytes, scope);
 }
 
-export function summarizeBackup(state: AppState, sessions: ChatSession[], bytes: number, scope: BackupScope): BackupSummary {
+export function summarizeBackup(state: AppState, sessions: ChatSession[], bytes: number, scope: BackupScope = 'full'): BackupSummary {
   const dynamicTasks = Array.isArray(state.dynamicTaskBank) ? state.dynamicTaskBank.length : 0;
   const dynamicPhases = Array.isArray(state.dynamicTaskBank) ? [...new Set(state.dynamicTaskBank.map((task) => task.phase).filter(Boolean))] : [];
   const planDays = state.planCache && typeof state.planCache === 'object' ? Object.keys(state.planCache).length : 0;
