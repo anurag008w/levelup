@@ -53,13 +53,17 @@ export function validateProactiveDelivery(
 
   // 3. Active Grace Period Check (30 minutes)
   // Allowed ONLY if it is an in-session conversational follow-up inside the active chat
-  const graceMs = (relationship.boundaries.activeGraceMinutes || 30) * 60 * 1000;
+  const configuredGraceMinutes = relationship.boundaries.activeGraceMinutes;
+  const graceMinutes = Number.isFinite(configuredGraceMinutes)
+    ? Math.max(0, configuredGraceMinutes)
+    : 30;
+  const graceMs = graceMinutes * 60 * 1000;
   const timeSinceActive = now - context.lastActiveTimestamp;
 
   if (timeSinceActive < graceMs && !context.isInsideActiveSession) {
     return {
       valid: false,
-      reason: `Suppressed: User active in app ${Math.round(timeSinceActive / 60000)}m ago (30-min grace shield)`,
+      reason: `Suppressed: User active in app ${Math.round(timeSinceActive / 60000)}m ago (${graceMinutes}-min grace shield)`,
     };
   }
 
@@ -97,19 +101,27 @@ export function validateProactiveDelivery(
 }
 
 function checkQuietHours(startStr: string, endStr: string, nowEpoch: number): boolean {
-  try {
-    const date = new Date(nowEpoch);
-    const [startH, startM] = startStr.split(':').map(Number);
-    const [endH, endM] = endStr.split(':').map(Number);
-    const currentMins = date.getHours() * 60 + date.getMinutes();
-    const startMins = startH * 60 + startM;
-    const endMins = endH * 60 + endM;
+  const start = parseClockMinutes(startStr);
+  const end = parseClockMinutes(endStr);
 
-    if (startMins > endMins) {
-      return currentMins >= startMins || currentMins < endMins;
-    }
-    return currentMins >= startMins && currentMins < endMins;
-  } catch {
-    return false;
+  // Malformed persisted/configured boundaries must fail closed. Returning
+  // "quiet" avoids silently bypassing a user's quiet-hours preference when
+  // old or corrupted state contains an invalid clock value.
+  if (start === null || end === null) return true;
+
+  const date = new Date(nowEpoch);
+  const currentMins = date.getHours() * 60 + date.getMinutes();
+
+  if (start > end) {
+    return currentMins >= start || currentMins < end;
   }
+  return currentMins >= start && currentMins < end;
+}
+
+function parseClockMinutes(value: string): number | null {
+  if (typeof value !== 'string') return null;
+  const match = /^(?:[01]\d|2[0-3]):[0-5]\d$/.exec(value.trim());
+  if (!match) return null;
+  const [hours, minutes] = value.trim().split(':').map(Number);
+  return hours * 60 + minutes;
 }
