@@ -63,7 +63,12 @@ export function validateProactiveDelivery(
   // `timeSinceActive < graceMs` false and could silently bypass the grace shield.
   // Treating an invalid timestamp as "active now" is conservative and prevents
   // malformed local/synced state from causing an unexpected interruption.
-  const lastActiveTimestamp = Number.isFinite(context.lastActiveTimestamp)
+  // Reject negative/future timestamps too: either value is outside the valid
+  // wall-clock domain for a completed activity event and could otherwise bypass
+  // or indefinitely distort the grace calculation after clock/state corruption.
+  const lastActiveTimestamp = Number.isFinite(context.lastActiveTimestamp) &&
+    context.lastActiveTimestamp >= 0 &&
+    context.lastActiveTimestamp <= now
     ? context.lastActiveTimestamp
     : now;
   const timeSinceActive = now - lastActiveTimestamp;
