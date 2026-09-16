@@ -13,7 +13,7 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Main baseline observed this turn: `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`
 - Turn-15 starting head: `da136966dbae945a9dfa643931ff2ab4d5ae83fb`
 - Latest fix commits: `fa7de1e30cbb0fd1d637b1c92662b8310a774ad5`, `7a5fe2eab9846cfa40cd5409a66c95c3245a9e06`
-- Latest state commit: pending (this update)
+- Latest state commit: `69e3832bb6c3601ee493f8ab65b76125ed51baff`
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
 - Next audit target: habits/exams/task persistence/concurrency, then AI/chat action state integrity rotation
 
@@ -75,6 +75,8 @@ This file is the persistent handoff for the hourly production-audit loop.
 ## Turn 15 — CI evidence
 
 - PR CI `35108462249` / run #470 — terminal SUCCESS for exact head `7a5fe2eab9846cfa40cd5409a66c95c3245a9e06`. `test`, `web-build`, and `android-build` all reached terminal SUCCESS. Test passed lint/full tests/type-check; web build succeeded; Android SDK setup, dependency installation, web build, Capacitor sync, Android unit tests/debug APK, and artifact upload all succeeded.
+- State-update push CI `35109108795` / run #471 — terminal SUCCESS for `69e3832bb6c3601ee493f8ab65b76125ed51baff`; all test/web-build/android-build jobs reached terminal SUCCESS.
+- State-update PR CI `35109114181` / run #472 — terminal SUCCESS for the same state commit; all test/web-build/android-build jobs reached terminal SUCCESS.
 - No CI failure required a correction after the final batch.
 
 ## Turn 15 — Final State
@@ -457,3 +459,15 @@ The complete historical record below is preserved unchanged from the prior persi
 - Final audit result: CLEAN for proven actionable findings in the Android screen-share startup surface audited this turn.
 - No speculative changes were made for physical-device lifecycle, OEM behavior, or Android API-matrix concerns that remain externally unverified.
 - `misa-work` remains the sole hardening branch; PR #34 remains the single open review PR targeting `main`; no merge, auto-merge, rebase, squash, or force-push performed.
+
+## Turn 14 — Remaining Risks / Not Verified
+
+- Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
+- `LiveCompanionForegroundService` camera+microphone+mediaPlayback type combinations still require Android-version/permission matrix verification.
+- `ScreenSharePlugin` process-death/recreation and Activity/plugin-process ownership still require physical-device evidence beyond CI compilation/tests.
+- `ScreenShareForegroundService` uses a four-hour WakeLock timeout; long-running-session behavior beyond that boundary remains not device-verified.
+- `android:usesCleartextTraffic=\"true\"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
+- `VITE_DEFAULT_AI_API_KEY` build-time exposure remains UNPROVEN because configured credential scope is not observable through repository access.
+- Repeated `AudioRoute.getAvailableRoutes is not a function` warnings remain UNPROVEN/ENVIRONMENTAL because tests pass through the guarded native/web boundary and native runtime evidence is unavailable.
+- Vite `base: './'` combined with root-absolute service-worker/manifest/notification paths remains UNPROVEN without deployment-topology evidence.
+- Android physical/API-matrix verification remains unavailable even though CI Android build/static checks are green.
