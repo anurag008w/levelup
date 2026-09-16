@@ -12,10 +12,17 @@ import type { ProactiveTrigger, ScheduledProactiveMessage } from '../ai/proactiv
 import { DEFAULT_LIVE_SETTINGS } from '../../core/domain/live-types';
 import { normalizeState } from '../../infra/storage/state-repository';
 
+/**
+ * Non-destructively merge Local vs Remote app state. The merge is intentionally
+ * union-oriented so independent work from either device is retained: task logs,
+ * todos, study resources, memory, habits, planners, levels, days, AI settings,
+ * dynamic tasks, and profile fields are reconciled without a blanket overwrite.
+ */
 export function mergeAppState(local: AppState, remote: AppState): AppState {
   const normLocal = normalizeState(local);
   const normRemote = normalizeState(remote);
 
+  // 1. Start Date: preserve the earliest known journey start date.
   let startDateISO = normLocal.startDateISO;
   if (normLocal.startDateISO && normRemote.startDateISO) {
     startDateISO = normLocal.startDateISO <= normRemote.startDateISO ? normLocal.startDateISO : normRemote.startDateISO;
@@ -23,12 +30,14 @@ export function mergeAppState(local: AppState, remote: AppState): AppState {
     startDateISO = normRemote.startDateISO;
   }
 
+  // 2. Task Logs: deep-union each day so a completed task is never lost.
   const allDays = new Set([...Object.keys(normLocal.taskLogs || {}), ...Object.keys(normRemote.taskLogs || {})]);
   const taskLogs: Record<string, Record<string, boolean>> = {};
   for (const day of allDays) {
     taskLogs[day] = { ...(normRemote.taskLogs?.[day] || {}), ...(normLocal.taskLogs?.[day] || {}) };
   }
 
+  // 3. Custom To-Dos: merge by ID, retaining completion and the latest metadata.
   const todoMap = new Map<string, CustomTodoTask>();
   for (const t of normRemote.customTodos || []) if (t?.id) todoMap.set(t.id, t);
   for (const t of normLocal.customTodos || []) {
@@ -43,11 +52,13 @@ export function mergeAppState(local: AppState, remote: AppState): AppState {
   }
   const customTodos = Array.from(todoMap.values());
 
+  // 4. Study Vault: union resources by stable ID.
   const vaultMap = new Map<string, StudyResource>();
   for (const v of normRemote.studyVault || []) if (v?.id) vaultMap.set(v.id, v);
   for (const v of normLocal.studyVault || []) if (v?.id) vaultMap.set(v.id, v);
   const studyVault = Array.from(vaultMap.values());
 
+  // 5. Memory Facts: dedupe by ID and normalized fact text.
   const memEntriesMap = new Map<string, MemoryEntry>();
   const seenFactTexts = new Set<string>();
   for (const e of [...(normRemote.memory?.entries || []), ...(normLocal.memory?.entries || [])]) {
@@ -61,20 +72,26 @@ export function mergeAppState(local: AppState, remote: AppState): AppState {
   for (const s of [...(normRemote.memory?.summaries || []), ...(normLocal.memory?.summaries || [])]) if (s?.id) memSummariesMap.set(s.id, s);
   const lastSummarizedAt = [normLocal.memory?.lastSummarizedAt, normRemote.memory?.lastSummarizedAt].filter(Boolean).sort().pop() || null;
 
+  // 6. Custom Habits: union by stable ID.
   const habitMap = new Map<string, Habit>();
   for (const h of normRemote.customHabits || []) if (h?.id) habitMap.set(h.id, h);
   for (const h of normLocal.customHabits || []) if (h?.id) habitMap.set(h.id, h);
   const customHabits = Array.from(habitMap.values());
 
+  // 7. Subject Planners: union by stable ID.
   const plannerMap = new Map<string, SubjectPlanner>();
   for (const p of normRemote.subjectPlanners || []) if (p?.id) plannerMap.set(p.id, p);
   for (const p of normLocal.subjectPlanners || []) if (p?.id) plannerMap.set(p.id, p);
   const subjectPlanners = Array.from(plannerMap.values());
 
+  // 8. Cleared Levels: set-union and stable numeric ordering.
   const clearedLevels = Array.from(new Set([...(normLocal.clearedLevels || []), ...(normRemote.clearedLevels || [])])).sort((a, b) => a - b);
+
+  // 9. Rest/Test Days: set-union and stable numeric ordering.
   const restDays = Array.from(new Set([...(normLocal.restDays || []), ...(normRemote.restDays || [])])).sort((a, b) => a - b);
   const testDays = Array.from(new Set([...(normLocal.testDays || []), ...(normRemote.testDays || [])])).sort((a, b) => a - b);
 
+  // 10. AI Settings: prefer local values while retaining remote provider data and safe live defaults.
   const providers = { ...(normRemote.aiSettings?.providers || {}), ...(normLocal.aiSettings?.providers || {}) };
   const activeProviderId = normLocal.aiSettings?.activeProviderId || normRemote.aiSettings?.activeProviderId || null;
   const remoteLive = normRemote.aiSettings?.live;
@@ -91,11 +108,13 @@ export function mergeAppState(local: AppState, remote: AppState): AppState {
     live: { ...DEFAULT_LIVE_SETTINGS, ...(sanitizedRemoteLive || {}), ...(normLocal.aiSettings?.live || {}) },
   };
 
+  // 11. Dynamic Task Bank: union generated task entries by stable ID.
   const taskBankMap = new Map<string, TaskBankEntry>();
   for (const tb of normRemote.dynamicTaskBank || []) if (tb?.id) taskBankMap.set(tb.id, tb);
   for (const tb of normLocal.dynamicTaskBank || []) if (tb?.id) taskBankMap.set(tb.id, tb);
   const dynamicTaskBank = Array.from(taskBankMap.values());
 
+  // 12. User Profile: prefer populated local fields, then remote values.
   const userProfile = {
     name: normLocal.userProfile?.name || normRemote.userProfile?.name || '',
     classLevel: normLocal.userProfile?.classLevel || normRemote.userProfile?.classLevel || '',
@@ -193,6 +212,12 @@ function mergeRelationshipState(local: RelationshipState, remote: RelationshipSt
   };
 }
 
+/**
+ * Merge proactive data idempotently across devices. Pending triggers are deduped
+ * by idempotencyKey (with a deterministic fallback), scheduled messages are
+ * deduped by identity/kind/time, and cancellation is monotonic: if any copy is
+ * cancelled, the merged record remains cancelled.
+ */
 function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyncPayload['proactive']): MisaSyncPayload['proactive'] {
   const triggers = new Map<string, ProactiveTrigger>();
   for (const t of [...(remote.pendingTriggers || []), ...(local.pendingTriggers || [])]) {
@@ -238,19 +263,16 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
     lastActiveTimestamp: Math.max(local.lastActiveTimestamp || 0, remote.lastActiveTimestamp || 0),
     lastUserChatTimestamp: Math.max(local.lastUserChatTimestamp || 0, remote.lastUserChatTimestamp || 0),
     lastCallTimestamp: Math.max(local.lastCallTimestamp || 0, remote.lastCallTimestamp || 0),
-    lastCallDeclinedTimestamp: Math.max(local.lastCallDeclinedTimestamp || 0, remote.lastCallDeclinedTimestamp || 0),
-    consecutiveCallDeclines: Math.max(local.consecutiveCallDeclines || 0, remote.consecutiveCallDeclines || 0),
-    dndUntilTimestamp: Math.max(local.dndUntilTimestamp || 0, remote.dndUntilTimestamp || 0),
-    coldStartDone: Boolean(local.coldStartDone || remote.coldStartDone),
     pendingTriggers: Array.from(triggers.values()),
     scheduledMessages: Array.from(scheduled.values()),
     missedInteractions: Array.from(missed.values()),
   };
 }
 
-function latestNonBlank<T>(a: T | undefined | null, b: T | undefined | null): T | undefined {
-  if (a !== undefined && a !== null && a !== '') return a;
-  return b !== undefined && b !== null && b !== '' ? b : undefined;
+function dedupeStrings(items: string[]): string[] {
+  return Array.from(new Set(items.filter(Boolean)));
 }
 
-function dedupeStrings(items: string[]): string[] { return Array.from(new Set(items.filter((x) => x && x.trim().length > 0))); }
+function latestNonBlank(a?: string, b?: string): string | undefined {
+  return a?.trim() ? a : b?.trim() ? b : undefined;
+}
