@@ -7,14 +7,14 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 12
+- Audit turn: 13
 - Fix iterations this turn: 2
 - Status: CONTINUING
 - Main baseline observed this turn: `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`
-- Turn-12 starting head: `48f88afc34ac2c972a92d7cb9fb1750eed81cc78`
-- Latest fix commit: `915caaeb4d405b9a14c1b8184493378071cf1ed4`
+- Turn-13 starting head: `915caaeb4d405b9a14c1b8184493378071cf1ed4`
+- Latest fix commit: `7070f929928d200601369de832920060cea14679`
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
-- Next audit target: planner/tasks/habits/exams persistence and concurrency, then Android process-death/FGS/camera/screen-share
+- Next audit target: Android process-death/FGS/camera/screen-share lifecycle ownership, then planner/tasks/habits/exams persistence/concurrency rotation
 
 ## Turn 8 — First Audit
 
@@ -60,7 +60,7 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
 - `LiveCompanionForegroundService` camera+microphone+mediaPlayback type combinations still require Android-version/permission matrix verification.
 - `ScreenSharePlugin` capture state remains Activity/plugin-process owned rather than FGS-owned; process death/recreation needs device evidence.
-- `android:usesCleartextTraffic="true"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
+- `android:usesCleartextTraffic=\"true\"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
 - `VITE_DEFAULT_AI_API_KEY` build-time exposure remains UNPROVEN because configured credential scope is not observable through repository access.
 - Repeated `AudioRoute.getAvailableRoutes is not a function` warnings remain UNPROVEN/ENVIRONMENTAL because tests pass through the guarded native/web boundary and native runtime evidence is unavailable.
 - Vite `base: './'` with root-absolute `/sw.js`, `/manifest.json`, and notification icon paths remains UNPROVEN without deployment-topology evidence.
@@ -194,7 +194,7 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
 - `LiveCompanionForegroundService` camera+microphone+mediaPlayback type combinations still require Android-version/permission matrix verification.
 - `ScreenSharePlugin` capture state remains Activity/plugin-process owned rather than FGS-owned; process death/recreation needs device evidence.
-- `android:usesCleartextTraffic="true"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
+- `android:usesCleartextTraffic=\"true\"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
 - `VITE_DEFAULT_AI_API_KEY` build-time exposure remains UNPROVEN because configured credential scope is not observable through repository access.
 - Repeated `AudioRoute.getAvailableRoutes is not a function` warnings remain UNPROVEN/ENVIRONMENTAL because tests pass through the guarded native/web boundary and native runtime evidence is unavailable.
 - Vite `base: './'` combined with root-absolute service-worker/manifest/notification paths remains UNPROVEN without deployment-topology evidence.
@@ -217,7 +217,7 @@ This file is the persistent handoff for the hourly production-audit loop.
 ## Turn 12 — Fix iteration 1
 
 ### Fix
-- `scripts/release.sh`: guarded the uncommitted-change prompt with `[[ "$DRY_RUN" != "1" ]]`, while preserving the prior dry-run guard around `git pull`.
+- `scripts/release.sh`: guarded the uncommitted-change prompt with `[[ \"$DRY_RUN\" != \"1\" ]]`, while preserving the prior dry-run guard around `git pull`.
 - Fix commit: `48f88afc34ac2c972a92d7cb9fb1750eed81cc78` (`fix(release): make dry-run non-interactive`).
 - CI `35098077776` / run #442 completed SUCCESS: test, web-build, and Android-build all successful.
 
@@ -264,7 +264,80 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
 - `LiveCompanionForegroundService` camera+microphone+mediaPlayback type combinations still require Android-version/permission matrix verification.
 - `ScreenSharePlugin` capture state remains Activity/plugin-process owned rather than FGS-owned; process death/recreation needs device evidence.
-- `android:usesCleartextTraffic="true"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
+- `android:usesCleartextTraffic=\"true\"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
+- `VITE_DEFAULT_AI_API_KEY` build-time exposure remains UNPROVEN because configured credential scope is not observable through repository access.
+- Repeated `AudioRoute.getAvailableRoutes is not a function` warnings remain UNPROVEN/ENVIRONMENTAL because tests pass through the guarded native/web boundary and native runtime evidence is unavailable.
+- Vite `base: './'` combined with root-absolute service-worker/manifest/notification paths remains UNPROVEN without deployment-topology evidence.
+- Android physical/API-matrix verification remains unavailable even though CI Android build/static checks are green.
+
+## Turn 12 — Final State
+
+- Final audit result: CLEAN for proven actionable findings in the release/versioning surfaces audited this turn.
+- No speculative changes made for unproven secret-scope, deployment-topology, native-runtime, or physical-device concerns.
+- `misa-work` remains the sole hardening branch; PR #34 remains the single open review PR targeting `main`; no merge, auto-merge, rebase, squash, or force-push performed.
+
+## Turn 12 — Next Turn
+
+Fresh first audit of planner/tasks/habits/exams persistence and concurrency, then continue rotation through Android process-death/FGS/camera/screen-share lifecycle ownership. Continue the same-turn AUDIT -> FIX -> VERIFY -> AUDIT loop for every newly proven actionable finding.
+
+## Turn 13 — First Audit
+
+### Scope
+- Read `/PRODUCTION_AUDIT_STATE.md` first, then re-read root `AGENTS.md`/`README.md` and audited the current `misa-work` planner surface.
+- Verified PR #34 was open, unmerged, targeting `main`, with current head eventually at `7070f929928d200601369de832920060cea14679`.
+- Fresh feature target: planner CRUD/import/tool execution and adjacent state persistence contracts.
+
+### Finding
+- P3 — `PlannerService.toggleItem(plannerId, itemId, done)` returned `true` for an existing planner even when `itemId` was stale/missing, rewrote the planner array, and updated `updatedAt` without changing any item. This made the mutation result contract false and could cause unnecessary persistence/state notifications for stale UI ids.
+
+### Evidence
+- Existing tests covered a missing planner id but not a missing item id.
+- The prior implementation mapped the planner whenever its id existed and only then returned `true`, without first proving the requested item existed.
+- UI callers ignore the boolean, so the immediate user-visible effect is limited, but the service contract and persistence churn were objectively incorrect.
+
+## Turn 13 — Fix iteration 1
+
+### Fix
+- `src/features/planner/planner.service.ts`: resolve the target planner first, return `false` for a missing planner or missing item, and only construct/save a new state when the requested item id exists.
+- Preserved the existing toggle/update behavior for valid ids and retained all useful comments; added concise rationale for rejecting stale ids.
+- Fix commit: `b355eeb42454c359a6cdcd4b44857349c6bb69de` (`fix(planner): reject toggling missing items`).
+
+## Turn 13 — Fix iteration 2
+
+### Fix
+- Added `src/features/planner/__tests__/planner.edge-cases.test.ts` proving a stale item id returns `false`, does not call through to a rewritten state snapshot, and leaves the existing item's `done` value unchanged.
+- Test commit: `7070f929928d200601369de832920060cea14679` (`test(planner): cover missing item toggle`).
+- Both AI commits use the required Misa trailer exactly once.
+
+### Verification
+- Re-read the modified planner service and new regression test from `misa-work`.
+- CI run `35103866808` / #454 for `b355eeb42454c359a6cdcd4b44857349c6bb69de` was cancelled when the test commit superseded it; no failure was inferred from that cancellation.
+- CI run `35103878999` / #456 for `7070f929928d200601369de832920060cea14679` reached terminal SUCCESS. `test`, `web-build`, and `android-build` all completed SUCCESS; the test job passed lint/full tests/type-check, web build succeeded, Android SDK setup/Capacitor sync/Android unit tests+debug APK/artifact upload succeeded.
+
+## Turn 13 — POST-FIX / LAST AUDIT iteration 1
+
+- Re-audited `toggleItem`, adjacent planner CRUD/import normalization, planner tool execution, UI caller behavior, and the new regression test.
+- Confirmed stale/missing item ids now fail closed without state rewrite while valid item ids retain existing behavior.
+- No new proven actionable planner/persistence regression was found.
+- FINAL AUDIT: CLEAN for the planner surfaces audited this turn.
+
+## Turn 13 — CI evidence
+
+- `35103866808` — CANCELLED: superseded by the next planner test commit; not treated as a code failure.
+- `35103878999` — SUCCESS: test, web-build, Android-build all successful.
+
+## Turn 13 — Final State
+
+- Final audit result: CLEAN for proven actionable findings in the planner surfaces audited this turn.
+- No speculative changes made for unproven concurrency/device/deployment concerns.
+- `misa-work` remains the sole hardening branch; PR #34 remains the single open review PR targeting `main`; no merge, auto-merge, rebase, squash, or force-push performed.
+
+## Remaining Risks / Not Verified after Turn 13
+
+- Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
+- `LiveCompanionForegroundService` camera+microphone+mediaPlayback type combinations still require Android-version/permission matrix verification.
+- `ScreenSharePlugin` capture state remains Activity/plugin-process owned rather than FGS-owned; process death/recreation needs device evidence.
+- `android:usesCleartextTraffic=\"true\"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
 - `VITE_DEFAULT_AI_API_KEY` build-time exposure remains UNPROVEN because configured credential scope is not observable through repository access.
 - Repeated `AudioRoute.getAvailableRoutes is not a function` warnings remain UNPROVEN/ENVIRONMENTAL because tests pass through the guarded native/web boundary and native runtime evidence is unavailable.
 - Vite `base: './'` combined with root-absolute service-worker/manifest/notification paths remains UNPROVEN without deployment-topology evidence.
@@ -272,4 +345,4 @@ This file is the persistent handoff for the hourly production-audit loop.
 
 ## Next Turn
 
-Fresh first audit of planner/tasks/habits/exams persistence and concurrency, then continue rotation through Android process-death/FGS/camera/screen-share lifecycle ownership. Continue the same-turn AUDIT -> FIX -> VERIFY -> AUDIT loop for every newly proven actionable finding.
+Fresh first audit of Android process-death/FGS/camera/screen-share lifecycle ownership, then rotate through habits/exams/task persistence and concurrency. Continue the same-turn AUDIT -> FIX -> VERIFY -> AUDIT loop for every newly proven actionable finding.
