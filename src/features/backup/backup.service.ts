@@ -86,18 +86,19 @@ function clampNumber(v: unknown, fallback: number, min: number, max: number): nu
   return typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
 }
 
-function normalizeChatMessage(raw: unknown): ChatMessage | null {
-  if (!isRecord(raw)) return null;
-  if (typeof raw.id !== 'string' || typeof raw.content !== 'string') return null;
-  const role = typeof raw.role === 'string' ? raw.role : '';
-  if (role !== 'user' && role !== 'assistant') return null;
-  const message: ChatMessage = { id: raw.id, role, content: raw.content, createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : new Date(0).toISOString() };
-  if (typeof raw.model === 'string') message.model = raw.model;
-  if (typeof raw.reasoning === 'string') message.reasoning = raw.reasoning;
-  if (typeof raw.tool === 'string') message.tool = raw.tool;
-  if (typeof raw.stopped === 'boolean') message.stopped = raw.stopped;
-  if (Array.isArray(raw.attachments)) message.attachments = raw.attachments as ChatMessage['attachments'];
-  return message;
+function normalizeChatPrefs(raw: unknown): ChatPreferences {
+  const defaults = defaultChatPrefs();
+  if (!isRecord(raw)) return defaults;
+  return {
+    providerId: typeof raw.providerId === 'string' ? raw.providerId : null,
+    model: typeof raw.model === 'string' ? raw.model : null,
+    temperature: clampNumber(raw.temperature, defaults.temperature, 0, 2),
+    maxTokens: Math.floor(clampNumber(raw.maxTokens, defaults.maxTokens, 1, 100_000)),
+    systemPrompt: typeof raw.systemPrompt === 'string' ? raw.systemPrompt : defaults.systemPrompt,
+    userPersona: typeof raw.userPersona === 'string' ? raw.userPersona : defaults.userPersona,
+    includeContext: typeof raw.includeContext === 'boolean' ? raw.includeContext : defaults.includeContext,
+    ...(typeof raw.thinking === 'string' && (THINKING_LEVELS as readonly string[]).includes(raw.thinking) ? { thinking: raw.thinking as ChatPreferences['thinking'] } : {}),
+  };
 }
 
 /** Normalize imported chat sessions and enforce the application's session/message limits. */
@@ -121,6 +122,20 @@ export function normalizeChatSessions(raw: unknown): ChatSession[] {
     });
   }
   return sessions;
+}
+
+function normalizeChatMessage(raw: unknown): ChatMessage | null {
+  if (!isRecord(raw)) return null;
+  if (typeof raw.id !== 'string' || typeof raw.content !== 'string') return null;
+  const role = typeof raw.role === 'string' ? raw.role : '';
+  if (role !== 'user' && role !== 'assistant') return null;
+  const message: ChatMessage = { id: raw.id, role, content: raw.content, createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : new Date(0).toISOString() };
+  if (typeof raw.model === 'string') message.model = raw.model;
+  if (typeof raw.reasoning === 'string') message.reasoning = raw.reasoning;
+  if (typeof raw.tool === 'string') message.tool = raw.tool;
+  if (typeof raw.stopped === 'boolean') message.stopped = raw.stopped;
+  if (Array.isArray(raw.attachments)) message.attachments = raw.attachments as ChatMessage['attachments'];
+  return message;
 }
 
 /** Build a versioned backup envelope for the requested export scope. */
