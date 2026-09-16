@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { validateProactiveDelivery } from '../behavior-validator';
 import { relationshipManager } from '../relationship-state';
+
+beforeEach(() => {
+  relationshipManager.resetForTesting();
+});
 
 describe('validateProactiveDelivery activity timestamp hardening', () => {
   it('fails closed for a negative persisted activity timestamp', () => {
