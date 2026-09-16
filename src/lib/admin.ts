@@ -8,8 +8,9 @@
 //     against the server's real /auth/login — the panel only unlocks if that
 //     account is itself a super admin. Nothing is hardcoded on the client.
 //
-// The unlock flag is stored per-username so switching accounts on the same
-// device cannot inherit another user's panel access.
+// The unlock marker is stored per username + login timestamp so switching or
+// re-authenticating accounts on the same device cannot inherit another session's
+// panel access.
 
 import { loginToServer } from './auth';
 
@@ -23,7 +24,7 @@ export interface AdminVerifyResult {
 /**
  * Whether a logged-in session is a server-side super admin (no dialog needed).
  * NOTE: role alone (e.g. role='admin') is NOT enough — the server only flags
- * is_super_admin for accounts listed in its ADMIN_USERS config.
+ * isSuperAdmin for accounts listed in its ADMIN_USERS config.
  */
 export function canAutoUnlockSession(session: { isSuperAdmin?: boolean; role?: string } | null | undefined): boolean {
   return session?.isSuperAdmin === true;
@@ -49,25 +50,27 @@ export async function verifyAdminLogin(username: string, password: string): Prom
   }
 }
 
-/** Whether the admin panel was unlocked for this user (persisted on-device). */
-export function isAdminUnlocked(username: string | null): boolean {
+/** Whether the admin panel was unlocked for this exact login session. */
+export function isAdminUnlocked(username: string | null, loggedInAt?: string | null): boolean {
+  if (!username || !loggedInAt) return false;
   try {
-    return localStorage.getItem(storageKey(username)) === '1';
+    return localStorage.getItem(storageKey(username, loggedInAt)) === '1';
   } catch {
     return false;
   }
 }
 
-/** Persists/lifts the per-user unlocked flag on-device. */
-export function setAdminUnlocked(username: string | null, unlocked: boolean): void {
+/** Persists/lifts the unlocked flag for this exact login session. */
+export function setAdminUnlocked(username: string | null, loggedInAt: string | null, unlocked: boolean): void {
+  if (!username || !loggedInAt) return;
   try {
-    if (unlocked) localStorage.setItem(storageKey(username), '1');
-    else localStorage.removeItem(storageKey(username));
+    if (unlocked) localStorage.setItem(storageKey(username, loggedInAt), '1');
+    else localStorage.removeItem(storageKey(username, loggedInAt));
   } catch {
     // storage unavailable — session persists until reload
   }
 }
 
-function storageKey(username: string | null): string {
-  return username ? `${ADMIN_STORAGE_KEY}.${username}` : ADMIN_STORAGE_KEY;
+function storageKey(username: string, loggedInAt: string): string {
+  return `${ADMIN_STORAGE_KEY}.${username}.${loggedInAt}`;
 }
