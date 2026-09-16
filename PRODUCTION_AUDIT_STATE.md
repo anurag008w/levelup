@@ -7,29 +7,84 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 13
-- Fix iterations this turn: 2
+- Audit turn: 14
+- Fix iterations this turn: 1
 - Status: CONTINUING
 - Main baseline observed this turn: `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`
-- Turn-13 starting head: `915caaeb4d405b9a14c1b8184493378071cf1ed4`
-- Latest fix commit: `7070f929928d200601369de832920060cea14679`
-- Latest state commit: `fa44223a370830d0b8c5ad6db6bd5d0fc808208a`
+- Turn-14 starting head: `b533e46f797337ef55f0e750f9e5e4266b68bda8`
+- Latest fix commit: `93d24692ff0fe9d6275e81d97deb3c9136e6bec7`
+- Latest state commit: pending (this update)
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
-- Next audit target: Android process-death/FGS/camera/screen-share lifecycle ownership, then planner/tasks/habits/exams persistence/concurrency rotation
+- Next audit target: Android FGS/camera/Live lifecycle ownership and then habits/exams/task persistence/concurrency rotation
 
-## Turn 13 — Final CI closure
+## Turn 14 — First Audit
 
-- State-update push CI `35104481669` / run #457 — terminal SUCCESS.
-- State-update PR CI `35104487577` / run #458 — terminal SUCCESS.
-- Both runs were for state commit `fa44223a370830d0b8c5ad6db6bd5d0fc808208a`; test, web-build, and Android-build completed successfully.
-- Android job completed Java setup, Android SDK setup, dependencies, web build, Capacitor sync, Android unit tests/debug APK, and artifact upload successfully.
+### Scope
+- Read `/PRODUCTION_AUDIT_STATE.md` first, then re-read root `AGENTS.md` and `README.md` before mutation.
+- Verified the repository's current `misa-work` head and the single PR #34 targeting `main`.
+- Rotated into Android process-death/FGS/camera/screen-share lifecycle ownership as directed by the previous handoff.
+- Inspected `LiveCompanionForegroundService`, `LiveCompanionPlugin`, `MainActivity`, `AndroidManifest.xml`, `ScreenShareForegroundService`, `ScreenSharePlugin`, Android build configuration, and CI workflow.
 
-## Turn 13 — Final State
+### Finding
+- P2 — `ScreenSharePlugin.startCapture()` had an async startup race. `isCapturing` was set only after the foreground-service wait and MediaProjection pipeline initialization completed, so two near-simultaneous calls could both pass the initial `isCapturing` check and each create a foreground service wait/pipeline. This could overwrite shared capture resources and leak/tear down the wrong pipeline.
 
-- Final audit result: CLEAN for proven actionable findings in the planner surfaces audited this turn.
-- Planner stale-item toggle contract was hardened and covered by regression testing.
-- No speculative changes made for unproven concurrency/device/deployment concerns.
+### Evidence
+- The method performed an asynchronous `startForegroundService()` followed by polling before setting `isCapturing = true`.
+- No startup-in-progress guard existed before this turn.
+- The plugin owns a single set of `mediaProjection`, `virtualDisplay`, `imageReader`, `captureThread`, and `captureHandler` fields, so overlapping initializations are not independent resources.
+
+### Other audit results
+- Existing MediaProjection ordering was preserved: foreground service activation is awaited before `getMediaProjection()`, and `registerCallback()` remains before `createVirtualDisplay()`.
+- Foreground services remain explicitly declared with their relevant service types and are not exported.
+- Process-death/PiP/native-device behavior remains unverified because no physical Android device/API matrix is available; no speculative lifecycle rewrite was made.
+- No documentation regression was found; useful native lifecycle comments were preserved.
+
+## Turn 14 — Fix iteration 1
+
+### Fix
+- `android/app/src/main/java/com/anurag/levelup/ScreenSharePlugin.java`: added an `AtomicBoolean captureStartInProgress` guard.
+- A second `startCapture()` received while the first asynchronous startup is in progress now fails closed with `Screen capture is already starting` instead of creating a second pipeline.
+- The guard is cleared on foreground-service startup failure, foreground-service timeout, successful initialization, initialization exception, and teardown.
+- Preserved all existing lifecycle/order/rationale comments and added a concise concurrency invariant comment.
+- Fix commit: `93d24692ff0fe9d6275e81d97deb3c9136e6bec7` (`fix(android): serialize screen-share startup`).
+
+## Turn 14 — Local / targeted verification
+
+- Re-read the complete modified `ScreenSharePlugin.java` from the exact fix commit and confirmed the guard covers the asynchronous startup window and cleanup paths.
+- Attempted a fresh shallow clone of `misa-work` for local command verification. The environment could not resolve `github.com` (`Could not resolve host: github.com`), so no local npm/Gradle command was falsely claimed as run or passed.
+- Repository CI was therefore used for executable verification.
+
+## Turn 14 — POST-FIX / LAST AUDIT iteration 1
+
+- Re-audited the complete changed ScreenShare startup path, including duplicate start calls, service-start failure, service activation timeout, successful initialization, exception cleanup, and stop/MediaProjection teardown.
+- Confirmed the single-resource-field design is now protected from overlapping startup calls.
+- Confirmed existing MediaProjection callback ordering and cleanup behavior were not removed or weakened.
+- No new proven actionable bug was found in the changed or immediately adjacent Android lifecycle surfaces.
+- FINAL AUDIT: CLEAN for the proven actionable screen-share startup race audited this turn.
+
+## Turn 14 — CI evidence
+
+- Push CI `35106763432` / run #461 — terminal SUCCESS for `93d24692ff0fe9d6275e81d97deb3c9136e6bec7`. Test, web-build, and Android-build all completed SUCCESS; Android SDK setup, dependency installation, web build, Capacitor sync, Android unit tests/debug APK, and artifact upload completed successfully.
+- PR CI `35106767060` / run #462 — terminal SUCCESS for the same SHA. Test, web-build, and Android-build all completed SUCCESS.
+- Android job reached terminal success after Android unit tests/debug APK and artifact upload.
+
+## Turn 14 — Final State
+
+- Final audit result: CLEAN for proven actionable findings in the Android screen-share startup surface audited this turn.
+- No speculative changes were made for physical-device lifecycle, OEM behavior, or Android API-matrix concerns that remain externally unverified.
 - `misa-work` remains the sole hardening branch; PR #34 remains the single open review PR targeting `main`; no merge, auto-merge, rebase, squash, or force-push performed.
+
+## Remaining Risks / Not Verified after Turn 14
+
+- Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
+- `LiveCompanionForegroundService` camera+microphone+mediaPlayback type combinations still require Android-version/permission matrix verification.
+- `ScreenSharePlugin` process-death/recreation and Activity/plugin-process ownership still require physical-device evidence beyond CI compilation/tests.
+- `ScreenShareForegroundService` uses a four-hour WakeLock timeout; long-running-session behavior beyond that boundary remains not device-verified.
+- `android:usesCleartextTraffic=\"true\"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
+- `VITE_DEFAULT_AI_API_KEY` build-time exposure remains UNPROVEN because configured credential scope is not observable through repository access.
+- Repeated `AudioRoute.getAvailableRoutes is not a function` warnings remain UNPROVEN/ENVIRONMENTAL because tests pass through the guarded native/web boundary and native runtime evidence is unavailable.
+- Vite `base: './'` combined with root-absolute service-worker/manifest/notification paths remains UNPROVEN without deployment-topology evidence.
+- Android physical/API-matrix verification remains unavailable even though CI Android build/static checks are green.
 
 ## Historical Audit/Fix Record
 
@@ -278,17 +333,6 @@ The complete historical record below is preserved unchanged from the prior persi
 - No speculative changes made for unproven secret-scope, deployment-topology, native-runtime, or physical-device concerns.
 - `misa-work` remains the sole hardening branch; PR #34 remains the single open review PR targeting `main`; no merge, auto-merge, rebase, squash, or force-push performed.
 
-## Remaining Risks / Not Verified after Turn 12
-
-- Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
-- `LiveCompanionForegroundService` camera+microphone+mediaPlayback type combinations still require Android-version/permission matrix verification.
-- `ScreenSharePlugin` capture state remains Activity/plugin-process owned rather than FGS-owned; process death/recreation needs device evidence.
-- `android:usesCleartextTraffic=\"true\"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
-- `VITE_DEFAULT_AI_API_KEY` build-time exposure remains UNPROVEN because configured credential scope is not observable through repository access.
-- Repeated `AudioRoute.getAvailableRoutes is not a function` warnings remain UNPROVEN/ENVIRONMENTAL because tests pass through the guarded native/web boundary and native runtime evidence is unavailable.
-- Vite `base: './'` combined with root-absolute service-worker/manifest/notification paths remains UNPROVEN without deployment-topology evidence.
-- Android physical/API-matrix verification remains unavailable even though CI Android build/static checks are green.
-
 ## Turn 13 — First Audit
 
 ### Scope
@@ -341,17 +385,8 @@ The complete historical record below is preserved unchanged from the prior persi
 - `35104487577` / run #458 — SUCCESS: PR-triggered CI for `fa44223a370830d0b8c5ad6db6bd5d0fc808208a`.
 - Both terminal-success runs validated test, web-build, and Android-build.
 
-## Remaining Risks / Not Verified after Turn 13
+## Turn 13 — Final State
 
-- Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
-- `LiveCompanionForegroundService` camera+microphone+mediaPlayback type combinations still require Android-version/permission matrix verification.
-- `ScreenSharePlugin` capture state remains Activity/plugin-process owned rather than FGS-owned; process death/recreation needs device evidence.
-- `android:usesCleartextTraffic=\"true\"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
-- `VITE_DEFAULT_AI_API_KEY` build-time exposure remains UNPROVEN because configured credential scope is not observable through repository access.
-- Repeated `AudioRoute.getAvailableRoutes is not a function` warnings remain UNPROVEN/ENVIRONMENTAL because tests pass through the guarded native/web boundary and native runtime evidence is unavailable.
-- Vite `base: './'` combined with root-absolute service-worker/manifest/notification paths remains UNPROVEN without deployment-topology evidence.
-- Android physical/API-matrix verification remains unavailable even though CI Android build/static checks are green.
-
-## Next Turn
-
-Fresh first audit of Android process-death/FGS/camera/screen-share lifecycle ownership, then rotate through habits/exams/task persistence and concurrency. Continue the same-turn AUDIT -> FIX -> VERIFY -> AUDIT loop for every newly proven actionable finding.
+- Final audit result: CLEAN for proven actionable findings in the planner surfaces audited this turn.
+- No speculative changes made for unproven concurrency/device/deployment concerns.
+- `misa-work` remains the sole hardening branch; PR #34 remains the single open review PR targeting `main`; no merge, auto-merge, rebase, squash, or force-push performed.
