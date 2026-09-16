@@ -33,6 +33,16 @@ import { REPLY_GRACE_MS, setupNotificationActions } from '../notification-action
 
 type ActionHandler = (action: { actionId: string; inputValue?: string; sessionId?: string }) => void;
 
+const AUTH_SESSION = JSON.stringify({
+  serverUrl: 'https://example.test',
+  username: 'user_1',
+  role: 'user',
+  isSuperAdmin: false,
+  apiKey: 'sk-test',
+  token: 'token',
+  loggedInAt: '2026-09-16T10:00:00.000Z',
+});
+
 describe('notification-actions', () => {
   let handler: ActionHandler | null = null;
 
@@ -41,6 +51,8 @@ describe('notification-actions', () => {
     sendMock.mockReset();
     notifyAiReplyMock.mockReset();
     minimizeAppMock.mockReset();
+    localStorage.clear();
+    localStorage.setItem('levelup.auth.session', AUTH_SESSION);
     onActionHandlerMock.mockImplementation((h: ActionHandler) => {
       handler = h;
     });
@@ -49,6 +61,7 @@ describe('notification-actions', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    localStorage.clear();
   });
 
   it('sends an inline reply without opening the chat, minimizes ~1s, then reveals the bubble like chat', async () => {
@@ -79,6 +92,18 @@ describe('notification-actions', () => {
     expect(openChat).not.toHaveBeenCalled();
     expect(chatUpdated).toHaveBeenCalled();
     expect(sendMock).toHaveBeenCalledBefore(minimizeAppMock);
+  });
+
+  it('rejects inline replies after logout so an old notification cannot mutate the previous session', async () => {
+    localStorage.removeItem('levelup.auth.session');
+    localStorage.removeItem('levelup:guest');
+
+    handler!({ actionId: 'reply', inputValue: 'stale account reply', sessionId: 'old-session' });
+    await vi.advanceTimersByTimeAsync(REPLY_GRACE_MS + 3000);
+
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(minimizeAppMock).not.toHaveBeenCalled();
+    expect(notifyAiReplyMock).not.toHaveBeenCalled();
   });
 
   it('reveals multi-bubble replies bubble-by-bubble exactly like chat (fire-time merge, not OS pre-schedule)', async () => {
