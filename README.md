@@ -59,7 +59,7 @@
 - **Native Runtime**: Capacitor 8 (Filesystem, Local Notifications, Intent Launcher, Share, App, Device).
 - **Math & Markdown**: KaTeX (inline & display LaTeX math), Rehype/Remark GFM, Highlight.js.
 - **State & Storage**: Offline-first LocalStorage & IndexedDB with optimistic UI updates aur reactive listeners.
-- **Testing & Quality**: Vitest, React Testing Library, Oxlint (94 test suites / 1,100+ tests). Live audio, silence-proactive, aur jitter-buffer streaming pipelines dedicated suites se covered hain.
+- **Testing & Quality**: Vitest, React Testing Library, Oxlint. Live audio, silence-proactive, aur jitter-buffer streaming pipelines dedicated suites se covered hain.
 
 ---
 
@@ -87,7 +87,7 @@ npm run dev
 # Ultra-fast oxlint chalao
 npm run lint
 
-# Saare 94 test suites chalao (1,100+ tests)
+# Saare automated tests
 npm test
 ```
 
@@ -108,6 +108,16 @@ cd android
 ```
 Output APK yahan milega:
 `android/app/build/outputs/apk/debug/app-debug.apk`
+
+---
+
+## 🧭 Production Hardening Direction
+
+LevelUp ka long-term engineering target **production-grade reliability across the full feature surface** hai. Autonomous audit runs ko sirf review ya report generate karke rukna nahi chahiye: proven actionable bugs aur reliability gaps ko code/tests/configuration me actually fix kiya jana chahiye, phir verification aur re-audit repeat hona chahiye.
+
+Production hardening me happy-path ke saath error handling, cancellation/cleanup, retries/timeouts, persistence aur data-integrity, concurrency/race conditions, security/privacy, offline/degraded operation, Android/native lifecycle, performance, regression coverage, CI/CD aur release reliability ko bhi cover karna hai.
+
+**Important:** “production hardening target” ka matlab ye nahi hai ki Misa Live / Memory / Proactive features ko prematurely stable declare kiya gaya hai. Neeche wala development-status section authoritative hai jab tak required engineering aur verification evidence complete na ho.
 
 ---
 
