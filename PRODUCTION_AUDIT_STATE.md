@@ -7,74 +7,83 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 14
-- Fix iterations this turn: 1
-- Status: CONTINUING
+- Audit turn: 15
+- Fix iterations this turn: 2
+- Status: COMPLETE
 - Main baseline observed this turn: `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`
-- Turn-14 starting head: `b533e46f797337ef55f0e750f9e5e4266b68bda8`
-- Latest fix commit: `93d24692ff0fe9d6275e81d97deb3c9136e6bec7`
+- Turn-15 starting head: `da136966dbae945a9dfa643931ff2ab4d5ae83fb`
+- Latest fix commits: `fa7de1e30cbb0fd1d637b1c92662b8310a774ad5`, `7a5fe2eab9846cfa40cd5409a66c95c3245a9e06`
 - Latest state commit: pending (this update)
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
-- Next audit target: Android FGS/camera/Live lifecycle ownership and then habits/exams/task persistence/concurrency rotation
+- Next audit target: habits/exams/task persistence/concurrency, then AI/chat action state integrity rotation
 
-## Turn 14 — First Audit
+## Turn 15 — First Audit
 
 ### Scope
 - Read `/PRODUCTION_AUDIT_STATE.md` first, then re-read root `AGENTS.md` and `README.md` before mutation.
-- Verified the repository's current `misa-work` head and the single PR #34 targeting `main`.
-- Rotated into Android process-death/FGS/camera/screen-share lifecycle ownership as directed by the previous handoff.
-- Inspected `LiveCompanionForegroundService`, `LiveCompanionPlugin`, `MainActivity`, `AndroidManifest.xml`, `ScreenShareForegroundService`, `ScreenSharePlugin`, Android build configuration, and CI workflow.
+- Confirmed PR #34 remains the single open `misa-work -> main` PR, unmerged and without auto-merge.
+- Confirmed the previous Turn-14 state-update CI `35107386418` / run #463 is terminal SUCCESS for `da136966dbae945a9dfa643931ff2ab4d5ae83fb`.
+- Rotated into habit-engine date/rest-day mapping and adjacent chat-driven day-mode persistence.
+- Inspected `src/features/habit-engine/dates.ts`, its regression suite, habit-engine context/planner consumers, task-bank unlock behavior, and the previously recorded deep-scan evidence for `setDayMode` duplicate rest-day writes.
 
 ### Finding
-- P2 — `ScreenSharePlugin.startCapture()` had an async startup race. `isCapturing` was set only after the foreground-service wait and MediaProjection pipeline initialization completed, so two near-simultaneous calls could both pass the initial `isCapturing` check and each create a foreground service wait/pipeline. This could overwrite shared capture resources and leak/tear down the wrong pipeline.
+- P2 — persisted `restDays` could contain duplicate content-day numbers through the chat `setDayMode` write path. The documented deep scan showed `setDayMode` appending a day without membership deduplication; switching between rest/test modes could also leave stale mode membership in the opposite list. Duplicate rest-day values are semantically a set, but the date mapping previously counted every duplicate, so one duplicated rest day could consume an extra calendar slot and shift the rest of the 90-day journey.
 
 ### Evidence
-- The method performed an asynchronous `startForegroundService()` followed by polling before setting `isCapturing = true`.
-- No startup-in-progress guard existed before this turn.
-- The plugin owns a single set of `mediaProjection`, `virtualDisplay`, `imageReader`, `captureThread`, and `captureHandler` fields, so overlapping initializations are not independent resources.
+- `src/features/chat/chat-tools.service.ts` builds `nextRest` with `[...]` append when marking rest.
+- `src/features/habit-engine/dates.ts` previously used raw `restDays.filter(...)` counts in `rawForContentDay` and `dateForRestDay`, so duplicate values affected calendar arithmetic.
+- `docs/DEEP_SCAN_2026-09-12.md` independently documented the duplicate-rest-day regression and its `setDayMode` source.
+- Sync already unions rest days with a `Set`, so the same state can arrive from multiple persistence paths; the date layer must remain safe when handed malformed/duplicated persisted data.
 
-### Other audit results
-- Existing MediaProjection ordering was preserved: foreground service activation is awaited before `getMediaProjection()`, and `registerCallback()` remains before `createVirtualDisplay()`.
-- Foreground services remain explicitly declared with their relevant service types and are not exported.
-- Process-death/PiP/native-device behavior remains unverified because no physical Android device/API matrix is available; no speculative lifecycle rewrite was made.
-- No documentation regression was found; useful native lifecycle comments were preserved.
-
-## Turn 14 — Fix iteration 1
+## Turn 15 — Fix iteration 1
 
 ### Fix
-- `android/app/src/main/java/com/anurag/levelup/ScreenSharePlugin.java`: added an `AtomicBoolean captureStartInProgress` guard.
-- A second `startCapture()` received while the first asynchronous startup is in progress now fails closed with `Screen capture is already starting` instead of creating a second pipeline.
-- The guard is cleared on foreground-service startup failure, foreground-service timeout, successful initialization, initialization exception, and teardown.
-- Preserved all existing lifecycle/order/rationale comments and added a concise concurrency invariant comment.
-- Fix commit: `93d24692ff0fe9d6275e81d97deb3c9136e6bec7` (`fix(android): serialize screen-share startup`).
+- `src/features/habit-engine/dates.ts`: introduced a single `uniqueRestDays()` normalization helper and routed all rest-day calendar calculations through the normalized sorted set.
+- `restRawPositions`, `rawForContentDay`, `dateForRestDay`, and `dateForDayNumber` now all ignore duplicate persisted rest-day entries, preventing duplicate values from shifting the calendar or changing day navigation.
+- Preserved all existing rest-day mapping comments and added a concise persistence/integrity rationale explaining why duplicate entries must not consume extra calendar slots.
+- Fix commits: `648773a28b237b3e32ca4a72d54dcf0e26fe3e6a` (`fix(planner): dedupe persisted rest-day positions`) and `fa7de1e30cbb0fd1d637b1c92662b8310a774ad5` (`fix(planner): normalize duplicate rest-day mappings`). The second commit completed the normalization across every inverse mapping helper after re-auditing the first implementation.
 
-## Turn 14 — Local / targeted verification
+## Turn 15 — Fix iteration 2
 
-- Re-read the complete modified `ScreenSharePlugin.java` from the exact fix commit and confirmed the guard covers the asynchronous startup window and cleanup paths.
-- Attempted a fresh shallow clone of `misa-work` for local command verification. The environment could not resolve `github.com` (`Could not resolve host: github.com`), so no local npm/Gradle command was falsely claimed as run or passed.
-- Repository CI was therefore used for executable verification.
+### Regression coverage
+- Added `src/features/habit-engine/__tests__/dates.duplicates.test.ts`.
+- Tests prove duplicate `[5, 5]` behaves identically to canonical `[5]` across raw positions, content-day mapping, content dates, rest dates, and day-number navigation.
+- Added coverage proving repeated values do not disturb ordering of distinct rest days.
+- Test commit: `7a5fe2eab9846cfa40cd5409a66c95c3245a9e06` (`test(planner): cover duplicate rest-day normalization`).
+- All AI-created commits in this turn contain the required Misa trailer exactly once.
 
-## Turn 14 — POST-FIX / LAST AUDIT iteration 1
+## Turn 15 — Local / targeted verification
 
-- Re-audited the complete changed ScreenShare startup path, including duplicate start calls, service-start failure, service activation timeout, successful initialization, exception cleanup, and stop/MediaProjection teardown.
-- Confirmed the single-resource-field design is now protected from overlapping startup calls.
-- Confirmed existing MediaProjection callback ordering and cleanup behavior were not removed or weakened.
-- No new proven actionable bug was found in the changed or immediately adjacent Android lifecycle surfaces.
-- FINAL AUDIT: CLEAN for the proven actionable screen-share startup race audited this turn.
+- Ran a deterministic Node.js smoke test of the exact rest-day normalization and inverse mapping logic; terminal result: `REST-DAY SMOKE: PASS`.
+- Attempted repository-local clone/build verification was not possible because the environment cannot resolve `github.com`; therefore no local npm/Vitest/Gradle pass is claimed.
+- Remote CI was used for repository-integrated executable verification.
 
-## Turn 14 — CI evidence
+## Turn 15 — POST-FIX / LAST AUDIT iteration 1
 
-- Push CI `35106763432` / run #461 — terminal SUCCESS for `93d24692ff0fe9d6275e81d97deb3c9136e6bec7`. Test, web-build, and Android-build all completed SUCCESS; Android SDK setup, dependency installation, web build, Capacitor sync, Android unit tests/debug APK, and artifact upload completed successfully.
-- PR CI `35106767060` / run #462 — terminal SUCCESS for the same SHA. Test, web-build, and Android-build all completed SUCCESS.
-- Android job reached terminal success after Android unit tests/debug APK and artifact upload.
+- Re-read the final `dates.ts` implementation and both fix diffs.
+- Found and corrected the first implementation's remaining inconsistency: `rawForContentDay` and `dateForRestDay` still counted duplicate entries even after `restRawPositions` was normalized. The follow-up fix routed every inverse mapping through the same normalized set.
+- Confirmed existing rest-day mapping semantics for unsorted distinct values remain unchanged.
 
-## Turn 14 — Final State
+## Turn 15 — POST-FIX / LAST AUDIT iteration 2
 
-- Final audit result: CLEAN for proven actionable findings in the Android screen-share startup surface audited this turn.
-- No speculative changes were made for physical-device lifecycle, OEM behavior, or Android API-matrix concerns that remain externally unverified.
+- Re-audited duplicate rest-day handling across forward mapping, inverse mapping, date navigation, and the new regression tests.
+- Confirmed duplicate persisted values can no longer shift the journey calendar through the date-helper layer.
+- No documentation/JSDoc/rationale was removed.
+- The original `setDayMode` source path still stores the array as provided; this is now harmless to calendar semantics because all date mapping is normalized at the consumption boundary. Direct state canonicalization remains a data-hygiene follow-up if the source write path is revisited.
+- FINAL AUDIT: CLEAN for the proven calendar-shift defect caused by duplicate persisted rest-day values.
+
+## Turn 15 — CI evidence
+
+- PR CI `35108462249` / run #470 — terminal SUCCESS for exact head `7a5fe2eab9846cfa40cd5409a66c95c3245a9e06`. `test`, `web-build`, and `android-build` all reached terminal SUCCESS. Test passed lint/full tests/type-check; web build succeeded; Android SDK setup, dependency installation, web build, Capacitor sync, Android unit tests/debug APK, and artifact upload all succeeded.
+- No CI failure required a correction after the final batch.
+
+## Turn 15 — Final State
+
+- Final audit result: CLEAN for the proven duplicate-rest-day calendar-shift defect audited this turn.
+- No speculative device/deployment changes were made.
 - `misa-work` remains the sole hardening branch; PR #34 remains the single open review PR targeting `main`; no merge, auto-merge, rebase, squash, or force-push performed.
 
-## Remaining Risks / Not Verified after Turn 14
+## Remaining Risks / Not Verified after Turn 15
 
 - Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
 - `LiveCompanionForegroundService` camera+microphone+mediaPlayback type combinations still require Android-version/permission matrix verification.
@@ -85,6 +94,7 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repeated `AudioRoute.getAvailableRoutes is not a function` warnings remain UNPROVEN/ENVIRONMENTAL because tests pass through the guarded native/web boundary and native runtime evidence is unavailable.
 - Vite `base: './'` combined with root-absolute service-worker/manifest/notification paths remains UNPROVEN without deployment-topology evidence.
 - Android physical/API-matrix verification remains unavailable even though CI Android build/static checks are green.
+- Direct `setDayMode` array canonicalization remains a lower-priority data-hygiene improvement; calendar consumers now normalize duplicate rest-day entries defensively.
 
 ## Historical Audit/Fix Record
 
@@ -389,4 +399,61 @@ The complete historical record below is preserved unchanged from the prior persi
 
 - Final audit result: CLEAN for proven actionable findings in the planner surfaces audited this turn.
 - No speculative changes made for unproven concurrency/device/deployment concerns.
+- `misa-work` remains the sole hardening branch; PR #34 remains the single open review PR targeting `main`; no merge, auto-merge, rebase, squash, or force-push performed.
+
+## Turn 14 — First Audit
+
+### Scope
+- Read `/PRODUCTION_AUDIT_STATE.md` first, then re-read root `AGENTS.md` and `README.md` before mutation.
+- Verified the repository's current `misa-work` head and the single PR #34 targeting `main`.
+- Rotated into Android process-death/FGS/camera/screen-share lifecycle ownership as directed by the previous handoff.
+- Inspected `LiveCompanionForegroundService`, `LiveCompanionPlugin`, `MainActivity`, `AndroidManifest.xml`, `ScreenShareForegroundService`, `ScreenSharePlugin`, Android build configuration, and CI workflow.
+
+### Finding
+- P2 — `ScreenSharePlugin.startCapture()` had an async startup race. `isCapturing` was set only after the foreground-service wait and MediaProjection pipeline initialization completed, so two near-simultaneous calls could both pass the initial `isCapturing` check and each create a foreground service wait/pipeline. This could overwrite shared capture resources and leak/tear down the wrong pipeline.
+
+### Evidence
+- The method performed an asynchronous `startForegroundService()` followed by polling before setting `isCapturing = true`.
+- No startup-in-progress guard existed before this turn.
+- The plugin owns a single set of `mediaProjection`, `virtualDisplay`, `imageReader`, `captureThread`, and `captureHandler` fields, so overlapping initializations are not independent resources.
+
+### Other audit results
+- Existing MediaProjection ordering was preserved: foreground service activation is awaited before `getMediaProjection()`, and `registerCallback()` remains before `createVirtualDisplay()`.
+- Foreground services remain explicitly declared with their relevant service types and are not exported.
+- Process-death/PiP/native-device behavior remains unverified because no physical Android device/API matrix is available; no speculative lifecycle rewrite was made.
+- No documentation regression was found; useful native lifecycle comments were preserved.
+
+## Turn 14 — Fix iteration 1
+
+### Fix
+- `android/app/src/main/java/com/anurag/levelup/ScreenSharePlugin.java`: added an `AtomicBoolean captureStartInProgress` guard.
+- A second `startCapture()` received while the first asynchronous startup is in progress now fails closed with `Screen capture is already starting` instead of creating a second pipeline.
+- The guard is cleared on foreground-service startup failure, foreground-service timeout, successful initialization, initialization exception, and teardown.
+- Preserved all existing lifecycle/order/rationale comments and added a concise concurrency invariant comment.
+- Fix commit: `93d24692ff0fe9d6275e81d97deb3c9136e6bec7` (`fix(android): serialize screen-share startup`).
+
+## Turn 14 — Local / targeted verification
+
+- Re-read the complete modified `ScreenSharePlugin.java` from the exact fix commit and confirmed the guard covers the asynchronous startup window and cleanup paths.
+- Attempted a fresh shallow clone of `misa-work` for local command verification. The environment could not resolve `github.com` (`Could not resolve host: github.com`), so no local npm/Gradle command was falsely claimed as run or passed.
+- Repository CI was therefore used for executable verification.
+
+## Turn 14 — POST-FIX / LAST AUDIT iteration 1
+
+- Re-audited the complete changed ScreenShare startup path, including duplicate start calls, service-start failure, service activation timeout, successful initialization, exception cleanup, and stop/MediaProjection teardown.
+- Confirmed the single-resource-field design is now protected from overlapping startup calls.
+- Confirmed existing MediaProjection callback ordering and cleanup behavior were not removed or weakened.
+- No new proven actionable bug was found in the changed or immediately adjacent Android lifecycle surfaces.
+- FINAL AUDIT: CLEAN for the proven actionable screen-share startup race audited this turn.
+
+## Turn 14 — CI evidence
+
+- Push CI `35106763432` / run #461 — terminal SUCCESS for `93d24692ff0fe9d6275e81d97deb3c9136e6bec7`. Test, web-build, and Android-build all completed SUCCESS; Android SDK setup, dependency installation, web build, Capacitor sync, Android unit tests/debug APK, and artifact upload completed successfully.
+- PR CI `35106767060` / run #462 — terminal SUCCESS for the same SHA. Test, web-build, and Android-build all completed SUCCESS.
+- Android job reached terminal success after Android unit tests/debug APK and artifact upload.
+
+## Turn 14 — Final State
+
+- Final audit result: CLEAN for proven actionable findings in the Android screen-share startup surface audited this turn.
+- No speculative changes were made for physical-device lifecycle, OEM behavior, or Android API-matrix concerns that remain externally unverified.
 - `misa-work` remains the sole hardening branch; PR #34 remains the single open review PR targeting `main`; no merge, auto-merge, rebase, squash, or force-push performed.
