@@ -315,4 +315,15 @@ describe('delete all data — transactional rollback (N3)', () => {
     expect(reloaded.memory.entries).toHaveLength(0);
     expect(reloaded.studyTimeMinutes).toBe(360);
   });
+
+  it('removes the owner marker when rollback starts from an unowned guest state', async () => {
+    localStorage.removeItem('levelup.data-owner');
+    const spy = vi.spyOn(app.chat, 'replaceStore').mockImplementationOnce(() => {
+      throw new Error('storage write failed');
+    });
+
+    await expect(deleteAllData(app, SESSION)).rejects.toThrow('storage write failed');
+    expect(spy).toHaveBeenCalled();
+    expect(localStorage.getItem('levelup.data-owner')).toBeNull();
+  });
 });

@@ -108,7 +108,16 @@ function rollbackDelete(container: AppContainer, snapshot: DeleteAllSnapshot): v
     container.chat.replaceStore(snapshot.chatSessions);
     container.store.save(snapshot.state);
     container.store.flush();
-    if (snapshot.owner !== null) localStorage.setItem('levelup.data-owner', snapshot.owner);
+
+    // Restore the owner exactly, including the intentionally-unowned state.
+    // Leaving a newly-created owner marker behind would violate account/guest
+    // isolation after a failed delete-all transaction.
+    if (snapshot.owner === null) {
+      localStorage.removeItem('levelup.data-owner');
+    } else {
+      localStorage.setItem('levelup.data-owner', snapshot.owner);
+    }
+
     if (snapshot.relationshipStateRaw === null) {
       localStorage.removeItem(RELATIONSHIP_STORAGE_KEY);
     } else {
