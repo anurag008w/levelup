@@ -6,7 +6,6 @@ import App from './App.tsx'
 import RootErrorBoundary from './components/RootErrorBoundary.tsx'
 import ScreenSkeleton from './components/ScreenSkeleton.tsx'
 import { persistentStoreReady } from './infra/storage/local-storage'
-import { container } from './di/container'
 
 // Web notifications ka real flow: service worker showNotification use karta hai
 // (tab band hone pe bhi kaam karta hai). Native app (Capacitor webview) me SW
