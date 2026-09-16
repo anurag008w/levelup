@@ -7,11 +7,11 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 8
-- Fix iterations this turn: 2
+- Audit turn: 9
+- Fix iterations this turn: 1
 - Status: CONTINUING
 - Main baseline observed this turn: `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`
-- Latest fix commit: `ec5d17b1749c7ff7f7c44a78885e8a14a157c912`
+- Latest fix commit: `888897927bf8f28ae303bbf5d1eb9c35d0ed5789`
 - Open PR: #34 (`misa-work` -> `main`), not merged, no auto-merge
 - Next audit target: notification/session/auth boundaries, then Android process-death/FGS/camera/screen-share
 
@@ -75,3 +75,46 @@ Fresh first audit of notification/session/auth boundaries, then startup/process-
 
 - Final audit result at state-recording time: CLEAN for proven actionable findings in the audited areas.
 - No speculative changes made for unproven deployment/security/device concerns.
+
+## Turn 9 — First Audit
+
+### Scope
+- Read this persistent state first, then re-read root `AGENTS.md` and `README.md` before mutation.
+- Confirmed `main` remains at `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`; `misa-work` began this turn at `4e5e99668c73d26124664d557ba79af0ae4b10c6`, with no behind divergence requiring synchronization.
+- Reviewed latest CI history, notification/session/auth boundaries, admin gate, startup lifecycle, and adjacent Android/Live surfaces.
+- Latest completed CI run `35048749869` for the starting `misa-work` state was successful. The repository's 110 test files / 1376 tests passed in that run; lint/typecheck also completed successfully. CI still emitted guarded native-audio warnings and lint warnings, but no failing check.
+
+### Finding
+- P1 — Session-boundary privilege regression in the admin panel: `isAdminUnlocked(username)` persisted an unlock flag only by username, while logout cleared the auth session but did not clear the admin marker. A subsequent login by the same username could therefore inherit the previous session's unlocked admin-panel state without a fresh server verification. The admin gate uses the persisted flag during `useAppState` initialization, so this was a concrete cross-session authorization-state bug, not a speculative client-tampering concern.
+
+### Evidence
+- `src/lib/admin.ts` keyed the persisted marker as `levelup.admin.unlocked.<username>` and `src/lib/useAppState.ts` initialized `adminUnlocked` directly from that marker.
+- `src/App.tsx` logout clears the auth session but does not clear the admin marker; therefore the old username-only marker survived logout.
+- `canAutoUnlockSession` itself remains server-backed and only accepts `isSuperAdmin === true`; the defect was the separate persisted unlock path.
+
+## Turn 9 — Fix iteration 1
+
+### Fixes
+- Changed `src/lib/admin.ts` so persisted admin unlocks are keyed by username + exact `loggedInAt` session marker and require both values to read/write.
+- Changed `src/lib/useAppState.ts` to initialize, auto-unlock, unlock, and lock admin state using the active session's username + `loggedInAt`.
+- Added regression coverage in `src/lib/__tests__/misc.test.ts` proving a marker from one login timestamp is not accepted for another and that no marker is persisted without a session marker.
+- Commits: `000cb57a34721b6ad905768f096eaf850a6f02f9`, `b0d714f026ffe55608ee05a0b133513e58d9a363`, `888897927bf8f28ae303bbf5d1eb9c35d0ed5789`.
+
+### Verification
+- Re-read all three changed files after mutation.
+- Compared the full Turn-9 code delta from `4e5e99668c73d26124664d557ba79af0ae4b10c6` to `888897927bf8f28ae303bbf5d1eb9c35d0ed5789`; only `src/lib/admin.ts`, `src/lib/useAppState.ts`, and its admin tests changed.
+- GitHub Actions run `35052442103` was pending at state-recording time and targets the final PR head `888897927bf8f28ae303bbf5d1eb9c35d0ed5789`; no green CI claim is made for the final fix.
+
+## Turn 9 — POST-FIX / LAST AUDIT iteration 1
+
+- Re-audited the session-bound admin key, all admin-state call sites, logout behavior, and the admin regression tests.
+- Confirmed a new login timestamp cannot reuse the prior session's persisted marker; missing username/session timestamp is rejected.
+- Rechecked adjacent notification/auth/startup surfaces and found no new proven actionable regression.
+- FINAL AUDIT: CLEAN by static/code evidence; CI verification pending.
+
+## Turn 9 — Final State
+
+- Final audit result: CLEAN for proven actionable findings in the audited areas.
+- No speculative changes made for native-device, deployment-topology, or build-secret-scope concerns.
+- Unresolved risks remain the device/API-matrix items and other UNPROVEN/ENVIRONMENTAL items listed above.
+- Next target remains notification/session/auth boundaries followed by Android process-death, FGS, camera, and screen-share lifecycle ownership.
