@@ -31,6 +31,34 @@ describe('sync-merge — multi-device smart merge', () => {
     expect(merged.taskLogs['2026-01-03']).toEqual({ 'task-4': true });
   });
 
+  it('never lets a stale false erase a completed task from another device', () => {
+    const local: AppState = {
+      ...emptyAppState(),
+      taskLogs: { '2026-01-01': { 'task-1': false, 'task-2': true } },
+    };
+    const remote: AppState = {
+      ...emptyAppState(),
+      taskLogs: { '2026-01-01': { 'task-1': true, 'task-3': false } },
+    };
+
+    const merged = mergeAppState(local, remote);
+    expect(merged.taskLogs['2026-01-01']).toEqual({ 'task-1': true, 'task-2': true, 'task-3': false });
+  });
+
+  it('keeps the merge monotonic regardless of device argument order', () => {
+    const local: AppState = {
+      ...emptyAppState(),
+      taskLogs: { '2026-01-01': { 'task-1': true } },
+    };
+    const remote: AppState = {
+      ...emptyAppState(),
+      taskLogs: { '2026-01-01': { 'task-1': false } },
+    };
+
+    expect(mergeAppState(local, remote).taskLogs['2026-01-01']['task-1']).toBe(true);
+    expect(mergeAppState(remote, local).taskLogs['2026-01-01']['task-1']).toBe(true);
+  });
+
   it('merges custom todos preserving completed status and new tasks', () => {
     const local: AppState = {
       ...emptyAppState(),
