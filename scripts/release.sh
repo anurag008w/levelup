@@ -40,8 +40,9 @@ if [[ "$BRANCH" != "main" ]]; then
 fi
 echo "✅ On main branch"
 
-# Check for uncommitted changes
-if ! git diff-index --quiet HEAD --; then
+# Check for uncommitted changes only for a real release. Dry-run must remain
+# non-interactive and observational, so it must never block on a dirty checkout.
+if [[ "$DRY_RUN" != "1" ]] && ! git diff-index --quiet HEAD --; then
     echo "⚠️  You have uncommitted changes!"
     git status --short
     echo ""
