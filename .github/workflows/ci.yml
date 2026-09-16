@@ -13,6 +13,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Restrict the workflow token to repository contents reads. CI does not need
+# write access to issues, pull requests, deployments, or repository settings.
+permissions:
+  contents: read
+
 # Cancel in-progress runs on same branch
 concurrency:
   group: ci-${{ github.ref }}
@@ -25,6 +30,9 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v7
+        with:
+          # CI only reads the checkout; do not leave the workflow token in git config.
+          persist-credentials: false
 
       - name: Configure git
         run: |
@@ -56,6 +64,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -80,6 +90,8 @@ jobs:
     needs: web-build
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 24
