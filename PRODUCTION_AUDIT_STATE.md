@@ -7,11 +7,11 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 9
-- Fix iterations this turn: 1
+- Audit turn: 11
+- Fix iterations this turn: 2
 - Status: CONTINUING
 - Main baseline observed this turn: `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`
-- Latest fix commit: `888897927bf8f28ae303bbf5d1eb9c35d0ed5789`
+- Latest fix commit: `e0de56eca63b0c83dbe25419cf76b3263a49f6b3`
 - Open PR: #34 (`misa-work` -> `main`), not merged, no auto-merge
 - Next audit target: notification/session/auth boundaries, then Android process-death/FGS/camera/screen-share
 
@@ -118,3 +118,107 @@ Fresh first audit of notification/session/auth boundaries, then startup/process-
 - No speculative changes made for native-device, deployment-topology, or build-secret-scope concerns.
 - Unresolved risks remain the device/API-matrix items and other UNPROVEN/ENVIRONMENTAL items listed above.
 - Next target remains notification/session/auth boundaries followed by Android process-death, FGS, camera, and screen-share lifecycle ownership.
+
+## Turn 10 — First Audit
+
+### Scope
+- Read the persistent state first, re-read applicable repository instructions, and inspected the current `misa-work`/PR/CI state.
+- Rotated through sync/proactive state, backup compatibility, startup/lifecycle, and adjacent CI surfaces.
+- GitHub Actions run `35055883408` conclusively failed the web type-check with seven concrete failures in `mergeProactiveBlob`: four required `MisaProactiveBlob` fields were missing, plus the resulting test/type failures.
+
+### Finding
+- P1 — `mergeProactiveBlob` constructed an incomplete `MisaProactiveBlob`, omitting `lastCallDeclinedTimestamp`, `consecutiveCallDeclines`, `dndUntilTimestamp`, and `coldStartDone`. This was proven by the CI compiler/test failure, not inferred from style.
+
+## Turn 10 — Fix iteration 1
+
+### Fix
+- Restored all four required proactive-state fields in `src/features/sync/sync-merge.ts`, preserving the service's existing monotonic/max semantics and boolean completion semantics.
+- Fix commit: `94d518ee879685ab7d69cb87d438db3a6942e67d`.
+
+### Verification
+- Re-read the changed merge function and adjacent `MisaProactiveBlob` contract.
+- CI run `35060060989` completed successfully for the fix: test, web-build, and Android-build all passed; Android SDK setup, Capacitor sync, Android unit tests/debug APK, and artifact upload all completed successfully.
+
+## Turn 10 — POST-FIX / LAST AUDIT iteration 1
+
+- Re-audited the proactive merge contract and adjacent sync surfaces after the successful CI run.
+- No new proven actionable bug found.
+- Final audit: CLEAN.
+
+## Turn 11 — First Audit
+
+### Scope
+- Read this persistent state first, re-read root `AGENTS.md`, and verified PR #34 remains the single open `misa-work -> main` review PR.
+- Confirmed `main` baseline remains `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481` and no behind divergence required synchronization.
+- Verified prior Turn-10 proactive merge fix with completed CI run `35060060989`: all three CI jobs were successful.
+- Rotated into sync/delete-all transactional recovery and storage/persistence boundaries, including the previously documented deep-scan finding around Misa-owned localStorage blobs.
+
+### Finding
+- P1 — `deleteAllData` destroyed `relationshipManager` and proactive-agent localStorage blobs, but `DeleteAllSnapshot`/`rollbackDelete` restored only chat, AppState, owner, and sync session. If a later step threw after those Misa blobs were reset, the UI could report a failed wipe while relationship memory and scheduled proactive state had been permanently lost. This was a proven transactional rollback gap already evidenced by the repository's deep scan and current code, not a speculative product preference.
+
+### Documentation audit
+- The existing transactional comments in `src/features/sync/delete-all.ts` were preserved. No useful rationale/JSDoc was removed.
+
+## Turn 11 — Fix iteration 1
+
+### Fix
+- Extended `DeleteAllSnapshot` with the raw `misa_relationship_state_v2` and `misa_proactive_agent_prefs_v2` localStorage snapshots.
+- `deleteAllData` now snapshots both blobs before destructive work and `rollbackDelete` restores them exactly, including restoring absence with `removeItem` when a blob did not previously exist.
+- Existing rollback/lifecycle comments were preserved and the new behavior is documented through the snapshot fields and rollback implementation.
+- Fix commit: `a7fbb76e5cd22de80290c9920b2d715304f05bf6`.
+
+### Verification
+- Re-read the complete modified `delete-all.ts` and compared the resulting tree against the parent tree; only `src/features/sync/delete-all.ts` was changed in this fix commit.
+- CI run `35064576969` completed successfully: test, web-build, and Android-build all passed, including Android SDK setup, Capacitor sync, Android unit tests/debug APK, and artifact upload.
+
+## Turn 11 — POST-FIX audit iteration 1
+
+- Re-audited `delete-all.ts` rollback sequencing, both Misa storage keys, local absence-vs-present restoration semantics, sync re-attachment, and the adjacent transactional tests.
+- The code fix was correct, but the existing rollback test did not assert preservation of the two independent Misa blobs.
+- Classification: P3 verification gap; actionable because the regression contract was not directly locked by a test.
+
+## Turn 11 — Fix iteration 2
+
+### Fix
+- Extended `src/features/sync/__tests__/delete-all.test.ts` to seed both Misa blobs before the forced server-auth failure and assert that the exact raw blobs are restored after rollback.
+- Existing test comments and transactional rationale were preserved.
+- Test commit: `e0de56eca63b0c83dbe25419cf76b3263a49f6b3`.
+
+### Verification
+- Re-read the complete test delta; the change is limited to the existing transactional rollback test and adds only the Misa-blob regression assertions/setup.
+- CI run `35064910145` completed successfully for `e0de56eca63b0c83dbe25419cf76b3263a49f6b3`: test, web-build, and Android-build all passed. The test job included lint, the full test suite, and type-check; web build and Android debug build also succeeded.
+
+## Turn 11 — POST-FIX / LAST AUDIT iteration 2
+
+- Re-audited the changed delete-all implementation and regression test, then checked adjacent storage, sync merge, backup, startup, and previously fixed admin/session surfaces.
+- Confirmed useful transactional comments/JSDoc remained intact; no documentation regression was introduced.
+- No new proven actionable unintentional bug found.
+- FINAL AUDIT: CLEAN.
+
+## Turn 11 — CI evidence
+
+- `35060060989` — SUCCESS: Turn-10 proactive merge fix; test, web-build, Android-build all successful.
+- `35064576969` — SUCCESS: Turn-11 delete-all rollback implementation; test, web-build, Android-build all successful.
+- `35064910145` — SUCCESS: Turn-11 rollback regression test; test, web-build, Android-build all successful.
+
+## Remaining Risks / Not Verified after Turn 11
+
+- Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
+- `LiveCompanionForegroundService` camera+microphone+mediaPlayback type combinations still require Android-version/permission matrix verification.
+- `ScreenSharePlugin` capture state remains Activity/plugin-process owned rather than FGS-owned; process death/recreation needs device evidence.
+- `android:usesCleartextTraffic="true"` remains enabled for compatibility; restricting it requires a dedicated custom/local-provider audit.
+- `VITE_DEFAULT_AI_API_KEY` build-time exposure remains UNPROVEN as a security defect because configured credential scope is not observable through repository access.
+- Repeated `AudioRoute.getAvailableRoutes is not a function` warnings remain UNPROVEN/ENVIRONMENTAL because tests pass through the guarded native/web boundary and native runtime evidence is unavailable.
+- Vite `base: './'` combined with root-absolute service-worker/manifest/notification paths remains UNPROVEN without deployment-topology evidence.
+- Android physical/API-matrix verification remains unavailable even though CI Android build/static checks are green.
+
+## Next Turn
+
+Fresh first audit of notification/session/auth boundaries, then startup/process-death and Android FGS/camera/screen-share ownership. Continue the same-turn audit/fix/re-audit loop for every newly proven actionable finding.
+
+## Turn 11 — Final State
+
+- Final audit result: CLEAN for proven actionable findings in the audited areas.
+- All relevant CI runs for Turn 11 reached terminal SUCCESS before final state recording.
+- No speculative changes were made for unproven deployment, secret-scope, native-runtime, or device-matrix concerns.
+- `misa-work` remains the sole fix branch; PR #34 remains the single open review PR targeting `main`, with no merge or auto-merge.
