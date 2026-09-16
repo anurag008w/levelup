@@ -46,6 +46,12 @@ if [[ "$DRY_RUN" != "1" ]] && ! git diff-index --quiet HEAD --; then
     echo "⚠️  You have uncommitted changes!"
     git status --short
     echo ""
+    # A manual terminal release may ask for explicit confirmation, but a
+    # non-interactive caller must fail closed instead of hanging on `read`.
+    if [[ ! -t 0 ]]; then
+        echo "❌ Cannot ask for confirmation from a non-interactive terminal. Commit/stash the changes and retry the release."
+        exit 1
+    fi
     read -p "Continue anyway? (y/n) " -n 1 -r
     echo ""
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
