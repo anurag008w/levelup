@@ -19,10 +19,10 @@
  *    shade se reply kar raha hai. Isliye send shuru karte hi chhota grace
  *    (REPLY_GRACE_MS) dekar app turant minimize ho jaati hai (~1s). Capacitor
  *    default `KeepRunning=true` hai, isliye WebView background me JS timers aur
- *    fetch-streams continue karta hai — send minimize ke BAAD bhi complete hota
- *    hai. (Pehle "minimize karne se send freeze ho jaata hai" maana jaata tha;
- *    v0605/0606 ka stuck asli me broadcast path ki headless delivery ka issue
- *    tha, minimize ka nahi.)
+ *    fetch-streams continue karta hai — send minimize ke BAAD bhi complete
+ *    hota hai. (Pehle "minimize karne se send freeze ho jaata hai" maana jaata
+ *    tha; v0605/0606 ka stuck asli me broadcast path ki headless delivery ka
+ *    issue tha, minimize ka nahi.)
  *
  *    Note: "reply se pehle app already foreground thi" wala check (`isAppActive`)
  *    reliable nahi hai — reply action Activity ko launch/resume kar deta hai,
@@ -56,6 +56,7 @@ import { App } from '@capacitor/app';
 import { container } from '../di/container';
 import { buildNotificationSteps, computeRevealSchedule, splitReplyIntoBubbles } from '../features/chat/message-segments';
 import { isNativePlatform, notifyAiReply, onNotificationAction, registerNotificationActions, trackAppState } from './notifications';
+import { loadSession } from './auth';
 
 let setup = false;
 
@@ -131,12 +132,34 @@ async function resolveOrCreateSession(): Promise<string> {
   return container.chat.createSession('Notification Reply').id;
 }
 
+/**
+ * Notification replies are actionable only while the app still has an owner.
+ * A notification can outlive logout because Android keeps it in the shade;
+ * accepting it after logout could otherwise mutate the previous account's
+ * local chat or invoke its provider path while the login gate is visible.
+ * Guest mode is also an explicit local owner, so it remains eligible.
+ */
+function hasActiveNotificationOwner(): boolean {
+  if (loadSession()) return true;
+  try {
+    return localStorage.getItem('levelup:guest') === 'true';
+  } catch {
+    return false;
+  }
+}
+
 export function setupNotificationActions(): void {
   if (setup) return;
   setup = true;
   trackAppState();
   void registerNotificationActions();
   void onNotificationAction(({ actionId, inputValue, sessionId }) => {
+    // Android notifications can outlive the auth session. Never accept a reply
+    // after logout: the old notification still carries the previous sessionId.
+    // Tap/open remains allowed below because it only navigates; it does not
+    // mutate the previous account's chat.
+    if (actionId === 'reply' && !hasActiveNotificationOwner()) return;
+
     // Live-call notifications: reply goes straight into the Gemini Live
     // session (same Activity-launch + minimize trick as chat, so the reply
     // reliably reaches the WebView), tap just opens the app.
@@ -191,7 +214,7 @@ export function setupNotificationActions(): void {
           const bubbles = splitReplyIntoBubbles(assistant.content);
           const schedule = computeRevealSchedule(bubbles.length);
           if (bubbles.length > 0) {
-            // HAR bubble apne reveal moment pe JS timer se fire hota hai
+            // HAR bubble apne reveal moment pe JS timer se fire hota
             // (delayMs=0 + force=true → turant show/update, same sessionId =
             // same notification id = purana merge hoke update hota hai), bilkul
             // ChatScreen ke normal flow jaisa. OS-level pre-scheduling yahan
