@@ -46,13 +46,17 @@ export function currentDayNumberFor(dateISO: string, startDateISO: string, total
 // content 5, raw 7 plays content 6, … raw 91 plays content 90 (journey extends
 // by one calendar day). All helpers are pure/deterministic.
 
+/** Rest-day content numbers as a sorted set. */
+function uniqueRestDays(restDays: number[]): number[] {
+  return [...new Set(restDays)].sort((a, b) => a - b);
+}
+
 /** Sorted calendar positions (raw day numbers) of the rest days. */
 export function restRawPositions(restDays: number[]): number[] {
   // `restDays` is persisted and can also arrive from AI/import/sync paths. It
   // represents a set of content-day numbers, so duplicate entries must not
   // create extra calendar slots and shift the entire journey.
-  const sorted = [...new Set(restDays)].sort((a, b) => a - b);
-  return sorted.map((d, i) => d + i);
+  return uniqueRestDays(restDays).map((d, i) => d + i);
 }
 
 /** Content day number for a raw calendar day. On a rest slot this returns the
@@ -71,7 +75,8 @@ export function isRestRaw(raw: number, restDays: number[]): boolean {
 
 /** Calendar raw position on which content day c actually plays. */
 export function rawForContentDay(c: number, restDays: number[]): number {
-  return c + restDays.filter((d) => d <= c).length;
+  const rests = uniqueRestDays(restDays);
+  return c + rests.filter((d) => d <= c).length;
 }
 
 /** Content day for a calendar date (1 = first content day). */
@@ -91,7 +96,8 @@ export function dateForContentDay(contentDay: number, startDateISO: string, rest
 
 /** Calendar date of the rest day for content day d. */
 export function dateForRestDay(restDay: number, startDateISO: string, restDays: number[]): string {
-  const raw = restDay + restDays.filter((d) => d < restDay).length;
+  const rests = uniqueRestDays(restDays);
+  const raw = restDay + rests.filter((d) => d < restDay).length;
   return isoAddDays(startDateISO, raw - 1);
 }
 
@@ -100,9 +106,10 @@ export function dateForRestDay(restDay: number, startDateISO: string, restDays: 
  * what UIs (DaySwitcher, chat tools) need: jumping to a rested content day
  * must land on the real rest day, not the shifted day after it. */
 export function dateForDayNumber(dayNumber: number, startDateISO: string, restDays: number[]): string {
-  return restDays.includes(dayNumber)
-    ? dateForRestDay(dayNumber, startDateISO, restDays)
-    : dateForContentDay(dayNumber, startDateISO, restDays);
+  const rests = uniqueRestDays(restDays);
+  return rests.includes(dayNumber)
+    ? dateForRestDay(dayNumber, startDateISO, rests)
+    : dateForContentDay(dayNumber, startDateISO, rests);
 }
 
 export function daysBetween(aISO: string, bISO: string): number {
