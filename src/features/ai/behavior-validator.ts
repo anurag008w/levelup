@@ -51,14 +51,22 @@ export function validateProactiveDelivery(
     return { valid: false, reason: 'Suppressed: Inside quiet hours' };
   }
 
-  // 3. Active Grace Period Check (30 minutes)
-  // Allowed ONLY if it is an in-session conversational follow-up inside the active chat
+  // 3. Active Grace Period (30 minutes)
+  // Allowed ONLY if it is an in-session conversational follow-up inside the active chat.
   const configuredGraceMinutes = relationship.boundaries.activeGraceMinutes;
   const graceMinutes = Number.isFinite(configuredGraceMinutes)
     ? Math.max(0, configuredGraceMinutes)
     : 30;
   const graceMs = graceMinutes * 60 * 1000;
-  const timeSinceActive = now - context.lastActiveTimestamp;
+
+  // Corrupt persisted activity timestamps must fail closed. `NaN` would make
+  // `timeSinceActive < graceMs` false and could silently bypass the grace shield.
+  // Treating an invalid timestamp as "active now" is conservative and prevents
+  // malformed local/synced state from causing an unexpected interruption.
+  const lastActiveTimestamp = Number.isFinite(context.lastActiveTimestamp)
+    ? context.lastActiveTimestamp
+    : now;
+  const timeSinceActive = now - lastActiveTimestamp;
 
   if (timeSinceActive < graceMs && !context.isInsideActiveSession) {
     return {
