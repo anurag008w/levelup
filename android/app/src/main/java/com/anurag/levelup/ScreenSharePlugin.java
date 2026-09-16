@@ -31,6 +31,7 @@ import androidx.activity.result.ActivityResult;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Misa Live — Screen Share Plugin (Android Native MediaProjection)
@@ -73,6 +74,8 @@ public class ScreenSharePlugin extends Plugin {
     private int screenDensity;
 
     private volatile boolean isCapturing = false;
+    /** Prevents overlapping async startCapture calls from creating duplicate pipelines. */
+    private final AtomicBoolean captureStartInProgress = new AtomicBoolean(false);
     private long lastFrameMs = 0;
     private long minFrameIntervalMs = 200; // 5fps default
 
@@ -137,6 +140,10 @@ public class ScreenSharePlugin extends Plugin {
             call.resolve(); // already running
             return;
         }
+        if (!captureStartInProgress.compareAndSet(false, true)) {
+            call.reject("Screen capture is already starting");
+            return;
+        }
 
         captureWidth  = call.getInt("width",  720);
         captureHeight = call.getInt("height", 1280);
@@ -154,6 +161,7 @@ public class ScreenSharePlugin extends Plugin {
                 getContext().startService(svcIntent);
             }
         } catch (Exception e) {
+            captureStartInProgress.set(false);
             Log.e(TAG, "foreground service start failed: " + e.getMessage(), e);
             call.reject("Screen capture foreground service failed to start: " + e.getMessage());
             return;
@@ -169,6 +177,7 @@ public class ScreenSharePlugin extends Plugin {
         }
         if (System.currentTimeMillis() >= deadlineMs) {
             getContext().stopService(new Intent(getContext(), ScreenShareForegroundService.class));
+            captureStartInProgress.set(false);
             call.reject("Screen capture foreground service did not become active in time");
             return;
         }
@@ -233,6 +242,7 @@ public class ScreenSharePlugin extends Plugin {
             );
 
             isCapturing = true;
+            captureStartInProgress.set(false);
             JSObject ret = new JSObject();
             ret.put("width", captureWidth);
             ret.put("height", captureHeight);
@@ -242,6 +252,7 @@ public class ScreenSharePlugin extends Plugin {
         } catch (Exception e) {
             Log.e(TAG, "startCapture failed: " + e.getMessage(), e);
             teardown();
+            captureStartInProgress.set(false);
             call.reject("Screen capture initialization failed: " + e.getMessage());
         }
     }
@@ -318,6 +329,7 @@ public class ScreenSharePlugin extends Plugin {
 
     private void teardown() {
         isCapturing = false;
+        captureStartInProgress.set(false);
         pendingResultCode = 0;
         pendingResultData = null;
         if (virtualDisplay != null) {
