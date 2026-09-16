@@ -7,10 +7,10 @@ on:
         description: "Version tag (e.g., v2026.08.01)"
         required: false
         default: ""
-  push:
-    tags:
-      - "v[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9]*"
 
+# Release is intentionally manual-only. The workflow creates and pushes the tag
+# itself; a tag-push trigger here would immediately start a second release run
+# for the same version and race/cancel the original run.
 permissions:
   contents: write
 
