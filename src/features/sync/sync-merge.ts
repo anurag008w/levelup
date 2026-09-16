@@ -34,7 +34,17 @@ export function mergeAppState(local: AppState, remote: AppState): AppState {
   const allDays = new Set([...Object.keys(normLocal.taskLogs || {}), ...Object.keys(normRemote.taskLogs || {})]);
   const taskLogs: Record<string, Record<string, boolean>> = {};
   for (const day of allDays) {
-    taskLogs[day] = { ...(normRemote.taskLogs?.[day] || {}), ...(normLocal.taskLogs?.[day] || {}) };
+    const localDay = normLocal.taskLogs?.[day] || {};
+    const remoteDay = normRemote.taskLogs?.[day] || {};
+    const taskIds = new Set([...Object.keys(remoteDay), ...Object.keys(localDay)]);
+    const mergedDay: Record<string, boolean> = {};
+    for (const taskId of taskIds) {
+      // Completion is monotonic across devices: a stale false must never erase
+      // a completed task recorded by another device. Uncomplete actions use the
+      // explicit local/UI state path rather than cross-device conflict resolution.
+      mergedDay[taskId] = Boolean(remoteDay[taskId] || localDay[taskId]);
+    }
+    taskLogs[day] = mergedDay;
   }
 
   // 3. Custom To-Dos: merge by ID, retaining completion and the latest metadata.
