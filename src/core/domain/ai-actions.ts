@@ -287,10 +287,10 @@ export function applyVersionAfter(state: AppState, versionId: string): AppState 
  * the snapshot being replaced are reverted.
  */
 function restoreTaskLogsSnapshot(state: AppState, replacement: unknown, expectedCurrent: unknown): AppState {
-  if (!isRecord(replacement) || !isRecord(expectedCurrent)) return applySnapshot(state, 'taskLogs', replacement);
+  if (!isTaskLogsSnapshot(replacement) || !isTaskLogsSnapshot(expectedCurrent)) return state;
   const current = state.taskLogs;
-  const replacementLogs = replacement as Record<string, Record<string, boolean>>;
-  const expectedLogs = expectedCurrent as Record<string, Record<string, boolean>>;
+  const replacementLogs = replacement;
+  const expectedLogs = expectedCurrent;
   const dayKeys = new Set([...Object.keys(current), ...Object.keys(replacementLogs), ...Object.keys(expectedLogs)]);
   const merged: AppState['taskLogs'] = { ...current };
 
@@ -324,6 +324,14 @@ function restoreTaskLogsSnapshot(state: AppState, replacement: unknown, expected
   }
 
   return { ...state, taskLogs: merged };
+}
+
+/** Validates persisted/AI task-log snapshots before they can affect app state. */
+function isTaskLogsSnapshot(value: unknown): value is Record<string, Record<string, boolean>> {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every((day) => (
+    isRecord(day) && Object.values(day).every((completed) => typeof completed === 'boolean')
+  ));
 }
 
 /** Day-mode arrays represent sets; canonicalize them when action snapshots are persisted/restored. */
