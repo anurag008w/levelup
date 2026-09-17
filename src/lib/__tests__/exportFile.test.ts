@@ -21,7 +21,12 @@ describe('exportTextFile browser download cleanup', () => {
       revokeObjectURL: revoke,
     });
     vi.stubGlobal('Blob', class {
-      constructor(public parts: unknown[], public options: unknown) {}
+      parts: unknown[];
+      options: unknown;
+      constructor(parts: unknown[], options: unknown) {
+        this.parts = parts;
+        this.options = options;
+      }
     });
     vi.stubGlobal('document', {
       createElement: vi.fn(() => anchor),
