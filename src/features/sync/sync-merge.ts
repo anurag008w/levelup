@@ -190,6 +190,14 @@ function mergeRelationshipState(local: RelationshipState, remote: RelationshipSt
     }
     return Array.from(map.values());
   };
+  const remoteCooldowns = remote.fatigue?.topicCooldowns || {};
+  const localCooldowns = local.fatigue?.topicCooldowns || {};
+  const topicCooldowns: Record<string, number> = { ...remoteCooldowns };
+  for (const [topic, localExpiry] of Object.entries(localCooldowns)) {
+    const remoteExpiry = topicCooldowns[topic];
+    if (!Number.isFinite(localExpiry) || localExpiry < 0) continue;
+    if (!Number.isFinite(remoteExpiry) || localExpiry > remoteExpiry) topicCooldowns[topic] = localExpiry;
+  }
   return {
     ...remote,
     ...local,
@@ -216,7 +224,7 @@ function mergeRelationshipState(local: RelationshipState, remote: RelationshipSt
       lastDismissalTimestamp: Math.max(local.fatigue?.lastDismissalTimestamp || 0, remote.fatigue?.lastDismissalTimestamp || 0),
       todayProactiveCount: Math.max(local.fatigue?.todayProactiveCount || 0, remote.fatigue?.todayProactiveCount || 0),
       proactiveDate: local.fatigue?.proactiveDate || remote.fatigue?.proactiveDate,
-      topicCooldowns: { ...(remote.fatigue?.topicCooldowns || {}), ...(local.fatigue?.topicCooldowns || {}) },
+      topicCooldowns,
     },
     preferredInteractionStyle: local.preferredInteractionStyle || remote.preferredInteractionStyle,
   };
