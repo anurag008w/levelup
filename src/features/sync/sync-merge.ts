@@ -162,7 +162,10 @@ export function mergeChatSessions(local: ChatSession[], remote: ChatSession[]): 
     const remoteSession = sessionMap.get(localSession.id);
     if (!remoteSession) sessionMap.set(localSession.id, { ...localSession, messages: [...(localSession.messages || [])] });
     else {
-      const localIsNewer = (localSession.updatedAt || '') >= (remoteSession.updatedAt || '');
+      const localUpdatedAt = Date.parse(localSession.updatedAt || '');
+      const remoteUpdatedAt = Date.parse(remoteSession.updatedAt || '');
+      const localIsNewer = localUpdatedAt > remoteUpdatedAt
+        || (localUpdatedAt === remoteUpdatedAt && chatSessionConflictKey(localSession) > chatSessionConflictKey(remoteSession));
       const latestSession = localIsNewer ? localSession : remoteSession;
       const olderSession = localIsNewer ? remoteSession : localSession;
       const msgMap = new Map<string, ChatMessage>();
@@ -170,8 +173,8 @@ export function mergeChatSessions(local: ChatSession[], remote: ChatSession[]): 
       for (const m of localSession.messages || []) {
         const key = m.id || `${m.createdAt}-${m.role}-${m.content.slice(0, 30)}`;
         // Message ids are stable; if two devices disagree about the same id,
-        // prefer the snapshot from the newer session rather than letting the
-        // merge argument order make a stale transcript overwrite it.
+        // prefer the snapshot from the deterministically newer session rather
+        // than letting merge argument order decide the transcript.
         if (!msgMap.has(key) || localIsNewer) msgMap.set(key, m);
       }
       const mergedMessages = Array.from(msgMap.values()).sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
@@ -189,6 +192,14 @@ export function mergeChatSessions(local: ChatSession[], remote: ChatSession[]): 
     }
   }
   return Array.from(sessionMap.values()).sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+}
+
+function chatSessionConflictKey(session: ChatSession): string {
+  const prefs = Object.entries(session.prefs || {}).sort(([a], [b]) => a.localeCompare(b));
+  const messages = [...(session.messages || [])]
+    .map((m) => ({ id: m.id || '', role: m.role, content: m.content, createdAt: m.createdAt || '' }))
+    .sort((a, b) => `${a.id}\u0000${a.createdAt}\u0000${a.role}\u0000${a.content}`.localeCompare(`${b.id}\u0000${b.createdAt}\u0000${b.role}\u0000${b.content}`));
+  return JSON.stringify({ title: session.title || '', createdAt: session.createdAt || '', prefs, messages });
 }
 
 export function mergeMisaData(local: MisaSyncPayload | null, remote: MisaSyncPayload | null): MisaSyncPayload | null {
@@ -286,6 +297,8 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
     // on one device must not silently erase an enabled feature on another.
     enabled: Boolean(remotePrefs.enabled || localPrefs.enabled),
     callsEnabled: Boolean(remotePrefs.callsEnabled || localPrefs.callsEnabled),
+    activeGraceMinutes: Math.max(remotePrefs.activeGraceMinutes || 0, localPrefs.activeGraceMinutes || 0),
+    customRingtoneUrl: localPrefs.customRingtoneUrl?.trim() || remotePrefs.customRingtoneUrl?.trim() || undefined,
   };
   return {
     prefs,
