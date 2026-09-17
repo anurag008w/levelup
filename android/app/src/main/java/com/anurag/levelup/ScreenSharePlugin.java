@@ -32,6 +32,7 @@ import androidx.activity.result.ActivityResult;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Misa Live — Screen Share Plugin (Android Native MediaProjection)
@@ -64,6 +65,7 @@ public class ScreenSharePlugin extends Plugin {
     private ImageReader imageReader;
     private HandlerThread captureThread;
     private Handler captureHandler;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private int pendingResultCode = 0;
     private Intent pendingResultData = null;
@@ -76,6 +78,9 @@ public class ScreenSharePlugin extends Plugin {
     private volatile boolean isCapturing = false;
     /** Prevents overlapping async startCapture calls from creating duplicate pipelines. */
     private final AtomicBoolean captureStartInProgress = new AtomicBoolean(false);
+    /** Invalidates delayed foreground-service callbacks from older capture attempts. */
+    private final AtomicLong captureStartGeneration = new AtomicLong(0L);
+    private Runnable foregroundServicePoll;
     private long lastFrameMs = 0;
     private long minFrameIntervalMs = 200; // 5fps default
 
@@ -145,6 +150,7 @@ public class ScreenSharePlugin extends Plugin {
             return;
         }
 
+        long generation = captureStartGeneration.incrementAndGet();
         captureWidth  = call.getInt("width",  720);
         captureHeight = call.getInt("height", 1280);
         captureFps    = call.getInt("fps",    5);
@@ -162,31 +168,39 @@ public class ScreenSharePlugin extends Plugin {
             }
         } catch (Exception e) {
             captureStartInProgress.set(false);
+            captureStartGeneration.compareAndSet(generation, generation + 1L);
             Log.e(TAG, "foreground service start failed: " + e.getMessage(), e);
             call.reject("Screen capture foreground service failed to start: " + e.getMessage());
             return;
         }
 
-        waitForForegroundService(call, System.currentTimeMillis() + FOREGROUND_SERVICE_TIMEOUT_MS);
+        waitForForegroundService(call, System.currentTimeMillis() + FOREGROUND_SERVICE_TIMEOUT_MS, generation);
     }
 
-    private void waitForForegroundService(PluginCall call, long deadlineMs) {
+    private void waitForForegroundService(PluginCall call, long deadlineMs, long generation) {
+        // A delayed callback can outlive teardown() and a subsequent startCapture().
+        // Never let an obsolete attempt touch the shared capture pipeline.
+        if (generation != captureStartGeneration.get()) return;
         if (ScreenShareForegroundService.isActive()) {
-            startCaptureAfterForegroundService(call);
+            startCaptureAfterForegroundService(call, generation);
             return;
         }
         if (System.currentTimeMillis() >= deadlineMs) {
+            if (generation != captureStartGeneration.get()) return;
             getContext().stopService(new Intent(getContext(), ScreenShareForegroundService.class));
             captureStartInProgress.set(false);
+            captureStartGeneration.compareAndSet(generation, generation + 1L);
             call.reject("Screen capture foreground service did not become active in time");
             return;
         }
-        new Handler(Looper.getMainLooper()).postDelayed(
-            () -> waitForForegroundService(call, deadlineMs), FOREGROUND_SERVICE_POLL_MS
-        );
+        Runnable poll = () -> waitForForegroundService(call, deadlineMs, generation);
+        foregroundServicePoll = poll;
+        mainHandler.postDelayed(poll, FOREGROUND_SERVICE_POLL_MS);
     }
 
-    private void startCaptureAfterForegroundService(PluginCall call) {
+    private void startCaptureAfterForegroundService(PluginCall call, long generation) {
+        // Check again at the point where the shared capture fields are about to be mutated.
+        if (generation != captureStartGeneration.get()) return;
         try {
             // 1. Create background capture thread
             captureThread = new HandlerThread("ScreenShareCapture");
@@ -243,6 +257,7 @@ public class ScreenSharePlugin extends Plugin {
 
             isCapturing = true;
             captureStartInProgress.set(false);
+            foregroundServicePoll = null;
             JSObject ret = new JSObject();
             ret.put("width", captureWidth);
             ret.put("height", captureHeight);
@@ -329,7 +344,12 @@ public class ScreenSharePlugin extends Plugin {
 
     private void teardown() {
         isCapturing = false;
+        captureStartGeneration.incrementAndGet();
         captureStartInProgress.set(false);
+        if (foregroundServicePoll != null) {
+            mainHandler.removeCallbacks(foregroundServicePoll);
+            foregroundServicePoll = null;
+        }
         pendingResultCode = 0;
         pendingResultData = null;
         if (virtualDisplay != null) {
