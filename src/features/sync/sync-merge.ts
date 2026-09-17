@@ -278,8 +278,18 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
     const key = m.id || `missed:${m.timestamp}:${m.reason || ''}`;
     if (!missed.has(key)) missed.set(key, m);
   }
+  const remotePrefs = remote.prefs || {};
+  const localPrefs = local.prefs || {};
+  const prefs = {
+    ...remotePrefs,
+    ...localPrefs,
+    // These are enablement flags, not last-writer-wins preferences: disabling
+    // on one device must not silently erase an enabled feature on another.
+    enabled: Boolean(remotePrefs.enabled || localPrefs.enabled),
+    callsEnabled: Boolean(remotePrefs.callsEnabled || localPrefs.callsEnabled),
+  };
   return {
-    prefs: { ...(remote.prefs || {}), ...(local.prefs || {}) },
+    prefs,
     lastActiveTimestamp: Math.max(local.lastActiveTimestamp || 0, remote.lastActiveTimestamp || 0),
     lastUserChatTimestamp: Math.max(local.lastUserChatTimestamp || 0, remote.lastUserChatTimestamp || 0),
     lastCallTimestamp: Math.max(local.lastCallTimestamp || 0, remote.lastCallTimestamp || 0),
