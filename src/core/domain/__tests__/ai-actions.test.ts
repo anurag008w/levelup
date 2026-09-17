@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { emptyAppState } from '../state';
-import { AiActionRegistry, AiPermissionEngine, executeAiAction, recordAiActionVersion, undoLastAiAction, redoLastAiAction, createAiActionPreview } from '../ai-actions';
+import { AiActionRegistry, AiPermissionEngine, executeAiAction, recordAiActionVersion, undoLastAiAction, redoLastAiAction, createAiActionPreview, type AiActionVersion } from '../ai-actions';
 
 describe('AI action history', () => {
   it('records versions and can undo/redo editable app snapshots', () => {
