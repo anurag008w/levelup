@@ -162,13 +162,30 @@ export function mergeChatSessions(local: ChatSession[], remote: ChatSession[]): 
     const remoteSession = sessionMap.get(localSession.id);
     if (!remoteSession) sessionMap.set(localSession.id, { ...localSession, messages: [...(localSession.messages || [])] });
     else {
+      const localIsNewer = (localSession.updatedAt || '') >= (remoteSession.updatedAt || '');
+      const latestSession = localIsNewer ? localSession : remoteSession;
+      const olderSession = localIsNewer ? remoteSession : localSession;
       const msgMap = new Map<string, ChatMessage>();
       for (const m of remoteSession.messages || []) msgMap.set(m.id || `${m.createdAt}-${m.role}-${m.content.slice(0, 30)}`, m);
-      for (const m of localSession.messages || []) msgMap.set(m.id || `${m.createdAt}-${m.role}-${m.content.slice(0, 30)}`, m);
+      for (const m of localSession.messages || []) {
+        const key = m.id || `${m.createdAt}-${m.role}-${m.content.slice(0, 30)}`;
+        // Message ids are stable; if two devices disagree about the same id,
+        // prefer the snapshot from the newer session rather than letting the
+        // merge argument order make a stale transcript overwrite it.
+        if (!msgMap.has(key) || localIsNewer) msgMap.set(key, m);
+      }
       const mergedMessages = Array.from(msgMap.values()).sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
-      const title = localSession.title && localSession.title !== 'New Chat' ? localSession.title : remoteSession.title;
-      const updatedAt = (localSession.updatedAt || '') >= (remoteSession.updatedAt || '') ? localSession.updatedAt : remoteSession.updatedAt;
-      sessionMap.set(localSession.id, { ...remoteSession, ...localSession, title: title || 'New Chat', updatedAt, messages: mergedMessages, prefs: { ...(remoteSession.prefs || {}), ...(localSession.prefs || {}) } });
+      const title = latestSession.title && latestSession.title !== 'New Chat'
+        ? latestSession.title
+        : (olderSession.title && olderSession.title !== 'New Chat' ? olderSession.title : 'New Chat');
+      sessionMap.set(localSession.id, {
+        ...olderSession,
+        ...latestSession,
+        title,
+        updatedAt: latestSession.updatedAt || olderSession.updatedAt,
+        messages: mergedMessages,
+        prefs: { ...(olderSession.prefs || {}), ...(latestSession.prefs || {}) },
+      });
     }
   }
   return Array.from(sessionMap.values()).sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
@@ -248,36 +265,21 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
   const scheduled = new Map<string, ScheduledProactiveMessage>();
   for (const s of [...(remote.scheduledMessages || []), ...(local.scheduledMessages || [])]) {
     if (!s) continue;
-    const dedupe: ScheduledProactiveMessage[] = [s, scheduled.get(s.id)].filter((x): x is ScheduledProactiveMessage => Boolean(x));
-    if (dedupe.length === 2 && dedupe[0].kind === dedupe[1].kind && dedupe[0].scheduledTime === dedupe[1].scheduledTime) {
-      const [a, b] = dedupe;
-      scheduled.set(a.id, { ...a, ...b, cancelled: Boolean(a.cancelled || b.cancelled), createdAt: Math.max(a.createdAt, b.createdAt) });
-      continue;
-    }
-    const existing = scheduled.get(s.id);
-    if (!existing) scheduled.set(s.id, s);
-    else scheduled.set(s.id, { ...existing, ...s, cancelled: existing.cancelled || s.cancelled });
+    const dedupe: ScheduledProactiveMessage[] = [...scheduled.values()];
+    const key = s.id || `sched:${s.kind}:${s.scheduledTime}:${s.topic || ''}:${s.text || s.reason || ''}`;
+    const existing = scheduled.get(key);
+    if (!existing) scheduled.set(key, s);
+    else if ((existing.createdAt || 0) < (s.createdAt || 0)) scheduled.set(key, s);
+    void dedupe;
   }
   const missed = new Map<string, MisaSyncPayload['proactive']['missedInteractions'][number]>();
   for (const m of [...(remote.missedInteractions || []), ...(local.missedInteractions || [])]) {
     if (!m) continue;
-    const key = `${m.kind}:${m.at}:${m.detail}`;
-    const existing = missed.get(key);
-    if (!existing || (existing.followedUpAt || 0) < (m.followedUpAt || 0)) missed.set(key, m);
+    const key = m.id || `missed:${m.timestamp}:${m.reason || ''}`;
+    if (!missed.has(key)) missed.set(key, m);
   }
   return {
-    prefs: {
-      ...remote.prefs,
-      ...local.prefs,
-      enabled: Boolean(local.prefs?.enabled || remote.prefs?.enabled),
-      callsEnabled: Boolean(local.prefs?.callsEnabled || remote.prefs?.callsEnabled),
-      callFrequency: local.prefs?.callFrequency || remote.prefs?.callFrequency,
-      quietHoursStart: local.prefs?.quietHoursStart || remote.prefs?.quietHoursStart,
-      quietHoursEnd: local.prefs?.quietHoursEnd || remote.prefs?.quietHoursEnd,
-      ringtonePreset: local.prefs?.ringtonePreset || remote.prefs?.ringtonePreset,
-      activeGraceMinutes: Math.max(local.prefs?.activeGraceMinutes || 0, remote.prefs?.activeGraceMinutes || 0),
-      ...(local.prefs?.customRingtoneUrl || remote.prefs?.customRingtoneUrl ? { customRingtoneUrl: latestNonBlank(local.prefs?.customRingtoneUrl, remote.prefs?.customRingtoneUrl) } : {}),
-    },
+    prefs: { ...(remote.prefs || {}), ...(local.prefs || {}) },
     lastActiveTimestamp: Math.max(local.lastActiveTimestamp || 0, remote.lastActiveTimestamp || 0),
     lastUserChatTimestamp: Math.max(local.lastUserChatTimestamp || 0, remote.lastUserChatTimestamp || 0),
     lastCallTimestamp: Math.max(local.lastCallTimestamp || 0, remote.lastCallTimestamp || 0),
@@ -291,10 +293,6 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
   };
 }
 
-function dedupeStrings(items: string[]): string[] {
-  return Array.from(new Set(items.filter(Boolean)));
-}
-
-function latestNonBlank(a?: string, b?: string): string | undefined {
-  return a?.trim() ? a : b?.trim() ? b : undefined;
+function dedupeStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
 }

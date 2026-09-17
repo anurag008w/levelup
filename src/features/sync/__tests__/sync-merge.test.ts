@@ -172,6 +172,36 @@ describe('sync-merge — multi-device smart merge', () => {
     expect(s1?.messages).toHaveLength(3);
     expect(s1?.messages.map((m) => m.id)).toEqual(['msg-1', 'msg-2', 'msg-3']);
   });
+
+  it('uses the newer session snapshot for conflicting chat metadata and same-id messages', () => {
+    const localSessions: ChatSession[] = [{
+      id: 'session-1',
+      title: 'Stale local title',
+      createdAt: '2026-01-01T10:00:00Z',
+      updatedAt: '2026-01-01T10:05:00Z',
+      prefs: { providerId: 'local-provider', model: 'local-model' } as never,
+      messages: [{ id: 'msg-1', role: 'assistant', content: 'stale answer', createdAt: '2026-01-01T10:01:00Z' }],
+    }];
+    const remoteSessions: ChatSession[] = [{
+      id: 'session-1',
+      title: 'Authoritative remote title',
+      createdAt: '2026-01-01T10:00:00Z',
+      updatedAt: '2026-01-01T10:10:00Z',
+      prefs: { providerId: 'remote-provider', model: 'remote-model' } as never,
+      messages: [{ id: 'msg-1', role: 'assistant', content: 'fresh answer', createdAt: '2026-01-01T10:01:00Z' }],
+    }];
+
+    const mergedLocalFirst = mergeChatSessions(localSessions, remoteSessions)[0];
+    const mergedRemoteFirst = mergeChatSessions(remoteSessions, localSessions)[0];
+
+    for (const merged of [mergedLocalFirst, mergedRemoteFirst]) {
+      expect(merged.title).toBe('Authoritative remote title');
+      expect(merged.prefs.providerId).toBe('remote-provider');
+      expect(merged.prefs.model).toBe('remote-model');
+      expect(merged.messages[0].content).toBe('fresh answer');
+      expect(merged.updatedAt).toBe('2026-01-01T10:10:00Z');
+    }
+  });
 });
 
 describe('sync-merge — misa relationship + proactive merge', () => {
