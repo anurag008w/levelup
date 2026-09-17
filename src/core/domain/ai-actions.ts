@@ -253,6 +253,7 @@ export function redoLastAiAction(state: AppState): AppState {
 export function restoreVersionBefore(state: AppState, versionId: string): AppState {
   const version = state.aiActionHistory.versions.find((item) => item.id === versionId);
   if (!version) return state;
+  if (version.entityType === 'taskLogs' && (!isTaskLogsSnapshot(version.beforeState) || !isTaskLogsSnapshot(version.afterState))) return state;
   const restored = version.entityType === 'taskLogs'
     ? restoreTaskLogsSnapshot(state, version.beforeState, version.afterState)
     : applySnapshot(state, version.entityType, version.beforeState);
@@ -268,6 +269,7 @@ export function restoreVersionBefore(state: AppState, versionId: string): AppSta
 export function applyVersionAfter(state: AppState, versionId: string): AppState {
   const version = state.aiActionHistory.undone.find((item) => item.id === versionId);
   if (!version) return state;
+  if (version.entityType === 'taskLogs' && (!isTaskLogsSnapshot(version.beforeState) || !isTaskLogsSnapshot(version.afterState))) return state;
   const restored = version.entityType === 'taskLogs'
     ? restoreTaskLogsSnapshot(state, version.afterState, version.beforeState)
     : applySnapshot(state, version.entityType, version.afterState);
