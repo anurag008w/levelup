@@ -24,11 +24,11 @@ const localConfig: ProviderConfig = {
 
 describe('OpenAICompatibleProvider healthCheck', () => {
   it('checks a keyless localhost provider instead of reporting API key missing', async () => {
-    let request: HttpRequestInit | null = null;
+    const requests: HttpRequestInit[] = [];
     const provider = new OpenAICompatibleProvider(
       localConfig,
       fakeHttp((init) => {
-        request = init;
+        requests.push(init);
         return { data: [] };
       }),
       { defaultBaseUrl: 'https://example.invalid/v1' },
@@ -39,8 +39,8 @@ describe('OpenAICompatibleProvider healthCheck', () => {
 
     expect(health.ok).toBe(true);
     expect(health.message).toBeUndefined();
-    expect(request?.url).toBe('http://localhost:11434/v1/models');
-    expect(request?.headers?.Authorization).toBeUndefined();
+    expect(requests[0]?.url).toBe('http://localhost:11434/v1/models');
+    expect(requests[0]?.headers?.Authorization).toBeUndefined();
   });
 
   it('still requires a key for remote providers', async () => {
@@ -62,11 +62,11 @@ describe('OpenAICompatibleProvider healthCheck', () => {
   });
 
   it('allows a configured remote provider to perform the normal health request', async () => {
-    let request: HttpRequestInit | null = null;
+    const requests: HttpRequestInit[] = [];
     const provider = new OpenAICompatibleProvider(
       { ...localConfig, baseUrl: 'https://api.example.com/v1', apiKey: 'sk-test' },
       fakeHttp((init) => {
-        request = init;
+        requests.push(init);
         return { data: [] };
       }),
       { defaultBaseUrl: 'https://example.invalid/v1' },
@@ -74,7 +74,7 @@ describe('OpenAICompatibleProvider healthCheck', () => {
 
     const health = await provider.healthCheck();
     expect(health.ok).toBe(true);
-    expect(request?.url).toBe('https://api.example.com/v1/models');
-    expect(request?.headers?.Authorization).toBe('Bearer sk-test');
+    expect(requests[0]?.url).toBe('https://api.example.com/v1/models');
+    expect(requests[0]?.headers?.Authorization).toBe('Bearer sk-test');
   });
 });
