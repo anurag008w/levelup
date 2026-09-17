@@ -177,16 +177,21 @@ public class ScreenSharePlugin extends Plugin {
         waitForForegroundService(call, System.currentTimeMillis() + FOREGROUND_SERVICE_TIMEOUT_MS, generation);
     }
 
+    /** Returns true only when a delayed callback still belongs to the active start attempt. */
+    static boolean isCurrentCaptureStart(long attemptGeneration, long currentGeneration) {
+        return attemptGeneration == currentGeneration;
+    }
+
     private void waitForForegroundService(PluginCall call, long deadlineMs, long generation) {
         // A delayed callback can outlive teardown() and a subsequent startCapture().
         // Never let an obsolete attempt touch the shared capture pipeline.
-        if (generation != captureStartGeneration.get()) return;
+        if (!isCurrentCaptureStart(generation, captureStartGeneration.get())) return;
         if (ScreenShareForegroundService.isActive()) {
             startCaptureAfterForegroundService(call, generation);
             return;
         }
         if (System.currentTimeMillis() >= deadlineMs) {
-            if (generation != captureStartGeneration.get()) return;
+            if (!isCurrentCaptureStart(generation, captureStartGeneration.get())) return;
             getContext().stopService(new Intent(getContext(), ScreenShareForegroundService.class));
             captureStartInProgress.set(false);
             captureStartGeneration.compareAndSet(generation, generation + 1L);
@@ -200,7 +205,7 @@ public class ScreenSharePlugin extends Plugin {
 
     private void startCaptureAfterForegroundService(PluginCall call, long generation) {
         // Check again at the point where the shared capture fields are about to be mutated.
-        if (generation != captureStartGeneration.get()) return;
+        if (!isCurrentCaptureStart(generation, captureStartGeneration.get())) return;
         try {
             // 1. Create background capture thread
             captureThread = new HandlerThread("ScreenShareCapture");
