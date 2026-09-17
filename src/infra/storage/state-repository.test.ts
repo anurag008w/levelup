@@ -129,6 +129,22 @@ describe('normalizeState field defaults', () => {
     expect(state.aiActionHistory.undone).toEqual([1]);
     expect(normalizeState({ aiActionHistory: 42 }).aiActionHistory.versions).toEqual([]);
   });
+
+  it('bounds AI action history by count while retaining the newest versions', () => {
+    const versions = Array.from({ length: 60 }, (_, i) => ({ id: `v${i}`, beforeState: { i }, afterState: { i: i + 1 } }));
+    const state = normalizeState({ ...emptyAppState(), aiActionHistory: { versions, undone: [] } });
+    expect(state.aiActionHistory.versions).toHaveLength(50);
+    expect(state.aiActionHistory.versions[0].id).toBe('v10');
+    expect(state.aiActionHistory.versions.at(-1)?.id).toBe('v59');
+  });
+
+  it('bounds oversized AI action snapshots by bytes instead of keeping a quota-breaking history', () => {
+    const payload = 'x'.repeat(100_000);
+    const versions = Array.from({ length: 10 }, (_, i) => ({ id: `v${i}`, beforeState: { payload }, afterState: { payload } }));
+    const state = normalizeState({ ...emptyAppState(), aiActionHistory: { versions, undone: [] } });
+    expect(JSON.stringify(state.aiActionHistory).length).toBeLessThanOrEqual(600_000);
+    expect(state.aiActionHistory.versions.at(-1)?.id).toBe('v9');
+  });
 });
 
 describe('hasV2Shape', () => {
