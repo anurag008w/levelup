@@ -96,4 +96,74 @@ describe('AI action history', () => {
     const redone = redoLastAiAction(withConcurrentWrite);
     expect(redone.taskLogs).toEqual({ '2026-08-01': { aiTask: true, manualTask: true } });
   });
+
+  it('leaves state and history unchanged when an undo snapshot is malformed', () => {
+    const state = {
+      ...emptyAppState(),
+      taskLogs: { '2026-08-01': { aiTask: true } },
+      aiActionHistory: {
+        versions: [{
+          id: 'bad-undo',
+          timestamp: '2026-08-01T10:00:00.000Z',
+          action: 'bulkMarkDone',
+          entityType: 'taskLogs',
+          entityId: '2026-08-01:aiTask',
+          summary: 'malformed undo',
+          permissions: ['bulk-edit'] as const,
+          beforeState: { '2026-08-01': { aiTask: false } },
+          afterState: { '2026-08-01': { aiTask: 'not-a-boolean' } },
+          changedFields: ['taskLogs'],
+          confirmationRequired: true,
+          confirmed: true,
+          status: 'applied' as const,
+        }],
+        undone: [],
+      },
+    };
+
+    const result = undoLastAiAction(state);
+    expect(result).toBe(state);
+  });
+
+  it('leaves state and history unchanged when a redo snapshot is malformed', () => {
+    const state = {
+      ...emptyAppState(),
+      taskLogs: { '2026-08-01': { aiTask: false } },
+      aiActionHistory: {
+        versions: [{
+          id: 'bad-redo',
+          timestamp: '2026-08-01T10:00:00.000Z',
+          action: 'bulkMarkDone',
+          entityType: 'taskLogs',
+          entityId: '2026-08-01:aiTask',
+          summary: 'malformed redo',
+          permissions: ['bulk-edit'] as const,
+          beforeState: { '2026-08-01': { aiTask: false } },
+          afterState: { '2026-08-01': { aiTask: true } },
+          changedFields: ['taskLogs'],
+          confirmationRequired: true,
+          confirmed: true,
+          status: 'undone' as const,
+        }],
+        undone: [{
+          id: 'bad-redo',
+          timestamp: '2026-08-01T10:00:00.000Z',
+          action: 'bulkMarkDone',
+          entityType: 'taskLogs',
+          entityId: '2026-08-01:aiTask',
+          summary: 'malformed redo',
+          permissions: ['bulk-edit'] as const,
+          beforeState: { '2026-08-01': { aiTask: false } },
+          afterState: { '2026-08-01': { aiTask: 1 } },
+          changedFields: ['taskLogs'],
+          confirmationRequired: true,
+          confirmed: true,
+          status: 'undone' as const,
+        }],
+      },
+    };
+
+    const result = redoLastAiAction(state);
+    expect(result).toBe(state);
+  });
 });
