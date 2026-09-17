@@ -57,4 +57,43 @@ describe('AI action history', () => {
     expect(result.summary).toContain('bulk-edit');
     expect(result.state.taskLogs).toEqual({});
   });
+
+  it('undoes only the AI task-log change and preserves a newer completion on another task', () => {
+    const before = { '2026-08-01': { aiTask: false, manualTask: false } };
+    const after = { '2026-08-01': { aiTask: true, manualTask: false } };
+    const recorded = recordAiActionVersion(
+      { ...emptyAppState(), taskLogs: after },
+      { action: 'bulkMarkDone', entityType: 'taskLogs', entityId: '2026-08-01:aiTask', summary: 'mark AI task done', permissions: ['bulk-edit'], confirmed: true },
+      before,
+      after,
+      new Date('2026-08-01T10:00:00Z'),
+    );
+    const withConcurrentWrite = {
+      ...recorded,
+      taskLogs: { '2026-08-01': { aiTask: true, manualTask: true } },
+    };
+
+    const undone = undoLastAiAction(withConcurrentWrite);
+    expect(undone.taskLogs).toEqual({ '2026-08-01': { aiTask: false, manualTask: true } });
+  });
+
+  it('does not let redo overwrite a newer task-log completion', () => {
+    const before = { '2026-08-01': { aiTask: false, manualTask: false } };
+    const after = { '2026-08-01': { aiTask: true, manualTask: false } };
+    const recorded = recordAiActionVersion(
+      { ...emptyAppState(), taskLogs: before },
+      { action: 'bulkMarkDone', entityType: 'taskLogs', entityId: '2026-08-01:aiTask', summary: 'mark AI task done', permissions: ['bulk-edit'], confirmed: true },
+      before,
+      after,
+      new Date('2026-08-01T10:00:00Z'),
+    );
+    const undone = undoLastAiAction(recorded);
+    const withConcurrentWrite = {
+      ...undone,
+      taskLogs: { '2026-08-01': { aiTask: false, manualTask: true } },
+    };
+
+    const redone = redoLastAiAction(withConcurrentWrite);
+    expect(redone.taskLogs).toEqual({ '2026-08-01': { aiTask: true, manualTask: true } });
+  });
 });
