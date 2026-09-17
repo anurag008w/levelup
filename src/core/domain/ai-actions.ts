@@ -253,7 +253,9 @@ export function redoLastAiAction(state: AppState): AppState {
 export function restoreVersionBefore(state: AppState, versionId: string): AppState {
   const version = state.aiActionHistory.versions.find((item) => item.id === versionId);
   if (!version) return state;
-  const restored = applySnapshot(state, version.entityType, version.beforeState);
+  const restored = version.entityType === 'taskLogs'
+    ? restoreTaskLogsSnapshot(state, version.beforeState, version.afterState)
+    : applySnapshot(state, version.entityType, version.beforeState);
   return {
     ...restored,
     aiActionHistory: {
@@ -266,7 +268,9 @@ export function restoreVersionBefore(state: AppState, versionId: string): AppSta
 export function applyVersionAfter(state: AppState, versionId: string): AppState {
   const version = state.aiActionHistory.undone.find((item) => item.id === versionId);
   if (!version) return state;
-  const restored = applySnapshot(state, version.entityType, version.afterState);
+  const restored = version.entityType === 'taskLogs'
+    ? restoreTaskLogsSnapshot(state, version.afterState, version.beforeState)
+    : applySnapshot(state, version.entityType, version.afterState);
   return {
     ...restored,
     aiActionHistory: {
@@ -274,6 +278,52 @@ export function applyVersionAfter(state: AppState, versionId: string): AppState 
       undone: state.aiActionHistory.undone.filter((item) => item.id !== versionId),
     },
   };
+}
+
+/**
+ * Task-log snapshots are optimistic undo/redo patches rather than whole-state
+ * replacements. If a task value changed after the AI snapshot, it is a newer
+ * user/device write and must survive the undo/redo. Only values still equal to
+ * the snapshot being replaced are reverted.
+ */
+function restoreTaskLogsSnapshot(state: AppState, replacement: unknown, expectedCurrent: unknown): AppState {
+  if (!isRecord(replacement) || !isRecord(expectedCurrent)) return applySnapshot(state, 'taskLogs', replacement);
+  const current = state.taskLogs;
+  const replacementLogs = replacement as Record<string, Record<string, boolean>>;
+  const expectedLogs = expectedCurrent as Record<string, Record<string, boolean>>;
+  const dayKeys = new Set([...Object.keys(current), ...Object.keys(replacementLogs), ...Object.keys(expectedLogs)]);
+  const merged: AppState['taskLogs'] = { ...current };
+
+  for (const day of dayKeys) {
+    const currentDay = current[day] ?? {};
+    const replacementDay = replacementLogs[day] ?? {};
+    const expectedDay = expectedLogs[day] ?? {};
+    const taskIds = new Set([...Object.keys(currentDay), ...Object.keys(replacementDay), ...Object.keys(expectedDay)]);
+    const mergedDay = { ...currentDay };
+    let changed = false;
+
+    for (const taskId of taskIds) {
+      const currentValue = currentDay[taskId];
+      const expectedValue = expectedDay[taskId];
+      const replacementValue = replacementDay[taskId];
+      if (currentValue !== expectedValue) continue;
+
+      if (replacementValue === undefined) {
+        if (currentValue !== undefined) {
+          delete mergedDay[taskId];
+          changed = true;
+        }
+      } else if (currentValue !== replacementValue) {
+        mergedDay[taskId] = replacementValue;
+        changed = true;
+      }
+    }
+
+    if (changed) merged[day] = mergedDay;
+    else if (!(day in current) && Object.keys(mergedDay).length > 0) merged[day] = mergedDay;
+  }
+
+  return { ...state, taskLogs: merged };
 }
 
 /** Day-mode arrays represent sets; canonicalize them when action snapshots are persisted/restored. */
