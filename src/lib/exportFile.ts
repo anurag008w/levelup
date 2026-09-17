@@ -61,5 +61,7 @@ function downloadInBrowser(content: string, filename: string, mimeType: string):
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  // Keep the object URL alive until the browser has had a chance to start the
+  // download. Synchronous revocation can cancel downloads in Firefox/iOS Safari.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
