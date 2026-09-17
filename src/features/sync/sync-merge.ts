@@ -265,18 +265,17 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
   const scheduled = new Map<string, ScheduledProactiveMessage>();
   for (const s of [...(remote.scheduledMessages || []), ...(local.scheduledMessages || [])]) {
     if (!s) continue;
-    const dedupe: ScheduledProactiveMessage[] = [...scheduled.values()];
     const key = s.id || `sched:${s.kind}:${s.scheduledTime}:${s.topic || ''}:${s.text || s.reason || ''}`;
     const existing = scheduled.get(key);
     if (!existing) scheduled.set(key, s);
     else if ((existing.createdAt || 0) < (s.createdAt || 0)) scheduled.set(key, s);
-    void dedupe;
   }
   const missed = new Map<string, MisaSyncPayload['proactive']['missedInteractions'][number]>();
   for (const m of [...(remote.missedInteractions || []), ...(local.missedInteractions || [])]) {
     if (!m) continue;
-    const key = m.id || `missed:${m.timestamp}:${m.reason || ''}`;
-    if (!missed.has(key)) missed.set(key, m);
+    const key = `${m.kind}:${m.at}:${m.detail}`;
+    const existing = missed.get(key);
+    if (!existing || (existing.followedUpAt || 0) < (m.followedUpAt || 0)) missed.set(key, m);
   }
   const remotePrefs = remote.prefs || {};
   const localPrefs = local.prefs || {};
