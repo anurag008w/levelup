@@ -1973,8 +1973,16 @@ export class ChatToolsService {
     const wantsRest = mode === 'rest';
     const wantsTest = mode === 'test';
     if (isRest === wantsRest && isTest === wantsTest) {
+      // Even a no-op mode request is a safe canonicalization point. Persist the
+      // normalized sets when legacy/corrupt state still contains duplicates.
+      const needsCanonicalization =
+        JSON.stringify(state.restDays ?? []) !== JSON.stringify(restDays)
+        || JSON.stringify(state.testDays ?? []) !== JSON.stringify(testDays);
+      if (needsCanonicalization) {
+        this.store.save({ ...state, restDays, testDays });
+      }
       const label = wantsRest ? 'REST DAY (chhuti)' : wantsTest ? 'TEST DAY (mock test)' : 'normal study day';
-      return { ok: true, summary: `Day ${d} already ${label} hai. ${this.planPreview(state, d)}` };
+      return { ok: true, summary: `Day ${d} already ${label} hai. ${this.planPreview({ ...state, restDays, testDays }, d)}` };
     }
     const nextRest = wantsRest ? normalizeToolDayList([...restDays, d]) : restDays.filter((x) => x !== d);
     const nextTest = wantsTest ? normalizeToolDayList([...testDays, d]) : testDays.filter((x) => x !== d);
