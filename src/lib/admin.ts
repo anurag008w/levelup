@@ -26,8 +26,16 @@ export interface AdminVerifyResult {
  * NOTE: role alone (e.g. role='admin') is NOT enough — the server only flags
  * isSuperAdmin for accounts listed in its ADMIN_USERS config.
  */
-export function canAutoUnlockSession(session: { isSuperAdmin?: boolean; role?: string } | null | undefined): boolean {
-  return session?.isSuperAdmin === true;
+export function canAutoUnlockSession(
+  session: { isSuperAdmin?: boolean; role?: string; username?: string; loggedInAt?: string } | null | undefined,
+): boolean {
+  return (
+    session?.isSuperAdmin === true
+    && typeof session.username === 'string'
+    && session.username.trim().length > 0
+    && typeof session.loggedInAt === 'string'
+    && session.loggedInAt.trim().length > 0
+  );
 }
 
 /**
