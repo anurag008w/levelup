@@ -97,7 +97,7 @@ This turn consumed the previous prioritized queue and implemented every safely a
 - **Proactive preference merge semantics — VERIFIED remains valid.** Current `mergeProactiveBlob()` retains monotonic enablement/grace semantics and local-or-remote ringtone selection.
 - **Duplicate rest-day calendar mapping — VERIFIED remains valid.** Current merge and date-consumer paths retain duplicate normalization.
 - **Task-log snapshot hardening — VERIFIED remains valid.** Historical hardening remains present.
-- **Native SSE cancellation — VERIFIED for the original cancellation finding.** The current `requestWithAbort()` behavior remains hardened; the separate `requestJson()` retry-loop defect remains open.
+- **Native HTTP cancellation — VERIFIED.** The original SSE cancellation hardening remains present, and Turn 20 additionally verified the native `requestJson()` retry-loop guard after abort.
 - **Screen-share obsolete-start race — VERIFIED for the original race.** Historical generation-token hardening remains represented; physical lifecycle evidence remains blocked.
 
 ## Historical Audit/Fix Record
