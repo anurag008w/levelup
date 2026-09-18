@@ -7,8 +7,8 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 20
-- Status: BLOCKED EXTERNAL EVIDENCE REMAIN
+- Audit turn: 21
+- Status: IN PROGRESS — CI GATE PENDING; EXTERNAL EVIDENCE REMAIN
 - Current verified application/code head: `2f0fdd58ade5d0da23af8071b845b31879d199fa`
 - Latest audit-state bookkeeping is recorded separately on `misa-work`; PR #34 remains the sole open PR
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
@@ -18,26 +18,47 @@ This file is the persistent handoff for the hourly production-audit loop.
 1. **BLOCKED — Deployment-topology verification for Vite relative base with root-absolute service-worker/manifest/notification paths.** Requires real deployment topology evidence.
 2. **BLOCKED — Android/native device and API-matrix verification.** Physical process-death, OEM background, PiP, camera/screen-share, and long-running FGS behavior require device evidence unavailable in repository CI.
 3. **BLOCKED — Build-time VITE_DEFAULT_AI_API_KEY exposure assessment.** Actual configured credential scope is not observable through repository access.
+4. **IN PROGRESS — Patch-package failure is not fail-closed during dependency installation.** Implementation is pushed; exact-SHA CI is still pending.
+5. **IN PROGRESS — Release version scheme accepts an oversized final component that updater/Android parsing cannot represent consistently.** Helper guard is pushed, but the manual release workflow has its own parser and still needs matching validation.
 
-## Turn 19 — Proactive cancellation hardening + exact-SHA CI verification
+## Turn 21 — Release/install guardrail hardening + CI regression recovery
 
 ### Scope and evidence
-- Re-read this persistent state before making changes, then inspected PR #34, the current `misa-work` implementations of `mergeProactiveBlob`, `ScheduledProactiveMessage`, and the existing sync-merge regression suite.
-- Confirmed scheduled-message IDs are generated locally with `crypto.randomUUID()` (or a random fallback), so device-local IDs cannot be relied on as a cross-device logical identity.
-- Current application/test head before audit-state bookkeeping was `13dd253c034687146072108bb7fc780e4943e4d4` and remained on PR #34.
+- Re-read the persistent state before changes and inspected PR #34, the current branch head, the independent deep-scan findings, release tooling, package installation behavior, and existing update-version tests.
+- The independent scan identified safely actionable release/install reliability gaps: `postinstall` allowed a required `patch-package` patch to fail silently; the release-version helper accepted five-or-more-digit final version components even though the updater and Android version-code parser interpret the final component as `DDSS`; and environment/release documentation had drifted.
+- Implemented fixes without merge/auto-merge/rebase/force-push or creation of another PR.
 
 ### Finding lifecycle
 
-#### P1 — Scheduled proactive-message cancellation is not monotonic across sync — VERIFIED
-- **Root cause:** `mergeProactiveBlob()` previously keyed scheduled records by `s.id` and replaced an existing record with a newer `createdAt` snapshot without preserving `cancelled`. Since IDs are generated locally, equivalent records created on two devices can have different IDs, allowing a cancelled copy and a pending copy to coexist and the pending copy to be delivered.
-- **Implementation:** scheduled-message merge now uses a deterministic logical identity composed of kind, scheduled time, topic, text/reason, and linked entity. When multiple copies share that identity, the newest metadata is retained while `cancelled` is merged with logical OR and `deliveryRetries` with max, making cancellation a monotonic tombstone.
-- **Changed files/functions:** `src/features/sync/sync-merge.ts` (`mergeProactiveBlob`, new `scheduledProactiveLogicalKey`); `src/features/sync/__tests__/sync-merge.test.ts` (cross-device cancellation regression cases).
-- **Implementation commit SHA:** `fe867a1cd03397e1e94d5a0b5d2927d2cec56dfc`.
-- **Regression-test commit SHA:** `13dd253c034687146072108bb7fc780e4943e4d4`.
-- **Checks:** exact application/test SHA CI run `#587` / Actions run `35330590774` completed successfully: `test`, `web-build`, and `android-build` all terminal `success`. The test job passed lint, tests, and type check; web build passed; Android unit tests and debug APK build/upload passed.
-- **State-head CI:** after recording this lifecycle state, SHA `82beae17f1b0ce2401fd634f5212d4d89944c9d8` received Actions run `#589` / `35330992933`; `test` and `web-build` passed and `android-build` passed. All three jobs are terminal `success`.
-- **Verification evidence:** final post-CI source re-audit at SHA `82beae17f1b0ce2401fd634f5212d4d89944c9d8` confirms the merge no longer uses the device-local scheduled-message ID as its sole identity and explicitly preserves `cancelled` across both merge orders. Regression tests cover different IDs and the case where the cancelled copy is older than the pending copy. The original resurrection failure mode is absent.
-- **Status:** `VERIFIED`.
+#### P3 — Required patch-package patch must fail closed — IN PROGRESS
+- **Root cause:** `package.json` used `"postinstall": "patch-package"` without `--error-on-fail`. A patch mismatch could leave a dependency unpatched while `npm ci` still completed.
+- **Changed files/functions:** `package.json` (`scripts.postinstall`).
+- **Implementation commit:** `42887bba78528ac8cd933f34d1288437a48095d0`.
+- **Regression/recovery commit:** `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` restored the accidentally omitted `vite` devDependency after inspecting the exact CI diff.
+- **Checks:** CI #629 / Actions `35335841582` for `42887bba78528ac8cd933f34d1288437a48095d0` reached `npm ci` successfully and explicitly logged `patch-package --error-on-fail` plus `@capacitor/local-notifications@8.2.1 ✔`. The same run then failed lint on the first regression test because an `.mjs` file contained TypeScript-only type syntax; this was diagnosed and corrected in `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f`.
+- **Status:** `IN PROGRESS` pending terminal-success CI for the corrected SHA.
+
+#### P2/P3 — Release version ambiguity and release helper repository drift — IN PROGRESS
+- **Root cause:** `parseVersion()` interprets 3/4-digit date suffixes as day plus sequence, while `scripts/release-version.mjs` accepted arbitrary-length final components. A value such as `2026.09.10000` could therefore be accepted by the helper but represented inconsistently by updater comparison and Android `versionCode` generation. Separately, `scripts/release.sh` printed the obsolete `jee-human-os` Actions URL.
+- **Implementation:** constrained `scripts/release-version.mjs` to `YYYY.MM.DD` / `YYYY.MM.DDSS` with at most four final digits; added `scripts/release-version.test.mjs` covering supported forms and rejection of `2026.09.10000`; corrected the release helper's repository URL to `anurag008w/levelup`.
+- **Changed files/functions:** `scripts/release-version.mjs`, `scripts/release-version.test.mjs`, `scripts/release.sh`.
+- **Implementation commit:** `42887bba78528ac8cd933f34d1288437a48095d0`.
+- **Regression/recovery commit:** `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` corrected the test syntax and restored `vite`.
+- **Limitation:** `.github/workflows/release.yml` independently parses the manual version input and does not call `release-version.mjs`; it can still accept an oversized final component. This finding therefore remains `IN PROGRESS` and is not claimed fixed.
+- **Status:** `IN PROGRESS`.
+
+#### P3/S4 — Environment example must accurately document build-time exposure and app version — IN PROGRESS
+- **Root cause:** `.env.example` omitted `VITE_APP_VERSION` even though the updater reads it, and its wording could imply that `VITE_DEFAULT_AI_API_KEY` is a hidden runtime secret. Vite `VITE_*` values are embedded into the client bundle.
+- **Implementation:** documented `VITE_APP_VERSION`, explicitly stated that `VITE_*` values are build-time/client-bundle values rather than runtime secrets, and warned against shipping real credentials in `VITE_DEFAULT_AI_API_KEY` in public web builds.
+- **Changed files:** `.env.example`.
+- **Implementation commit:** `42887bba78528ac8cd933f34d1288437a48095d0`.
+- **Status:** `IN PROGRESS` pending exact-SHA CI and final source re-audit.
+
+### Turn 21 CI failure/recovery evidence
+- Commit `42887bba78528ac8cd933f34d1288437a48095d0` triggered CI #629 / Actions `35335841582`.
+- `npm ci` succeeded and demonstrated the new fail-closed patch command was actually executed; lint then failed on the newly added `scripts/release-version.test.mjs` because it contained TypeScript type annotations in an `.mjs` file.
+- The failure was not ignored. Commit `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` removes those annotations and restores the `vite` devDependency accidentally omitted by the first commit.
+- Exact-SHA CI for `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` was queued/in progress when this state record was prepared; no finding depending on that gate is marked `FIXED` or `VERIFIED` yet.
 
 ## Turn 20 — Admin/session + sync + native cancellation + notification + day-mode hardening
 
@@ -117,5 +138,4 @@ All earlier audit turns, findings, fixes, regressions, and verification evidence
 
 ## Historical state integrity note
 
-No historical finding was deleted. Turn-20 P2/P3 findings were removed from the prioritized open queue only after exact-SHA CI and final source re-audit established `VERIFIED`; their complete lifecycle remains in the Turn-20 record above. The prioritized queue now contains only findings blocked by external deployment/device/credential-scope evidence.
-
+No historical finding was deleted. Turn-20 P2/P3 findings were removed from the prioritized open queue only after exact-SHA CI and final source re-audit established `VERIFIED`; their complete lifecycle remains in the Turn-20 record above. The prioritized queue now contains only findings blocked by external deployment/device/credential-scope evidence plus the new Turn-21 findings awaiting their exact-SHA CI gate.
