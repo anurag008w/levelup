@@ -106,6 +106,15 @@ describe('notification-actions', () => {
     expect(notifyAiReplyMock).not.toHaveBeenCalled();
   });
 
+  it('ignores a reply when its auth marker does not match the current session', async () => {
+    handler!({ actionId: 'reply', inputValue: 'marker check', sessionId: 'old-session', authSessionMarker: '2026-09-16T09:00:00.000Z' });
+    await vi.advanceTimersByTimeAsync(REPLY_GRACE_MS + 3000);
+
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(minimizeAppMock).not.toHaveBeenCalled();
+    expect(notifyAiReplyMock).not.toHaveBeenCalled();
+  });
+
   it('reveals multi-bubble replies bubble-by-bubble exactly like chat (fire-time merge, not OS pre-schedule)', async () => {
     const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
     sendMock.mockResolvedValue({ content: 'Pehla paragraph.\n\nDusra paragraph.' });
