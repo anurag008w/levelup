@@ -139,10 +139,13 @@ async function resolveOrCreateSession(): Promise<string> {
  * local chat or invoke its provider path while the login gate is visible.
  * Guest mode is also an explicit local owner, so it remains eligible.
  */
-function hasActiveNotificationOwner(): boolean {
-  if (loadSession()) return true;
+function isNotificationReplyBoundToActiveOwner(authSessionMarker?: string): boolean {
+  const session = loadSession();
+  if (session) {
+    return Boolean(authSessionMarker) && authSessionMarker === session.loggedInAt;
+  }
   try {
-    return localStorage.getItem('levelup:guest') === 'true';
+    return !authSessionMarker && localStorage.getItem('levelup:guest') === 'true';
   } catch {
     return false;
   }
@@ -153,12 +156,12 @@ export function setupNotificationActions(): void {
   setup = true;
   trackAppState();
   void registerNotificationActions();
-  void onNotificationAction(({ actionId, inputValue, sessionId }) => {
-    // Android notifications can outlive the auth session. Never accept a reply
-    // after logout: the old notification still carries the previous sessionId.
-    // Tap/open remains allowed below because it only navigates; it does not
-    // mutate the previous account's chat.
-    if (actionId === 'reply' && !hasActiveNotificationOwner()) return;
+  void onNotificationAction(({ actionId, inputValue, sessionId, authSessionMarker }) => {
+    // Android notifications can outlive the auth session. Replies are valid only
+    // for the exact login session that created the notification. Guest replies
+    // remain valid only while guest mode is still the explicit local owner.
+    // Tap/open remains allowed below because it only navigates.
+    if (actionId === 'reply' && !isNotificationReplyBoundToActiveOwner(authSessionMarker)) return;
 
     // Live-call notifications: reply goes straight into the Gemini Live
     // session (same Activity-launch + minimize trick as chat, so the reply
