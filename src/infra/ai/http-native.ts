@@ -93,9 +93,11 @@ export class CapacitorHttpClient implements HttpClient {
         return res.data as T;
       } catch (err) {
         lastError = err;
-        if (attempt >= retries) throw lastError;
-        const retryable = !(err instanceof HttpError) || RETRYABLE_STATUS.has(err.status);
-        if (retryable) await delayMs(backoffMs(attempt, err instanceof HttpError ? err.status : undefined));
+        if (isRetryableNativeError(err) && attempt < retries) {
+          await delayMs(backoffMs(attempt, err instanceof HttpError ? err.status : undefined));
+          continue;
+        }
+        throw lastError;
       }
     }
     throw lastError;
@@ -135,6 +137,14 @@ export class CapacitorHttpClient implements HttpClient {
     }
     return options;
   }
+}
+
+function isRetryableNativeError(err: unknown): boolean {
+  if (err instanceof HttpError) {
+    if (err.kind === 'aborted') return false;
+    return RETRYABLE_STATUS.has(err.status);
+  }
+  return true;
 }
 
 function statusToKind(status: number): HttpError['kind'] {
