@@ -28,12 +28,12 @@ import type { LiveCallOrigin } from '../../core/domain/live-types';
 export interface ProactivePreferences {
   enabled: boolean;
   callsEnabled: boolean;
-  callFrequency: 'rare' | 'balanced' | 'request_only'; // rare = 1 call/4d, balanced = 1 call/2d, request_only = only when user asks
-  quietHoursStart: string; // e.g. "01:00"
-  quietHoursEnd: string;   // e.g. "07:00"
+  callFrequency: 'rare' | 'balanced' | 'request_only';
+  quietHoursStart: string;
+  quietHoursEnd: string;
   ringtonePreset: RingtonePresetId;
   customRingtoneUrl?: string;
-  activeGraceMinutes: number; // default: 30 minutes
+  activeGraceMinutes: number;
 }
 
 export const DEFAULT_PROACTIVE_PREFS: ProactivePreferences = {
@@ -46,18 +46,13 @@ export const DEFAULT_PROACTIVE_PREFS: ProactivePreferences = {
   activeGraceMinutes: 30,
 };
 
-export type CallStatusType =
-  | 'accepted'
-  | 'declined'
-  | 'missed'
-  | 'offline_attempt'
-  | 'timeout';
+export type CallStatusType = 'accepted' | 'declined' | 'missed' | 'offline_attempt' | 'timeout';
 
 export interface ProactiveTrigger {
   id: number;
   idempotencyKey?: string;
   type: 'chat_nudge' | 'incoming_call' | 'inactivity' | 'cold_start' | 'session_followup';
-  scheduledTime: number; // epoch ms
+  scheduledTime: number;
   topic?: string;
   intent?: 'reminder' | 'doubt_followup' | 'urgent_check' | 'recap' | 'general';
   relatedTaskId?: string;
@@ -72,7 +67,7 @@ export interface ScheduledProactiveMessage {
   kind: 'message' | 'call';
   text?: string;
   reason?: string;
-  scheduledTime: number; // epoch ms
+  scheduledTime: number;
   topic?: string;
   createdAt: number;
   linkedEntity?: { type: 'todo' | 'task' | 'memory' | 'keyword'; value: string };
@@ -188,6 +183,11 @@ const DYNAMIC_TEMPLATES: Record<string, string[]> = {
     'Aaj HC Verma ko dekh ke bhaag toh nahi gaye na 😂',
     'Physics ke sawal tumhe solve kar rahe hain ya tum unhe? 😂 Batana agar help chahiye!',
     'Areyy itni shanti? Lagta hai integration ne behosh kar diya 😂',
+  ],
+  celebration: [
+    'Areyy ye wala target toh ho gaya 😭🔥',
+    'Superb! Ek aur concept solid lock ho gaya! 🚀',
+    'Shabaash! Consistency aisi hi banaye rakhna! 👏',
   ],
   jee_prep: [
     'Suno, question solving chal rahi hai na? Koi calculation me doubt ho to batana!',
@@ -333,9 +333,7 @@ class ProactiveAgentService {
     this.prefs = { ...this.prefs, ...patch };
     if (patch.enabled === false) { void this.cancelAllPendingTriggers(); ringtonePlayer.stop(); this.pendingTriggers = []; this.scheduledMessages = this.scheduledMessages.filter((s) => s.kind === 'call'); }
     if (patch.callsEnabled === false) { this.pendingTriggers = this.pendingTriggers.filter((t) => t.type !== 'incoming_call'); this.scheduledMessages = this.scheduledMessages.filter((s) => s.kind !== 'call'); ringtonePlayer.stop(); }
-    if (patch.quietHoursStart || patch.quietHoursEnd || patch.activeGraceMinutes) {
-      relationshipManager.update((s) => { if (patch.quietHoursStart) s.boundaries.quietHoursStart = patch.quietHoursStart; if (patch.quietHoursEnd) s.boundaries.quietHoursEnd = patch.quietHoursEnd; if (patch.activeGraceMinutes !== undefined) s.boundaries.activeGraceMinutes = patch.activeGraceMinutes; });
-    }
+    if (patch.quietHoursStart || patch.quietHoursEnd || patch.activeGraceMinutes) relationshipManager.update((s) => { if (patch.quietHoursStart) s.boundaries.quietHoursStart = patch.quietHoursStart; if (patch.quietHoursEnd) s.boundaries.quietHoursEnd = patch.quietHoursEnd; if (patch.activeGraceMinutes !== undefined) s.boundaries.activeGraceMinutes = patch.activeGraceMinutes; });
     this.saveState();
   }
   setUserActivityState(state: UserActivityState): void { this.currentActivityState = state; }
@@ -384,103 +382,105 @@ class ProactiveAgentService {
   }
   private checkScheduledMessages(): void {
     if (!this.prefs.enabled || this.isQuietTime() || isLiveCallActive()) return;
-    const now = Date.now();
-    const due = this.scheduledMessages.filter((s) => s.scheduledTime <= now);
-    if (due.length === 0) return;
+    const now = Date.now(); const due = this.scheduledMessages.filter((s) => s.scheduledTime <= now); if (due.length === 0) return;
     this.scheduledMessages = this.scheduledMessages.filter((s) => s.scheduledTime > now); this.saveState();
     for (const item of due) {
       if (item.kind === 'call') {
         const fired = this.triggerIncomingCall(item.reason || 'Misa ne schedule kiya tha');
-        if (!fired) {
-          const tries = (item.deliveryRetries ?? 0) + 1;
-          if (tries < ProactiveAgentService.MAX_DELIVERY_RETRIES) { this.scheduledMessages.push({ ...item, scheduledTime: now + 5 * 60 * 1000, deliveryRetries: tries }); this.saveState(); }
-        }
+        if (!fired) { const tries = (item.deliveryRetries ?? 0) + 1; if (tries < ProactiveAgentService.MAX_DELIVERY_RETRIES) { this.scheduledMessages.push({ ...item, scheduledTime: now + 5 * 60 * 1000, deliveryRetries: tries }); this.saveState(); } }
       } else if (item.text) {
-        const relState = relationshipManager.getState();
-        const validation = validateProactiveDelivery({ id: `sch_${item.id}`, type: 'commitment_followup', topic: item.topic, urgency: 0.7, relevance: 0.85, confidence: 0.9, freshness: 0.9, offlineText: item.text, isInsideActiveSession: this.isUserCurrentlyInChat }, relState, { lastActiveTimestamp: this.lastActiveTimestamp, isInsideActiveSession: this.isUserCurrentlyInChat, recentSentMessages: relState.recentSentMessages, now });
-        if (!validation.valid) {
-          const tries = (item.deliveryRetries ?? 0) + 1; if (tries >= ProactiveAgentService.MAX_DELIVERY_RETRIES) continue;
-          this.scheduledMessages.push({ ...item, scheduledTime: now + 5 * 60 * 1000, deliveryRetries: tries }); this.saveState(); continue;
-        }
+        const relState = relationshipManager.getState(); const validation = validateProactiveDelivery({ id: `sch_${item.id}`, type: 'commitment_followup', topic: item.topic, urgency: 0.7, relevance: 0.85, confidence: 0.9, freshness: 0.9, offlineText: item.text, isInsideActiveSession: this.isUserCurrentlyInChat }, relState, { lastActiveTimestamp: this.lastActiveTimestamp, isInsideActiveSession: this.isUserCurrentlyInChat, recentSentMessages: relState.recentSentMessages, now });
+        if (!validation.valid) { const tries = (item.deliveryRetries ?? 0) + 1; if (tries >= ProactiveAgentService.MAX_DELIVERY_RETRIES) continue; this.scheduledMessages.push({ ...item, scheduledTime: now + 5 * 60 * 1000, deliveryRetries: tries }); this.saveState(); continue; }
         const msg = validation.sanitizedText || item.text; this.injectMessageIntoChat(msg); relationshipManager.recordProactiveSent(item.topic || 'ai_scheduled', msg);
       }
     }
   }
-  scheduleMessage(text: string, scheduledTime: number, topic?: string, linkedEntity?: ScheduledProactiveMessage['linkedEntity']): string {
-    const item: ScheduledProactiveMessage = { id: crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, kind: 'message', text, topic, scheduledTime, createdAt: Date.now(), linkedEntity };
-    this.scheduledMessages.push(item); this.saveState(); return item.id;
-  }
-  scheduleCall(reason: string, scheduledTime: number): string {
-    const item: ScheduledProactiveMessage = { id: crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, kind: 'call', reason, scheduledTime, createdAt: Date.now() };
-    this.scheduledMessages.push(item); this.saveState(); return item.id;
-  }
+  scheduleMessage(text: string, scheduledTime: number, topic?: string, linkedEntity?: ScheduledProactiveMessage['linkedEntity']): string { const item: ScheduledProactiveMessage = { id: crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, kind: 'message', text, topic, scheduledTime, createdAt: Date.now(), linkedEntity }; this.scheduledMessages.push(item); this.saveState(); return item.id; }
+  scheduleCall(reason: string, scheduledTime: number): string { const item: ScheduledProactiveMessage = { id: crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, kind: 'call', reason, scheduledTime, createdAt: Date.now() }; this.scheduledMessages.push(item); this.saveState(); return item.id; }
   cancelScheduledForDoneEntity(type: 'todo' | 'task' | 'memory' | 'keyword', value: string): number {
-    if (!value) return 0;
-    const norm = value.trim().toLowerCase(); const before = this.scheduledMessages.length;
-    this.scheduledMessages = this.scheduledMessages.filter((s) => {
-      if (s.scheduledTime <= Date.now()) return true;
-      const ent = s.linkedEntity; if (!ent || ent.type !== type) return true;
-      const entNorm = (ent.value || '').trim().toLowerCase(); if (entNorm === '') return true;
-      return entNorm !== norm && !norm.includes(entNorm) && !entNorm.includes(norm);
-    });
-    if (this.scheduledMessages.length !== before) { this.saveState(); return before - this.scheduledMessages.length; }
-    return 0;
+    if (!value) return 0; const norm = value.trim().toLowerCase(); const before = this.scheduledMessages.length;
+    this.scheduledMessages = this.scheduledMessages.filter((s) => { if (s.scheduledTime <= Date.now()) return true; const ent = s.linkedEntity; if (!ent || ent.type !== type) return true; const entNorm = (ent.value || '').trim().toLowerCase(); if (entNorm === '') return true; return entNorm !== norm && !norm.includes(entNorm) && !entNorm.includes(norm); });
+    if (this.scheduledMessages.length !== before) { this.saveState(); return before - this.scheduledMessages.length; } return 0;
   }
   notifyEntityCompleted(type: 'todo' | 'task' | 'memory' | 'keyword', value: string): void { this.cancelScheduledForDoneEntity(type, value); }
   makeCall(reason: string): boolean { return this.triggerIncomingCall(reason || 'Misa call kar rahi hai', 'user_tool'); }
-  cancelScheduledMessage(id: string): boolean {
-    const before = this.scheduledMessages.length;
-    this.scheduledMessages = this.scheduledMessages.filter((s) => s.id !== id);
-    if (this.scheduledMessages.length !== before) { this.saveState(); return true; }
-    return false;
+  cancelScheduledMessage(id: string): boolean { const before = this.scheduledMessages.length; this.scheduledMessages = this.scheduledMessages.filter((s) => s.id !== id); if (this.scheduledMessages.length !== before) { this.saveState(); return true; } return false; }
+  listScheduledMessages(): ScheduledProactiveMessage[] { const now = Date.now(); return this.scheduledMessages.filter((s) => s.scheduledTime > now).sort((a, b) => a.scheduledTime - b.scheduledTime); }
+  private async checkSpontaneousMemoryMessage(): Promise<void> {
+    if (!this.prefs.enabled || this.isQuietTime() || isLiveCallActive()) return;
+    const now = Date.now(); if (now < this.nextSpontaneousAt || this.currentActivityState === 'DEEP_STUDY' || this.currentActivityState === 'SOLVING' || this.isUserCurrentlyInChat) return;
+    const relState = relationshipManager.getState(); if (now - this.lastActiveTimestamp < this.prefs.activeGraceMinutes * 60 * 1000 && this.lastActiveTimestamp > 0) return;
+    const hasMemorySource = (relState.pendingPromises?.length ?? 0) > 0 || (relState.commitments?.length ?? 0) > 0 || (relState.durableMemories?.length ?? 0) > 0 || !!relState.currentProblemArea || (relState.currentSubject && relState.currentSubject !== 'General');
+    if (!hasMemorySource) return;
+    for (const expires of Object.values(relState.fatigue?.topicCooldowns ?? {})) if (now < expires) return;
+    let sourceLabel = 'jee_prep'; let situation = ''; let offlineMsg = ''; let foundSource = false; const today = new Date().toISOString().slice(0, 10);
+    const duePromise = relState.pendingPromises?.find((p: any) => !p.isResumed && p.targetDate && p.targetDate <= today);
+    if (duePromise) { foundSource = true; sourceLabel = 'jee_prep'; situation = `Student ne promise kiya tha: "${duePromise.userPromise}" (target: ${duePromise.targetDate}). Wo target date aa gayi hai, isliye ab puchhna natural hai. Warm, chhota, zero-guilt reminder bhejo.`; offlineMsg = `Arey, woh "${duePromise.userPromise}" wali baat — aaj uska waqt tha na? Kaisa raha? 😏`; }
+    if (!foundSource && (relState.commitments?.length ?? 0) > 0) { const commitment = relState.commitments[0]; const lastTouch = commitment.updatedAt || commitment.createdAt || 0; const commitmentAgeDays = (now - lastTouch) / (24 * 3600 * 1000); const isActiveCommitment = commitment.state === 'STARTED' || commitment.state === 'PLANNED' || commitment.state === 'RESUMED'; if (commitmentAgeDays >= 1 && commitmentAgeDays <= 7 && isActiveCommitment) { foundSource = true; sourceLabel = commitment.topic || 'jee_prep'; situation = `Student ka active commitment hai: "${commitment.sourceText}" (topic: ${commitment.topic || 'daily study'}), jo ${Math.round(commitmentAgeDays)} din se touch nahi hua. Ek warm check-in bhejo — kya target kaisa chal raha hai, problem ho toh saath karein.`; offlineMsg = `Suno, "${commitment.sourceText}" — ${Math.round(commitmentAgeDays)} din ho gaye. Ab kaisa chal raha hai? Koi fasi baat ho toh batana! 💪`; } }
+    if (!foundSource && (relState.durableMemories?.length ?? 0) > 0) { const candidates = relState.durableMemories.filter((m) => m.confidence >= 0.6 && !m.isMastered && m.category !== 'preference').sort((a, b) => (b.confidence - a.confidence) || (b.lastReinforcedAt - a.lastReinforcedAt)); const memory = candidates[0]; if (memory) { foundSource = true; sourceLabel = memory.topic || memory.subject || 'jee_prep'; situation = `Student ki ek baat yaad hai: "${memory.fact}" (category: ${memory.category}). Ye unlinked/not-mastered hai, isliye genuine laga. Ussi se juda ek natural warm chhota message bhejo.`; if (memory.category === 'target') offlineMsg = `Arey, aaj ka revision target yaad aaya — "${memory.fact}" wala target aaj kaisa chal raha hai? 💪`; else if (memory.category === 'habit') offlineMsg = `Yaad aaya, tumne bataya tha "${memory.fact}" — aaj ka count kaise hai?`; else offlineMsg = `Woh "${memory.fact}" wali cheez — ab kaisa lag raha hai?`; } }
+    if (!foundSource && relState.currentProblemArea) { foundSource = true; sourceLabel = relState.currentProblemArea; situation = `Student recently "${relState.currentProblemArea}" par kaam kar raha tha. Usi se juda ek chhota natural message bhejo.`; offlineMsg = `Woh "${relState.currentProblemArea}" wala doubt — kuch progress hua na?`; } else if (!foundSource && relState.currentSubject && relState.currentSubject !== 'General') { foundSource = true; sourceLabel = relState.currentSubject; situation = `Student ka current subject "${relState.currentSubject}" hai. Uss subject ke liye ek motivating chhota message bhejo.`; offlineMsg = `${relState.currentSubject} ke targets kaisi chal rahi hai aaj? Ek doubt nikalte hain! 🔥`; }
+    if (!foundSource) { this.nextSpontaneousAt = now + ProactiveAgentService.SPONTANEOUS_MIN_GAP_MS; return; }
+    this.nextSpontaneousAt = now + ProactiveAgentService.SPONTANEOUS_MIN_GAP_MS;
+    const msg = await this.generateDynamicProactiveMessage(situation, sourceLabel).catch(() => offlineMsg); const finalMsg = msg?.trim() || offlineMsg;
+    const validation = validateProactiveDelivery({ id: 'spontaneous_memory', type: 'check_in', topic: sourceLabel, urgency: 0.55, relevance: 0.8, confidence: 0.85, freshness: 0.9, offlineText: finalMsg, isInsideActiveSession: this.isUserCurrentlyInChat }, relState, { lastActiveTimestamp: this.lastActiveTimestamp, isInsideActiveSession: this.isUserCurrentlyInChat, recentSentMessages: relState.recentSentMessages, now });
+    if (!validation.valid) { this.nextSpontaneousAt = now + ProactiveAgentService.SPONTANEOUS_MIN_GAP_MS; return; }
+    const decision = socialDecisionEngine.shouldSpeak({ id: 'spontaneous_memory', type: 'check_in', topic: sourceLabel, urgency: 0.55, relevance: 0.8, confidence: 0.85, freshness: 0.9, offlineText: finalMsg }, relState, this.lastActiveTimestamp, now, this.currentActivityState); if (!decision.allow) { this.nextSpontaneousAt = now + ProactiveAgentService.SPONTANEOUS_MIN_GAP_MS; return; }
+    const text = validation.sanitizedText || finalMsg; this.injectMessageIntoChat(text); relationshipManager.recordProactiveSent(sourceLabel, text); this.recordUserActivity(); this.nextSpontaneousAt = now + ProactiveAgentService.SPONTANEOUS_MIN_GAP_MS;
   }
-  listScheduledMessages(): ScheduledProactiveMessage[] {
-    const now = Date.now(); return this.scheduledMessages.filter((s) => s.scheduledTime > now).sort((a, b) => a.scheduledTime - b.scheduledTime);
+  async generateDynamicProactiveMessage(situation: string, topic?: string): Promise<string> {
+    const relState = relationshipManager.getState(); const activeTopic = topic || relState.commitments[0]?.topic || relState.currentProblemArea || relState.currentSubject || 'JEE study'; const recentStruggle = relState.durableMemories.find((m) => m.category === 'struggle')?.fact;
+    try {
+      if (typeof container !== 'undefined' && container?.llm?.isAvailable()) {
+        const systemInstruction = `You are Misa, a warm, caring, real human-like female JEE study partner and best friend.\nStudent Context:\n- Current Target Topic: "${activeTopic}"\n- Recent Struggle/Doubt: ${recentStruggle ? `"${recentStruggle}"` : 'None recorded'}\n- Situation: ${situation}\n\nInstructions:\n- Write exactly 1 short, natural, warm Hinglish message (maximum 1-2 sentences) directly to the student.\n- DO NOT say "As an AI" or "Misa here" or "Main aapki study assistant hoon" or "Kya main aapki madad kar sakti hoon?".\n- Speak like a real close friend on WhatsApp (casual, warm, empathetic, motivational).\n- You can use natural words like "bhai", "yaar", "suno", or light emojis.`;
+        const res = await container.llm.complete({ messages: [{ role: 'system', content: systemInstruction }, { role: 'user', content: `Send a natural, 1-line study check-in message for situation: ${situation}` }], temperature: 0.85, maxTokens: 80 });
+        const reply = res.text?.trim(); if (reply && reply.length > 5 && reply.length < 220) return reply.replace(/^["']|["']$/g, '');
+      }
+    } catch (err) { console.warn('[ProactiveAgent] Dynamic LLM generation fallback:', err); }
+    return pickContextualMessage(topic || 'jee_prep', relState);
   }
-  private async checkSpontaneousMemoryMessage(): Promise<void> { return; }
-  async generateDynamicProactiveMessage(situation: string, topic?: string): Promise<string> { return pickContextualMessage(topic || 'jee_prep', relationshipManager.getState()); }
-  private async checkInactivityAndFire(): Promise<void> { if (!this.prefs.enabled || this.isQuietTime() || isLiveCallActive() || this.inactivityCheckInFlight) return; this.inactivityCheckInFlight = true; try { return; } finally { this.inactivityCheckInFlight = false; } }
-  private evaluateSpontaneousCall(_now: number, _relState: any): void {}
+  private async checkInactivityAndFire(): Promise<void> {
+    if (!this.prefs.enabled || this.isQuietTime() || isLiveCallActive() || this.inactivityCheckInFlight) return; this.inactivityCheckInFlight = true;
+    try {
+      const now = Date.now(); const effectiveLastActive = Math.max(this.lastUserChatTimestamp || 0, this.lastActiveTimestamp || 0); const inactiveSince = effectiveLastActive > 0 ? now - effectiveLastActive : 0; const activeSince = now - this.lastActiveTimestamp;
+      if (activeSince < this.prefs.activeGraceMinutes * 60 * 1000 && effectiveLastActive > 0) return;
+      if (this.currentActivityState === 'DEEP_STUDY' || this.currentActivityState === 'SOLVING') return;
+      if (this.pendingTriggers.some((t) => t.scheduledTime > now - 30 * 60 * 1000)) return;
+      const relState = relationshipManager.getState();
+      if (effectiveLastActive > 0 && inactiveSince >= 2.5 * 3600 * 1000 && inactiveSince < 24 * 3600 * 1000) {
+        const lastDaytimeNudge = relState.fatigue.topicCooldowns['inactivity_daytime'] || 0;
+        if (now >= lastDaytimeNudge) {
+          const situation = this.lastUserChatTimestamp === 0 ? 'Student has opened/used the app but has not yet chatted or started their daily study sprint.' : 'Student has been quietly studying or away from study session for ~3 hours during daytime.';
+          const msg = await this.generateDynamicProactiveMessage(situation, 'inactivity_daytime');
+          const validation = validateProactiveDelivery({ id: 'inactivity_daytime', type: 'check_in', urgency: 0.6, relevance: 0.85, confidence: 0.9, freshness: 0.9, offlineText: msg, isInsideActiveSession: this.isUserCurrentlyInChat }, relState, { lastActiveTimestamp: this.lastActiveTimestamp, isInsideActiveSession: this.isUserCurrentlyInChat, recentSentMessages: relState.recentSentMessages, now });
+          if (validation.valid) { this.injectMessageIntoChat(validation.sanitizedText || msg); relationshipManager.recordProactiveSent('inactivity_daytime', msg); this.lastUserChatTimestamp = now; return; }
+          return;
+        }
+      }
+      if (effectiveLastActive > 0 && inactiveSince >= 96 * 3600 * 1000) {
+        const msg = await this.generateDynamicProactiveMessage('Student has been inactive for 4 days. Send a warm, zero-guilt, fresh start reset message.', 'inactivity_96h');
+        const validation = validateProactiveDelivery({ id: 'inactivity_96h', type: 'check_in', urgency: 0.7, relevance: 0.8, confidence: 0.9, freshness: 0.9, offlineText: msg }, relState, { lastActiveTimestamp: this.lastActiveTimestamp, recentSentMessages: relState.recentSentMessages, now });
+        if (validation.valid) { this.injectMessageIntoChat(validation.sanitizedText || msg); relationshipManager.recordProactiveSent('inactivity_96h', msg); this.lastUserChatTimestamp = now; } return;
+      } else if (effectiveLastActive > 0 && inactiveSince >= 48 * 3600 * 1000) {
+        const msg = await this.generateDynamicProactiveMessage('Student has been quiet for 2 days. Send a friendly, low-pressure check-in.', 'inactivity_48h');
+        const validation = validateProactiveDelivery({ id: 'inactivity_48h', type: 'check_in', urgency: 0.6, relevance: 0.75, confidence: 0.85, freshness: 0.85, offlineText: msg }, relState, { lastActiveTimestamp: this.lastActiveTimestamp, recentSentMessages: relState.recentSentMessages, now });
+        if (validation.valid) { this.injectMessageIntoChat(validation.sanitizedText || msg); relationshipManager.recordProactiveSent('inactivity_48h', msg); this.lastUserChatTimestamp = now; } return;
+      } else if (effectiveLastActive > 0 && inactiveSince >= 24 * 3600 * 1000) {
+        const msg = await this.generateDynamicProactiveMessage('Student has been away for 24 hours. Encourage starting with 1 small study target today.', 'inactivity_24h');
+        const validation = validateProactiveDelivery({ id: 'inactivity_24h', type: 'check_in', urgency: 0.5, relevance: 0.7, confidence: 0.8, freshness: 0.8, offlineText: msg }, relState, { lastActiveTimestamp: this.lastActiveTimestamp, recentSentMessages: relState.recentSentMessages, now });
+        if (validation.valid) { this.injectMessageIntoChat(validation.sanitizedText || msg); relationshipManager.recordProactiveSent('inactivity_24h', msg); this.lastUserChatTimestamp = now; } return;
+      }
+      this.evaluateSpontaneousCall(now, relState);
+    } finally { this.inactivityCheckInFlight = false; }
+  }
+  private evaluateSpontaneousCall(now: number, relState: any): void { if (!this.prefs.callsEnabled || this.prefs.callFrequency === 'request_only' || this.isQuietTime()) return; if (this.currentActivityState === 'DEEP_STUDY' || this.currentActivityState === 'SOLVING' || this.currentActivityState === 'WRITING') return; const minCallInterval = this.prefs.callFrequency === 'rare' ? 4 * 24 * 3600 * 1000 : 2 * 24 * 3600 * 1000; const declinePenaltyMs = (3 + this.consecutiveCallDeclines) * 24 * 3600 * 1000; const sevenDays = 7 * 24 * 3600 * 1000; const effectiveLastActive = Math.max(this.lastUserChatTimestamp || 0, this.lastActiveTimestamp || 0); const callReady = now - this.lastCallTimestamp > minCallInterval && now - this.lastCallDeclinedTimestamp > declinePenaltyMs && effectiveLastActive > 0 && now - effectiveLastActive < sevenDays && relState.fatigue.fatigueScore < 0.4; if (callReady && Math.random() < 0.1) { const commitments = relState.commitments.filter((c: any) => c.state === 'PLANNED'); const reason = commitments.length > 0 ? `${commitments[0].topic} study check-in` : 'Study check-in'; this.triggerIncomingCall(reason); } }
   recordUserActivity(): void { this.lastActiveTimestamp = Date.now(); this.saveState(); }
   recordTyping(): void { const now = Date.now(); this.lastActiveTimestamp = now; this.lastUserChatTimestamp = now; this.isUserCurrentlyInChat = true; if (now - this.lastTypingPersistAt > 20000) { this.lastTypingPersistAt = now; this.saveState(); } }
   setDNDDuration(durationMs: number): void { this.dndUntilTimestamp = Date.now() + durationMs; this.cancelAllPendingTriggers(); this.saveState(); }
-  isQuietTime(): boolean {
-    const now = new Date(); if (Date.now() < this.dndUntilTimestamp) return true;
-    try { const [startH, startM] = this.prefs.quietHoursStart.split(':').map(Number); const [endH, endM] = this.prefs.quietHoursEnd.split(':').map(Number); const currentMins = now.getHours() * 60 + now.getMinutes(); const startMins = startH * 60 + startM; const endMins = endH * 60 + endM; if (startMins > endMins) return currentMins >= startMins || currentMins < endMins; return currentMins >= startMins && currentMins < endMins; } catch { return false; }
-  }
-  async cancelAllPendingTriggers(): Promise<void> {
-    if (Capacitor.isNativePlatform()) { try { const ids = this.pendingTriggers.map((t) => ({ id: t.id })); if (ids.length > 0) await LocalNotifications.cancel({ notifications: ids }); } catch (e) {} }
-    this.pendingTriggers = []; this.saveState();
-  }
-  async onTaskCompleted(taskId?: string, taskTitle?: string): Promise<void> {
-    this.recordUserActivity(); if (!taskId && !taskTitle) return;
-    const remaining: ProactiveTrigger[] = []; const toCancel: Array<{ id: number }> = []; const lowerTitle = (taskTitle || '').toLowerCase();
-    for (const trig of this.pendingTriggers) { const matchTask = trig.relatedTaskId && trig.relatedTaskId === taskId; const matchTopic = trig.topic && lowerTitle.includes(trig.topic.toLowerCase()); if (matchTask || matchTopic) toCancel.push({ id: trig.id }); else remaining.push(trig); }
-    if (toCancel.length > 0 && Capacitor.isNativePlatform()) { try { await LocalNotifications.cancel({ notifications: toCancel }); } catch {} }
-    this.pendingTriggers = remaining; this.saveState();
-    if (taskTitle) { const comm = relationshipManager.findCommitmentByTopic(taskTitle); if (comm) relationshipManager.updateCommitmentState(comm.id, 'COMPLETED'); else relationshipManager.reinforceTopicSuccess(taskTitle); const celebMsg = pickVariedTemplate('celebration', relationshipManager.getState().recentSentMessages); if (this.celebrationTimer !== null) clearTimeout(this.celebrationTimer); this.celebrationTimer = setTimeout(() => { this.celebrationTimer = null; this.injectMessageIntoChat(celebMsg); }, 800); }
-  }
-  onChatTurn(userText: string, assistantReply: string, context?: { tasksCount?: number; streak?: number }): void {
-    if (!this.prefs.enabled) return; this.recordUserActivity(); this.isUserCurrentlyInChat = true; relationshipManager.recordAppEngaged(); this.lastUserChatTimestamp = Date.now(); const lowerUser = userText.toLowerCase();
-    if (lowerUser.includes('disturb mat') || lowerUser.includes('message mat karna') || lowerUser.includes('call mat karna') || lowerUser.includes('dnd')) { let hours = 2; const match = lowerUser.match(/(\d+)\s*(?:ghante|ghanta|hour|hr)/); if (match) hours = parseInt(match[1], 10) || 2; this.setDNDDuration(hours * 3600 * 1000); return; }
-    if (lowerUser.includes('call karo') || lowerUser.includes('call pe aao') || lowerUser.includes('call lagao') || lowerUser.includes('mujhe call karo') || lowerUser.includes('call me') || lowerUser.includes('call karna') || lowerUser.includes('mujhe call')) { if (Date.now() - this.lastUserToolCallTimestamp < 30000) return; this.chatCallTimer = setTimeout(() => { this.chatCallTimer = null; this.triggerIncomingCall('User ne chat me call karne ko kaha', 'user_tool'); }, 1800); return; }
-    if (lowerUser.includes('kal batata') || lowerUser.includes('kal bataunga') || lowerUser.includes('baad me batata') || lowerUser.includes('baad me bataunga')) relationshipManager.addUserPromise(userText);
-    const hasCommitmentIntent = lowerUser.includes('kal ') || lowerUser.includes('karega') || lowerUser.includes('karunga') || lowerUser.includes('questions lagane') || lowerUser.includes('solve karna');
-    if (hasCommitmentIntent) { const topicMatch = lowerUser.includes('optics') ? 'Optics' : lowerUser.includes('rotation') ? 'Rotation' : lowerUser.includes('organic') ? 'Organic Chemistry' : lowerUser.includes('thermo') ? 'Thermodynamics' : lowerUser.includes('calculus') ? 'Calculus' : 'JEE Problem Solving'; const subjectMatch: SubjectArea = lowerUser.includes('optics') || lowerUser.includes('rotation') || lowerUser.includes('thermo') ? 'Physics' : lowerUser.includes('organic') ? 'Chemistry' : lowerUser.includes('calculus') ? 'Mathematics' : 'General'; const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); relationshipManager.addCommitment({ sourceText: userText, topic: topicMatch, subject: subjectMatch, targetDate: tomorrow.toISOString().slice(0, 10), state: 'PLANNED' }); }
-    if (lowerUser.includes('nahi samajh') || lowerUser.includes('problem ho rahi') || lowerUser.includes('doubt') || lowerUser.includes('stuck')) { const topicMatch = lowerUser.includes('optics') ? 'Optics' : lowerUser.includes('rotation') ? 'Rotation' : lowerUser.includes('organic') ? 'Organic Chemistry' : 'General Doubt'; relationshipManager.addOrUpdateMemory('struggle', `Struggled with ${topicMatch}: "${userText.slice(0, 80)}"`, topicMatch); }
-    if (lowerUser.includes('thak gaya') || lowerUser.includes('exhausted') || lowerUser.includes('demotivated') || lowerUser.includes('stress')) relationshipManager.update((s) => { s.currentMoodContext = 'burnout'; });
-    if (this.debounceTimer) clearTimeout(this.debounceTimer); this.debounceTimer = setTimeout(() => { this.sealSessionTrigger(userText, assistantReply, context); }, 4000);
-    if (this.sessionIdleTimer) clearTimeout(this.sessionIdleTimer);
-    const topicForFollowUp = lowerUser.includes('optics') ? 'Optics' : lowerUser.includes('rotat') || lowerUser.includes('torque') ? 'Rotation' : lowerUser.includes('organic') || lowerUser.includes('reaction') ? 'Organic Chemistry' : lowerUser.includes('thermo') ? 'Thermodynamics' : lowerUser.includes('calculus') || lowerUser.includes('integrat') ? 'Calculus' : lowerUser.includes('doubt') || lowerUser.includes('nahi samajh') ? 'the doubt you had' : null;
-    this.lastSessionTopic = topicForFollowUp || this.lastSessionTopic;
-    this.sessionIdleTimer = setTimeout(() => { this.evaluateSessionFollowUp(); this.isUserCurrentlyInChat = false; }, 5 * 60 * 1000);
-  }
-  private async sealSessionTrigger(userText: string, _assistantReply: string, _context?: { tasksCount?: number; streak?: number }): Promise<void> { await this.cancelAllPendingTriggers(); const lower = userText.toLowerCase(); const now = Date.now(); let delayMs = 1.5 * 3600 * 1000; let topic = 'jee_prep'; let urgency = 0.6; let relevance = 0.8; let confidence = 0.85; if (lower.includes('optics') || lower.includes('ray diagram') || lower.includes('mirror') || lower.includes('lens')) { topic = 'optics'; delayMs = 1.5 * 3600 * 1000; urgency = 0.8; relevance = 0.95; } else if (lower.includes('rotat') || lower.includes('torque') || lower.includes('moment of inertia')) { topic = 'rotation'; delayMs = 3.5 * 3600 * 1000; urgency = 0.8; relevance = 0.95; } else if (lower.includes('organic') || lower.includes('reaction') || lower.includes('mechanism')) { topic = 'organic'; delayMs = 2 * 3600 * 1000; urgency = 0.75; relevance = 0.9; } else if (lower.includes('thermo') || lower.includes('entropy') || lower.includes('enthalpy')) { topic = 'thermodynamics'; delayMs = 3.5 * 3600 * 1000; urgency = 0.75; relevance = 0.9; } else if (lower.includes('calculus') || lower.includes('integration') || lower.includes('differential')) { topic = 'calculus'; delayMs = 3.5 * 3600 * 1000; urgency = 0.8; relevance = 0.95; } else if (lower.includes('kal') || lower.includes('tomorrow') || lower.includes('subah')) { topic = 'morning_plan'; const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(9, 30, 0, 0); delayMs = Math.max(2 * 3600 * 1000, tomorrow.getTime() - now); urgency = 0.85; relevance = 0.9; } else if (lower.includes('thak') || lower.includes('tired') || lower.includes('demotivat') || lower.includes('stress')) { topic = 'rest_burnout'; delayMs = 45 * 60 * 1000; urgency = 0.65; relevance = 0.85; }
-    const relState = relationshipManager.getState(); const offlineMessage = pickContextualMessage(topic, relState); const scheduledTime = now + delayMs; const candidate: ProactiveCandidate = { id: `cand_${now}`, type: 'commitment_followup', topic, urgency, relevance, confidence, freshness: 0.9, offlineText: offlineMessage };
-    const decision = socialDecisionEngine.shouldSpeak(candidate, relState, this.lastActiveTimestamp, scheduledTime, this.currentActivityState); if (!decision.allow) return;
-    this.pendingTriggers = this.pendingTriggers.filter((t) => t.topic !== topic); const triggerId = Math.floor(Math.random() * 100000) + 1000; const trigger: ProactiveTrigger = { id: triggerId, idempotencyKey: `${topic}:reminder:${new Date(scheduledTime).toISOString().slice(0, 10)}`, type: 'chat_nudge', scheduledTime, topic, offlineMessage }; this.pendingTriggers.push(trigger); this.saveState();
-    if (Capacitor.isNativePlatform()) { try { await LocalNotifications.schedule({ notifications: [{ id: triggerId, title: 'Misa', body: offlineMessage, largeBody: offlineMessage, schedule: { at: new Date(scheduledTime), allowWhileIdle: true }, channelId: 'misa_proactive_channel', extra: { offlineMessage, topic } }] }); } catch (err) { console.warn('[ProactiveAgent] Schedule notification error:', err); } }
-  }
+  isQuietTime(): boolean { const now = new Date(); if (Date.now() < this.dndUntilTimestamp) return true; try { const [startH, startM] = this.prefs.quietHoursStart.split(':').map(Number); const [endH, endM] = this.prefs.quietHoursEnd.split(':').map(Number); const currentMins = now.getHours() * 60 + now.getMinutes(); const startMins = startH * 60 + startM; const endMins = endH * 60 + endM; if (startMins > endMins) return currentMins >= startMins || currentMins < endMins; return currentMins >= startMins && currentMins < endMins; } catch { return false; } }
+  async cancelAllPendingTriggers(): Promise<void> { if (Capacitor.isNativePlatform()) { try { const ids = this.pendingTriggers.map((t) => ({ id: t.id })); if (ids.length > 0) await LocalNotifications.cancel({ notifications: ids }); } catch (e) {} } this.pendingTriggers = []; this.saveState(); }
+  async onTaskCompleted(taskId?: string, taskTitle?: string): Promise<void> { this.recordUserActivity(); if (!taskId && !taskTitle) return; const remaining: ProactiveTrigger[] = []; const toCancel: Array<{ id: number }> = []; const lowerTitle = (taskTitle || '').toLowerCase(); for (const trig of this.pendingTriggers) { const matchTask = trig.relatedTaskId && trig.relatedTaskId === taskId; const matchTopic = trig.topic && lowerTitle.includes(trig.topic.toLowerCase()); if (matchTask || matchTopic) toCancel.push({ id: trig.id }); else remaining.push(trig); } if (toCancel.length > 0 && Capacitor.isNativePlatform()) { try { await LocalNotifications.cancel({ notifications: toCancel }); } catch {} } this.pendingTriggers = remaining; this.saveState(); if (taskTitle) { const comm = relationshipManager.findCommitmentByTopic(taskTitle); if (comm) relationshipManager.updateCommitmentState(comm.id, 'COMPLETED'); else relationshipManager.reinforceTopicSuccess(taskTitle); const celebMsg = pickVariedTemplate('celebration', relationshipManager.getState().recentSentMessages); if (this.celebrationTimer !== null) clearTimeout(this.celebrationTimer); this.celebrationTimer = setTimeout(() => { this.celebrationTimer = null; this.injectMessageIntoChat(celebMsg); }, 800); } }
+  onChatTurn(userText: string, assistantReply: string, context?: { tasksCount?: number; streak?: number }): void { if (!this.prefs.enabled) return; this.recordUserActivity(); this.isUserCurrentlyInChat = true; relationshipManager.recordAppEngaged(); this.lastUserChatTimestamp = Date.now(); const lowerUser = userText.toLowerCase(); if (lowerUser.includes('disturb mat') || lowerUser.includes('message mat karna') || lowerUser.includes('call mat karna') || lowerUser.includes('dnd')) { let hours = 2; const match = lowerUser.match(/(\d+)\s*(?:ghante|ghanta|hour|hr)/); if (match) hours = parseInt(match[1], 10) || 2; this.setDNDDuration(hours * 3600 * 1000); return; } if (lowerUser.includes('call karo') || lowerUser.includes('call pe aao') || lowerUser.includes('call lagao') || lowerUser.includes('mujhe call karo') || lowerUser.includes('call me') || lowerUser.includes('phone karo') || lowerUser.includes('call karna') || lowerUser.includes('mujhe call')) { if (Date.now() - this.lastUserToolCallTimestamp < 30000) return; this.chatCallTimer = setTimeout(() => { this.chatCallTimer = null; this.triggerIncomingCall('User ne chat me call karne ko kaha', 'user_tool'); }, 1800); return; } if (lowerUser.includes('kal batata') || lowerUser.includes('kal bataunga') || lowerUser.includes('baad me batata') || lowerUser.includes('baad me bataunga')) relationshipManager.addUserPromise(userText); const hasCommitmentIntent = lowerUser.includes('kal ') || lowerUser.includes('karega') || lowerUser.includes('karunga') || lowerUser.includes('questions lagane') || lowerUser.includes('solve karna'); if (hasCommitmentIntent) { const topicMatch = lowerUser.includes('optics') ? 'Optics' : lowerUser.includes('rotation') ? 'Rotation' : lowerUser.includes('organic') ? 'Organic Chemistry' : lowerUser.includes('thermo') ? 'Thermodynamics' : lowerUser.includes('calculus') ? 'Calculus' : 'JEE Problem Solving'; const subjectMatch: SubjectArea = lowerUser.includes('optics') || lowerUser.includes('rotation') || lowerUser.includes('thermo') ? 'Physics' : lowerUser.includes('organic') ? 'Chemistry' : lowerUser.includes('calculus') ? 'Mathematics' : 'General'; const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); relationshipManager.addCommitment({ sourceText: userText, topic: topicMatch, subject: subjectMatch, targetDate: tomorrow.toISOString().slice(0, 10), state: 'PLANNED' }); } if (lowerUser.includes('nahi samajh') || lowerUser.includes('problem ho rahi') || lowerUser.includes('doubt') || lowerUser.includes('stuck')) { const topicMatch = lowerUser.includes('optics') ? 'Optics' : lowerUser.includes('rotation') ? 'Rotation' : lowerUser.includes('organic') ? 'Organic Chemistry' : 'General Doubt'; relationshipManager.addOrUpdateMemory('struggle', `Struggled with ${topicMatch}: "${userText.slice(0, 80)}"`, topicMatch); } if (lowerUser.includes('thak gaya') || lowerUser.includes('exhausted') || lowerUser.includes('demotivated') || lowerUser.includes('stress')) relationshipManager.update((s) => { s.currentMoodContext = 'burnout'; }); if (this.debounceTimer) clearTimeout(this.debounceTimer); this.debounceTimer = setTimeout(() => { this.sealSessionTrigger(userText, assistantReply, context); }, 4000); if (this.sessionIdleTimer) clearTimeout(this.sessionIdleTimer); const topicForFollowUp = lowerUser.includes('optics') ? 'Optics' : lowerUser.includes('rotat') || lowerUser.includes('torque') ? 'Rotation' : lowerUser.includes('organic') || lowerUser.includes('reaction') ? 'Organic Chemistry' : lowerUser.includes('thermo') ? 'Thermodynamics' : lowerUser.includes('calculus') || lowerUser.includes('integrat') ? 'Calculus' : lowerUser.includes('doubt') || lowerUser.includes('nahi samajh') ? 'the doubt you had' : null; this.lastSessionTopic = topicForFollowUp || this.lastSessionTopic; this.sessionIdleTimer = setTimeout(() => { this.evaluateSessionFollowUp(); this.isUserCurrentlyInChat = false; }, 5 * 60 * 1000); }
+  private async sealSessionTrigger(userText: string, _assistantReply: string, _context?: { tasksCount?: number; streak?: number }): Promise<void> { await this.cancelAllPendingTriggers(); const lower = userText.toLowerCase(); const now = Date.now(); let delayMs = 1.5 * 3600 * 1000; let topic = 'jee_prep'; let urgency = 0.6; let relevance = 0.8; let confidence = 0.85; if (lower.includes('optics') || lower.includes('ray diagram') || lower.includes('mirror') || lower.includes('lens')) { topic = 'optics'; delayMs = 1.5 * 3600 * 1000; urgency = 0.8; relevance = 0.95; } else if (lower.includes('rotat') || lower.includes('torque') || lower.includes('moment of inertia')) { topic = 'rotation'; delayMs = 3.5 * 3600 * 1000; urgency = 0.8; relevance = 0.95; } else if (lower.includes('organic') || lower.includes('reaction') || lower.includes('mechanism')) { topic = 'organic'; delayMs = 2 * 3600 * 1000; urgency = 0.75; relevance = 0.9; } else if (lower.includes('thermo') || lower.includes('entropy') || lower.includes('enthalpy')) { topic = 'thermodynamics'; delayMs = 3.5 * 3600 * 1000; urgency = 0.75; relevance = 0.9; } else if (lower.includes('calculus') || lower.includes('integration') || lower.includes('differential')) { topic = 'calculus'; delayMs = 3.5 * 3600 * 1000; urgency = 0.8; relevance = 0.95; } else if (lower.includes('kal') || lower.includes('tomorrow') || lower.includes('subah')) { topic = 'morning_plan'; const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(9, 30, 0, 0); delayMs = Math.max(2 * 3600 * 1000, tomorrow.getTime() - now); urgency = 0.85; relevance = 0.9; } else if (lower.includes('thak') || lower.includes('tired') || lower.includes('demotivat') || lower.includes('stress')) { topic = 'rest_burnout'; delayMs = 45 * 60 * 1000; urgency = 0.65; relevance = 0.85; } const relState = relationshipManager.getState(); const offlineMessage = pickContextualMessage(topic, relState); const scheduledTime = now + delayMs; const candidate: ProactiveCandidate = { id: `cand_${now}`, type: 'commitment_followup', topic, urgency, relevance, confidence, freshness: 0.9, offlineText: offlineMessage }; const decision = socialDecisionEngine.shouldSpeak(candidate, relState, this.lastActiveTimestamp, scheduledTime, this.currentActivityState); if (!decision.allow) return; this.pendingTriggers = this.pendingTriggers.filter((t) => t.topic !== topic); const triggerId = Math.floor(Math.random() * 100000) + 1000; const trigger: ProactiveTrigger = { id: triggerId, idempotencyKey: `${topic}:reminder:${new Date(scheduledTime).toISOString().slice(0, 10)}`, type: 'chat_nudge', scheduledTime, topic, offlineMessage }; this.pendingTriggers.push(trigger); this.saveState(); if (Capacitor.isNativePlatform()) { try { await LocalNotifications.schedule({ notifications: [{ id: triggerId, title: 'Misa', body: offlineMessage, largeBody: offlineMessage, schedule: { at: new Date(scheduledTime), allowWhileIdle: true }, channelId: 'misa_proactive_channel', extra: { offlineMessage, topic } }] }); } catch (err) { console.warn('[ProactiveAgent] Schedule notification error:', err); } } }
   evaluateSessionFollowUp(overrideNow?: number): void { if (this.isQuietTime()) return; const now = overrideNow ?? Date.now(); if (now - this.lastUserChatTimestamp < 4.5 * 60 * 1000 && !overrideNow) return; const rel = relationshipManager.getState(); const topic = this.lastSessionTopic || rel.commitments[0]?.topic || rel.currentSubject || null; const followUpMessages = topic ? [`Ek kaam aur batao — ${topic} ka jo section chal raha tha, koi step clear nahi tha kya? 😊`, `Hey, ${topic} wala part kaisa raha? Kuch aur sambhalna ho toh batao! 🎯`, `Suno, ${topic} me koi formula ya concept dobara dekhna ho toh batao, saath me kar lete hain 💪`] : ['Koi aur question chal raha hai? Batao, saath me solve karte hain! 😊', 'Hey, padhai kaisi chal rahi hai? Koi concept fasa hua ho toh batao! 🎯', 'Suno, agar koi doubt hai toh abhi puch lo — main available hoon! 💪']; const sentMsgs = rel.recentSentMessages; const available = followUpMessages.filter((m) => !sentMsgs.includes(m)); const msg = available[Math.floor(Math.random() * available.length)] || followUpMessages[0]; const candidate: ProactiveCandidate = { id: `session_followup_${now}`, type: 'session_followup', topic: topic || undefined, urgency: 0.7, relevance: 0.9, confidence: 0.85, freshness: 0.95, offlineText: msg, isInsideActiveSession: this.isUserCurrentlyInChat }; const validation = validateProactiveDelivery(candidate, rel, { lastActiveTimestamp: this.lastActiveTimestamp, isInsideActiveSession: this.isUserCurrentlyInChat, recentSentMessages: rel.recentSentMessages, now }); if (!validation.valid) return; const decision = socialDecisionEngine.shouldSpeak(candidate, rel, this.lastActiveTimestamp, now, this.currentActivityState); if (decision.allow) { this.injectMessageIntoChat(validation.sanitizedText || msg); relationshipManager.recordProactiveSent('session_followup', msg); } }
   private async checkColdStartOnboarding(): Promise<void> { if (this.coldStartDone) return; if (this.pendingTriggers.some((t) => t.id === 9901 || t.id === 9902)) return; const now = Date.now(); const day1Time = new Date(); day1Time.setHours(18, 30, 0, 0); if (day1Time.getTime() < now) day1Time.setDate(day1Time.getDate() + 1); const revTime = new Date(); revTime.setHours(20, 0, 0, 0); if (revTime.getTime() < now) revTime.setDate(revTime.getDate() + 1); const trigger: ProactiveTrigger = { id: 9901, type: 'cold_start', scheduledTime: day1Time.getTime(), offlineMessage: 'Hey! Dekha tumne LevelUp install kiya hai par abhi tak baat nahi ki. JEE prep me kya target chal raha hai — milke plan banayein?' }; const revisionTrigger: ProactiveTrigger = { id: 9902, type: 'cold_start', scheduledTime: revTime.getTime(), topic: 'jee_prep', offlineMessage: 'Hey! Aaj ka revision target kaisa progress kar raha hai? Batana agar koi problem fasa ho — saath me crack karte hain! 💪' }; this.pendingTriggers.push(trigger, revisionTrigger); this.coldStartDone = true; this.saveState(); if (Capacitor.isNativePlatform()) { try { await LocalNotifications.schedule({ notifications: [{ id: 9901, title: 'Misa', body: trigger.offlineMessage, largeBody: trigger.offlineMessage, schedule: { at: day1Time, allowWhileIdle: true }, channelId: 'misa_proactive_channel', extra: { offlineMessage: trigger.offlineMessage } }, { id: 9902, title: 'Misa', body: revisionTrigger.offlineMessage, largeBody: revisionTrigger.offlineMessage, schedule: { at: revTime, allowWhileIdle: true }, channelId: 'misa_proactive_channel', extra: { offlineMessage: revisionTrigger.offlineMessage } }] }); } catch {} } }
   triggerIncomingCall(reason = 'Study check-in', origin: LiveCallOrigin = 'auto'): boolean { const userRequested = origin === 'user_tool'; if (!this.prefs.callsEnabled && !userRequested) return false; if (this.isQuietTime() && !userRequested) return false; if (isLiveCallActive()) return false; const now = Date.now(); const minCallInterval = this.prefs.callFrequency === 'rare' ? 4 * 24 * 3600 * 1000 : 2 * 24 * 3600 * 1000; const declinePenaltyMs = (3 + this.consecutiveCallDeclines) * 24 * 3600 * 1000; if (now - this.lastCallDeclinedTimestamp < declinePenaltyMs && !userRequested) return false; if (now - this.lastCallTimestamp < minCallInterval && !userRequested) return false; this.lastCallTimestamp = now; this.saveState(); if (userRequested && this.chatCallTimer !== null) { clearTimeout(this.chatCallTimer); this.chatCallTimer = null; } if (userRequested) this.lastUserToolCallTimestamp = now; const callEvent: IncomingCallEvent = { callId: `call_${now}`, reason, callerName: 'Misa', origin }; for (const listener of this.incomingCallListeners) listener(callEvent); return true; }
@@ -492,15 +492,7 @@ class ProactiveAgentService {
   private recordMissedInteraction(kind: 'call' | 'message', detail: string): void { const now = Date.now(); this.missedInteractions.push({ kind, at: now, detail, followedUpAt: null }); this.missedInteractions = this.missedInteractions.filter((m) => now - m.at < ProactiveAgentService.MISSED_FOLLOWUP_MAX_AGE_MS); this.saveState(); }
   private clearMissedCallFollowUps(): void { const before = this.missedInteractions.length; this.missedInteractions = this.missedInteractions.filter((m) => m.kind !== 'call'); if (this.missedInteractions.length !== before) this.saveState(); }
   private checkMissedInteractionFollowUp(): void { if (!this.prefs.enabled || this.isQuietTime() || isLiveCallActive()) return; const now = Date.now(); const pending = this.missedInteractions.find((m) => m.followedUpAt === null); if (!pending) return; if (now - pending.at < ProactiveAgentService.MISSED_FOLLOWUP_GRACE_MS) return; const activeRecently = this.lastActiveTimestamp > 0 && now - this.lastActiveTimestamp < 2 * 60 * 60 * 1000; if (!activeRecently) return; let followUp = ''; const hoursLate = Math.round((now - pending.at) / 3600000); if (pending.kind === 'call') followUp = hoursLate <= 24 ? `Arey, abhi aaye ho? Mera call miss ho gaya tha — sab theek hai na? 😄` : `Kal mera call miss ho gaya tha, tab busy the? Theek ho na? 😊`; else followUp = `Hmm, tumne ek lambe time ke baad message kiya (${pending.detail}) — sab theek hai? Lag raha tha mujhse ignore kar rahe the 😅`; this.injectMessageIntoChat(followUp); pending.followedUpAt = now; this.saveState(); }
-  injectMessageIntoChat(text: string): void {
-    if (isLiveCallActive()) return;
-    const now = Date.now(); const lastInjectedAt = this.recentInjected.get(text); if (lastInjectedAt !== undefined && now - lastInjectedAt < ProactiveAgentService.INJECT_DEDUPE_WINDOW_MS) return; this.recentInjected.set(text, now); if (this.recentInjected.size > 50) for (const [key, at] of this.recentInjected) if (now - at > 60 * 60 * 1000) this.recentInjected.delete(key);
-    const msgId = `msg-${now}-${Math.random().toString(36).slice(2, 6)}`; const payload: MessageInjectionPayload = { role: 'assistant', text, isProactive: true, msgId }; let delivered = false;
-    for (const listener of this.messageInjectionListeners) { try { if (listener(payload) !== false) delivered = true; } catch {} }
-    if (!delivered) { try { const activeId = container?.chat?.getActiveSessionId?.() || container?.chat?.listSessions?.()?.[0]?.id; if (activeId) container.chat.appendMessage(activeId, { id: msgId, role: 'assistant', content: text, createdAt: new Date(now).toISOString(), isProactive: true }); } catch {} }
-    if (!delivered && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('levelup:proactive-message', { detail: { text, isProactive: true, msgId } }));
-    if (Capacitor.isNativePlatform() && (!this.isUserCurrentlyInChat || !isAppActive())) void LocalNotifications.schedule({ notifications: [{ id: (now % 2147483647) + 1, title: 'Misa', body: text, largeBody: text, schedule: { at: new Date(now + 100), allowWhileIdle: true }, channelId: 'misa_proactive_channel', extra: { offlineMessage: text } }] }).catch(() => undefined);
-  }
+  injectMessageIntoChat(text: string): void { if (isLiveCallActive()) return; const now = Date.now(); const lastInjectedAt = this.recentInjected.get(text); if (lastInjectedAt !== undefined && now - lastInjectedAt < ProactiveAgentService.INJECT_DEDUPE_WINDOW_MS) return; this.recentInjected.set(text, now); if (this.recentInjected.size > 50) for (const [key, at] of this.recentInjected) if (now - at > 60 * 60 * 1000) this.recentInjected.delete(key); const msgId = `msg-${now}-${Math.random().toString(36).slice(2, 6)}`; const payload: MessageInjectionPayload = { role: 'assistant', text, isProactive: true, msgId }; let delivered = false; for (const listener of this.messageInjectionListeners) { try { if (listener(payload) !== false) delivered = true; } catch {} } if (!delivered) { try { const activeId = container?.chat?.getActiveSessionId?.() || container?.chat?.listSessions?.()?.[0]?.id; if (activeId) container.chat.appendMessage(activeId, { id: msgId, role: 'assistant', content: text, createdAt: new Date(now).toISOString(), isProactive: true }); } catch {} } if (!delivered && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('levelup:proactive-message', { detail: { text, isProactive: true, msgId } })); if (Capacitor.isNativePlatform() && (!this.isUserCurrentlyInChat || !isAppActive())) void LocalNotifications.schedule({ notifications: [{ id: (now % 2147483647) + 1, title: 'Misa', body: text, largeBody: text, schedule: { at: new Date(now + 100), allowWhileIdle: true }, channelId: 'misa_proactive_channel', extra: { offlineMessage: text } }] }).catch(() => undefined); }
   private injectCallStatusEvent(callStatus: CallStatusType): void { let displayText = '📞 Call Event'; if (callStatus === 'missed') displayText = '📞 Missed Call'; else if (callStatus === 'declined') displayText = '📞 Declined Call'; else if (callStatus === 'offline_attempt') displayText = '📶 Offline Call Attempt'; for (const listener of this.messageInjectionListeners) listener({ role: 'assistant', text: displayText, isCallEvent: true, callStatus }); }
   onIncomingCall(listener: IncomingCallListener): () => void { this.incomingCallListeners.add(listener); return () => this.incomingCallListeners.delete(listener); }
   onMessageInjection(listener: MessageInjectionListener): () => void { this.messageInjectionListeners.add(listener); return () => this.messageInjectionListeners.delete(listener); }
