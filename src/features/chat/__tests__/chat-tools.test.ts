@@ -491,6 +491,31 @@ describe('ChatToolsService', () => {
     expect(store.get().restDays).toEqual([]);
   });
 
+  it('canonicalizes duplicate and conflicting day modes before writing', async () => {
+    const store = makeStore();
+    store.save({
+      ...store.get(),
+      restDays: [35, 35, 35],
+      testDays: [35, 40, 40],
+    });
+    const { tools } = makeTools(store);
+
+    const study = await tools.run({ action: 'setDayMode', day: 35, mode: 'study', confirmed: true });
+    expect(study.ok).toBe(true);
+    expect(store.get().restDays).toEqual([]);
+    expect(store.get().testDays).toEqual([40]);
+
+    store.save({
+      ...store.get(),
+      restDays: [36, 36],
+      testDays: [37, 37],
+    });
+    const rest = await tools.run({ action: 'setDayMode', day: 36, mode: 'rest', confirmed: true });
+    expect(rest.ok).toBe(true);
+    expect(store.get().restDays).toEqual([36]);
+    expect(store.get().testDays).toEqual([37]);
+  });
+
   it('setDayMode test/rest/study changes are undoable and redoable (combined dayModes entity)', async () => {
     const store = makeStore();
     const { tools } = makeTools(store);
