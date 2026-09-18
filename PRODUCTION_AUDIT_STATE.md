@@ -7,15 +7,25 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 15
+- Audit turn: 16
 - Fix iterations this turn: 2
 - Status: COMPLETE
 - Main baseline observed this turn: `38a57bb68dcf4fdcd8d3f72b92d8b83cca23c481`
-- Turn-15 starting head: `da136966dbae945a9dfa643931ff2ab4d5ae83fb`
-- Latest fix commits: `fa7de1e30cbb0fd1d637b1c92662b8310a774ad5`, `7a5fe2eab9846cfa40cd5409a66c95c3245a9e06`
-- Latest state commit: `69e3832bb6c3601ee493f8ab65b76125ed51baff`
+- Turn-16 starting head: `f35be39b8efcb16692b177f64f4b41ca46770396`
+- Latest fix commits: `11053bdf5aa0e4e9305ae04c6c8f95afa4dfaee8`, `d2b5045c2d6f41d6419903ca3a43360291bfb015`
+- Latest state commit: `69e3832bb6c3601ee493f8ab65b76125ed51baff` (superseded by the state-update commit recorded at the end of Turn 16)
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
-- Next audit target: habits/exams/task persistence/concurrency, then AI/chat action state integrity rotation
+- Next audit target: Android cleartext/custom-local provider hardening, then direct setDayMode state canonicalization and remaining AI/provider lifecycle surfaces
+
+### PRIORITIZED OPEN FINDINGS INDEX
+
+> The persisted Turn-15 state did not contain this index. This queue is synchronized from the recorded remaining risks in that state; no independent reviewer ordering was available to consume in this turn.
+
+1. **P2 OPEN — Android cleartext/custom-local provider hardening.** `android:usesCleartextTraffic="true"` remains broader than necessary and needs an evidence-backed custom/local-provider compatibility audit before narrowing.
+2. **P3 OPEN — Direct setDayMode state canonicalization.** Duplicate/stale rest/test membership can still be written at the chat-tool source, even though date consumers defensively normalize duplicate rest days.
+3. **BLOCKED — Deployment-topology verification for Vite relative base with root-absolute service-worker/manifest/notification paths.** Requires real deployment topology evidence.
+4. **BLOCKED — Android/native device and API-matrix verification.** Physical process-death, OEM background, PiP, camera/screen-share, and long-running FGS behavior require device evidence unavailable in repository CI.
+5. **BLOCKED — Build-time VITE_DEFAULT_AI_API_KEY exposure assessment.** Actual configured credential scope is not observable through repository access.
 
 ## Turn 15 — First Audit
 
@@ -471,3 +481,66 @@ The complete historical record below is preserved unchanged from the prior persi
 - Repeated `AudioRoute.getAvailableRoutes is not a function` warnings remain UNPROVEN/ENVIRONMENTAL because tests pass through the guarded native/web boundary and native runtime evidence is unavailable.
 - Vite `base: './'` combined with root-absolute service-worker/manifest/notification paths remains UNPROVEN without deployment-topology evidence.
 - Android physical/API-matrix verification remains unavailable even though CI Android build/static checks are green.
+## Turn 16 — First Audit
+
+### Scope
+- Read `PRODUCTION_AUDIT_STATE.md` first. The previous persisted state ended at Turn 15 and did not contain a `PRIORITIZED OPEN FINDINGS INDEX`; the recorded remaining-risk queue was used without inventing an independent review-agent ordering.
+- Re-read root `AGENTS.md` and `README.md` before mutation; both continue to classify Misa Live/Memory/Proactive features as development-only and require verified hardening before any stability claim.
+- Confirmed PR #34 remains the single open `misa-work -> main` PR, unmerged and without auto-merge. Turn-16 starting head was `f35be39b8efcb16692b177f64f4b41ca46770396`.
+- Rotated into AI/provider HTTP lifecycle and cancellation semantics in `src/infra/ai/http-native.ts`.
+
+### Finding
+- **P2 — Native Capacitor SSE cancellation was not honoring the caller's abort signal.** `HttpRequestInit` exposes an external `AbortSignal` for caller-side cancellation, and `CapacitorHttpClient.requestJson()` already attempted to honor it. But `requestSse()` called `CapacitorHttp.request()` directly, so an in-flight native streaming request could remain pending until its native read timeout even after the user pressed stop. The same boundary also left the JSON implementation's abort event listener attached until the signal settled elsewhere.
+
+### Evidence
+- Before the fix, `requestSse()` had no pre-abort check and no abort listener/race; it awaited the native request unconditionally.
+- `requestJson()` already documented that CapacitorHttp itself cannot be directly cancelled and used a promise race to surface an app-facing abort promptly.
+- The corrected implementation centralizes this contract in `requestWithAbort()` and applies it to both JSON and SSE requests.
+
+## Turn 16 — Fix iteration 1
+
+### Fix
+- `src/infra/ai/http-native.ts`: added `requestWithAbort()`, which rejects already-aborted calls, races the native request against the caller signal, and removes the abort listener on success, failure, or cancellation. The underlying native request still relies on its connect/read timeout because CapacitorHttp does not expose direct AbortSignal cancellation.
+- `requestJson()` now uses the helper, removing its prior per-request listener leak.
+- `requestSse()` now uses the same helper, giving native SSE the same stop/cancel contract as JSON requests.
+- Existing timeout/read-timeout behavior and SSE parsing were preserved.
+
+### Regression coverage
+- `src/infra/ai/__tests__/http-native.test.ts`: added coverage that an in-flight native SSE request rejects with `HttpError(kind="aborted")` when the caller aborts, and that a pre-aborted signal prevents the native request from starting.
+- The in-flight test resolves the mocked native request after the caller-facing promise has aborted, proving the wrapper does not depend on native cancellation to settle the app-facing operation.
+
+### Commits
+- `11053bdf5aa0e4e9305ae04c6c8f95afa4dfaee8` — `fix(ai): honor native SSE cancellation`
+- `d2b5045c2d6f41d6419903ca3a43360291bfb015` — `test(ai): cover native SSE cancellation`
+- Both AI-authored commits use author `anurag` and contain the required Misa trailer exactly once.
+
+## Turn 16 — Targeted / static verification
+
+- Re-read the exact final `http-native.ts` and `http-native.test.ts` at `d2b5045c2d6f41d6419903ca3a43360291bfb015`.
+- Confirmed every native JSON/SSE request with a caller signal goes through the same abort wrapper and listener cleanup path.
+- Repository-local npm/Gradle execution was not available because the environment cannot reliably resolve `github.com`; no local command pass is claimed.
+- Remote CI supplied repository-integrated executable verification.
+
+## Turn 16 — CI evidence
+
+- CI run **#573 / 35315758166** for exact final code SHA `d2b5045c2d6f41d6419903ca3a43360291bfb015` reached terminal SUCCESS.
+- `test` job **105506949428** — SUCCESS: dependency install, lint, full tests, and type check all succeeded.
+- `web-build` job **105507185078** — SUCCESS: production web build succeeded.
+- `android-build` job **105507325493** — SUCCESS: Android SDK setup, dependency install, web build, Capacitor sync, Android unit tests/debug APK, and APK upload all succeeded.
+
+## Turn 16 — POST-FIX / LAST AUDIT
+
+- Re-audited the native HTTP boundary after terminal CI success.
+- Confirmed `requestSse()` no longer has a direct uncancelled `CapacitorHttp.request()` path when an external signal is supplied.
+- Confirmed pre-aborted calls do not start the native request.
+- Confirmed the abort listener is removed after either request settlement or caller cancellation.
+- Confirmed retry behavior in `requestJson()` remains fail-closed for `HttpError(kind="aborted")`; no new retry loop was introduced.
+- No useful documentation/JSDoc was removed; the native cancellation limitation remains explicitly documented.
+- **Finding lifecycle: VERIFIED** — implementation complete, regression coverage present, exact final code SHA passed full CI, and post-CI re-audit confirmed the original uncancellable SSE path is gone.
+
+## Turn 16 — Final State
+
+- Final code SHA before the state-recording commit: `d2b5045c2d6f41d6419903ca3a43360291bfb015`.
+- PR #34 remains open, unmerged, targeting `main`; `misa-work` remains the sole hardening branch.
+- The verified native SSE cancellation finding is removed from the prioritized OPEN queue and retained here as complete historical evidence.
+- Remaining open/blocked items are listed in the `PRIORITIZED OPEN FINDINGS INDEX` near the top of this file.
