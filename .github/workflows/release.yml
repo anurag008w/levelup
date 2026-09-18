@@ -50,6 +50,16 @@ jobs:
           fi
           VERSION_NAME="${VERSION#v}"
 
+          # Keep the workflow parser aligned with scripts/release-version.mjs:
+          # YYYY.MM.DD or YYYY.MM.DDSS, with at most four digits in the final
+          # component. The updater and Android versionCode parser both split
+          # the final component after its first two digits, so silently
+          # accepting a longer value would produce an ambiguous release.
+          if [[ ! "$VERSION_NAME" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{1,4}$ ]]; then
+            echo "❌ Invalid app version '$VERSION_NAME' — expected YYYY.MM.DD or YYYY.MM.DDSS (max 4 digits in the final component)"
+            exit 1
+          fi
+
           YEAR="${VERSION_NAME%%.*}"
           REST="${VERSION_NAME#*.}"
           MONTH="${REST%%.*}"
