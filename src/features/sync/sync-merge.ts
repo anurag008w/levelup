@@ -212,8 +212,8 @@ function mergeRelationshipState(local: RelationshipState, remote: RelationshipSt
     }
     return Array.from(map.values());
   };
-  const remoteCooldowns = remote.fatigue?.topicCooldowns || {};
-  const localCooldowns = local.fatigue?.topicCooldowns || {};
+  const remoteCooldowns = sanitizeTopicCooldowns(remote.fatigue?.topicCooldowns);
+  const localCooldowns = sanitizeTopicCooldowns(local.fatigue?.topicCooldowns);
   const topicCooldowns: Record<string, number> = { ...remoteCooldowns };
   for (const [topic, localExpiry] of Object.entries(localCooldowns)) {
     const remoteExpiry = topicCooldowns[topic];
@@ -327,6 +327,17 @@ function scheduledProactiveLogicalKey(message: ScheduledProactiveMessage): strin
     message.text || message.reason || '',
     linkedEntity,
   ].join('\\u0000');
+}
+
+function sanitizeTopicCooldowns(input: unknown): Record<string, number> {
+  if (typeof input !== 'object' || input === null) return {};
+  const sanitized: Record<string, number> = {};
+  for (const [rawTopic, value] of Object.entries(input as Record<string, unknown>)) {
+    const topic = rawTopic.trim();
+    if (!topic || typeof value !== 'number' || !Number.isFinite(value) || value < 0) continue;
+    sanitized[topic] = value;
+  }
+  return sanitized;
 }
 
 function dedupeStrings(values: string[]): string[] {
