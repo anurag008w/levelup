@@ -7,18 +7,48 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 22
-- Status: IN PROGRESS — EXACT-SHA CI PASSED; EXTERNAL EVIDENCE REMAINS
-- Current verified repository head: `4d9c0c2090ec8d0995466b0d80a7982e1afd5cca`
-- Current verified application/code head before this bookkeeping commit: `4d9c0c2090ec8d0995466b0d80a7982e1afd5cca`
-- Latest audit-state bookkeeping is recorded separately on `misa-work`; PR #34 remains the sole open PR
+- Audit turn: 23
+- Status: IN PROGRESS — EXACT-SHA CI PASSED; DEPLOYMENT/DEVICE/CREDENTIAL EVIDENCE REMAINS
+- Current verified repository head: `b13fe22ba87446d62b93b504dc5052c83a79d6ca`
+- Current verified application/code head: `b13fe22ba87446d62b93b504dc5052c83a79d6ca`
+- Latest audit-state bookkeeping is being recorded on `misa-work`; PR #34 remains the sole open PR
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
 
 ### PRIORITIZED OPEN FINDINGS INDEX
 
-1. **BLOCKED — Deployment-topology verification for Vite relative base with root-absolute service-worker/manifest/notification paths.** Requires real deployment topology evidence.
+1. **BLOCKED — Deployment-topology verification for Vite relative base.** Code-side mitigation for root-absolute service-worker/manifest/notification paths is verified on this turn, but real deployed-host evidence is still required before the deployment-topology finding can be upgraded from `BLOCKED`.
 2. **BLOCKED — Android/native device and API-matrix verification.** Physical process-death, OEM background, PiP, camera/screen-share, and long-running FGS behavior require device evidence unavailable in repository CI.
 3. **BLOCKED — Build-time VITE_DEFAULT_AI_API_KEY exposure assessment.** Actual configured credential scope is not observable through repository access.
+
+## Turn 23 — Deployment-relative PWA path hardening + exact-SHA CI verification
+
+### Scope and evidence
+- Re-read `/PRODUCTION_AUDIT_STATE.md` first and confirmed the highest-priority open finding was the deployment-topology item for `base: './'` combined with root-absolute PWA/service-worker paths.
+- Re-audited the current `misa-work` versions of `index.html`, `src/main.tsx`, `public/manifest.json`, `public/sw.js`, `vite.config.ts`, and the open PR before editing.
+- Confirmed the root-absolute paths were real code paths: HTML referenced `/icon-192.png` and `/manifest.json`; `main.tsx` registered `/sw.js`; and the service worker opened `/` after a notification click.
+- Implemented code-side mitigation without changing the deployment model: HTML PWA assets are relative, the manifest uses relative `start_url`, `scope`, and icon paths, service-worker registration derives its URL from `import.meta.env.BASE_URL`, and notification clicks reopen the service worker's own registration scope.
+- Added a regression test at `scripts/deployment-paths.test.mjs` covering all four path contracts so future changes cannot silently reintroduce root-absolute deployment coupling.
+- No merge, auto-merge, rebase, force-push, second PR, or PR close was performed.
+
+### Finding lifecycle
+
+#### P2/P3 — Deployment-relative PWA/service-worker path hardening — BLOCKED
+- **Root cause:** the Vite configuration uses `base: './'`, but PWA entry points used root-absolute paths. On a host where the app is served below `/`, those paths resolve outside the deployed application. The service worker also used `/` as its notification-click fallback, which similarly escapes a subpath deployment.
+- **Changed files/functions:** `index.html` (favicon/manifest links); `public/manifest.json` (`start_url`, `scope`, icon `src`); `src/main.tsx` (service-worker registration URL); `public/sw.js` (notification-click fallback); `scripts/deployment-paths.test.mjs` (regression coverage).
+- **Implementation commits:** `2411a8cd53284fe6e9f84c3e1419c9ea74e2ff0e`, `656faffcda50928ae2d8aaf8531643af1f038c45`, `7ac37a89b1b6880b5ed65c7dbdede762fcc2ccfc`, `d711d0d970f7ed1a45848679c4c163ba2fd097c3`, `b13fe22ba87446d62b93b504dc5052c83a79d6ca`.
+- **Targeted/static verification:** post-change source re-audit confirms `index.html` no longer contains root-absolute favicon/manifest paths; the manifest uses `./` for start/scope and `./favicon.svg`; `main.tsx` constructs `${import.meta.env.BASE_URL}sw.js`; and `sw.js` uses `self.registration.scope` rather than `/`.
+- **Regression coverage:** `scripts/deployment-paths.test.mjs` asserts the relative HTML paths, exact manifest `start_url`/`scope`/icon contract, BASE_URL-derived service-worker registration, and scope-relative notification fallback.
+- **Exact-SHA CI:** run #646 / Actions `35345597971` for `b13fe22ba87446d62b93b504dc5052c83a79d6ca` completed with terminal `success` for `test`, `web-build`, and `android-build`. The `test` job completed install, lint, full tests, and type check; web build and Android build also completed successfully.
+- **Evidence limitation:** repository CI proves the source/build contract but does not prove behavior on the user's actual deployment host, especially rewrite/base-URL behavior for a subpath and browser service-worker scope. The deployment-topology finding therefore remains `BLOCKED`; the code-side mitigation is verified but real-host verification is still required.
+- **Lifecycle:** `BLOCKED`.
+
+### Turn 23 CI evidence
+- Final implementation SHA: `b13fe22ba87446d62b93b504dc5052c83a79d6ca`.
+- Exact CI run: #646 / Actions `35345597971`.
+- `test`: terminal `success`; install, lint, full tests, and type check completed successfully.
+- `web-build`: terminal `success`; production web build completed successfully.
+- `android-build`: terminal `success`; Android SDK setup, dependency installation, web build, Capacitor sync, Android unit tests/debug APK build, and artifact upload completed successfully.
+- No CI failure required a recovery commit in this turn.
 
 ## Turn 22 — Release workflow parser alignment + exact-SHA verification
 
@@ -144,7 +174,7 @@ This turn consumed the previous prioritized queue and implemented every safely a
 - **Root cause:** `setDayMode` normalized arrays for calculations but a no-op request could return before persisting the canonical sets, leaving duplicate legacy values in state.
 - **Changed files/functions:** `src/features/chat/chat-tools.service.ts` (`normalizeToolDayList`, `setDayMode`); `src/features/chat/__tests__/chat-tools.test.ts`.
 - **Implementation/test commits:** `61fd64aecf603a13fb815a1b29722315e02f5d47`, `b6352131ed649bc8a17476bee4858efe3f6ab235`, `33a74358dcc20eba88f62b13fd70adbef174a2d2`; CI-found regression fix commits `b6352131ed649bc8a17476bee4858efe3f6ab235` and `2f0fdd58ade5d0da23af8071b845b31879d199fa`.
-- **Verification history:** first exact application CI run #619 / `35332289405` correctly failed two newly added regressions: duplicate day-mode state was not canonicalized on an idempotent request, and the cooldown test fixture accidentally shared the default nested fatigue object. Both were diagnosed from exact CI logs and fixed in the subsequent commits.
+- **Verification history:** first exact application CI run #619 / `35332289405` correctly failed two newly added regressions: duplicate day-mode state was not canonicalized on an idempotent request, and the cooldown test fixture accidentally shared the default nested fatigue object. Both were diagnosed and fixed in the subsequent commits.
 - **Final verification:** run #623 / `35332445497` completed with `test`, `web-build`, `android-build` all terminal `success`; the full suite reported 1422 tests passing. Post-CI re-audit confirms a no-op day-mode request now persists canonical unique, bounded, sorted day sets.
 - **Lifecycle:** `VERIFIED`.
 
@@ -169,7 +199,7 @@ All earlier audit turns, findings, fixes, regressions, and verification evidence
 
 ## Remaining Risks / Not Verified
 
-- Deployment-topology behavior for Vite `base: './'` with root-absolute service-worker/manifest/notification paths remains BLOCKED pending real deployment evidence.
+- Deployment-topology behavior for Vite `base: './'` is code-hardened in Turn 23, but real deployed-host behavior for subpath hosting, SPA rewrites, service-worker scope, and notification-click navigation remains BLOCKED pending real deployment evidence.
 - Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain BLOCKED because repository CI cannot provide device evidence.
 - `LiveCompanionForegroundService` camera+microphone+mediaPlayback combinations still require Android-version/permission-matrix verification on real devices.
 - `ScreenSharePlugin` process-death/recreation and Activity/plugin-process ownership still require physical-device evidence.
@@ -180,4 +210,4 @@ All earlier audit turns, findings, fixes, regressions, and verification evidence
 
 ## Historical state integrity note
 
-No historical finding was deleted. Turn-20 P2/P3 findings were removed from the prioritized open queue only after exact-SHA CI and final source re-audit established `VERIFIED`; their complete lifecycle remains in the Turn-20 record above. Turn-21 release/install findings were subsequently re-verified in Turn 22; the prioritized queue now contains only findings blocked by external deployment/device/credential-scope evidence.
+No historical finding was deleted. Turn-20 P2/P3 findings were removed from the prioritized open queue only after exact-SHA CI and final source re-audit established `VERIFIED`; their complete lifecycle remains in the Turn-20 record above. Turn-21 release/install findings were subsequently re-verified in Turn 22; the prioritized queue now contains only findings blocked by external deployment/device/credential-scope evidence. Turn 23 adds verified code-side mitigation for the deployment-path failure mode while intentionally retaining the real-host deployment verification finding as `BLOCKED`.
