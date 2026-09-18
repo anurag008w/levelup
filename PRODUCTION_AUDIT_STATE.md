@@ -7,9 +7,10 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 21
-- Status: IN PROGRESS — CI GATE PENDING; EXTERNAL EVIDENCE REMAIN
-- Current verified application/code head: `2f0fdd58ade5d0da23af8071b845b31879d199fa`
+- Audit turn: 22
+- Status: IN PROGRESS — EXACT-SHA CI PASSED; EXTERNAL EVIDENCE REMAINS
+- Current verified repository head: `4d9c0c2090ec8d0995466b0d80a7982e1afd5cca`
+- Current verified application/code head before this bookkeeping commit: `4d9c0c2090ec8d0995466b0d80a7982e1afd5cca`
 - Latest audit-state bookkeeping is recorded separately on `misa-work`; PR #34 remains the sole open PR
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
 
@@ -18,8 +19,49 @@ This file is the persistent handoff for the hourly production-audit loop.
 1. **BLOCKED — Deployment-topology verification for Vite relative base with root-absolute service-worker/manifest/notification paths.** Requires real deployment topology evidence.
 2. **BLOCKED — Android/native device and API-matrix verification.** Physical process-death, OEM background, PiP, camera/screen-share, and long-running FGS behavior require device evidence unavailable in repository CI.
 3. **BLOCKED — Build-time VITE_DEFAULT_AI_API_KEY exposure assessment.** Actual configured credential scope is not observable through repository access.
-4. **IN PROGRESS — Patch-package failure is not fail-closed during dependency installation.** Implementation is pushed; exact-SHA CI is still pending.
-5. **IN PROGRESS — Release version scheme accepts an oversized final component that updater/Android parsing cannot represent consistently.** Helper guard is pushed, but the manual release workflow has its own parser and still needs matching validation.
+
+## Turn 22 — Release workflow parser alignment + exact-SHA verification
+
+### Scope and evidence
+- Re-read `/PRODUCTION_AUDIT_STATE.md`, confirmed PR #34 and branch `misa-work`, and consumed the highest-priority safely actionable finding remaining from Turn 21.
+- Re-audited the release workflow against `scripts/release-version.mjs` and `src/lib/updates.ts` before changing it.
+- Implemented fail-closed validation in `.github/workflows/release.yml` so the manual release path accepts only the same `YYYY.MM.DD` / `YYYY.MM.DDSS` final-component width supported by the release helper and updater/Android parser.
+- No merge, auto-merge, rebase, force-push, second PR, or PR close was performed.
+
+### Finding lifecycle
+
+#### P3 — Required patch-package patch must fail closed — VERIFIED
+- **Root cause:** `package.json` previously ran `patch-package` without `--error-on-fail`, allowing a dependency patch mismatch to leave the dependency unpatched while installation still succeeded.
+- **Changed files/functions:** `package.json` (`scripts.postinstall`).
+- **Implementation commit:** `42887bba78528ac8cd933f34d1288437a48095d0`.
+- **Regression/recovery commit:** `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` restored the accidentally omitted `vite` devDependency and corrected the new `.mjs` test syntax.
+- **Verification:** exact corrected application SHA `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` was followed by successful CI run #633 / Actions `35336039254`; `test`, `web-build`, and `android-build` all completed with terminal `success`, with the test job completing lint, full tests, and type check.
+- **Post-CI re-audit:** current `package.json` retains the fail-closed postinstall command and the release-version regression test remains in the branch.
+- **Lifecycle:** `VERIFIED`.
+
+#### P2/P3 — Release version ambiguity and release helper repository drift — VERIFIED
+- **Root cause:** `parseVersion()` interprets 3/4-digit date suffixes as day plus sequence, while `scripts/release-version.mjs` had accepted arbitrary-length final components. A value such as `2026.09.10000` could therefore be accepted by the helper but represented inconsistently by updater comparison and Android `versionCode` generation. Separately, `scripts/release.sh` had printed the obsolete `jee-human-os` Actions URL.
+- **Implementation:** `scripts/release-version.mjs` now limits the final component to at most four digits; `scripts/release-version.test.mjs` covers supported forms and rejects `2026.09.10000`; `scripts/release.sh` points to `anurag008w/levelup`.
+- **Turn 22 implementation:** `.github/workflows/release.yml` now independently rejects any `VERSION_NAME` outside `^[0-9]{4}\.[0-9]{2}\.[0-9]{1,4}$` before calculating `VERSION_CODE`, keeping the manual release workflow aligned with the helper/updater scheme.
+- **Changed files/functions:** `scripts/release-version.mjs`, `scripts/release-version.test.mjs`, `scripts/release.sh`, `.github/workflows/release.yml`.
+- **Implementation commits:** `42887bba78528ac8cd933f34d1288437a48095d0`, `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f`, `4d9c0c2090ec8d0995466b0d80a7982e1afd5cca`.
+- **Targeted/static check:** post-change source re-audit confirmed the workflow validation executes before `YEAR/MONTH/DAYSEQ` parsing and prevents five-or-more-digit final components from reaching `VERSION_CODE` generation.
+- **Exact-SHA CI:** run #635 / Actions `35340222728` for `4d9c0c2090ec8d0995466b0d80a7982e1afd5cca` completed with terminal `success` for `test`, `web-build`, and `android-build`. The `test` job completed install, lint, full tests, and type check; web build and Android build also completed successfully.
+- **Post-CI re-audit:** the checked-in workflow contains the guard, and the existing release helper regression test still rejects `2026.09.10000`. The original oversized-version failure mode is no longer reachable through the manual release workflow's version-calculation path.
+- **Lifecycle:** `VERIFIED`.
+
+#### P3/S4 — Environment example must accurately document build-time exposure and app version — VERIFIED
+- **Root cause:** `.env.example` omitted `VITE_APP_VERSION` even though the updater reads it, and its wording could imply that `VITE_DEFAULT_AI_API_KEY` is a hidden runtime secret. Vite `VITE_*` values are embedded into the client bundle.
+- **Implementation:** documented `VITE_APP_VERSION`, explicitly stated that `VITE_*` values are build-time/client-bundle values rather than runtime secrets, and warned against shipping real credentials in `VITE_DEFAULT_AI_API_KEY` in public web builds.
+- **Changed files:** `.env.example`.
+- **Implementation commit:** `42887bba78528ac8cd933f34d1288437a48095d0`.
+- **Verification:** exact later CI run #633 / `35336039254` on corrected SHA `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` passed `test`, `web-build`, and `android-build`; post-CI source re-audit confirms the documented variables and client-bundle warning remain present.
+- **Lifecycle:** `VERIFIED` for the documentation finding. The separate question of whether a real configured credential is exposed remains **BLOCKED** and is retained in the prioritized queue.
+
+### Turn 22 CI evidence
+- Implementation commit `4d9c0c2090ec8d0995466b0d80a7982e1afd5cca` triggered CI #635 / Actions `35340222728`.
+- `test`, `web-build`, and `android-build` all reached terminal `success`; no CI failure required a recovery commit in this turn.
+- The state-bookkeeping commit created after this implementation will itself be CI-gated as the final repository head.
 
 ## Turn 21 — Release/install guardrail hardening + CI regression recovery
 
@@ -35,7 +77,7 @@ This file is the persistent handoff for the hourly production-audit loop.
 - **Changed files/functions:** `package.json` (`scripts.postinstall`).
 - **Implementation commit:** `42887bba78528ac8cd933f34d1288437a48095d0`.
 - **Regression/recovery commit:** `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` restored the accidentally omitted `vite` devDependency after inspecting the exact CI diff.
-- **Checks:** CI #629 / Actions `35335841582` for `42887bba78528ac8cd933f34d1288437a48095d0` reached `npm ci` successfully and explicitly logged `patch-package --error-on-fail` plus `@capacitor/local-notifications@8.2.1 ✔`. The same run then failed lint on the first regression test because an `.mjs` file contained TypeScript-only type syntax; this was diagnosed and corrected in `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f`.
+- **Checks:** CI #629 / Actions `35335841582` for `42887bba78528ac8cd933f34d1288437a48095d0` reached `npm ci` successfully and explicitly logged `patch-package --error-on-fail` plus `@capacitor/local-notifications@8.2.1 ✔`. The same run then failed lint on the newly added `scripts/release-version.test.mjs` because an `.mjs` file contained TypeScript-only type syntax; this was diagnosed and corrected in `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f`.
 - **Status:** `IN PROGRESS` pending terminal-success CI for the corrected SHA.
 
 #### P2/P3 — Release version ambiguity and release helper repository drift — IN PROGRESS
@@ -56,7 +98,7 @@ This file is the persistent handoff for the hourly production-audit loop.
 
 ### Turn 21 CI failure/recovery evidence
 - Commit `42887bba78528ac8cd933f34d1288437a48095d0` triggered CI #629 / Actions `35335841582`.
-- `npm ci` succeeded and demonstrated the new fail-closed patch command was actually executed; lint then failed on the newly added `scripts/release-version.test.mjs` because it contained TypeScript type annotations in an `.mjs` file.
+- `npm ci` succeeded and demonstrated the new fail-closed patch command was actually executed; lint then failed on the newly added `scripts/release-version.test.mjs` because it contained TypeScript-only type syntax.
 - The failure was not ignored. Commit `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` removes those annotations and restores the `vite` devDependency accidentally omitted by the first commit.
 - Exact-SHA CI for `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` was queued/in progress when this state record was prepared; no finding depending on that gate is marked `FIXED` or `VERIFIED` yet.
 
@@ -138,4 +180,4 @@ All earlier audit turns, findings, fixes, regressions, and verification evidence
 
 ## Historical state integrity note
 
-No historical finding was deleted. Turn-20 P2/P3 findings were removed from the prioritized open queue only after exact-SHA CI and final source re-audit established `VERIFIED`; their complete lifecycle remains in the Turn-20 record above. The prioritized queue now contains only findings blocked by external deployment/device/credential-scope evidence plus the new Turn-21 findings awaiting their exact-SHA CI gate.
+No historical finding was deleted. Turn-20 P2/P3 findings were removed from the prioritized open queue only after exact-SHA CI and final source re-audit established `VERIFIED`; their complete lifecycle remains in the Turn-20 record above. Turn-21 release/install findings were subsequently re-verified in Turn 22; the prioritized queue now contains only findings blocked by external deployment/device/credential-scope evidence.
