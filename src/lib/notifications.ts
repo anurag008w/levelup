@@ -41,6 +41,8 @@ export interface NotificationActionPayload {
   actionId: string;
   inputValue?: string;
   sessionId?: string;
+  /** Exact auth login marker captured when the notification was created. */
+  authSessionMarker?: string;
 }
 
 /** LevelUp ka Android package (capacitor.config.ts ke appId se match karna chahiye). */
@@ -388,6 +390,8 @@ export async function notifyAiReply(
   // user ke apne messages owner name se.
   const extra: Record<string, unknown> = {};
   if (sessionId) extra.sessionId = sessionId;
+  const authSessionMarker = loadSession()?.loggedInAt;
+  if (sessionId && authSessionMarker) extra.authSessionMarker = authSessionMarker;
   if (opts?.preferBigText) extra.preferBigText = true;
   if (channelSilent) extra.silent = true;
   if (messages && messages.length > 0) {
@@ -575,8 +579,15 @@ export async function onNotificationAction(
   try {
     const handle = await LocalNotifications.addListener('localNotificationActionPerformed', (res) => {
       const notification = res.notification as PendingLocalNotificationSchema | undefined;
-      const extra = notification?.extra && typeof notification.extra === 'object' ? (notification.extra as { sessionId?: string }) : {};
-      handler({ actionId: res.actionId, inputValue: res.inputValue, sessionId: extra.sessionId });
+      const extra = notification?.extra && typeof notification.extra === 'object'
+        ? (notification.extra as { sessionId?: string; authSessionMarker?: string })
+        : {};
+      handler({
+        actionId: res.actionId,
+        inputValue: res.inputValue,
+        sessionId: extra.sessionId,
+        authSessionMarker: extra.authSessionMarker,
+      });
     });
     return () => {
       void handle.remove();
