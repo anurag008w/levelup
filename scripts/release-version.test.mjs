@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const script = new URL('./release-version.mjs', import.meta.url);
+const workflow = new URL('../.github/workflows/release.yml', import.meta.url);
 
 function run(version) {
   try {
@@ -30,5 +32,12 @@ describe('release-version policy', () => {
     const result = run('2026.09.10000');
     expect(result.status).not.toBe(0);
     expect(result.output).toContain('Invalid app version');
+  });
+
+  it('does not interpolate the untrusted manual version input into shell source', () => {
+    const source = readFileSync(workflow, 'utf8');
+    expect(source).toContain('RELEASE_INPUT_VERSION: ${{ github.event.inputs.version }}');
+    expect(source).toContain('VERSION="$RELEASE_INPUT_VERSION"');
+    expect(source).not.toContain('VERSION="${{ github.event.inputs.version }}"');
   });
 });

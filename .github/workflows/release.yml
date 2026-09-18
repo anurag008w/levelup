@@ -35,11 +35,13 @@ jobs:
 
       - name: Set version
         id: version
+        env:
+          RELEASE_INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
           else
-            VERSION="${{ github.event.inputs.version }}"
+            VERSION="$RELEASE_INPUT_VERSION"
             if [[ -z "$VERSION" ]]; then
               echo "❌ Manual workflow run ke liye version chahiye (e.g. 2026.09.7004)"
               exit 1
