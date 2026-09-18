@@ -281,6 +281,57 @@ describe('sync-merge — misa relationship + proactive merge', () => {
     expect(merged.proactive.scheduledMessages).toHaveLength(2);
   });
 
+  it('preserves cancellation across devices even when scheduled ids differ', () => {
+    const cancelledOnPhone = misa();
+    cancelledOnPhone.proactive.scheduledMessages = [
+      {
+        id: 'phone-id',
+        kind: 'message',
+        text: 'optics revision?',
+        scheduledTime: 1_800_000_000_000,
+        topic: 'optics',
+        createdAt: 100,
+        cancelled: true,
+      },
+    ];
+    const pendingOnLaptop = misa();
+    pendingOnLaptop.proactive.scheduledMessages = [
+      {
+        id: 'laptop-id',
+        kind: 'message',
+        text: 'optics revision?',
+        scheduledTime: 1_800_000_000_000,
+        topic: 'optics',
+        createdAt: 200,
+        cancelled: false,
+      },
+    ];
+
+    const merged = mergeMisaData(cancelledOnPhone, pendingOnLaptop)!;
+    const reverse = mergeMisaData(pendingOnLaptop, cancelledOnPhone)!;
+
+    expect(merged.proactive.scheduledMessages).toHaveLength(1);
+    expect(merged.proactive.scheduledMessages[0].cancelled).toBe(true);
+    expect(reverse.proactive.scheduledMessages).toHaveLength(1);
+    expect(reverse.proactive.scheduledMessages[0].cancelled).toBe(true);
+    expect(merged.proactive.scheduledMessages[0].createdAt).toBe(200);
+  });
+
+  it('does not resurrect a cancellation when the cancelled copy is older', () => {
+    const olderCancellation = misa();
+    olderCancellation.proactive.scheduledMessages = [
+      { id: 'cancelled-copy', kind: 'call', reason: 'check in', scheduledTime: 1_900_000_000_000, createdAt: 300, cancelled: true },
+    ];
+    const newerPending = misa();
+    newerPending.proactive.scheduledMessages = [
+      { id: 'pending-copy', kind: 'call', reason: 'check in', scheduledTime: 1_900_000_000_000, createdAt: 400, cancelled: false },
+    ];
+
+    const merged = mergeMisaData(olderCancellation, newerPending)!;
+    expect(merged.proactive.scheduledMessages).toHaveLength(1);
+    expect(merged.proactive.scheduledMessages[0].cancelled).toBe(true);
+  });
+
   it('feature ON on either device stays ON after merge', () => {
     const local = misa({ proactive: { ...misa().proactive, prefs: prefs({ enabled: true, callsEnabled: false }) } });
     const remote = misa({ proactive: { ...misa().proactive, prefs: prefs({ enabled: false, callsEnabled: true }) } });
