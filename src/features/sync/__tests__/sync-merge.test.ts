@@ -333,19 +333,33 @@ describe('sync-merge — misa relationship + proactive merge', () => {
   });
 
   it('sanitizes invalid topic cooldown expiries during merge', () => {
-    const local = misa();
-    local.relationship.fatigue.topicCooldowns = {
-      physics: 400,
-      badString: '500' as never,
-      negative: -1,
-      infinite: Number.POSITIVE_INFINITY,
-    };
-    const remote = misa();
-    remote.relationship.fatigue.topicCooldowns = {
-      physics: 300,
-      chemistry: 250,
-      notFinite: Number.NaN,
-    };
+    const local = misa({
+      relationship: {
+        ...misa().relationship,
+        fatigue: {
+          ...misa().relationship.fatigue,
+          topicCooldowns: {
+            physics: 400,
+            badString: '500' as never,
+            negative: -1,
+            infinite: Number.POSITIVE_INFINITY,
+          },
+        },
+      },
+    });
+    const remote = misa({
+      relationship: {
+        ...misa().relationship,
+        fatigue: {
+          ...misa().relationship.fatigue,
+          topicCooldowns: {
+            physics: 300,
+            chemistry: 250,
+            notFinite: Number.NaN,
+          },
+        },
+      },
+    });
 
     const merged = mergeMisaData(local, remote)!;
     expect(merged.relationship.fatigue.topicCooldowns).toEqual({
