@@ -265,6 +265,16 @@ const METADATA_KEYS: Array<keyof TaskMetadataPatch> = [
  * whitespace collapsed, so "Kinematics revision!", " Kinematics revision " and
  * "Kinematics revision" all count as the same task on a day.
  */
+function normalizeToolDayList(values: number[]): number[] {
+  return Array.from(
+    new Set(
+      values.filter(
+        (value) => Number.isInteger(value) && value >= MIN_DAY && value <= MAX_DAY,
+      ),
+    ),
+  ).sort((a, b) => a - b);
+}
+
 function normalizeTaskTitle(title: string): string {
   return title
     .toLowerCase()
@@ -1946,8 +1956,8 @@ export class ChatToolsService {
   private setDayMode(state: AppState, day: number, mode: 'study' | 'rest' | 'test', confirmed = false): ChatToolResult {
     if (!state.startDateISO) return { ok: false, summary: 'Journey abhi shuru nahi hui.' };
     const d = clamp(day);
-    const restDays = state.restDays ?? [];
-    const testDays = state.testDays ?? [];
+    const restDays = normalizeToolDayList(state.restDays ?? []);
+    const testDays = normalizeToolDayList(state.testDays ?? []);
     // Rest/test mode changes the calendar mapping for a day, so only current
     // or future days are allowed — a past rest would silently re-interpret
     // already-logged days and shift mastery counts.
@@ -1966,8 +1976,8 @@ export class ChatToolsService {
       const label = wantsRest ? 'REST DAY (chhuti)' : wantsTest ? 'TEST DAY (mock test)' : 'normal study day';
       return { ok: true, summary: `Day ${d} already ${label} hai. ${this.planPreview(state, d)}` };
     }
-    const nextRest = wantsRest ? [...restDays, d] : restDays.filter((x) => x !== d);
-    const nextTest = wantsTest ? [...testDays, d] : testDays.filter((x) => x !== d);
+    const nextRest = wantsRest ? normalizeToolDayList([...restDays, d]) : restDays.filter((x) => x !== d);
+    const nextTest = wantsTest ? normalizeToolDayList([...testDays, d]) : testDays.filter((x) => x !== d);
     const beforeState = { restDays, testDays };
     const afterState = { restDays: nextRest, testDays: nextTest };
     const modeLabel = wantsRest ? 'mark rest (holiday)' : wantsTest ? 'mark test (mock test)' : 'mark study';
