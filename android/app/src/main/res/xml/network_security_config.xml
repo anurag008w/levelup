@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Release network policy: deny cleartext HTTP by default.
+
+    LevelUp's documented local OpenAI-compatible providers are loopback-only
+    (localhost / 127.0.0.1 / ::1). Android permits localhost cleartext traffic
+    separately; keeping the explicit localhost rule here makes that exception
+    auditable while preventing arbitrary remote HTTP endpoints from widening
+    the app's cleartext attack surface.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain>localhost</domain>
+        <domain>127.0.0.1</domain>
+        <domain>ip6-localhost</domain>
+    </domain-config>
+</network-security-config>
