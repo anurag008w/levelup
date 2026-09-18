@@ -332,6 +332,28 @@ describe('sync-merge — misa relationship + proactive merge', () => {
     expect(merged.proactive.scheduledMessages[0].cancelled).toBe(true);
   });
 
+  it('sanitizes invalid topic cooldown expiries during merge', () => {
+    const local = misa();
+    local.relationship.fatigue.topicCooldowns = {
+      physics: 400,
+      badString: '500' as never,
+      negative: -1,
+      infinite: Number.POSITIVE_INFINITY,
+    };
+    const remote = misa();
+    remote.relationship.fatigue.topicCooldowns = {
+      physics: 300,
+      chemistry: 250,
+      notFinite: Number.NaN,
+    };
+
+    const merged = mergeMisaData(local, remote)!;
+    expect(merged.relationship.fatigue.topicCooldowns).toEqual({
+      physics: 400,
+      chemistry: 250,
+    });
+  });
+
   it('feature ON on either device stays ON after merge', () => {
     const local = misa({ proactive: { ...misa().proactive, prefs: prefs({ enabled: true, callsEnabled: false }) } });
     const remote = misa({ proactive: { ...misa().proactive, prefs: prefs({ enabled: false, callsEnabled: true }) } });
