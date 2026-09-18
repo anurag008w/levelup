@@ -12,7 +12,8 @@ import { persistentStoreReady } from './infra/storage/local-storage'
 // zaroori nahi — wahan LocalNotifications plugin handle karta hai.
 if ('serviceWorker' in navigator && !Capacitor.isNativePlatform()) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {
+    const serviceWorkerUrl = `${import.meta.env.BASE_URL}sw.js`
+    navigator.serviceWorker.register(serviceWorkerUrl).catch(() => {
       /* SW fail ho to bhi app chalta rahe — Notification constructor fallback hai */
     })
   })
