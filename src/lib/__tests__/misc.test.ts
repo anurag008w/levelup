@@ -21,11 +21,13 @@ describe('admin gate (server-backed, no hardcoded credentials)', () => {
   });
 
   it('auto-unlocks only for server super admins — role alone is not enough', () => {
-    expect(canAutoUnlockSession({ isSuperAdmin: true, role: 'admin' })).toBe(true);
-    expect(canAutoUnlockSession({ isSuperAdmin: true })).toBe(true);
+    expect(canAutoUnlockSession({ isSuperAdmin: true, role: 'admin', username: 'admin_1', loggedInAt: '2026-09-16T09:00:00.000Z' })).toBe(true);
+    expect(canAutoUnlockSession({ isSuperAdmin: true, username: 'admin_1', loggedInAt: '2026-09-16T09:00:00.000Z' })).toBe(true);
     expect(canAutoUnlockSession({ isSuperAdmin: false, role: 'admin' })).toBe(false);
     expect(canAutoUnlockSession({ role: 'admin' })).toBe(false);
-    expect(canAutoUnlockSession({ isSuperAdmin: false })).toBe(false);
+    expect(canAutoUnlockSession({ isSuperAdmin: false, username: 'admin_1', loggedInAt: '2026-09-16T09:00:00.000Z' })).toBe(false);
+    expect(canAutoUnlockSession({ isSuperAdmin: true, username: 'admin_1' })).toBe(false);
+    expect(canAutoUnlockSession({ isSuperAdmin: true, loggedInAt: '2026-09-16T09:00:00.000Z' })).toBe(false);
     expect(canAutoUnlockSession(null)).toBe(false);
     expect(canAutoUnlockSession(undefined)).toBe(false);
   });
