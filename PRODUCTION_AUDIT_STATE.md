@@ -7,18 +7,45 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 23
-- Status: IN PROGRESS — EXACT-SHA CI PASSED; DEPLOYMENT/DEVICE/CREDENTIAL EVIDENCE REMAINS
-- Current verified repository head: `b13fe22ba87446d62b93b504dc5052c83a79d6ca`
-- Current verified application/code head: `b13fe22ba87446d62b93b504dc5052c83a79d6ca`
-- Latest audit-state bookkeeping is being recorded on `misa-work`; PR #34 remains the sole open PR
+- Audit turn: 24
+- Status: IN PROGRESS — EXACT-SHA CI PASSED FOR TURN 24 CODE; FINAL STATE BOOKKEEPING CI PENDING
+- Current verified application/code head: `039f0a94671fa57d695e12d2996aae38c931aefa`
+- Current repository head before this state update: `039f0a94671fa57d695e12d2996aae38c931aefa`
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
 
 ### PRIORITIZED OPEN FINDINGS INDEX
 
-1. **BLOCKED — Deployment-topology verification for Vite relative base.** Code-side mitigation for root-absolute service-worker/manifest/notification paths is verified on this turn, but real deployed-host evidence is still required before the deployment-topology finding can be upgraded from `BLOCKED`.
+1. **BLOCKED — Deployment-topology verification for Vite relative base.** Code-side mitigation for root-absolute service-worker/manifest/notification paths is verified, but real deployed-host evidence is still required before the deployment-topology finding can be upgraded from `BLOCKED`.
 2. **BLOCKED — Android/native device and API-matrix verification.** Physical process-death, OEM background, PiP, camera/screen-share, and long-running FGS behavior require device evidence unavailable in repository CI.
 3. **BLOCKED — Build-time VITE_DEFAULT_AI_API_KEY exposure assessment.** Actual configured credential scope is not observable through repository access.
+
+## Turn 24 — GitHub Actions supply-chain pinning + exact-SHA CI verification
+
+### Scope and evidence
+- Re-read `/PRODUCTION_AUDIT_STATE.md` first and consumed the prioritized queue. All three existing findings were externally blocked, so no unsafe attempt was made to manufacture deployment/device/credential evidence.
+- Audited the current `misa-work` CI and release workflows for mutable third-party action references.
+- Confirmed the workflows used mutable version tags for checkout, Node, Java, Android SDK, artifact upload, and release creation.
+- Verified the current upstream tag targets before editing: `actions/checkout@v7` -> `3d3c42e5aac5ba805825da76410c181273ba90b1`; `actions/setup-node@v7` -> `820762786026740c76f36085b0efc47a31fe5020`; `actions/setup-java@v5` -> `b6effb05e454b25005698d916606bdc6ffcbf961`; `android-actions/setup-android@v4` -> `be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd`; `actions/upload-artifact@v7` -> `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a`; and the annotated `softprops/action-gh-release@v3` tag resolves to implementation commit `efb35369e0ad2afab669f228072c1b0d510eae64`.
+- Pinned all CI/release action references to those immutable commit SHAs and retained version comments for auditability.
+- No merge, auto-merge, rebase, force-push, second PR, or PR close was performed.
+
+### Finding lifecycle
+
+#### P2/P3 — Mutable GitHub Actions references permit dependency drift — VERIFIED
+- **Root cause:** `.github/workflows/ci.yml` and `.github/workflows/release.yml` referenced mutable action tags (`@v7`, `@v5`, `@v4`, `@v3`). A future tag movement could change CI/release behavior without a repository commit, weakening supply-chain reproducibility and auditability.
+- **Changed files/functions:** `.github/workflows/ci.yml` (checkout, setup-node, setup-java, setup-android, upload-artifact action references); `.github/workflows/release.yml` (checkout, setup-node, setup-java, setup-android, upload-artifact, action-gh-release references).
+- **Implementation commits:** `778a1df8256817ec7902b5db5846826ecb8a662c` (CI workflow pins); `039f0a94671fa57d695e12d2996aae38c931aefa` (release workflow pins).
+- **Targeted/static verification:** current checked-in workflow content uses full 40-character immutable commit SHAs for every third-party `uses:` reference in both workflows, with comments documenting the corresponding release tag.
+- **Exact-SHA CI for first implementation:** run #650 / Actions `35351071476` for `778a1df8256817ec7902b5db5846826ecb8a662c` completed with terminal `success` for `test`, `web-build`, and `android-build`. The test job completed install, lint, full tests, and type check; web build and Android build completed successfully; Android unit tests/debug APK build and artifact upload completed successfully.
+- **Exact-SHA CI for final implementation:** run #652 / Actions `35351462349` for `039f0a94671fa57d695e12d2996aae38c931aefa` completed with terminal `success` for `test`, `web-build`, and `android-build`. The test job completed install, lint, full tests, and type check; web build completed successfully; Android SDK setup, dependency installation, web build, Capacitor sync, Android unit tests/debug APK build, and artifact upload all completed successfully.
+- **Post-CI re-audit:** both workflow files retain immutable SHA references and the release workflow's annotated `v3` tag has been pinned to the resolved implementation commit rather than the mutable tag.
+- **Lifecycle:** `VERIFIED`.
+
+### Turn 24 CI evidence
+- First implementation SHA: `778a1df8256817ec7902b5db5846826ecb8a662c`; exact CI run #650 / Actions `35351071476`; terminal success for `test`, `web-build`, and `android-build`.
+- Final implementation SHA: `039f0a94671fa57d695e12d2996aae38c931aefa`; exact CI run #652 / Actions `35351462349`; terminal success for `test`, `web-build`, and `android-build`.
+- No CI failure required a recovery commit in this turn.
+- The state-bookkeeping commit for this turn is the only remaining CI gate before this turn's repository head can be treated as fully verified.
 
 ## Turn 23 — Deployment-relative PWA path hardening + exact-SHA CI verification
 
@@ -86,19 +113,13 @@ This file is the persistent handoff for the hourly production-audit loop.
 - **Changed files:** `.env.example`.
 - **Implementation commit:** `42887bba78528ac8cd933f34d1288437a48095d0`.
 - **Verification:** exact later CI run #633 / `35336039254` on corrected SHA `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` passed `test`, `web-build`, and `android-build`; post-CI source re-audit confirms the documented variables and client-bundle warning remain present.
-- **Lifecycle:** `VERIFIED` for the documentation finding. The separate question of whether a real configured credential is exposed remains **BLOCKED** and is retained in the prioritized queue.
+- **Lifecycle:** `VERIFIED` for the documentation finding. The separate question of whether a real configured credential is exposed remains `BLOCKED` and is retained in the prioritized queue.
 
 ### Turn 22 CI evidence
 - Implementation commit `4d9c0c2090ec8d0995466b0d80a7982e1afd5cca` triggered CI #635 / Actions `35340222728`.
 - `test`, `web-build`, and `android-build` all reached terminal `success`; no CI failure required a recovery commit in this turn.
-- The state-bookkeeping commit created after this implementation will itself be CI-gated as the final repository head.
 
 ## Turn 21 — Release/install guardrail hardening + CI regression recovery
-
-### Scope and evidence
-- Re-read the persistent state before changes and inspected PR #34, the current branch head, the independent deep-scan findings, release tooling, package installation behavior, and existing update-version tests.
-- The independent scan identified safely actionable release/install reliability gaps: `postinstall` allowed a required `patch-package` patch to fail silently; the release-version helper accepted five-or-more-digit final version components even though the updater and Android version-code parser interpret the final component as `DDSS`; and environment/release documentation had drifted.
-- Implemented fixes without merge/auto-merge/rebase/force-push or creation of another PR.
 
 ### Finding lifecycle
 
@@ -106,7 +127,7 @@ This file is the persistent handoff for the hourly production-audit loop.
 - **Root cause:** `package.json` used `"postinstall": "patch-package"` without `--error-on-fail`. A patch mismatch could leave a dependency unpatched while `npm ci` still completed.
 - **Changed files/functions:** `package.json` (`scripts.postinstall`).
 - **Implementation commit:** `42887bba78528ac8cd933f34d1288437a48095d0`.
-- **Regression/recovery commit:** `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` restored the accidentally omitted `vite` devDependency after inspecting the exact CI diff.
+- **Regression/recovery commit:** `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` restored the accidentally omitted `vite` devDependency and corrected the new `.mjs` test syntax.
 - **Checks:** CI #629 / Actions `35335841582` for `42887bba78528ac8cd933f34d1288437a48095d0` reached `npm ci` successfully and explicitly logged `patch-package --error-on-fail` plus `@capacitor/local-notifications@8.2.1 ✔`. The same run then failed lint on the newly added `scripts/release-version.test.mjs` because an `.mjs` file contained TypeScript-only type syntax; this was diagnosed and corrected in `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f`.
 - **Status:** `IN PROGRESS` pending terminal-success CI for the corrected SHA.
 
@@ -129,8 +150,7 @@ This file is the persistent handoff for the hourly production-audit loop.
 ### Turn 21 CI failure/recovery evidence
 - Commit `42887bba78528ac8cd933f34d1288437a48095d0` triggered CI #629 / Actions `35335841582`.
 - `npm ci` succeeded and demonstrated the new fail-closed patch command was actually executed; lint then failed on the newly added `scripts/release-version.test.mjs` because it contained TypeScript-only type syntax.
-- The failure was not ignored. Commit `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` removes those annotations and restores the `vite` devDependency accidentally omitted by the first commit.
-- Exact-SHA CI for `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` was queued/in progress when this state record was prepared; no finding depending on that gate is marked `FIXED` or `VERIFIED` yet.
+- The failure was not ignored. Commit `28a0d7f254e69651cc035ca5ab1cb6d5b65bb39f` removes those annotations and restores the `v...` dependency configuration.
 
 ## Turn 20 — Admin/session + sync + native cancellation + notification + day-mode hardening
 
@@ -178,11 +198,6 @@ This turn consumed the previous prioritized queue and implemented every safely a
 - **Final verification:** run #623 / `35332445497` completed with `test`, `web-build`, `android-build` all terminal `success`; the full suite reported 1422 tests passing. Post-CI re-audit confirms a no-op day-mode request now persists canonical unique, bounded, sorted day sets.
 - **Lifecycle:** `VERIFIED`.
 
-### Turn 20 failure/recovery evidence
-- Application-head attempt `33a74358dcc20eba88f62b13fd70adbef174a2d2` triggered CI #619 / `35332289405`, where `test` failed exactly two regression cases and `web-build`/Android were skipped by the dependency chain.
-- The failures were not ignored: the failing expectations were diagnosed, the production no-op canonicalization path was strengthened, and the cooldown fixture was isolated from the shared default nested object.
-- Corrected application head `2f0fdd58ade5d0da23af8071b845b31879d199fa` then passed all three relevant jobs in CI #623 / `35332445497`.
-
 ### Regression verification of previously fixed/hardened findings
 
 - **Android cleartext policy — VERIFIED remains valid.** Current network security policy remains deny-by-default with only the intended loopback exception; previous exact-head CI verification remains recorded.
@@ -195,7 +210,7 @@ This turn consumed the previous prioritized queue and implemented every safely a
 
 ## Historical Audit/Fix Record
 
-All earlier audit turns, findings, fixes, regressions, and verification evidence remain preserved in Git history immediately preceding this state update. The prior persistent state was blob `4e6c7e3468554af90fd994c6150171cd4a0f6e7c`; this turn carries its historical material forward and adds the Turn-19 lifecycle record above. Earlier verified findings include native SSE cancellation, screen-share startup serialization, planner stale-item rejection, delete-all transactional restoration, proactive-state merge completeness, release dry-run/release-trigger hardening, session-bound admin unlock isolation, duplicate rest-day calendar normalization, and Android cleartext policy hardening.
+All earlier audit turns, findings, fixes, regressions, and verification evidence remain preserved in Git history immediately preceding this state update. Earlier verified findings include native SSE cancellation, screen-share startup serialization, planner stale-item rejection, delete-all transactional restoration, proactive-state merge completeness, release dry-run/release-trigger hardening, session-bound admin unlock isolation, duplicate rest-day calendar normalization, and Android cleartext policy hardening.
 
 ## Remaining Risks / Not Verified
 
@@ -210,4 +225,4 @@ All earlier audit turns, findings, fixes, regressions, and verification evidence
 
 ## Historical state integrity note
 
-No historical finding was deleted. Turn-20 P2/P3 findings were removed from the prioritized open queue only after exact-SHA CI and final source re-audit established `VERIFIED`; their complete lifecycle remains in the Turn-20 record above. Turn-21 release/install findings were subsequently re-verified in Turn 22; the prioritized queue now contains only findings blocked by external deployment/device/credential-scope evidence. Turn 23 adds verified code-side mitigation for the deployment-path failure mode while intentionally retaining the real-host deployment verification finding as `BLOCKED`.
+No historical finding was intentionally deleted. Turn-20 P2/P3 findings remain represented with their complete lifecycle above; Turn-21 release/install findings remain represented with their recovery history and subsequent VERIFIED records in Turn 22; Turn 23 adds verified code-side mitigation for the deployment-path failure mode while intentionally retaining the real-host deployment verification finding as `BLOCKED`; Turn 24 adds the immutable-action hardening finding as `VERIFIED` while retaining all externally blocked findings in the prioritized queue.
