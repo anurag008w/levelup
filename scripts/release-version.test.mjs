@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const script = new URL('./release-version.mjs', import.meta.url);
 
-function run(version: string) {
+function run(version) {
   try {
     const stdout = execFileSync(process.execPath, [script.pathname, '--set', version, '--dry-run'], {
       cwd: process.cwd(),
@@ -12,7 +12,7 @@ function run(version: string) {
     });
     return { status: 0, output: stdout };
   } catch (error) {
-    const e = error as { status?: number; stderr?: Buffer | string; stdout?: Buffer | string };
+    const e = error ?? {};
     return {
       status: e.status ?? 1,
       output: `${e.stdout ?? ''}${e.stderr ?? ''}`,
