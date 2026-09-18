@@ -76,4 +76,18 @@ describe('sync-merge — proactive cooldown integrity', () => {
     const merged = mergeMisaData(local, remote)!;
     expect(merged.relationship.fatigue.topicCooldowns).toEqual({ optics: 5_000, algebra: 2_000 });
   });
+
+  it('rejects remote numeric strings instead of persisting them as cooldowns', () => {
+    const local = misa();
+    local.relationship.fatigue.topicCooldowns = { optics: 4_000 };
+    const remote = misa();
+    remote.relationship.fatigue.topicCooldowns = {
+      optics: '9999999999999' as unknown as number,
+      algebra: 'not-a-number' as unknown as number,
+      geometry: 3_000,
+    };
+
+    const merged = mergeMisaData(local, remote)!;
+    expect(merged.relationship.fatigue.topicCooldowns).toEqual({ optics: 4_000, geometry: 3_000 });
+  });
 });
