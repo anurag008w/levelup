@@ -114,8 +114,8 @@ export function useAppState() {
 
   function autoUnlock(): boolean {
     const session = loadSession();
-    if (!canAutoUnlockSession(session)) return false;
-    setAdminUnlocked(session?.username ?? null, session?.loggedInAt ?? null, true);
+    if (!canAutoUnlockSession(session) || !session?.username || !session.loggedInAt) return false;
+    setAdminUnlocked(session.username, session.loggedInAt, true);
     setAdminUnlockedState(true);
     return true;
   }
