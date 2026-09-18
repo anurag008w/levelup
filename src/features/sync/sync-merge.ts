@@ -39,9 +39,6 @@ export function mergeAppState(local: AppState, remote: AppState): AppState {
     const taskIds = new Set([...Object.keys(remoteDay), ...Object.keys(localDay)]);
     const mergedDay: Record<string, boolean> = {};
     for (const taskId of taskIds) {
-      // Completion is monotonic across devices: a stale false must never erase
-      // a completed task recorded by another device. Uncomplete actions use the
-      // explicit local/UI state path rather than cross-device conflict resolution.
       mergedDay[taskId] = Boolean(remoteDay[taskId] || localDay[taskId]);
     }
     taskLogs[day] = mergedDay;
@@ -172,9 +169,6 @@ export function mergeChatSessions(local: ChatSession[], remote: ChatSession[]): 
       for (const m of remoteSession.messages || []) msgMap.set(m.id || `${m.createdAt}-${m.role}-${m.content.slice(0, 30)}`, m);
       for (const m of localSession.messages || []) {
         const key = m.id || `${m.createdAt}-${m.role}-${m.content.slice(0, 30)}`;
-        // Message ids are stable; if two devices disagree about the same id,
-        // prefer the snapshot from the deterministically newer session rather
-        // than letting merge argument order decide the transcript.
         if (!msgMap.has(key) || localIsNewer) msgMap.set(key, m);
       }
       const mergedMessages = Array.from(msgMap.values()).sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
@@ -261,8 +255,8 @@ function mergeRelationshipState(local: RelationshipState, remote: RelationshipSt
 /**
  * Merge proactive data idempotently across devices. Pending triggers are deduped
  * by idempotencyKey (with a deterministic fallback), scheduled messages are
- * deduped by identity/kind/time, and cancellation is monotonic: if any copy is
- * cancelled, the merged record remains cancelled.
+ * deduped by logical content/time identity, and cancellation is monotonic: if
+ * any copy is cancelled, the merged record remains cancelled.
  */
 function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyncPayload['proactive']): MisaSyncPayload['proactive'] {
   const triggers = new Map<string, ProactiveTrigger>();
@@ -276,10 +270,19 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
   const scheduled = new Map<string, ScheduledProactiveMessage>();
   for (const s of [...(remote.scheduledMessages || []), ...(local.scheduledMessages || [])]) {
     if (!s) continue;
-    const key = s.id || `sched:${s.kind}:${s.scheduledTime}:${s.topic || ''}:${s.text || s.reason || ''}`;
+    const key = scheduledProactiveLogicalKey(s);
     const existing = scheduled.get(key);
-    if (!existing) scheduled.set(key, s);
-    else if ((existing.createdAt || 0) < (s.createdAt || 0)) scheduled.set(key, s);
+    if (!existing) {
+      scheduled.set(key, s);
+      continue;
+    }
+    const latest = (existing.createdAt || 0) >= (s.createdAt || 0) ? existing : s;
+    scheduled.set(key, {
+      ...latest,
+      // Cancellation is a tombstone: once observed, sync must never resurrect it.
+      cancelled: Boolean(existing.cancelled || s.cancelled),
+      deliveryRetries: Math.max(existing.deliveryRetries || 0, s.deliveryRetries || 0),
+    });
   }
   const missed = new Map<string, MisaSyncPayload['proactive']['missedInteractions'][number]>();
   for (const m of [...(remote.missedInteractions || []), ...(local.missedInteractions || [])]) {
@@ -293,8 +296,6 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
   const prefs = {
     ...remotePrefs,
     ...localPrefs,
-    // These are enablement flags, not last-writer-wins preferences: disabling
-    // on one device must not silently erase an enabled feature on another.
     enabled: Boolean(remotePrefs.enabled || localPrefs.enabled),
     callsEnabled: Boolean(remotePrefs.callsEnabled || localPrefs.callsEnabled),
     activeGraceMinutes: Math.max(remotePrefs.activeGraceMinutes || 0, localPrefs.activeGraceMinutes || 0),
@@ -313,6 +314,19 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
     scheduledMessages: Array.from(scheduled.values()),
     missedInteractions: Array.from(missed.values()),
   };
+}
+
+function scheduledProactiveLogicalKey(message: ScheduledProactiveMessage): string {
+  const linkedEntity = message.linkedEntity
+    ? `${message.linkedEntity.type}:${message.linkedEntity.value}`
+    : '';
+  return [
+    message.kind,
+    message.scheduledTime,
+    message.topic || '',
+    message.text || message.reason || '',
+    linkedEntity,
+  ].join('\\u0000');
 }
 
 function dedupeStrings(values: string[]): string[] {
