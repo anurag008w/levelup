@@ -7,21 +7,17 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 19
-- Status: REVIEW FINDINGS OPEN
-- Current PR head: `82beae17f1b0ce2401fd634f5212d4d89944c9d8`
+- Audit turn: 20
+- Status: BLOCKED EXTERNAL EVIDENCE REMAIN
+- Current verified application/code head: `2f0fdd58ade5d0da23af8071b845b31879d199fa`
+- Latest audit-state bookkeeping is recorded separately on `misa-work`; PR #34 remains the sole open PR
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
 
 ### PRIORITIZED OPEN FINDINGS INDEX
 
-1. **P2 OPEN — Admin preview unlock paths still enable in-memory state without requiring `loggedInAt`.** `autoUnlock()` checks only `canAutoUnlockSession()`, while `unlockAdmin()` can set state true for a verified super-admin username that does not match the loaded app session; persisted session-bound storage correctly refuses a missing marker, creating an inconsistent security boundary.
-2. **P2 OPEN — Remote proactive cooldown values are not runtime-validated.** `mergeRelationshipState` copies remote `topicCooldowns` before finite/non-negative validation; malformed numeric-string expiries can survive into proactive decision state.
-3. **P2 OPEN — Native HTTP cancellation can still enter the retry loop after an abort.** `requestJson()` treats the abort `HttpError(status=0)` as non-retryable but does not break/throw on that branch, so it immediately performs another attempt until `retries` is exhausted. Existing cancellation tests cover SSE, not this retry behavior.
-4. **P2 OPEN — Notification replies are owner-gated but not explicitly session-bound.** The current guard checks for any active session/guest owner rather than proving the notification `sessionId` equals the active authenticated session; account/session switching therefore remains insufficiently verified.
-5. **P3 OPEN — Direct `setDayMode` state canonicalization.** Duplicate/stale rest/test membership can still be written at the chat-tool source, even though date consumers defensively normalize duplicate rest-day entries.
-6. **BLOCKED — Deployment-topology verification for Vite relative base with root-absolute service-worker/manifest/notification paths.** Requires real deployment topology evidence.
-7. **BLOCKED — Android/native device and API-matrix verification.** Physical process-death, OEM background, PiP, camera/screen-share, and long-running FGS behavior require device evidence unavailable in repository CI.
-8. **BLOCKED — Build-time VITE_DEFAULT_AI_API_KEY exposure assessment.** Actual configured credential scope is not observable through repository access.
+1. **BLOCKED — Deployment-topology verification for Vite relative base with root-absolute service-worker/manifest/notification paths.** Requires real deployment topology evidence.
+2. **BLOCKED — Android/native device and API-matrix verification.** Physical process-death, OEM background, PiP, camera/screen-share, and long-running FGS behavior require device evidence unavailable in repository CI.
+3. **BLOCKED — Build-time VITE_DEFAULT_AI_API_KEY exposure assessment.** Actual configured credential scope is not observable through repository access.
 
 ## Turn 19 — Proactive cancellation hardening + exact-SHA CI verification
 
@@ -43,6 +39,57 @@ This file is the persistent handoff for the hourly production-audit loop.
 - **Verification evidence:** final post-CI source re-audit at SHA `82beae17f1b0ce2401fd634f5212d4d89944c9d8` confirms the merge no longer uses the device-local scheduled-message ID as its sole identity and explicitly preserves `cancelled` across both merge orders. Regression tests cover different IDs and the case where the cancelled copy is older than the pending copy. The original resurrection failure mode is absent.
 - **Status:** `VERIFIED`.
 
+## Turn 20 — Admin/session + sync + native cancellation + notification + day-mode hardening
+
+### Scope and implementation
+
+This turn consumed the previous prioritized queue and implemented every safely actionable P2/P3 item before the externally blocked evidence items.
+
+#### P2 Admin preview/manual unlock session binding — VERIFIED
+- **Root cause:** auto-unlock trusted `isSuperAdmin` without requiring a non-empty username/login marker, while manual unlock could verify a different super-admin username and still flip in-memory admin state even when the active app session did not match.
+- **Changed files/functions:** `src/lib/admin.ts` (`canAutoUnlockSession`); `src/lib/useAppState.ts` (`autoUnlock`, `unlockAdmin`); `src/lib/__tests__/misc.test.ts`; `src/lib/__tests__/use-app-state.test.tsx`.
+- **Implementation/test commits:** `22d22a937c9e076991e14f9ed0ffdcf60f7d733b`, `805734dfccd26398a9f078494a9d178f648833d5`, `a97c30191f6e034e0f9acd97236f941fcd404029`, `a571bd4d01f354be44676c4283db433eb03e62e8`.
+- **Verification:** exact application-head CI run #623 / Actions `35332445497` for final application SHA `2f0fdd58ade5d0da23af8071b845b31879d199fa`: `test`, `web-build`, and `android-build` all completed with terminal `success`. Test job completed lint, full test suite, and type check successfully.
+- **Post-CI re-audit:** `canAutoUnlockSession` now requires super-admin + non-empty username + non-empty `loggedInAt`; `unlockAdmin` rejects credential verification when the active session is absent, username-mismatched, or markerless, and verifies the stored marker before setting React admin state.
+- **Lifecycle:** `VERIFIED`.
+
+#### P2 Remote proactive cooldown validation — VERIFIED
+- **Root cause:** remote `topicCooldowns` values entered `mergeRelationshipState` before runtime validation; malformed strings, NaN, Infinity, negatives, blank topic keys could influence merged proactive state.
+- **Changed files/functions:** `src/features/sync/sync-merge.ts` (`sanitizeTopicCooldowns`, `mergeRelationshipState`); `src/features/sync/__tests__/sync-merge.test.ts`.
+- **Implementation/test commits:** `7cd6216959827837f18895a8128b133f11eae566`, `29e3addc00cb83c91857c4828cf8ff8c9ec5ae21`, `2f0fdd58ade5d0da23af8071b845b31879d199fa`.
+- **Verification:** exact run #623 / `35332445497` terminal-success across all relevant jobs. Regression covers numeric strings, negative, NaN, Infinity, and cross-device max-expiry preservation.
+- **Post-CI re-audit:** both local and remote cooldown maps are sanitized to finite, non-negative numbers with non-empty trimmed topic keys before max-merge.
+- **Lifecycle:** `VERIFIED`.
+
+#### P2 Native HTTP abort retry guard — VERIFIED
+- **Root cause:** `requestJson()` classified abort as non-retryable but fell through the catch block without throwing, causing additional immediate attempts until the retry budget was exhausted.
+- **Changed files/functions:** `src/infra/ai/http-native.ts` (`requestJson`, `isRetryableNativeError`); `src/infra/ai/__tests__/http-native.test.ts`.
+- **Implementation/test commits:** `09c73b7fa856da1bc50bac25b1dff96c3c1f4925`, `c294717c9a81e2bfd95b6a3f96914b4a18515933`.
+- **Verification:** run #623 / `35332445497` terminal-success. Regression proves an aborted native JSON request is attempted exactly once and surfaces `HttpError(kind="aborted")`; the existing native SSE cancellation coverage also remains green.
+- **Post-CI re-audit:** retry loop now only continues for retryable errors while attempts remain; abort and other non-retryable `HttpError` values throw immediately.
+- **Lifecycle:** `VERIFIED`.
+
+#### P2 Notification authenticated-session binding — VERIFIED
+- **Root cause:** notification replies were guarded only by the existence of an active owner. A persisted notification could survive a login/session transition without carrying proof that it belonged to the current authenticated login marker.
+- **Changed files/functions:** `src/lib/notifications.ts` (`NotificationActionPayload`, notification extra payload, action extraction); `src/lib/notification-actions.ts` (`isNotificationReplyBoundToActiveOwner`, reply guard); `src/lib/__tests__/notification-actions.test.ts`.
+- **Implementation/test commits:** `5009521525fd73baf901a4ae20d937599c61f2ba`, `a22f7268de3a04be0c5f46b3c72f31619e72d12f`, `48e7d92a95280e92a01049f3c86a980fe85c999e`, `37d140a216a8ae6032870fda5af0293921d4ef99`.
+- **Verification:** run #623 / `35332445497` terminal-success. Notification action tests passed, including mismatched-marker rejection; authenticated notifications now capture `loggedInAt` and replies require that exact marker, while guest replies require explicit guest ownership.
+- **Post-CI re-audit:** notification creation attaches `authSessionMarker`; native action dispatch forwards it; reply handling rejects markerless/mismatched authenticated replies and still permits explicit guest ownership.
+- **Lifecycle:** `VERIFIED`.
+
+#### P3 Direct day-mode canonicalization — VERIFIED
+- **Root cause:** `setDayMode` normalized arrays for calculations but a no-op request could return before persisting the canonical sets, leaving duplicate legacy values in state.
+- **Changed files/functions:** `src/features/chat/chat-tools.service.ts` (`normalizeToolDayList`, `setDayMode`); `src/features/chat/__tests__/chat-tools.test.ts`.
+- **Implementation/test commits:** `61fd64aecf603a13fb815a1b29722315e02f5d47`, `b6352131ed649bc8a17476bee4858efe3f6ab235`, `33a74358dcc20eba88f62b13fd70adbef174a2d2`; CI-found regression fix commits `b6352131ed649bc8a17476bee4858efe3f6ab235` and `2f0fdd58ade5d0da23af8071b845b31879d199fa`.
+- **Verification history:** first exact application CI run #619 / `35332289405` correctly failed two newly added regressions: duplicate day-mode state was not canonicalized on an idempotent request, and the cooldown test fixture accidentally shared the default nested fatigue object. Both were diagnosed from exact CI logs and fixed in the subsequent commits.
+- **Final verification:** run #623 / `35332445497` completed with `test`, `web-build`, `android-build` all terminal `success`; the full suite reported 1422 tests passing. Post-CI re-audit confirms a no-op day-mode request now persists canonical unique, bounded, sorted day sets.
+- **Lifecycle:** `VERIFIED`.
+
+### Turn 20 failure/recovery evidence
+- Application-head attempt `33a74358dcc20eba88f62b13fd70adbef174a2d2` triggered CI #619 / `35332289405`, where `test` failed exactly two regression cases and `web-build`/Android were skipped by the dependency chain.
+- The failures were not ignored: the failing expectations were diagnosed, the production no-op canonicalization path was strengthened, and the cooldown fixture was isolated from the shared default nested object.
+- Corrected application head `2f0fdd58ade5d0da23af8071b845b31879d199fa` then passed all three relevant jobs in CI #623 / `35332445497`.
+
 ### Regression verification of previously fixed/hardened findings
 
 - **Android cleartext policy — VERIFIED remains valid.** Current network security policy remains deny-by-default with only the intended loopback exception; previous exact-head CI verification remains recorded.
@@ -59,19 +106,16 @@ All earlier audit turns, findings, fixes, regressions, and verification evidence
 
 ## Remaining Risks / Not Verified
 
-- Admin preview unlock paths still need a consistent login-marker/session-identity gate.
-- Remote proactive cooldown values still need runtime validation before entering merged state.
-- Native `requestJson()` abort still needs an immediate non-retry regression fix.
-- Notification reply actions still need explicit authenticated-session binding.
-- Direct `setDayMode` array canonicalization remains a lower-priority data-hygiene improvement; calendar consumers now normalize duplicate rest-day entries defensively.
-- Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain not device-verified.
-- `LiveCompanionForegroundService` camera+microphone+mediaPlayback type combinations still require Android-version/permission matrix verification.
-- `ScreenSharePlugin` process-death/recreation and Activity/plugin-process ownership still require physical-device evidence beyond CI compilation/tests.
-- `ScreenShareForegroundService` uses a four-hour WakeLock timeout; long-running-session behavior beyond that boundary remains not device-verified.
-- `VITE_DEFAULT_AI_API_KEY` build-time exposure remains UNPROVEN because configured credential scope is not observable through repository access.
-- Repeated `AudioRoute.getAvailableRoutes is not a function` warnings remain UNPROVEN/ENVIRONMENTAL because tests pass through the guarded native/web boundary and native runtime evidence is unavailable.
-- Vite `base: './'` combined with root-absolute service-worker/manifest/notification paths remains UNPROVEN without deployment-topology evidence.
+- Deployment-topology behavior for Vite `base: './'` with root-absolute service-worker/manifest/notification paths remains BLOCKED pending real deployment evidence.
+- Physical-device lifecycle, PiP, camera, screen-share, OEM background behavior, and process-death recovery remain BLOCKED because repository CI cannot provide device evidence.
+- `LiveCompanionForegroundService` camera+microphone+mediaPlayback combinations still require Android-version/permission-matrix verification on real devices.
+- `ScreenSharePlugin` process-death/recreation and Activity/plugin-process ownership still require physical-device evidence.
+- `ScreenShareForegroundService` four-hour WakeLock timeout and long-running-session behavior remain not device-verified.
+- `VITE_DEFAULT_AI_API_KEY` build-time exposure remains BLOCKED/UNPROVEN because configured credential scope is not observable through repository access.
+- Repeated `AudioRoute.getAvailableRoutes is not a function` warnings remain UNPROVEN/ENVIRONMENTAL because native runtime evidence is unavailable.
+- No repository-CI finding from this turn is being treated as evidence of physical-device production readiness.
 
 ## Historical state integrity note
 
-No historical finding was deleted. P1 was removed from the prioritized open queue only after exact-SHA CI and final source re-audit established `VERIFIED`; its complete lifecycle remains above. The remaining index is synchronized to the unresolved findings carried forward from the independent review.
+No historical finding was deleted. Turn-20 P2/P3 findings were removed from the prioritized open queue only after exact-SHA CI and final source re-audit established `VERIFIED`; their complete lifecycle remains in the Turn-20 record above. The prioritized queue now contains only findings blocked by external deployment/device/credential-scope evidence.
+
