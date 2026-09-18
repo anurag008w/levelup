@@ -1,5 +1,5 @@
 #!/bin/bash
-# Release script for Human OS
+# Release script for LevelUp
 # Usage: ./scripts/release.sh [version]
 # If no version provided, uses today's date (vYYYY.MM.DD)
 #
