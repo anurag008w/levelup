@@ -123,12 +123,23 @@ export function useAppState() {
   async function unlockAdmin(username: string, password: string): Promise<AdminVerifyResult> {
     const result = await verifyAdminLogin(username, password);
     if (!result.ok) return result;
+
     const session = loadSession();
     const clean = username.trim();
-    const sessionForUnlock = session?.username === clean ? session : null;
-    setAdminUnlocked(clean, sessionForUnlock?.loggedInAt ?? null, true);
-    setAdminUnlockedState(true);
-    return { ok: true };
+    if (!session || session.username.trim() !== clean || !session.loggedInAt) {
+      // Verifying another account's credentials must never grant admin UI state
+      // to the currently logged-in account. The local unlock marker is bound to
+      // the active auth session, so a matching username + login timestamp is
+      // required before the in-memory gate can turn on.
+      return { ok: false, error: 'Admin unlock ke liye isi account ka active login session zaroori hai.' };
+    }
+
+    setAdminUnlocked(clean, session.loggedInAt, true);
+    const unlocked = isAdminUnlocked(clean, session.loggedInAt);
+    setAdminUnlockedState(unlocked);
+    return unlocked
+      ? { ok: true }
+      : { ok: false, error: 'Admin unlock marker save nahi hua. Dobara try karo.' };
   }
 
   function lockAdmin() {
