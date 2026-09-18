@@ -9,7 +9,7 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Target branch: `main`
 - Audit turn: 19
 - Status: REVIEW FINDINGS OPEN
-- Current PR head: `13dd253c034687146072108bb7fc780e4943e4d4`
+- Current PR head: `82beae17f1b0ce2401fd634f5212d4d89944c9d8`
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
 
 ### PRIORITIZED OPEN FINDINGS INDEX
@@ -27,8 +27,8 @@ This file is the persistent handoff for the hourly production-audit loop.
 
 ### Scope and evidence
 - Re-read this persistent state before making changes, then inspected PR #34, the current `misa-work` implementations of `mergeProactiveBlob`, `ScheduledProactiveMessage`, and the existing sync-merge regression suite.
-- Confirmed the scheduled-message IDs are generated with `crypto.randomUUID()` (or a random fallback), so device-local IDs cannot be relied on as a cross-device logical identity.
-- Current PR head before state recording was `13dd253c034687146072108bb7fc780e4943e4d4` and remains open/unmerged.
+- Confirmed scheduled-message IDs are generated locally with `crypto.randomUUID()` (or a random fallback), so device-local IDs cannot be relied on as a cross-device logical identity.
+- Current application/test head before audit-state bookkeeping was `13dd253c034687146072108bb7fc780e4943e4d4` and remained on PR #34.
 
 ### Finding lifecycle
 
@@ -38,8 +38,9 @@ This file is the persistent handoff for the hourly production-audit loop.
 - **Changed files/functions:** `src/features/sync/sync-merge.ts` (`mergeProactiveBlob`, new `scheduledProactiveLogicalKey`); `src/features/sync/__tests__/sync-merge.test.ts` (cross-device cancellation regression cases).
 - **Implementation commit SHA:** `fe867a1cd03397e1e94d5a0b5d2927d2cec56dfc`.
 - **Regression-test commit SHA:** `13dd253c034687146072108bb7fc780e4943e4d4`.
-- **Checks:** exact PR CI run `#587` / Actions run `35330590774` for SHA `13dd253c034687146072108bb7fc780e4943e4d4` completed successfully. `test` passed lint, tests, and type check; `web-build` passed; `android-build` passed Android unit tests and debug APK build/upload. The CI job inventory shows all three jobs terminal `success`.
-- **Verification evidence:** post-CI source re-audit confirms the merge no longer uses the device-local scheduled-message ID as its sole identity and explicitly preserves `cancelled` across both merge orders. Regression tests cover different IDs and the case where the cancelled copy is older than the pending copy. The original resurrection failure mode is therefore absent at the verified SHA.
+- **Checks:** exact application/test SHA CI run `#587` / Actions run `35330590774` completed successfully: `test`, `web-build`, and `android-build` all terminal `success`. The test job passed lint, tests, and type check; web build passed; Android unit tests and debug APK build/upload passed.
+- **State-head CI:** after recording this lifecycle state, SHA `82beae17f1b0ce2401fd634f5212d4d89944c9d8` received Actions run `#589` / `35330992933`; `test` and `web-build` passed and `android-build` passed. All three jobs are terminal `success`.
+- **Verification evidence:** final post-CI source re-audit at SHA `82beae17f1b0ce2401fd634f5212d4d89944c9d8` confirms the merge no longer uses the device-local scheduled-message ID as its sole identity and explicitly preserves `cancelled` across both merge orders. Regression tests cover different IDs and the case where the cancelled copy is older than the pending copy. The original resurrection failure mode is absent.
 - **Status:** `VERIFIED`.
 
 ### Regression verification of previously fixed/hardened findings
