@@ -1645,6 +1645,7 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
         this.lastUserVoiceTime = Date.now();
         this.userSpeechEndedAt = Date.now();
         this.awaitingAssistantReply = true;
+        if (!this.pendingResponseSince) this.pendingResponseSince = Date.now();
         this.silenceStateMachine.onSpeechActivity();
         this.silenceNudgeStreak = 0; // reset silence streak on user speech
         // Do NOT reset callEndAskCount here — the user just answered the
@@ -1801,6 +1802,8 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
     this.awaitingAssistantReply = true;
     this.userSpeechEndedAt = Date.now();
     this.lastUserVoiceTime = Date.now();
+    this.lastUserSpokenText = trimmed;
+    this.pendingResponseSince = Date.now();
     this.lastTurnFinishedTime = Date.now();
     this.lastSilenceNudgeAt = Date.now();
     this.silenceStateMachine.onSpeechActivity();
@@ -1877,6 +1880,8 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
       this.awaitingAssistantReply = true;
       this.userSpeechEndedAt = Date.now();
       this.lastUserVoiceTime = Date.now();
+      this.lastUserSpokenText = item.text;
+      this.pendingResponseSince = Date.now();
       this.lastTurnFinishedTime = Date.now();
       this.lastSilenceNudgeAt = Date.now();
       this.silenceStateMachine.onSpeechActivity();
@@ -3059,27 +3064,49 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
       const lastActivityAnchor = this.lastTurnFinishedTime || 0;
       const silenceDurationSec = (Date.now() - lastActivityAnchor) / 1000;
 
-      // ── Fast Stalled-Turn Watchdog (User Spoke Real Words but Model Didn't Reply) ──
-      // In a live voice call, if the student spoke actual words and 3.5s pass without
-      // Gemini generating a reply, kick the stalled turn with their exact words!
-      const spokenWords = this.lastUserSpokenText.slice(-300).trim();
-      const userSpokeRealWords = this.awaitingAssistantReply && spokenWords.length > 0 && this.userSpeechEndedAt > 0;
-      const speechWaitDurationSec = (Date.now() - this.userSpeechEndedAt) / 1000;
-      // Never manufacture a second assistant turn while Gemini is already answering.
-      // A short network/model delay is not a reason to inject another prompt into Live.
-      if (userSpokeRealWords && speechWaitDurationSec >= 8 && !this.currentAssistantMessage && !this.activeAssistantTurnId && (Date.now() - this.lastSilenceNudgeAt > 15000)) {
-        this.awaitingAssistantReply = false;
-        this.lastSilenceNudgeAt = Date.now();
-        this.lastTurnFinishedTime = Date.now();
-        this.lastUserSpokenText = '';
-        try {
-          this.session.sendRealtimeInput({
-            text: `[SYSTEM EVENT: The student said: "${spokenWords}". Answer their spoken words directly out loud right now!]`,
-          });
-          console.info(`[GeminiLive] Fast reply watchdog kicked stalled turn for recognized words: "${spokenWords}"`);
-        } catch (e) {
-          console.warn('[GeminiLive] Fast reply watchdog error:', e);
+      // ── Stalled-turn transport recovery ───────────────────────────────────
+      // Never inject a second prompt into the same Live session: that can race
+      // a slow but healthy Gemini turn and produce duplicate answers. Only
+      // recover when the user has a pending turn for >=12s AND the transport
+      // has been completely silent for >=12s as well. In that case preserve the
+      // exact user words as one queued replay, close the dead socket, and let
+      // the normal bounded reconnect path restore the turn.
+      const pendingWords = this.lastUserSpokenText.slice(-300).trim();
+      const responseStartedAt = this.pendingResponseSince || this.userSpeechEndedAt;
+      const responseWaitMs = responseStartedAt > 0 ? Date.now() - responseStartedAt : 0;
+      const transportQuietMs = Date.now() - this.lastWsActivity;
+      const turnStalled =
+        this.awaitingAssistantReply &&
+        pendingWords.length > 0 &&
+        !this.currentAssistantMessage &&
+        !this.activeAssistantTurnId &&
+        responseWaitMs >= 12_000 &&
+        transportQuietMs >= 12_000;
+
+      if (turnStalled && this.session) {
+        const alreadyQueued = this.pendingTextQueue.some((item) => item.text === pendingWords);
+        if (!alreadyQueued) {
+          if (this.pendingTextQueue.length >= GeminiLiveClient.MAX_PENDING_TEXT_QUEUE) {
+            this.pendingTextQueue.shift();
+          }
+          this.pendingTextQueue.push({ text: pendingWords, displayText: pendingWords });
         }
+        this.awaitingAssistantReply = false;
+        this.pendingResponseSince = 0;
+        this.lastUserSpokenText = '';
+        this.lastTurnFinishedTime = Date.now();
+        this.recordConnectionFailure(new Error('Live response stalled — reconnecting before replay.'));
+        try {
+          this.session.close?.();
+        } catch {
+          // best-effort close; reconnect path below is authoritative
+        }
+        this.session = null;
+        this.isReconnecting = false;
+        this.reconnectAttempts = 0;
+        void this.handleAutoReconnect().catch((e) =>
+          console.warn('[GeminiLive] Stalled-turn recovery failed:', e),
+        );
         return;
       }
 
