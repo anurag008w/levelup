@@ -49,4 +49,10 @@ describe('release-version policy', () => {
     expect(source).toContain('target_commitish: ${{ github.sha }}');
     expect(releaseAction).toBeGreaterThan(-1);
   });
+
+  it('treats the previous tag as git revision data, not shell syntax', () => {
+    const source = readFileSync(workflow, 'utf8');
+    expect(source).toContain('git log --format="- %s" --end-of-options "$LAST_TAG..HEAD"');
+    expect(source).not.toContain('git log $LAST_TAG..HEAD --format="- %s"');
+  });
 });
