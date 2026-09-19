@@ -271,9 +271,9 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
   const scheduledAliases = new Map<string, string>();
   for (const s of [...(remote.scheduledMessages || []), ...(local.scheduledMessages || [])]) {
     if (!s) continue;
-    const logicalKey = scheduledProactiveLogicalKey(s);
+    const contentKey = scheduledProactiveContentKey(s);
     const idKey = s.id ? 'id:' + s.id : null;
-    const targetKey = (idKey && scheduledAliases.get(idKey)) || scheduledAliases.get(logicalKey) || idKey || logicalKey;
+    const targetKey = (idKey && scheduledAliases.get(idKey)) || scheduledAliases.get(contentKey) || idKey || contentKey;
     const existing = scheduled.get(targetKey);
     if (!existing) {
       scheduled.set(targetKey, s);
@@ -290,7 +290,7 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
         deliveryRetries: Math.max(existing.deliveryRetries || 0, s.deliveryRetries || 0),
       });
     }
-    scheduledAliases.set(logicalKey, targetKey);
+    scheduledAliases.set(contentKey, targetKey);
     if (idKey) scheduledAliases.set(idKey, targetKey);
   }
   const missed = new Map<string, MisaSyncPayload['proactive']['missedInteractions'][number]>();
@@ -325,10 +325,7 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
   };
 }
 
-function scheduledProactiveLogicalKey(message: ScheduledProactiveMessage): string {
-  // The generated ID is the stable identity shared by synced copies.
-  // Content/time remains a compatibility fallback for legacy records without an ID.
-  if (message.id) return `id:${message.id}`;
+function scheduledProactiveContentKey(message: ScheduledProactiveMessage): string {
   const linkedEntity = message.linkedEntity
     ? `${message.linkedEntity.type}:${message.linkedEntity.value}`
     : '';
