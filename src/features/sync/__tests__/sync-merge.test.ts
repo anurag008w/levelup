@@ -380,12 +380,22 @@ describe('sync-merge — misa relationship + proactive merge', () => {
 
 
 describe('sync-merge — scheduled proactive cancellation', () => {
+  const scheduledPrefs = (): ProactivePreferences => ({
+    enabled: true,
+    callsEnabled: true,
+    callFrequency: 'balanced',
+    quietHoursStart: '01:00',
+    quietHoursEnd: '07:00',
+    ringtonePreset: 'soft_chime',
+    activeGraceMinutes: 30,
+  });
+
   it('keeps a cancellation tombstone when the same scheduled item changes metadata on another device', () => {
     const base = {
       version: 1,
       relationship: { ...DEFAULT_RELATIONSHIP_STATE },
       proactive: {
-        prefs: prefs(),
+        prefs: scheduledPrefs(),
         lastActiveTimestamp: 0,
         lastUserChatTimestamp: 0,
         lastCallTimestamp: 0,
