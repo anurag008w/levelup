@@ -82,6 +82,25 @@ const pendingLiveReplies: PendingLiveReply[] = [];
  * register its handler before we minimize the notification-reply Activity. */
 export const LIVE_REPLY_HANDLER_WAIT_MS = 8_000;
 
+function waitForLiveReplyHandler(text: string): Promise<void> {
+  if (liveReplyHandler) return Promise.resolve(liveReplyHandler(text));
+
+  return new Promise<void>((resolve, reject) => {
+    const item: PendingLiveReply = { text, resolve, reject };
+    pendingLiveReplies.push(item);
+
+    // Never keep an orphaned notification reply around after its bounded
+    // Activity/React startup window. A later call must not receive an old reply.
+    window.setTimeout(() => {
+      const index = pendingLiveReplies.indexOf(item);
+      if (index >= 0) {
+        pendingLiveReplies.splice(index, 1);
+        reject(new Error('Live reply handler did not become ready.'));
+      }
+    }, LIVE_REPLY_HANDLER_WAIT_MS);
+  });
+}
+
 export function setLiveCallReplyHandler(handler: ((text: string) => void | Promise<void>) | null): void {
   liveReplyHandler = handler;
   if (handler && pendingLiveReplies.length > 0) {
@@ -200,20 +219,9 @@ export function setupNotificationActions(): void {
             // Android is allowed to resume the Activity only so JS can deliver the
             // reply. Always return to the background afterwards, even when React
             // has already mounted the Live overlay or the process was cold-started.
-            let delivery = Promise.resolve();
-            if (liveReplyHandler) {
-              delivery = Promise.resolve(liveReplyHandler(text));
-            } else {
-              // Cold-start race: wait for LiveCompanionOverlay to register its
-              // handler instead of minimizing 50ms later and racing the mount.
-              delivery = new Promise<void>((resolve, reject) => {
-                pendingLiveReplies.push({ text, resolve, reject });
-              });
-            }
-            await Promise.race([
-              delivery,
-              new Promise<void>((resolve) => setTimeout(resolve, LIVE_REPLY_HANDLER_WAIT_MS)),
-            ]);
+            // Cold-start safe delivery. The helper owns the timeout and removes
+            // the queued item when the Activity/React startup window expires.
+            await waitForLiveReplyHandler(text);
             await new Promise((resolve) => setTimeout(resolve, LIVE_REPLY_GRACE_MS));
             await minimizeIfNative();
           } catch {
