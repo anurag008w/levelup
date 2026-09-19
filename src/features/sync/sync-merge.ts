@@ -317,16 +317,13 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
 }
 
 function scheduledProactiveLogicalKey(message: ScheduledProactiveMessage): string {
+  // The generated ID is the stable identity shared by synced copies.
+  // Content/time remains a compatibility fallback for legacy records without an ID.
+  if (message.id) return `id:${message.id}`;
   const linkedEntity = message.linkedEntity
     ? `${message.linkedEntity.type}:${message.linkedEntity.value}`
     : '';
-  return [
-    message.kind,
-    message.scheduledTime,
-    message.topic || '',
-    message.text || message.reason || '',
-    linkedEntity,
-  ].join('\\u0000');
+  return [message.kind, message.scheduledTime, message.topic || '', message.text || message.reason || '', linkedEntity].join('\\u0000');
 }
 
 function sanitizeTopicCooldowns(input: unknown): Record<string, number> {
