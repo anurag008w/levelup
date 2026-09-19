@@ -8,30 +8,30 @@ on:
         required: false
         default: ""
 
-# Release is intentionally manual-only. The release action creates the tag
-# and release after all build and artifact preparation succeeds.
-permissions:
-  contents: write
-
+# Build work runs with read-only repository access. Only the final publish job
+# receives contents: write, after all untrusted dependency/build steps finish.
 concurrency:
   group: release
   cancel-in-progress: true
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+      version_name: ${{ steps.version.outputs.VERSION_NAME }}
+      version_code: ${{ steps.version.outputs.VERSION_CODE }}
+      previous_tag: ${{ steps.prev_tag.outputs.PREVIOUS_TAG }}
+      apk_name: ${{ steps.prepare.outputs.apk_name }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Configure git
-        run: |
-          git config user.email "anurag008w@users.noreply.github.com"
-          git config user.name "anurag008w"
 
       - name: Set version
         id: version
@@ -75,9 +75,9 @@ jobs:
           fi
           VERSION_CODE="${YEAR}${MONTH}${DAY}${SEQ}"
 
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_OUTPUT
-          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_OUTPUT"
           echo "📌 Release: $VERSION (versionCode $VERSION_CODE)"
 
       - name: Determine previous tag
@@ -85,7 +85,7 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           PREVIOUS_TAG=$(git tag --sort=-creatordate | grep -v "^${VERSION}$" | head -1 || echo "")
-          echo "PREVIOUS_TAG=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+          echo "PREVIOUS_TAG=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
           echo "📎 Previous tag for changelog comparison: $PREVIOUS_TAG"
 
       - name: Set up Node.js
@@ -157,20 +157,50 @@ jobs:
           mkdir -p release-out
           APK_NAME="levelup-${{ steps.version.outputs.VERSION_NAME }}-signed.apk"
           cp android/app/build/outputs/apk/release/app-release.apk "release-out/${APK_NAME}"
-          echo "apk_path=release-out/${APK_NAME}" >> $GITHUB_OUTPUT
-          echo "apk_name=${APK_NAME}" >> $GITHUB_OUTPUT
+          echo "apk_name=${APK_NAME}" >> "$GITHUB_OUTPUT"
+
+      # Build artifacts are transferred to the separate publish job. The
+      # write-capable GitHub token is therefore unavailable during npm ci,
+      # web/Android builds, signing, and artifact preparation.
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: levelup-${{ steps.version.outputs.VERSION_NAME }}-apk
+          path: release-out
+          retention-days: 30
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download APK artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: levelup-${{ needs.build.outputs.version_name }}-apk
+          path: release-out
 
       - name: Generate changelog
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_APK_NAME: ${{ needs.build.outputs.apk_name }}
+          LAST_TAG: ${{ needs.build.outputs.previous_tag }}
         run: |
-          LAST_TAG="${{ steps.prev_tag.outputs.PREVIOUS_TAG }}"
-
           cat > changelog.md << 'CHANGELOG'
-          # Release ${{ steps.version.outputs.VERSION }}
+          # Release ${RELEASE_VERSION}
 
           ## 📱 Download APK
           Install the signed release APK on your Android device.
 
-          - **APK:** `${{ steps.prepare.outputs.apk_name }}`
+          - **APK:** `${RELEASE_APK_NAME}`
 
           CHANGELOG
 
@@ -185,26 +215,19 @@ jobs:
             git log --format="- %s" --end-of-options "$LAST_TAG..HEAD" >> changelog.md
           fi
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: levelup-${{ steps.version.outputs.VERSION_NAME }}-apk
-          path: ${{ steps.prepare.outputs.apk_path }}
-          retention-days: 30
-
-      # The release action creates the tag only after every build, changelog,
-      # and artifact step above has succeeded. This avoids leaving a dangling
-      # tag behind when preparation fails part-way through a manual release.
+      # Only this final publishing job has contents: write. It creates the tag
+      # and release after build, signing, artifact transfer, and changelog
+      # preparation have all succeeded.
       - name: Create release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
-          tag_name: ${{ steps.version.outputs.VERSION }}
+          tag_name: ${{ needs.build.outputs.version }}
           target_commitish: ${{ github.sha }}
-          name: "LevelUp ${{ steps.version.outputs.VERSION }}"
+          name: "LevelUp ${{ needs.build.outputs.version }}"
           body_path: changelog.md
-          files: ${{ steps.prepare.outputs.apk_path }}
+          files: release-out/${{ needs.build.outputs.apk_name }}
 
       - name: Done
         run: |
-          echo "🎉 Release ${{ steps.version.outputs.VERSION }} created!"
-          echo "📦 Signed APK: ${{ steps.prepare.outputs.apk_name }}"
+          echo "🎉 Release ${{ needs.build.outputs.version }} created!"
+          echo "📦 Signed APK: ${{ needs.build.outputs.apk_name }}"
