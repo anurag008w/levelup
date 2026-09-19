@@ -382,7 +382,7 @@ class ProactiveAgentService {
   }
   private checkScheduledMessages(): void {
     if (!this.prefs.enabled || this.isQuietTime() || isLiveCallActive()) return;
-    const now = Date.now(); const due = this.scheduledMessages.filter((s) => s.scheduledTime <= now); if (due.length === 0) return;
+    const now = Date.now(); const due = this.scheduledMessages.filter((s) => s.scheduledTime <= now && !s.cancelled); if (due.length === 0) return;
     this.scheduledMessages = this.scheduledMessages.filter((s) => s.scheduledTime > now); this.saveState();
     for (const item of due) {
       if (item.kind === 'call') {
@@ -399,13 +399,13 @@ class ProactiveAgentService {
   scheduleCall(reason: string, scheduledTime: number): string { const item: ScheduledProactiveMessage = { id: crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, kind: 'call', reason, scheduledTime, createdAt: Date.now() }; this.scheduledMessages.push(item); this.saveState(); return item.id; }
   cancelScheduledForDoneEntity(type: 'todo' | 'task' | 'memory' | 'keyword', value: string): number {
     if (!value) return 0; const norm = value.trim().toLowerCase(); const before = this.scheduledMessages.length;
-    this.scheduledMessages = this.scheduledMessages.filter((s) => { if (s.scheduledTime <= Date.now()) return true; const ent = s.linkedEntity; if (!ent || ent.type !== type) return true; const entNorm = (ent.value || '').trim().toLowerCase(); if (entNorm === '') return true; return entNorm !== norm && !norm.includes(entNorm) && !entNorm.includes(norm); });
+    this.scheduledMessages = this.scheduledMessages.map((s) => { if (s.cancelled || s.scheduledTime <= Date.now()) return s; const ent = s.linkedEntity; if (!ent || ent.type !== type) return s; const entNorm = (ent.value || '').trim().toLowerCase(); if (entNorm === '') return s; return entNorm === norm || norm.includes(entNorm) || entNorm.includes(norm) ? { ...s, cancelled: true } : s; });
     if (this.scheduledMessages.length !== before) { this.saveState(); return before - this.scheduledMessages.length; } return 0;
   }
   notifyEntityCompleted(type: 'todo' | 'task' | 'memory' | 'keyword', value: string): void { this.cancelScheduledForDoneEntity(type, value); }
   makeCall(reason: string): boolean { return this.triggerIncomingCall(reason || 'Misa call kar rahi hai', 'user_tool'); }
-  cancelScheduledMessage(id: string): boolean { const before = this.scheduledMessages.length; this.scheduledMessages = this.scheduledMessages.filter((s) => s.id !== id); if (this.scheduledMessages.length !== before) { this.saveState(); return true; } return false; }
-  listScheduledMessages(): ScheduledProactiveMessage[] { const now = Date.now(); return this.scheduledMessages.filter((s) => s.scheduledTime > now).sort((a, b) => a.scheduledTime - b.scheduledTime); }
+  cancelScheduledMessage(id: string): boolean { const index = this.scheduledMessages.findIndex((s) => s.id === id && !s.cancelled); if (index < 0) return false; this.scheduledMessages[index] = { ...this.scheduledMessages[index], cancelled: true }; this.saveState(); return true; }
+  listScheduledMessages(): ScheduledProactiveMessage[] { const now = Date.now(); return this.scheduledMessages.filter((s) => s.scheduledTime > now && !s.cancelled).sort((a, b) => a.scheduledTime - b.scheduledTime); }
   private async checkSpontaneousMemoryMessage(): Promise<void> {
     if (!this.prefs.enabled || this.isQuietTime() || isLiveCallActive()) return;
     const now = Date.now(); if (now < this.nextSpontaneousAt || this.currentActivityState === 'DEEP_STUDY' || this.currentActivityState === 'SOLVING' || this.isUserCurrentlyInChat) return;
