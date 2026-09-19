@@ -55,7 +55,7 @@
 import { App } from '@capacitor/app';
 import { container } from '../di/container';
 import { buildNotificationSteps, computeRevealSchedule, splitReplyIntoBubbles } from '../features/chat/message-segments';
-import { isNativePlatform, notifyAiReply, onNotificationAction, registerNotificationActions, trackAppState, wasAppResumedFromBackground } from './notifications';
+import { isNativePlatform, notifyAiReply, onNotificationAction, registerNotificationActions, trackAppState } from './notifications';
 import { loadSession } from './auth';
 
 let setup = false;
