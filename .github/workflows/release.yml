@@ -203,7 +203,7 @@ jobs:
 
           if [[ -n "$LAST_TAG" ]]; then
             echo "### Changes since $LAST_TAG" >> changelog.md
-            git log -- "$LAST_TAG..HEAD" --format="- %s" >> changelog.md
+            git log --format="- %s" --end-of-options "$LAST_TAG..HEAD" >> changelog.md
           fi
 
       - name: Upload artifact
