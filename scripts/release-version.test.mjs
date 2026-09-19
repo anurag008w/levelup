@@ -43,7 +43,9 @@ describe('release-version policy', () => {
 
   it('keeps repository write permission out of build and dependency-install jobs', () => {
     const source = readFileSync(workflow, 'utf8');
-    const buildJob = source.slice(source.indexOf('  build:'));
+    const buildStart = source.indexOf('  build:');
+    const publishStart = source.indexOf('  publish:', buildStart);
+    const buildJob = source.slice(buildStart, publishStart >= 0 ? publishStart : undefined);
     const publishJob = source.slice(source.indexOf('  publish:'));
     const install = buildJob.indexOf('run: npm ci');
     const buildWritePermission = buildJob.indexOf('contents: write');
