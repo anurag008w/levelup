@@ -55,4 +55,13 @@ describe('release-version policy', () => {
     expect(source).toContain('git log --format="- %s" --end-of-options "$LAST_TAG..HEAD"');
     expect(source).not.toContain('git log $LAST_TAG..HEAD --format="- %s"');
   });
+
+  it('fails closed instead of publishing a debug APK when signing credentials are missing', () => {
+    const source = readFileSync(workflow, 'utf8');
+    expect(source).toContain('Production release signing credentials are required');
+    expect(source).toContain('./gradlew assembleRelease --no-daemon');
+    expect(source).toContain('levelup-${{ steps.version.outputs.VERSION_NAME }}-signed.apk');
+    expect(source).not.toContain('assembleDebug --no-daemon');
+    expect(source).not.toContain('SIGNED=false');
+  });
 });
