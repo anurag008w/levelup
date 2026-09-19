@@ -64,7 +64,9 @@ export class NativeScreenShare {
     await ScreenShare.startCapture({
       width: 720,
       height: 1280,
-      fps: Math.max(1, Math.min(fps, 10)),
+      // Gemini Live vision input is capped at 1 frame/sec; keep native capture aligned
+      // even when an older stored setting requests a higher rate.
+      fps: Math.max(1, Math.min(fps, 1)),
     });
 
     return true;
