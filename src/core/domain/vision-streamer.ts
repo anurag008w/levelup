@@ -205,7 +205,10 @@ export class VisionStreamer {
     this.videoElement.srcObject = stream;
     void this.videoElement.play().catch(() => undefined);
 
-    const intervalMs = Math.max(200, Math.floor(1000 / Math.max(1, fps)));
+    // Gemini Live currently accepts video input at up to 1 frame/sec.
+    // Clamp here even if an older/custom setting still requests a higher FPS.
+    const effectiveFps = Math.min(1, Math.max(1, fps));
+    const intervalMs = Math.max(1000, Math.floor(1000 / effectiveFps));
     this.frameInterval = window.setInterval(() => {
       if (
         !this.videoElement ||
