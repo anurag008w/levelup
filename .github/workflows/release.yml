@@ -8,9 +8,8 @@ on:
         required: false
         default: ""
 
-# Release is intentionally manual-only. The workflow creates and pushes the tag
-# itself; a tag-push trigger here would immediately start a second release run
-# for the same version and race/cancel the original run.
+# Release is intentionally manual-only. The release action creates the tag
+# and release after all build and artifact preparation succeeds.
 permissions:
   contents: write
 
@@ -176,17 +175,6 @@ jobs:
           echo "apk_path=release-out/${APK_NAME}" >> $GITHUB_OUTPUT
           echo "apk_name=${APK_NAME}" >> $GITHUB_OUTPUT
 
-      - name: Create tag
-        if: github.event_name != 'push'
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
-            echo "❌ Tag $VERSION already exists on origin; refusing to overwrite it."
-            exit 1
-          fi
-          git tag -a "$VERSION" -m "Release $VERSION"
-          git push origin "$VERSION"
-
       - name: Generate changelog
         run: |
           LAST_TAG="${{ steps.prev_tag.outputs.PREVIOUS_TAG }}"
@@ -225,10 +213,14 @@ jobs:
           path: ${{ steps.prepare.outputs.apk_path }}
           retention-days: 30
 
+      # The release action creates the tag only after every build, changelog,
+      # and artifact step above has succeeded. This avoids leaving a dangling
+      # tag behind when preparation fails part-way through a manual release.
       - name: Create release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
+          target_commitish: ${{ github.sha }}
           name: "LevelUp ${{ steps.version.outputs.VERSION }}"
           body_path: changelog.md
           files: ${{ steps.prepare.outputs.apk_path }}
