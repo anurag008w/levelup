@@ -183,11 +183,11 @@ export function setupNotificationActions(): void {
           // When the Live overlay is already mounted, the app is genuinely being
           // used in the foreground; do not minimize it just because the
           // notification action caused Android to resume the Activity.
-          const shouldMinimizeAfterAction = wasAppResumedFromBackground();
           try {
-            // Android may resume the Activity before this JS callback runs.
-            // Decide from the pre-action lifecycle signal, not from whether
-            // React has already mounted the Live overlay.
+            // A notification inline-reply is an explicit background interaction:
+            // Android is allowed to resume the Activity only so JS can deliver the
+            // reply. Always return to the background afterwards, even when React
+            // has already mounted the Live overlay or the process was cold-started.
             if (liveReplyHandler) {
               await Promise.resolve(liveReplyHandler(text));
             } else {
@@ -195,10 +195,8 @@ export function setupNotificationActions(): void {
               // registers its handler instead of silently dropping it.
               pendingLiveReplies.push(text);
             }
-            if (shouldMinimizeAfterAction) {
-              await new Promise((resolve) => setTimeout(resolve, LIVE_REPLY_GRACE_MS));
-              await minimizeIfNative();
-            }
+            await new Promise((resolve) => setTimeout(resolve, LIVE_REPLY_GRACE_MS));
+            await minimizeIfNative();
           } catch {
             // no-op
           }
