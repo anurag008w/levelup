@@ -1,9 +1,6 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       version:
@@ -19,9 +16,8 @@ concurrency:
 
 jobs:
   build:
-    # A normal main push must not publish a release. The special marker is used
-    # once to repair the latest existing release, while keeping manual releases.
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[repair-release]')
+    # Releases are manual-only. CI remains push-driven; this workflow must never
+    # start from an ordinary main commit or from a repair commit.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
