@@ -31,7 +31,6 @@ jobs:
       version_name: ${{ steps.version.outputs.VERSION_NAME }}
       version_code: ${{ steps.version.outputs.VERSION_CODE }}
       previous_tag: ${{ steps.prev_tag.outputs.PREVIOUS_TAG }}
-      apk_name: ${{ steps.prepare.outputs.apk_name }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -163,7 +162,6 @@ jobs:
           APK_NAME="levelup-${{ steps.version.outputs.VERSION_NAME }}-signed.apk"
           cp android/app/build/outputs/apk/release/app-release.apk "release-out/$APK_NAME"
           test -s "release-out/$APK_NAME"
-          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a0 # v7
@@ -192,11 +190,15 @@ jobs:
           path: release-out
 
       - name: Verify APK
-        env:
-          APK_NAME: ${{ needs.build.outputs.apk_name }}
         run: |
-          APK_PATH="release-out/$APK_NAME"
-          test -f "$APK_PATH"
+          shopt -s nullglob
+          APK_FILES=(release-out/*.apk)
+          if [[ ${#APK_FILES[@]} -ne 1 ]]; then
+            echo "❌ Expected exactly one APK in release artifact, found ${#APK_FILES[@]}"
+            printf "%s\n" "${APK_FILES[@]}" || true
+            exit 1
+          fi
+          APK_PATH="${APK_FILES[0]}"
           test -s "$APK_PATH"
           unzip -t "$APK_PATH" >/dev/null
           echo "✅ APK ready: $APK_PATH"
@@ -205,9 +207,16 @@ jobs:
       - name: Generate changelog
         env:
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
-          RELEASE_APK_NAME: ${{ needs.build.outputs.apk_name }}
           LAST_TAG: ${{ needs.build.outputs.previous_tag }}
         run: |
+          shopt -s nullglob
+          APK_FILES=(release-out/*.apk)
+          if [[ ${#APK_FILES[@]} -ne 1 ]]; then
+            echo "❌ Expected exactly one APK before changelog generation, found ${#APK_FILES[@]}"
+            exit 1
+          fi
+          RELEASE_APK_NAME="$(basename "${APK_FILES[0]}")"
+
           cat > changelog.md << CHANGELOG
           # Release ${RELEASE_VERSION}
 
@@ -229,9 +238,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
-          RELEASE_APK_NAME: ${{ needs.build.outputs.apk_name }}
         run: |
-          APK_PATH="release-out/$RELEASE_APK_NAME"
+          shopt -s nullglob
+          APK_FILES=(release-out/*.apk)
+          if [[ ${#APK_FILES[@]} -ne 1 ]]; then
+            echo "❌ Expected exactly one APK before publishing, found ${#APK_FILES[@]}"
+            exit 1
+          fi
+          APK_PATH="${APK_FILES[0]}"
+          RELEASE_APK_NAME="$(basename "$APK_PATH")"
 
           if gh release view "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "♻️ Updating existing release $RELEASE_VERSION"
