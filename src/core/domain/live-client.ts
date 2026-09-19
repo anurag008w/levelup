@@ -365,6 +365,7 @@ export class GeminiLiveClient {
       this.awaitingAssistantReply = false;
       this.lastUserSpokenText = '';
       this.userSpeechEndedAt = 0;
+      this.pendingResponseSince = 0;
       this.quietFocusUntil = 0;
       this.lastVisionHeartbeatAt = 0;
       this.lastUserVoiceTime = 0;
@@ -3469,6 +3470,7 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
     this.awaitingAssistantReply = false;
     this.lastUserSpokenText = '';
     this.userSpeechEndedAt = 0;
+    this.pendingResponseSince = 0;
     this.quietFocusUntil = 0;
     this.lastVisionHeartbeatAt = 0;
     this.silenceStateMachine.reset();
