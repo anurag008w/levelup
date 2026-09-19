@@ -268,21 +268,30 @@ function mergeProactiveBlob(local: MisaSyncPayload['proactive'], remote: MisaSyn
     else if ((existing.scheduledTime || 0) > (t.scheduledTime || 0)) triggers.set(key, t);
   }
   const scheduled = new Map<string, ScheduledProactiveMessage>();
+  const scheduledAliases = new Map<string, string>();
   for (const s of [...(remote.scheduledMessages || []), ...(local.scheduledMessages || [])]) {
     if (!s) continue;
-    const key = scheduledProactiveLogicalKey(s);
-    const existing = scheduled.get(key);
+    const logicalKey = scheduledProactiveLogicalKey(s);
+    const idKey = s.id ? 'id:' + s.id : null;
+    const targetKey = (idKey && scheduledAliases.get(idKey)) || scheduledAliases.get(logicalKey) || idKey || logicalKey;
+    const existing = scheduled.get(targetKey);
     if (!existing) {
-      scheduled.set(key, s);
-      continue;
+      scheduled.set(targetKey, s);
+    } else {
+      const latest = (existing.createdAt || 0) > (s.createdAt || 0)
+        ? existing
+        : (existing.createdAt || 0) < (s.createdAt || 0)
+          ? s
+          : JSON.stringify(existing) >= JSON.stringify(s) ? existing : s;
+      scheduled.set(targetKey, {
+        ...latest,
+        // Cancellation is a tombstone: once observed, sync must never resurrect it.
+        cancelled: Boolean(existing.cancelled || s.cancelled),
+        deliveryRetries: Math.max(existing.deliveryRetries || 0, s.deliveryRetries || 0),
+      });
     }
-    const latest = (existing.createdAt || 0) >= (s.createdAt || 0) ? existing : s;
-    scheduled.set(key, {
-      ...latest,
-      // Cancellation is a tombstone: once observed, sync must never resurrect it.
-      cancelled: Boolean(existing.cancelled || s.cancelled),
-      deliveryRetries: Math.max(existing.deliveryRetries || 0, s.deliveryRetries || 0),
-    });
+    scheduledAliases.set(logicalKey, targetKey);
+    if (idKey) scheduledAliases.set(idKey, targetKey);
   }
   const missed = new Map<string, MisaSyncPayload['proactive']['missedInteractions'][number]>();
   for (const m of [...(remote.missedInteractions || []), ...(local.missedInteractions || [])]) {
