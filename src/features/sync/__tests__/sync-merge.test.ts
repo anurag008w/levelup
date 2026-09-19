@@ -377,3 +377,65 @@ describe('sync-merge — misa relationship + proactive merge', () => {
     expect(merged.proactive.prefs.callsEnabled).toBe(true);
   });
 });
+
+
+describe('sync-merge — scheduled proactive cancellation', () => {
+  it('keeps a cancellation tombstone when the same scheduled item changes metadata on another device', () => {
+    const base = {
+      version: 1,
+      relationship: { ...DEFAULT_RELATIONSHIP_STATE },
+      proactive: {
+        prefs: prefs(),
+        lastActiveTimestamp: 0,
+        lastUserChatTimestamp: 0,
+        lastCallTimestamp: 0,
+        lastCallDeclinedTimestamp: 0,
+        consecutiveCallDeclines: 0,
+        dndUntilTimestamp: 0,
+        coldStartDone: false,
+        pendingTriggers: [],
+        scheduledMessages: [],
+        missedInteractions: [],
+      },
+    } satisfies MisaSyncPayload;
+
+    const local = {
+      ...base,
+      proactive: {
+        ...base.proactive,
+        scheduledMessages: [{
+          id: 'scheduled-1',
+          kind: 'message' as const,
+          text: 'original reminder',
+          topic: 'physics',
+          scheduledTime: 2000,
+          createdAt: 1000,
+          cancelled: true,
+        }],
+      },
+    };
+
+    const remote = {
+      ...base,
+      proactive: {
+        ...base.proactive,
+        scheduledMessages: [{
+          id: 'scheduled-1',
+          kind: 'message' as const,
+          text: 'edited reminder',
+          topic: 'physics',
+          scheduledTime: 3000,
+          createdAt: 2001,
+          cancelled: false,
+        }],
+      },
+    };
+
+    const merged = mergeMisaData(local, remote)!;
+    expect(merged.proactive.scheduledMessages).toHaveLength(1);
+    expect(merged.proactive.scheduledMessages[0].id).toBe('scheduled-1');
+    expect(merged.proactive.scheduledMessages[0].cancelled).toBe(true);
+    expect(merged.proactive.scheduledMessages[0].text).toBe('edited reminder');
+    expect(merged.proactive.scheduledMessages[0].scheduledTime).toBe(3000);
+  });
+});
