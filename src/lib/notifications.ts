@@ -92,16 +92,30 @@ export function isChatTabActive(): boolean {
  * hain, jo timers par depend nahi karta.
  */
 let appActive = true;
+let appActiveSince = Date.now();
+let lastAppInactiveAt = 0;
 
 export function isAppActive(): boolean {
   return appActive;
+}
+
+/** True when Android has just resumed the Activity from a previously backgrounded state. */
+export function wasAppResumedFromBackground(windowMs = 10_000): boolean {
+  if (!lastAppInactiveAt) return false;
+  if (!appActive) return true;
+  return appActiveSince >= lastAppInactiveAt && Date.now() - appActiveSince <= windowMs;
 }
 
 /** App ke foreground/background state ko track karta hai. App start pe ek baar call karo. */
 export function trackAppState(): void {
   if (typeof document !== 'undefined') {
     const syncFromVisibility = () => {
-      appActive = !document.hidden;
+      const nextActive = !document.hidden;
+      if (nextActive !== appActive) {
+        if (!nextActive) lastAppInactiveAt = Date.now();
+        else appActiveSince = Date.now();
+      }
+      appActive = nextActive;
     };
     document.addEventListener('visibilitychange', syncFromVisibility);
     syncFromVisibility();
@@ -109,6 +123,10 @@ export function trackAppState(): void {
   if (isNativePlatform()) {
     try {
       App.addListener('appStateChange', ({ isActive }) => {
+        if (isActive !== appActive) {
+          if (!isActive) lastAppInactiveAt = Date.now();
+          else appActiveSince = Date.now();
+        }
         appActive = isActive;
       });
     } catch {
