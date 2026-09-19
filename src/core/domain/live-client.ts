@@ -3352,8 +3352,14 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
    * call from sendTextMessage/sendAudioChunk on every user interaction.
    */
   retryConnectIfNeeded(): void {
-    if (!this.hasFailedConnection()) return;
-    this.lastConnectionErrorAt = 0;
+    const canRecover = this.hasFailedConnection() ||
+      (!!this.activeApiKey &&
+        !this.session &&
+        !this.isReconnecting &&
+        this.status !== 'connecting' &&
+        !this.isUserExplicitlyClosed);
+    if (!canRecover) return;
+    if (this.hasFailedConnection()) this.lastConnectionErrorAt = 0;
     // Belt & suspenders for the no-reject SDK edge: a model that FAILED last
     // time must not be retried forever — advance the chain ONE step before the
     // user-driven retry (the connect-catch cascade already handles the normal
