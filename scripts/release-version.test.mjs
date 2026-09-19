@@ -37,7 +37,16 @@ describe('release-version policy', () => {
   it('does not interpolate the untrusted manual version input into shell source', () => {
     const source = readFileSync(workflow, 'utf8');
     expect(source).toContain('RELEASE_INPUT_VERSION: ${{ github.event.inputs.version }}');
-    expect(source).toContain('VERSION="$RELEASE_INPUT_VERSION"');
-    expect(source).not.toContain('VERSION="${{ github.event.inputs.version }}"');
+    expect(source).toContain('VERSION=\"$RELEASE_INPUT_VERSION\"');
+    expect(source).not.toContain('VERSION=\"${{ github.event.inputs.version }}\"');
+  });
+
+  it('does not push a release tag before release creation', () => {
+    const source = readFileSync(workflow, 'utf8');
+    const tagPush = source.indexOf('git push origin "$VERSION"');
+    const releaseAction = source.indexOf('softprops/action-gh-release@');
+    expect(tagPush).toBe(-1);
+    expect(source).toContain('target_commitish: ${{ github.sha }}');
+    expect(releaseAction).toBeGreaterThan(-1);
   });
 });
