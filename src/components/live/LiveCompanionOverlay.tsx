@@ -317,6 +317,9 @@ export default function LiveCompanionOverlay({
    *  "Call disconnected unexpectedly." banner — this teardown is expected and
    *  user-initiated, not a failure. Cleared when the replacement connects. */
   const suppressingDisconnectErrorRef = useRef(false);
+  // Explicit hangup is an intentional teardown; never flash the generic
+  // "unexpectedly disconnected" error before onClose unmounts the overlay.
+  const endingCallRef = useRef(false);
   // AUDIT FIX (round 2): generation token so a STALE settings-reconnect promise
   // can never stamp error/suppressing state over a newer reconnect attempt.
   const settingsReconnectGenRef = useRef(0);
@@ -373,13 +376,13 @@ export default function LiveCompanionOverlay({
     const callbacks: LiveClientCallbacks = {
       onStatusChange: (newStatus) => {
         if (newStatus === 'idle' || newStatus === 'disconnected') {
-          // AUDIT FIX: an expected teardown during a settings-change reconnect
-          // is NOT an error — keep the UI in a neutral reconnecting state.
+          // Explicit hangup is intentional and onClose will remove this overlay.
+          if (endingCallRef.current) return;
+          // Any non-explicit disconnect is an internal transport teardown
+          // (network recovery, model fallback, or settings reconnect). The
+          // socket is allowed to pass through disconnected while connect()
+          // installs its replacement; never show a false "unexpected" banner.
           if (suppressingDisconnectErrorRef.current || !liveClient.isClosed()) {
-            // Any non-explicit disconnect is an internal transport teardown
-            // (network recovery, model fallback, or settings reconnect). The
-            // socket is allowed to pass through disconnected while connect()
-            // installs its replacement; never show a false "unexpected" banner.
             setStatus('reconnecting');
             return;
           }
@@ -514,6 +517,7 @@ export default function LiveCompanionOverlay({
       if (!keepMic) mic.getTracks().forEach((t) => t.stop());
       cam?.getTracks().forEach((t) => t.stop());
       c.disconnect();
+      endingCallRef.current = false;
       if (activeLiveClient === c) {
         activeLiveClient = null;
         // Same tick me flag bhi clear — startup-failure path par chat routing
@@ -758,6 +762,7 @@ export default function LiveCompanionOverlay({
       if (clientRef.current === liveClient) {
         clientRef.current = null;
       }
+      if (!activeLiveClient) endingCallRef.current = false;
       // P5 (hang-fix): release the live-call-active flag for the proactive
       // agent — but only when NO overlay still owns a live call (a reattach
       // remount must not clear it mid-call).
@@ -991,6 +996,7 @@ export default function LiveCompanionOverlay({
   // End Call & Return Transcripts
   function handleEndCall() {
     haptic();
+    endingCallRef.current = true;
     const currentTranscripts = clientRef.current?.getTranscripts() || transcripts;
     clientRef.current?.disconnect();
     void stopLiveCompanionService();
