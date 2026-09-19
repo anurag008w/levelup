@@ -7,18 +7,37 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 25
-- Status: IN PROGRESS — RELEASE INPUT HARDENING IMPLEMENTED; EXACT-SHA CI PENDING
-- Current verified application/code head: `039f0a94671fa57d695e12d2996aae38c931aefa`
-- Current repository head before this state update: `913dd398b5f735ade77595971611fbcfc7c89925`
+- Audit turn: 26
+- Status: IN PROGRESS — RELEASE INPUT SHELL HARDENING VERIFIED; EXTERNAL PRODUCTION EVIDENCE REMAINS BLOCKED
+- Current repository head before this state update: `5f7b8a90e343a662d8ae595a76fbee9166b2def9`
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
 
 ### PRIORITIZED OPEN FINDINGS INDEX
 
-1. **IN PROGRESS — Release workflow shell-injection boundary for manual version input.** The manual `workflow_dispatch` version was interpolated directly into a shell assignment; it is now passed through an environment variable and a regression test covers the boundary. Exact-SHA CI and final re-audit are pending before `VERIFIED`.
-2. **BLOCKED — Deployment-topology verification for Vite relative base.** Code-side mitigation for root-absolute service-worker/manifest/notification paths is verified, but real deployed-host evidence is still required before the deployment-topology finding can be upgraded from `BLOCKED`.
-3. **BLOCKED — Android/native device and API-matrix verification.** Physical process-death, OEM background, PiP, camera/screen-share, and long-running FGS behavior require device evidence unavailable in repository CI.
-4. **BLOCKED — Build-time VITE_DEFAULT_AI_API_KEY exposure assessment.** Actual configured credential scope is not observable through repository access.
+1. **BLOCKED — Deployment-topology verification for Vite relative base.** Code-side mitigation for root-absolute service-worker/manifest/notification paths is verified, but real deployed-host evidence is still required before the deployment-topology finding can be upgraded from `BLOCKED`.
+2. **BLOCKED — Android/native device and API-matrix verification.** Physical process-death, OEM background, PiP, camera/screen-share, and long-running FGS behavior require device evidence unavailable in repository CI.
+3. **BLOCKED — Build-time VITE_DEFAULT_AI_API_KEY exposure assessment.** Actual configured credential scope is not observable through repository access.
+
+## Turn 26 — Release workflow shell-boundary verification
+
+### Scope and evidence
+- Re-read `/PRODUCTION_AUDIT_STATE.md` first and consumed the prioritized queue. The three remaining production findings require external deployment/device/credential evidence unavailable through repository access, so no unsupported claim was made and no arbitrary code change was introduced.
+- Re-audited the current release workflow and the two hardening commits following Turn 25: `913dd398b5f735ade77595971611fbcfc7c89925` and `5f7b8a90e343a662d8ae595a76fbee9166b2def9`.
+- Confirmed `.github/workflows/release.yml` reads the manual `workflow_dispatch` version through `RELEASE_INPUT_VERSION` and `VERSION="$RELEASE_INPUT_VERSION"`, so the workflow input is shell data rather than shell source.
+- Confirmed the changelog command treats the previous tag as revision data with `git log --format="- %s" --end-of-options "$LAST_TAG..HEAD"`; the regression test added in `5f7b8a90e343a662d8ae595a76fbee9166b2def9` asserts this contract and rejects the vulnerable unquoted ordering.
+- No merge, auto-merge, rebase, force-push, second PR, or PR close was performed.
+
+### Finding lifecycle
+
+#### P1/P2 — Manual release version input can cross into shell source — VERIFIED
+- **Root cause:** `.github/workflows/release.yml` previously embedded `${{ github.event.inputs.version }}` directly inside a shell assignment, allowing a crafted manual input to be interpreted as shell syntax before validation.
+- **Changed files/functions:** `.github/workflows/release.yml` (`Set version` step); `scripts/release-version.test.mjs` (workflow-boundary and changelog revision regression assertions).
+- **Implementation history:** `913dd398b5f735ade77595971611fbcfc7c89925` isolated the manual input through an environment variable; `5f7b8a90e343a662d8ae595a76fbee9166b2def9` added the previous-tag `git log` boundary regression guard.
+- **Targeted/static verification:** current workflow contains `RELEASE_INPUT_VERSION: ${{ github.event.inputs.version }}`, reads `VERSION="$RELEASE_INPUT_VERSION"`, and uses `git log --format="- %s" --end-of-options "$LAST_TAG..HEAD"`; the vulnerable direct version interpolation and old unguarded changelog command are absent.
+- **Exact-SHA CI evidence:** commit `5f7b8a90e343a662d8ae595a76fbee9166b2def9` has completed GitHub Actions successfully. Check-runs for that exact SHA include `test`, `web-build`, and `android-build` with terminal `success`; Android build/test also completed successfully. Relevant run IDs include `35416244726` and `35416246239`.
+- **Commit attribution:** the final hardening commit is authored by Anurag and contains exactly the required `Co-authored-by: Misa AI <323098813+misa-ai-a@users.noreply.github.com>` trailer.
+- **Final re-audit:** release workflow source and regression tests still enforce both shell-boundary protections at the current head.
+- **Lifecycle:** `VERIFIED`.
 
 ## Turn 25 — Release workflow input-boundary hardening
 
@@ -38,8 +57,8 @@ This file is the persistent handoff for the hourly production-audit loop.
 - **Implementation commit:** `913dd398b5f735ade77595971611fbcfc7c89925`.
 - **Targeted/static verification:** checked-in workflow now contains `RELEASE_INPUT_VERSION: ${{ github.event.inputs.version }}` under `env:` and `VERSION="$RELEASE_INPUT_VERSION"`; the vulnerable `VERSION="${{ github.event.inputs.version }}"` pattern is absent. The version regex remains downstream as a validation guard.
 - **Regression coverage:** `scripts/release-version.test.mjs` reads `.github/workflows/release.yml` and asserts the safe environment-variable boundary plus absence of the vulnerable direct interpolation.
-- **CI evidence:** exact-SHA CI for `913dd398b5f735ade77595971611fbcfc7c89925` is not yet available at the time of this state update; no finding is marked `FIXED` or `VERIFIED` pending the CI gate.
-- **Lifecycle:** `IN PROGRESS`.
+- **CI evidence:** exact-SHA CI for `913dd398b5f735ade77595971611fbcfc7c89925` was not yet available at the time of that state update; no finding was marked `FIXED` or `VERIFIED` pending the CI gate.
+- **Lifecycle at Turn 25:** `IN PROGRESS`.
 
 ## Turn 24 — GitHub Actions supply-chain pinning + exact-SHA CI verification
 
@@ -151,4 +170,4 @@ The complete historical Turn 21 and Turn 20 finding/fix records remain preserved
 
 ## Historical state integrity note
 
-No historical finding was intentionally deleted. Turn 20 P2/P3 findings remain represented with their lifecycle above; Turn 21 release/install findings remain represented with their recovery history and subsequent VERIFIED records; Turn 23 adds verified code-side mitigation for the deployment-path failure mode while intentionally retaining the real-host deployment verification finding as `BLOCKED`; Turn 24 adds the immutable-action hardening finding as `VERIFIED`; Turn 25 adds the release-input shell-boundary finding as `IN PROGRESS` pending exact-SHA CI and final re-audit.
+No historical finding was intentionally deleted. Turn 20 P2/P3 findings remain represented with their lifecycle above; Turn 21 release/install findings remain represented with their recovery history and subsequent VERIFIED records; Turn 23 adds verified code-side mitigation for the deployment-path failure mode while intentionally retaining the real-host deployment verification finding as `BLOCKED`; Turn 24 adds the immutable-action hardening finding as `VERIFIED`; Turn 25 adds the release-input shell-boundary finding as `IN PROGRESS` pending exact-SHA CI and final re-audit; Turn 26 independently verifies the release input and changelog revision shell boundaries at current head `5f7b8a90e343a662d8ae595a76fbee9166b2def9` with successful exact-SHA CI.
