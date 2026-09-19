@@ -125,6 +125,10 @@ export class GeminiLiveClient {
   /** Latest vision frame retained across short Live reconnect gaps so the replacement
    * Gemini session receives actual camera/screen content immediately. */
   private latestVisionFrame: { data: string; capturedAt: number } | null = null;
+  /** Last explicit vision-inspection heartbeat. Frames continue streaming independently;
+   * this heartbeat gives Gemini a turn trigger so silent camera/screen context is actually inspected. */
+  private lastVisionHeartbeatAt = 0;
+  private static readonly VISION_HEARTBEAT_MS = 20_000;
   private lastUserVoiceTime = 0;
   private lastTurnFinishedTime = 0;
   private sessionStartTime = 0;
@@ -362,6 +366,7 @@ export class GeminiLiveClient {
       this.lastUserSpokenText = '';
       this.userSpeechEndedAt = 0;
       this.quietFocusUntil = 0;
+      this.lastVisionHeartbeatAt = 0;
       this.lastUserVoiceTime = 0;
       this.lastTurnFinishedTime = 0;
     }
@@ -3084,6 +3089,34 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
       // decides how to respond based on streak, focus, camera state, etc.
       const isBackground = this.status === 'background-active' || this.status === 'background-pip-active';
       const isCameraOrScreen = this.visionStreamer.getIsCameraActive() || this.visionStreamer.getIsScreenSharing();
+      const now = Date.now();
+
+      // Gemini Live receives the visual stream continuously, but video frames
+      // by themselves do not start a new reasoning turn. Periodically pair the
+      // latest real frame with an internal heartbeat prompt while the student
+      // is silent, so camera/screen context remains actively inspectable without
+      // turning the heartbeat into a user-facing "why are you silent?" message.
+      if (
+        isCameraOrScreen &&
+        !this.awaitingAssistantReply &&
+        !this.currentAssistantMessage &&
+        !this.activeAssistantTurnId &&
+        now - this.lastUserVoiceTime > 2000 &&
+        now - this.lastVisionHeartbeatAt >= GeminiLiveClient.VISION_HEARTBEAT_MS &&
+        this.latestVisionFrame &&
+        now - this.latestVisionFrame.capturedAt <= 5000
+      ) {
+        this.lastVisionHeartbeatAt = now;
+        try {
+          this.sendLatestVisionFrame();
+          this.session.sendRealtimeInput({
+            text: '[VISION HEARTBEAT — INTERNAL CONTEXT] Inspect the latest actual camera/screen frame now. Silently keep the visual context in mind. Only speak ONE short natural line when there is a genuinely useful, clearly visible situational observation; otherwise reply "[silence]". Do not mention this heartbeat, do not ask why the student is silent, and do not create filler.',
+          });
+          console.info('[GeminiLive] Vision heartbeat inspected latest frame.');
+        } catch (e) {
+          console.warn('[GeminiLive] Vision heartbeat failed:', e);
+        }
+      }
       // Live silence is a companionship feature, NOT a second response channel.
       // Give the completed turn a real conversational pause before asking for attention.
       // This prevents "normal answer + immediately another silent/proactive answer".
@@ -3404,6 +3437,7 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
     this.lastUserSpokenText = '';
     this.userSpeechEndedAt = 0;
     this.quietFocusUntil = 0;
+    this.lastVisionHeartbeatAt = 0;
     this.silenceStateMachine.reset();
     if (!preserveReconnectState) {
       this.audioStreamer.close();
