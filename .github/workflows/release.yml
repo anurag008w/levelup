@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       version:
@@ -16,6 +19,9 @@ concurrency:
 
 jobs:
   build:
+    # A normal main push must not publish a release. The special marker is used
+    # once to repair the latest existing release, while keeping manual releases.
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[repair-release]')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -39,7 +45,11 @@ jobs:
           RELEASE_INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            VERSION="${GITHUB_REF#refs/tags/}"
+            VERSION="$(git tag --sort=-creatordate | head -1 || true)"
+            if [[ -z "$VERSION" ]]; then
+              echo "❌ No existing release tag found for repair."
+              exit 1
+            fi
           else
             VERSION="$RELEASE_INPUT_VERSION"
             if [[ -z "$VERSION" ]]; then
@@ -52,11 +62,6 @@ jobs:
           fi
           VERSION_NAME="${VERSION#v}"
 
-          # Keep the workflow parser aligned with scripts/release-version.mjs:
-          # YYYY.MM.DD or YYYY.MM.DDSS, with at most four digits in the final
-          # component. The updater and Android versionCode parser both split
-          # the final component after its first two digits, so silently
-          # accepting a longer value would produce an ambiguous release.
           if [[ ! "$VERSION_NAME" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{1,4}$ ]]; then
             echo "❌ Invalid app version '$VERSION_NAME' — expected YYYY.MM.DD or YYYY.MM.DDSS (max 4 digits in the final component)"
             exit 1
@@ -156,14 +161,12 @@ jobs:
         run: |
           mkdir -p release-out
           APK_NAME="levelup-${{ steps.version.outputs.VERSION_NAME }}-signed.apk"
-          cp android/app/build/outputs/apk/release/app-release.apk "release-out/${APK_NAME}"
-          echo "apk_name=${APK_NAME}" >> "$GITHUB_OUTPUT"
+          cp android/app/build/outputs/apk/release/app-release.apk "release-out/$APK_NAME"
+          test -s "release-out/$APK_NAME"
+          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
 
-      # Build artifacts are transferred to the separate publish job. The
-      # write-capable GitHub token is therefore unavailable during npm ci,
-      # web/Android builds, signing, and artifact preparation.
       - name: Upload APK artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a0 # v7
         with:
           name: levelup-${{ steps.version.outputs.VERSION_NAME }}-apk
           path: release-out
@@ -188,23 +191,30 @@ jobs:
           name: levelup-${{ needs.build.outputs.version_name }}-apk
           path: release-out
 
+      - name: Verify APK
+        env:
+          APK_NAME: ${{ needs.build.outputs.apk_name }}
+        run: |
+          APK_PATH="release-out/$APK_NAME"
+          test -f "$APK_PATH"
+          test -s "$APK_PATH"
+          unzip -t "$APK_PATH" >/dev/null
+          echo "✅ APK ready: $APK_PATH"
+          ls -lh "$APK_PATH"
+
       - name: Generate changelog
         env:
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
           RELEASE_APK_NAME: ${{ needs.build.outputs.apk_name }}
           LAST_TAG: ${{ needs.build.outputs.previous_tag }}
         run: |
-          cat > changelog.md << 'CHANGELOG'
+          cat > changelog.md << CHANGELOG
           # Release ${RELEASE_VERSION}
 
           ## 📱 Download APK
           Install the signed release APK on your Android device.
 
           - **APK:** `${RELEASE_APK_NAME}`
-
-          CHANGELOG
-
-          cat >> changelog.md << 'CHANGELOG'
 
           ## 📝 Changes
 
@@ -215,19 +225,32 @@ jobs:
             git log --format="- %s" --end-of-options "$LAST_TAG..HEAD" >> changelog.md
           fi
 
-      # Only this final publishing job has contents: write. It creates the tag
-      # and release after build, signing, artifact transfer, and changelog
-      # preparation have all succeeded.
-      - name: Create release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
-        with:
-          tag_name: ${{ needs.build.outputs.version }}
-          target_commitish: ${{ github.sha }}
-          name: "LevelUp ${{ needs.build.outputs.version }}"
-          body_path: changelog.md
-          files: release-out/${{ needs.build.outputs.apk_name }}
+      - name: Publish release and APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_APK_NAME: ${{ needs.build.outputs.apk_name }}
+        run: |
+          APK_PATH="release-out/$RELEASE_APK_NAME"
+
+          if gh release view "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "♻️ Updating existing release $RELEASE_VERSION"
+            gh release edit "$RELEASE_VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "LevelUp $RELEASE_VERSION" \
+              --notes-file changelog.md
+            gh release upload "$RELEASE_VERSION" "$APK_PATH" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            echo "🆕 Creating release $RELEASE_VERSION"
+            gh release create "$RELEASE_VERSION" "$APK_PATH" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "${{ github.sha }}" \
+              --title "LevelUp $RELEASE_VERSION" \
+              --notes-file changelog.md
+          fi
 
       - name: Done
         run: |
-          echo "🎉 Release ${{ needs.build.outputs.version }} created!"
-          echo "📦 Signed APK: ${{ needs.build.outputs.apk_name }}"
+          echo "🎉 Release ${{ needs.build.outputs.version }} published with signed APK!"
