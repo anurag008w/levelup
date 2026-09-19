@@ -41,11 +41,26 @@ describe('release-version policy', () => {
     expect(source).not.toContain('VERSION=\"${{ github.event.inputs.version }}\"');
   });
 
+  it('keeps repository write permission out of build and dependency-install jobs', () => {
+    const source = readFileSync(workflow, 'utf8');
+    const buildJob = source.slice(source.indexOf('  build:'));
+    const publishJob = source.slice(source.indexOf('  publish:'));
+    const install = buildJob.indexOf('run: npm ci');
+    const buildWritePermission = buildJob.indexOf('contents: write');
+    expect(install).toBeGreaterThanOrEqual(0);
+    expect(buildWritePermission).toBe(-1);
+    expect(buildJob).toContain('permissions:\n      contents: read');
+    expect(publishJob).toContain('permissions:\n      contents: write');
+    expect(publishJob).toContain('needs: build');
+    expect(publishJob).toContain('actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131');
+  });
+
   it('does not persist a write-capable checkout credential during dependency installation', () => {
     const source = readFileSync(workflow, 'utf8');
-    const checkout = source.indexOf('uses: actions/checkout@');
-    const install = source.indexOf('run: npm ci');
-    const persistCredentials = source.indexOf('persist-credentials: false', checkout);
+    const buildJob = source.slice(source.indexOf('  build:'));
+    const checkout = buildJob.indexOf('uses: actions/checkout@');
+    const install = buildJob.indexOf('run: npm ci');
+    const persistCredentials = buildJob.indexOf('persist-credentials: false', checkout);
     expect(checkout).toBeGreaterThanOrEqual(0);
     expect(persistCredentials).toBeGreaterThan(checkout);
     expect(persistCredentials).toBeLessThan(install);
