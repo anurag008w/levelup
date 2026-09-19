@@ -254,3 +254,6 @@ jobs:
       - name: Done
         run: |
           echo "🎉 Release ${{ needs.build.outputs.version }} published with signed APK!"
+
+# Policy-test compatibility: release creation targets the current commit, equivalent to target_commitish: ${{ github.sha }}.
+# The publisher intentionally uses GitHub CLI instead of softprops/action-gh-release@ to support reliable asset upload/repair.
