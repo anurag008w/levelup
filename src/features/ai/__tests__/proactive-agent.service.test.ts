@@ -305,6 +305,65 @@ describe('ProactiveAgentService Production Hardening', () => {
     unsub();
   });
 
+
+  it('17. REAL-FIX: background proactive messages never race an active user chat turn', () => {
+    const injected: any[] = [];
+    const unsub = proactiveAgentService.onMessageInjection((msg) => {
+      injected.push(msg);
+      return true;
+    });
+
+    proactiveAgentService.beginChatTurn();
+    proactiveAgentService.injectMessageIntoChat('Suno, itne silent kyu ho?');
+
+    expect(injected.length).toBe(0);
+    unsub();
+    proactiveAgentService.cancelChatTurn();
+  });
+
+  it('18. REAL-FIX: notification-tap delivery may bypass the active-turn guard because it is user initiated', () => {
+    const injected: any[] = [];
+    const unsub = proactiveAgentService.onMessageInjection((msg) => {
+      injected.push(msg);
+      return true;
+    });
+
+    proactiveAgentService.beginChatTurn();
+    proactiveAgentService.injectMessageIntoChat('Tapped notification', { allowDuringChat: true });
+
+    expect(injected.length).toBe(1);
+    expect(injected[0].text).toBe('Tapped notification');
+    unsub();
+    proactiveAgentService.cancelChatTurn();
+  });
+
+  it('19. REAL-FIX: session follow-up callback transitions to idle before evaluating', () => {
+    proactiveAgentService.updatePreferences({
+      quietHoursStart: '00:00',
+      quietHoursEnd: '00:00',
+    });
+
+    const injected: any[] = [];
+    const unsub = proactiveAgentService.onMessageInjection((msg) => {
+      injected.push(msg);
+      return true;
+    });
+
+    proactiveAgentService.onChatTurn('Optics me doubt tha', 'Haan, dekhte hain');
+    // Direct evaluation while still marked as an active chat session must not
+    // be treated as the timed idle follow-up transition.
+    (proactiveAgentService as any).userTurnInFlight = true;
+    proactiveAgentService.evaluateSessionFollowUp(Date.now() + 5 * 60 * 1000);
+    expect(injected.length).toBe(0);
+
+    (proactiveAgentService as any).userTurnInFlight = false;
+    (proactiveAgentService as any).isUserCurrentlyInChat = false;
+    proactiveAgentService.evaluateSessionFollowUp(Date.now() + 5 * 60 * 1000);
+    expect(injected.length).toBe(1);
+
+    unsub();
+  });
+
   it('16. listener delivers (true) → service does NOT double-persist (delivered guard)', () => {
     proactiveAgentService.updatePreferences({
       quietHoursStart: '00:00',
