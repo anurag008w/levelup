@@ -71,12 +71,24 @@ export const LIVE_CALL_SESSION_ID = 'live-call';
 
 /** Live overlay apna reply handler yahan register karta hai. */
 let liveReplyHandler: ((text: string) => void | Promise<void>) | null = null;
-const pendingLiveReplies: string[] = [];
+interface PendingLiveReply {
+  text: string;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}
+
+const pendingLiveReplies: PendingLiveReply[] = [];
+/** Give a cold-start Activity a bounded window to mount the Live overlay and
+ * register its handler before we minimize the notification-reply Activity. */
+export const LIVE_REPLY_HANDLER_WAIT_MS = 8_000;
+
 export function setLiveCallReplyHandler(handler: ((text: string) => void | Promise<void>) | null): void {
   liveReplyHandler = handler;
   if (handler && pendingLiveReplies.length > 0) {
     const pending = pendingLiveReplies.splice(0, pendingLiveReplies.length);
-    for (const text of pending) void Promise.resolve(handler(text)).catch(() => undefined);
+    for (const item of pending) {
+      void Promise.resolve(handler(item.text)).then(item.resolve, item.reject);
+    }
   }
 }
 
@@ -188,13 +200,20 @@ export function setupNotificationActions(): void {
             // Android is allowed to resume the Activity only so JS can deliver the
             // reply. Always return to the background afterwards, even when React
             // has already mounted the Live overlay or the process was cold-started.
+            let delivery = Promise.resolve();
             if (liveReplyHandler) {
-              await Promise.resolve(liveReplyHandler(text));
+              delivery = Promise.resolve(liveReplyHandler(text));
             } else {
-              // Cold-start race: preserve the reply until LiveCompanionOverlay
-              // registers its handler instead of silently dropping it.
-              pendingLiveReplies.push(text);
+              // Cold-start race: wait for LiveCompanionOverlay to register its
+              // handler instead of minimizing 50ms later and racing the mount.
+              delivery = new Promise<void>((resolve, reject) => {
+                pendingLiveReplies.push({ text, resolve, reject });
+              });
             }
+            await Promise.race([
+              delivery,
+              new Promise<void>((resolve) => setTimeout(resolve, LIVE_REPLY_HANDLER_WAIT_MS)),
+            ]);
             await new Promise((resolve) => setTimeout(resolve, LIVE_REPLY_GRACE_MS));
             await minimizeIfNative();
           } catch {
