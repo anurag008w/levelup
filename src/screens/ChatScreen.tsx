@@ -203,6 +203,8 @@ export default function ChatScreen({
   /** Pending "Copy this chat to memory?" prompt shown when switching away from an unarchived chat. */
   const [memoryPrompt, setMemoryPrompt] = useState<{ sessionId: string; title: string; onConfirm: () => void } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  /** Synchronous send lock: React state updates are async, so this closes rapid Enter/tap races. */
+  const sendInFlightRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1383,7 +1385,9 @@ export default function ChatScreen({
     pendingAttachments: DraftAttachment[],
     onlyTools: string[],
   ) {
-    if (!text || streaming) return;
+    if (!text || streaming || sendInFlightRef.current) return;
+    sendInFlightRef.current = true;
+    proactiveAgentService.beginChatTurn();
     // Late-reply follow-up: agar user ne Misa ke brown (missed) me aaya message
     // ka jawaab kaafi der baad diya, record karo taaki natural "tum bahut der
     // me reply kiya, sab theek hai?" mile. Sirf tab jab ek visible dikhne wala
@@ -1502,9 +1506,11 @@ export default function ChatScreen({
         setError(err instanceof Error ? err.message : String(err));
       }
     } finally {
+      if (!sent) proactiveAgentService.cancelChatTurn();
       if (sent) revokeAttachmentUrls(pendingAttachments);
       abortRef.current = null;
       setStreaming(false);
+      sendInFlightRef.current = false;
       refresh();
       // Only the message we just generated gets the reveal effect; reopening
       // an old chat must never replay it.
