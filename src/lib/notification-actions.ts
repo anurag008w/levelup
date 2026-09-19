@@ -92,7 +92,11 @@ const seenReplies = new Map<string, number>();
  * background ho jaati hai (~1s); KeepRunning=true (Capacitor default) ki wajah
  * se send aur bubble timers background me chalte rahte hain.
  */
-export const REPLY_GRACE_MS = 600;
+export const REPLY_GRACE_MS = 150;
+/** Live notification replies are already routed synchronously to the active call.
+ * Minimize almost immediately so the notification action does not leave the UI
+ * sitting in front of the user. */
+export const LIVE_REPLY_GRACE_MS = 50;
 
 function isDuplicateReply(sessionId: string, inputValue: string): boolean {
   const key = `${sessionId}:${inputValue.trim()}`;
@@ -173,10 +177,11 @@ export function setupNotificationActions(): void {
         void (async () => {
           const deliver = liveReplyHandler ? () => liveReplyHandler!(text) : () => {};
           try {
+            // The Live handler sends synchronously into the existing WebSocket
+            // session; minimize almost immediately instead of leaving the Activity
+            // visible for the normal chat-reply grace period.
             deliver();
-            // 600ms grace — WebView me JS callback dispatch hone ka mauka,
-            // phir turant minimize (user shade me hai, app khula nahi rehna).
-            await new Promise((resolve) => setTimeout(resolve, REPLY_GRACE_MS));
+            await new Promise((resolve) => setTimeout(resolve, LIVE_REPLY_GRACE_MS));
             await minimizeIfNative();
           } catch {
             // no-op
