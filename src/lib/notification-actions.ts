@@ -55,7 +55,7 @@
 import { App } from '@capacitor/app';
 import { container } from '../di/container';
 import { buildNotificationSteps, computeRevealSchedule, splitReplyIntoBubbles } from '../features/chat/message-segments';
-import { isNativePlatform, notifyAiReply, onNotificationAction, registerNotificationActions, trackAppState } from './notifications';
+import { isNativePlatform, notifyAiReply, onNotificationAction, registerNotificationActions, trackAppState, wasAppResumedFromBackground } from './notifications';
 import { loadSession } from './auth';
 
 let setup = false;
@@ -70,9 +70,14 @@ let setup = false;
 export const LIVE_CALL_SESSION_ID = 'live-call';
 
 /** Live overlay apna reply handler yahan register karta hai. */
-let liveReplyHandler: ((text: string) => void) | null = null;
-export function setLiveCallReplyHandler(handler: ((text: string) => void) | null): void {
+let liveReplyHandler: ((text: string) => void | Promise<void>) | null = null;
+const pendingLiveReplies: string[] = [];
+export function setLiveCallReplyHandler(handler: ((text: string) => void | Promise<void>) | null): void {
   liveReplyHandler = handler;
+  if (handler && pendingLiveReplies.length > 0) {
+    const pending = pendingLiveReplies.splice(0, pendingLiveReplies.length);
+    for (const text of pending) void Promise.resolve(handler(text)).catch(() => undefined);
+  }
 }
 
 /**
@@ -178,14 +183,19 @@ export function setupNotificationActions(): void {
           // When the Live overlay is already mounted, the app is genuinely being
           // used in the foreground; do not minimize it just because the
           // notification action caused Android to resume the Activity.
-          const hadLiveUiBeforeAction = Boolean(liveReplyHandler);
-          const deliver = liveReplyHandler ? () => liveReplyHandler!(text) : () => {};
+          const shouldMinimizeAfterAction = wasAppResumedFromBackground();
           try {
-            // The Live handler sends synchronously into the existing WebSocket
-            // session. Only cold/background notification actions need the tiny
-            // minimize grace.
-            deliver();
-            if (!hadLiveUiBeforeAction) {
+            // Android may resume the Activity before this JS callback runs.
+            // Decide from the pre-action lifecycle signal, not from whether
+            // React has already mounted the Live overlay.
+            if (liveReplyHandler) {
+              await Promise.resolve(liveReplyHandler(text));
+            } else {
+              // Cold-start race: preserve the reply until LiveCompanionOverlay
+              // registers its handler instead of silently dropping it.
+              pendingLiveReplies.push(text);
+            }
+            if (shouldMinimizeAfterAction) {
               await new Promise((resolve) => setTimeout(resolve, LIVE_REPLY_GRACE_MS));
               await minimizeIfNative();
             }
