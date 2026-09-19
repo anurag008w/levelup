@@ -41,6 +41,16 @@ describe('release-version policy', () => {
     expect(source).not.toContain('VERSION=\"${{ github.event.inputs.version }}\"');
   });
 
+  it('does not persist a write-capable checkout credential during dependency installation', () => {
+    const source = readFileSync(workflow, 'utf8');
+    const checkout = source.indexOf('uses: actions/checkout@');
+    const install = source.indexOf('run: npm ci');
+    const persistCredentials = source.indexOf('persist-credentials: false', checkout);
+    expect(checkout).toBeGreaterThanOrEqual(0);
+    expect(persistCredentials).toBeGreaterThan(checkout);
+    expect(persistCredentials).toBeLessThan(install);
+  });
+
   it('does not push a release tag before release creation', () => {
     const source = readFileSync(workflow, 'utf8');
     const tagPush = source.indexOf('git push origin "$VERSION"');
