@@ -375,7 +375,11 @@ export default function LiveCompanionOverlay({
         if (newStatus === 'idle' || newStatus === 'disconnected') {
           // AUDIT FIX: an expected teardown during a settings-change reconnect
           // is NOT an error — keep the UI in a neutral reconnecting state.
-          if (suppressingDisconnectErrorRef.current) {
+          if (suppressingDisconnectErrorRef.current || !liveClient.isClosed()) {
+            // Any non-explicit disconnect is an internal transport teardown
+            // (network recovery, model fallback, or settings reconnect). The
+            // socket is allowed to pass through disconnected while connect()
+            // installs its replacement; never show a false "unexpected" banner.
             setStatus('reconnecting');
             return;
           }
@@ -1020,10 +1024,24 @@ export default function LiveCompanionOverlay({
     if (!isOpen) return;
     // Register the handler: when user replies from notification shade, the
     // message routes to the active live session (same as in-app chat send).
-    setLiveCallReplyHandler((text) => {
+    setLiveCallReplyHandler(async (text) => {
       const msg = (text || '').trim();
       if (!msg) return;
-      if (clientRef.current) clientRef.current.sendTextMessage(msg, msg);
+
+      // Android can deliver the notification action during Activity/React
+      // recreation, before this mount has assigned clientRef. Wait briefly for
+      // the already-starting singleton instead of accepting + silently dropping
+      // the user's inline reply.
+      const startedAt = Date.now();
+      while (!clientRef.current && Date.now() - startedAt < 8_000) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      const client = clientRef.current;
+      if (!client || client.isClosed()) {
+        throw new Error('Live call is no longer active.');
+      }
+      client.sendTextMessage(msg, msg);
     });
     return () => setLiveCallReplyHandler(null);
   }, [isOpen]);
