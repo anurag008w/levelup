@@ -3028,7 +3028,9 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
       const spokenWords = this.lastUserSpokenText.slice(-300).trim();
       const userSpokeRealWords = this.awaitingAssistantReply && spokenWords.length > 0 && this.userSpeechEndedAt > 0;
       const speechWaitDurationSec = (Date.now() - this.userSpeechEndedAt) / 1000;
-      if (userSpokeRealWords && speechWaitDurationSec >= 3.5 && (Date.now() - this.lastSilenceNudgeAt > 8000)) {
+      // Never manufacture a second assistant turn while Gemini is already answering.
+      // A short network/model delay is not a reason to inject another prompt into Live.
+      if (userSpokeRealWords && speechWaitDurationSec >= 8 && !this.currentAssistantMessage && !this.activeAssistantTurnId && (Date.now() - this.lastSilenceNudgeAt > 15000)) {
         this.awaitingAssistantReply = false;
         this.lastSilenceNudgeAt = Date.now();
         this.lastTurnFinishedTime = Date.now();
@@ -3050,19 +3052,27 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
       // decides how to respond based on streak, focus, camera state, etc.
       const isBackground = this.status === 'background-active' || this.status === 'background-pip-active';
       const isCameraOrScreen = this.visionStreamer.getIsCameraActive() || this.visionStreamer.getIsScreenSharing();
-      const silenceThresholdSec = isCameraOrScreen ? 20 : isBackground ? 22 : 25;
+      // Live silence is a companionship feature, NOT a second response channel.
+      // Give the completed turn a real conversational pause before asking for attention.
+      // This prevents "normal answer + immediately another silent/proactive answer".
+      const silenceThresholdSec = isCameraOrScreen ? 60 : isBackground ? 75 : 90;
 
-      // ── Escalating cadence — we NEVER hard-stop ──
-      // Streak grows → gaps grow (40s → 90s → 180s). Misa stays a present
-      // companion even after many silent rounds; complete silence is impossible.
+      // One natural nudge, then a long cooldown. Never create a burst of 2–3
+      // proactive turns while the student is simply thinking/working.
       const cadenceMs =
-        this.silenceNudgeStreak <= 4
-          ? (isBackground ? 35_000 : 40_000)
-          : this.silenceNudgeStreak <= 6
-            ? (isBackground ? 75_000 : 90_000)
-            : (isBackground ? 150_000 : 180_000);
+        this.silenceNudgeStreak <= 1
+          ? (isBackground ? 120_000 : 150_000)
+          : this.silenceNudgeStreak <= 2
+            ? (isBackground ? 240_000 : 300_000)
+            : 10 * 60_000;
 
-      if (silenceDurationSec >= silenceThresholdSec && (Date.now() - this.lastSilenceNudgeAt > cadenceMs)) {
+      if (
+        silenceDurationSec >= silenceThresholdSec &&
+        !this.awaitingAssistantReply &&
+        !this.currentAssistantMessage &&
+        !this.activeAssistantTurnId &&
+        (Date.now() - this.lastSilenceNudgeAt > cadenceMs)
+      ) {
         this.lastSilenceNudgeAt = Date.now();
         this.lastTurnFinishedTime = Date.now();
         this.silenceNudgeStreak += 1;
@@ -3091,7 +3101,7 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
           // nudge would feed context and get [silence] back, leaving the student
           // in dead air. The student's exact complaints: "mai chup rha toh woh
           // chup hi reh rhi hai", "greeting bhi nhi deti hai".
-          promptText = `[CONTEXT UPDATE] ${baseCtx}. The student is quiet — say ONE short warm natural line out loud now (your own words, aap/tum), then go back to listening for them. Do NOT reply "[silence]" to this update.`;
+          promptText = `[CONTEXT UPDATE — PROACTIVE, NOT A USER MESSAGE] ${baseCtx}. Only if you genuinely have a useful situational reason, say ONE short warm natural line out loud now (your own words, aap/tum). Otherwise reply "[silence]". Never ask "why are you silent?" just to fill space. Never send more than one line/turn from this update, then return to listening.`;
         }
 
         try {
