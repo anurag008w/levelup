@@ -261,6 +261,11 @@ export class GeminiLiveClient {
     return this.isUserExplicitlyClosed;
   }
 
+  /** True while an SDK/network recovery worker owns the reconnect transition. */
+  isReconnectInProgress(): boolean {
+    return this.isReconnecting;
+  }
+
   getVisionStreamer(): VisionStreamer {
     return this.visionStreamer;
   }
@@ -1864,41 +1869,53 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
     }
   }
 
-  /** Flush any messages buffered while the session was reconnecting. */
+  /** Flush one message buffered during a reconnect. A failed send stays queued
+   * and immediately re-enters bounded reconnect recovery instead of disappearing. */
   private flushPendingTextQueue(): void {
     if (this.pendingTextQueue.length === 0 || !this.session) return;
-    const queued = this.pendingTextQueue.splice(0, this.pendingTextQueue.length);
-    for (const item of queued) {
-      // Reset anchors + push to the live session. The user bubble was already
-      // added at buffer time (sendTextMessage) — do NOT add a second one here
-      // or the message shows up twice after reconnect.
-      this.activeAssistantTurnId = null;
-      this.activeUserTurnId = null;
-      this.currentAssistantMessage = '';
-      this.pendingReasoning = '';
-      this.silenceNudgeStreak = 0;
-      // NOTE: callEndAskCount NOT reset here — see reportUserTyping.
-      this.awaitingAssistantReply = true;
-      this.userSpeechEndedAt = Date.now();
-      this.lastUserVoiceTime = Date.now();
-      this.lastUserSpokenText = item.text;
-      this.pendingResponseSince = Date.now();
-      this.lastTurnFinishedTime = Date.now();
-      this.lastSilenceNudgeAt = Date.now();
-      this.silenceStateMachine.onSpeechActivity();
-      if (this.status === 'speaking') {
-        this.audioStreamer.flushPlayback();
-        this.setStatus('listening');
-      }
-      if (item.toolCalls && item.toolCalls.length > 0) {
-        this.pendingToolCalls.push(...item.toolCalls);
-      }
-      try {
-        this.session.sendRealtimeInput({ text: item.text });
-      } catch (e) {
-        console.warn('[GeminiLive] Failed to flush pending text message:', e);
-      }
+
+    const item = this.pendingTextQueue.shift();
+    if (!item) return;
+
+    // The user bubble was already added at buffer time — do NOT add a duplicate
+    // bubble when the message is replayed after reconnect.
+    this.activeAssistantTurnId = null;
+    this.activeUserTurnId = null;
+    this.currentAssistantMessage = '';
+    this.pendingReasoning = '';
+    this.silenceNudgeStreak = 0;
+    this.awaitingAssistantReply = true;
+    this.userSpeechEndedAt = Date.now();
+    this.lastUserVoiceTime = Date.now();
+    this.lastUserSpokenText = item.text;
+    this.pendingResponseSince = Date.now();
+    this.lastTurnFinishedTime = Date.now();
+    this.lastSilenceNudgeAt = Date.now();
+    this.silenceStateMachine.onSpeechActivity();
+
+    if (this.status === 'speaking') {
+      this.audioStreamer.flushPlayback();
+      this.setStatus('listening');
     }
+    if (item.toolCalls && item.toolCalls.length > 0) {
+      this.pendingToolCalls.push(...item.toolCalls);
+    }
+
+    try {
+      this.session.sendRealtimeInput({ text: item.text });
+    } catch (e) {
+      console.warn('[GeminiLive] Failed to flush pending text message:', e);
+      // Preserve the exact item so a transient CLOSING/CLOSED socket cannot
+      // swallow the user's already-visible message.
+      if (this.pendingTextQueue.length >= GeminiLiveClient.MAX_PENDING_TEXT_QUEUE) {
+        this.pendingTextQueue.pop();
+      }
+      this.pendingTextQueue.unshift(item);
+      this.session = null;
+      this.recordConnectionFailure(e);
+      this.retryConnectIfNeeded();
+    }
+
     if (this.callbacks.onTranscriptUpdate) {
       this.callbacks.onTranscriptUpdate([...this.transcripts]);
     }
@@ -3441,8 +3458,12 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    const reconnectWorkerWasActive = preserveReconnectState && this.isReconnecting;
     this.reconnectEpoch += 1;
-    this.isReconnecting = false;
+    // Keep the worker-owned reconnect state visible during the internal
+    // disconnect() performed by connect(). Clearing it here caused the overlay
+    // to report a false unexpected disconnect between reconnect and re-connect.
+    if (!reconnectWorkerWasActive) this.isReconnecting = false;
     if (!preserveReconnectState) {
       this.reconnectAttempts = 999;
       if (this.currentMediaStream) {
@@ -3558,7 +3579,11 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
       }
       this.session = null;
     }
-    this.setStatus(preserveReconnectState ? 'disconnected' : 'idle');
+    this.setStatus(
+      preserveReconnectState
+        ? (reconnectWorkerWasActive ? 'reconnecting' : 'disconnected')
+        : 'idle',
+    );
     if (!preserveReconnectState) {
       this.isIncomingCallSession = false;
       this.incomingCallReason = '';
