@@ -175,14 +175,20 @@ export function setupNotificationActions(): void {
         const text = inputValue.trim();
         if (isDuplicateReply(sessionId, text)) return;
         void (async () => {
+          // When the Live overlay is already mounted, the app is genuinely being
+          // used in the foreground; do not minimize it just because the
+          // notification action caused Android to resume the Activity.
+          const hadLiveUiBeforeAction = Boolean(liveReplyHandler);
           const deliver = liveReplyHandler ? () => liveReplyHandler!(text) : () => {};
           try {
             // The Live handler sends synchronously into the existing WebSocket
-            // session; minimize almost immediately instead of leaving the Activity
-            // visible for the normal chat-reply grace period.
+            // session. Only cold/background notification actions need the tiny
+            // minimize grace.
             deliver();
-            await new Promise((resolve) => setTimeout(resolve, LIVE_REPLY_GRACE_MS));
-            await minimizeIfNative();
+            if (!hadLiveUiBeforeAction) {
+              await new Promise((resolve) => setTimeout(resolve, LIVE_REPLY_GRACE_MS));
+              await minimizeIfNative();
+            }
           } catch {
             // no-op
           }
