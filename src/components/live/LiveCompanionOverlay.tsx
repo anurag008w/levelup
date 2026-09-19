@@ -327,6 +327,7 @@ export default function LiveCompanionOverlay({
   // drawer notification grows with the full long reply instead of being
   // flooded with schedule() calls that can drop / stall).
   const liveNotifTimerRef = useRef<number | null>(null);
+  const liveNotifPendingRef = useRef<{ text: string; transcripts: LiveTranscriptItem[] } | null>(null);
   // Live-call stat tick throttle. `live-client` pushes `onStatsUpdate` from the
   // main-thread analyser path about every 80ms (12.5Hz). Committing straight to
   // `setStats` re-renders this whole overlay that fast, which competes with
