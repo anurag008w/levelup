@@ -71,6 +71,7 @@ describe('useAppState', () => {
   it('admin preview rewinds/pushes today to the previewed journey day', async () => {
     const start = '2026-01-01';
     container.store.save({ ...emptyAppState(), startDateISO: start });
+    superAdminSession();
     mockServerAuth(true);
     const { result } = renderHook(() => useAppState());
     expect(result.current.adminUnlocked).toBe(false);
@@ -92,6 +93,19 @@ describe('useAppState', () => {
     });
     expect(result.current.adminUnlocked).toBe(false);
     expect(result.current.today).not.toBe(isoAddDays(start, 4));
+  });
+
+  it('rejects a verified super-admin username that does not match the active auth session', async () => {
+    superAdminSession();
+    mockServerAuth(true);
+    const { result } = renderHook(() => useAppState());
+
+    let res: { ok: boolean } | undefined;
+    await act(async () => {
+      res = await result.current.unlockAdmin('different_admin', 'pw');
+    });
+    expect(res?.ok).toBe(false);
+    expect(result.current.adminUnlocked).toBe(false);
   });
 
   it('rejects a non-super-admin account without unlocking', async () => {
@@ -117,6 +131,26 @@ describe('useAppState', () => {
     });
     expect(ok).toBe(true);
     expect(result.current.adminUnlocked).toBe(true);
+  });
+
+  it('autoUnlock refuses when a super-admin session has no login marker', () => {
+    saveSession({
+      serverUrl: 'https://sync.test',
+      username: 'admin_1',
+      role: 'admin',
+      isSuperAdmin: true,
+      apiKey: 'k',
+      token: 't',
+      loggedInAt: '',
+    });
+    const { result } = renderHook(() => useAppState());
+
+    let ok = true;
+    act(() => {
+      ok = result.current.autoUnlock();
+    });
+    expect(ok).toBe(false);
+    expect(result.current.adminUnlocked).toBe(false);
   });
 
   it('autoUnlock refuses when the session is a normal user', () => {

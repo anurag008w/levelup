@@ -40,6 +40,7 @@ describe('CapacitorHttpClient', () => {
       kind: 'auth',
       message: 'bad key',
     });
+    expect(requestMock).toHaveBeenCalledTimes(1);
   });
 
   it('retries retryable statuses before giving up', async () => {
@@ -50,6 +51,30 @@ describe('CapacitorHttpClient', () => {
     const out = await client.requestJson({ url: 'https://x/models', retries: 1 });
     expect(out).toBe('ok');
     expect(requestMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry an aborted native JSON request', async () => {
+    let resolveRequest!: (value: { status: number; data: string; headers: Record<string, string>; url: string }) => void;
+    requestMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve;
+      }),
+    );
+
+    const controller = new AbortController();
+    const client = new CapacitorHttpClient();
+    const pending = client.requestJson({ url: 'https://x/chat', signal: controller.signal, retries: 3 });
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({
+      status: 0,
+      kind: 'aborted',
+      message: 'Request aborted',
+    });
+    expect(requestMock).toHaveBeenCalledTimes(1);
+
+    resolveRequest({ status: 200, data: '{}', headers: {}, url: 'u' });
   });
 
   it('feeds SSE frames from a full-body text response', async () => {
@@ -89,5 +114,43 @@ describe('CapacitorHttpClient', () => {
     const client = new CapacitorHttpClient();
     await client.requestSse({ url: 'https://x/stream', body: {} }, (p) => frames.push(p));
     expect(frames).toEqual(['{"a":1}']);
+  });
+
+  it('rejects an in-flight native SSE request when the caller aborts', async () => {
+    let resolveRequest!: (value: { status: number; data: string; headers: Record<string, string>; url: string }) => void;
+    requestMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve;
+      }),
+    );
+
+    const controller = new AbortController();
+    const client = new CapacitorHttpClient();
+    const pending = client.requestSse({ url: 'https://x/stream', signal: controller.signal }, () => undefined);
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({
+      status: 0,
+      kind: 'aborted',
+      message: 'Request aborted',
+    });
+
+    resolveRequest({ status: 200, data: '', headers: {}, url: 'u' });
+  });
+
+  it('does not start a native SSE request when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const client = new CapacitorHttpClient();
+    await expect(
+      client.requestSse({ url: 'https://x/stream', signal: controller.signal }, () => undefined),
+    ).rejects.toMatchObject({
+      status: 0,
+      kind: 'aborted',
+      message: 'Request aborted',
+    });
+    expect(requestMock).not.toHaveBeenCalled();
   });
 });

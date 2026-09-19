@@ -14,6 +14,7 @@ import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Looper;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -30,6 +31,8 @@ import androidx.activity.result.ActivityResult;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Misa Live — Screen Share Plugin (Android Native MediaProjection)
@@ -37,10 +40,11 @@ import java.nio.ByteBuffer;
  * Android WebView does NOT support navigator.mediaDevices.getDisplayMedia().
  * This plugin bridges the gap using Android's MediaProjection API:
  *   1. requestPermission()  → shows system screen capture permission dialog
- *   2. startCapture(fps)    → starts foreground service (Android 10+), obtains
- *                             MediaProjection token, registers callback (Android 14+),
- *                             creates VirtualDisplay + ImageReader pipeline,
- *                             emits "screenFrame" events with base64 JPEG data
+ *   2. startCapture(fps)    → starts foreground service, waits until it is
+ *                             actually promoted, obtains MediaProjection token,
+ *                             registers callback (Android 14+), creates
+ *                             VirtualDisplay + ImageReader pipeline, and emits
+ *                             "screenFrame" events with base64 JPEG data
  *   3. stopCapture()        → tears down projection + virtual display + foreground service
  *
  * The JS layer (vision-streamer.ts) listens to "screenFrame" events and feeds
@@ -52,6 +56,8 @@ import java.nio.ByteBuffer;
 public class ScreenSharePlugin extends Plugin {
 
     private static final String TAG = "ScreenSharePlugin";
+    private static final long FOREGROUND_SERVICE_TIMEOUT_MS = 3000L;
+    private static final long FOREGROUND_SERVICE_POLL_MS = 50L;
 
     private MediaProjectionManager projectionManager;
     private MediaProjection mediaProjection;
@@ -59,6 +65,7 @@ public class ScreenSharePlugin extends Plugin {
     private ImageReader imageReader;
     private HandlerThread captureThread;
     private Handler captureHandler;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private int pendingResultCode = 0;
     private Intent pendingResultData = null;
@@ -69,6 +76,11 @@ public class ScreenSharePlugin extends Plugin {
     private int screenDensity;
 
     private volatile boolean isCapturing = false;
+    /** Prevents overlapping async startCapture calls from creating duplicate pipelines. */
+    private final AtomicBoolean captureStartInProgress = new AtomicBoolean(false);
+    /** Invalidates delayed foreground-service callbacks from older capture attempts. */
+    private final AtomicLong captureStartGeneration = new AtomicLong(0L);
+    private Runnable foregroundServicePoll;
     private long lastFrameMs = 0;
     private long minFrameIntervalMs = 200; // 5fps default
 
@@ -133,37 +145,85 @@ public class ScreenSharePlugin extends Plugin {
             call.resolve(); // already running
             return;
         }
+        if (!captureStartInProgress.compareAndSet(false, true)) {
+            call.reject("Screen capture is already starting");
+            return;
+        }
 
+        long generation = captureStartGeneration.incrementAndGet();
         captureWidth  = call.getInt("width",  720);
         captureHeight = call.getInt("height", 1280);
         captureFps    = call.getInt("fps",    5);
         minFrameIntervalMs = 1000L / Math.max(1, Math.min(captureFps, 30));
 
         try {
-            // 1. Start foreground service on all Android versions (Android 7 to 16+)
+            // Android O+ startForegroundService is asynchronous. Do not call
+            // getMediaProjection until the service has actually entered the
+            // foreground state, otherwise Android 14+ can reject the request.
             Intent svcIntent = new Intent(getContext(), ScreenShareForegroundService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 getContext().startForegroundService(svcIntent);
             } else {
                 getContext().startService(svcIntent);
             }
+        } catch (Exception e) {
+            captureStartInProgress.set(false);
+            captureStartGeneration.compareAndSet(generation, generation + 1L);
+            Log.e(TAG, "foreground service start failed: " + e.getMessage(), e);
+            call.reject("Screen capture foreground service failed to start: " + e.getMessage());
+            return;
+        }
 
-            // 2. Create background capture thread
+        waitForForegroundService(call, System.currentTimeMillis() + FOREGROUND_SERVICE_TIMEOUT_MS, generation);
+    }
+
+    /** Returns true only when a delayed callback still belongs to the active start attempt. */
+    static boolean isCurrentCaptureStart(long attemptGeneration, long currentGeneration) {
+        return attemptGeneration == currentGeneration;
+    }
+
+    private void waitForForegroundService(PluginCall call, long deadlineMs, long generation) {
+        // A delayed callback can outlive teardown() and a subsequent startCapture().
+        // Never let an obsolete attempt touch the shared capture pipeline.
+        if (!isCurrentCaptureStart(generation, captureStartGeneration.get())) return;
+        if (ScreenShareForegroundService.isActive()) {
+            startCaptureAfterForegroundService(call, generation);
+            return;
+        }
+        if (System.currentTimeMillis() >= deadlineMs) {
+            if (!isCurrentCaptureStart(generation, captureStartGeneration.get())) return;
+            getContext().stopService(new Intent(getContext(), ScreenShareForegroundService.class));
+            captureStartInProgress.set(false);
+            captureStartGeneration.compareAndSet(generation, generation + 1L);
+            call.reject("Screen capture foreground service did not become active in time");
+            return;
+        }
+        Runnable poll = () -> waitForForegroundService(call, deadlineMs, generation);
+        foregroundServicePoll = poll;
+        mainHandler.postDelayed(poll, FOREGROUND_SERVICE_POLL_MS);
+    }
+
+    private void startCaptureAfterForegroundService(PluginCall call, long generation) {
+        // Check again at the point where the shared capture fields are about to be mutated.
+        if (!isCurrentCaptureStart(generation, captureStartGeneration.get())) return;
+        try {
+            // 1. Create background capture thread
             captureThread = new HandlerThread("ScreenShareCapture");
             captureThread.start();
             captureHandler = new Handler(captureThread.getLooper());
 
-            // 3. Obtain MediaProjection token
+            // 2. Obtain MediaProjection only after the mediaProjection FGS is active
             mediaProjection = projectionManager.getMediaProjection(
                 pendingResultCode, pendingResultData
             );
 
             if (mediaProjection == null) {
                 call.reject("Failed to obtain MediaProjection instance");
+                teardown();
                 return;
             }
 
-            // 4. Register callback BEFORE createVirtualDisplay (MANDATORY on Android 14+)
+            // 3. Register callback BEFORE createVirtualDisplay (MANDATORY on Android 14+)
             mediaProjection.registerCallback(new MediaProjection.Callback() {
                 @Override
                 public void onStop() {
@@ -174,7 +234,7 @@ public class ScreenSharePlugin extends Plugin {
                 }
             }, captureHandler);
 
-            // 5. ImageReader: RGBA_8888 for high-fidelity zero-copy capture
+            // 4. ImageReader: RGBA_8888 for high-fidelity zero-copy capture
             imageReader = ImageReader.newInstance(
                 captureWidth, captureHeight,
                 PixelFormat.RGBA_8888, 3
@@ -191,7 +251,7 @@ public class ScreenSharePlugin extends Plugin {
                 processFrame(reader);
             }, captureHandler);
 
-            // 6. Create VirtualDisplay attached to the ImageReader surface
+            // 5. Create VirtualDisplay attached to the ImageReader surface
             virtualDisplay = mediaProjection.createVirtualDisplay(
                 "MisaLiveScreenShare",
                 captureWidth, captureHeight, screenDensity,
@@ -201,6 +261,8 @@ public class ScreenSharePlugin extends Plugin {
             );
 
             isCapturing = true;
+            captureStartInProgress.set(false);
+            foregroundServicePoll = null;
             JSObject ret = new JSObject();
             ret.put("width", captureWidth);
             ret.put("height", captureHeight);
@@ -210,12 +272,16 @@ public class ScreenSharePlugin extends Plugin {
         } catch (Exception e) {
             Log.e(TAG, "startCapture failed: " + e.getMessage(), e);
             teardown();
+            captureStartInProgress.set(false);
             call.reject("Screen capture initialization failed: " + e.getMessage());
         }
     }
 
     private void processFrame(ImageReader reader) {
         Image image = null;
+        Bitmap bmp = null;
+        Bitmap cropped = null;
+        Bitmap scaled = null;
         try {
             image = reader.acquireLatestImage();
             if (image == null) return;
@@ -226,20 +292,20 @@ public class ScreenSharePlugin extends Plugin {
             int rowStride   = planes[0].getRowStride();
             int rowPadding  = rowStride - pixelStride * captureWidth;
 
-            Bitmap bmp = Bitmap.createBitmap(
+            bmp = Bitmap.createBitmap(
                 captureWidth + rowPadding / pixelStride,
                 captureHeight,
                 Bitmap.Config.ARGB_8888
             );
             bmp.copyPixelsFromBuffer(buffer);
 
-            Bitmap cropped = (rowPadding == 0) ? bmp :
+            cropped = (rowPadding == 0) ? bmp :
                 Bitmap.createBitmap(bmp, 0, 0, captureWidth, captureHeight);
 
             // Scale to max width 640px for Gemini Live optimal bandwidth & latency
             int outW = Math.min(captureWidth, 640);
             int outH = (int) (captureHeight * ((float) outW / captureWidth));
-            Bitmap scaled = Bitmap.createScaledBitmap(cropped, outW, outH, false);
+            scaled = Bitmap.createScaledBitmap(cropped, outW, outH, false);
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             scaled.compress(Bitmap.CompressFormat.JPEG, 60, baos);
@@ -250,13 +316,12 @@ public class ScreenSharePlugin extends Plugin {
             ev.put("data", b64);
             notifyListeners("screenFrame", ev);
 
-            if (scaled != cropped) scaled.recycle();
-            if (cropped != bmp) cropped.recycle();
-            bmp.recycle();
-
         } catch (Exception e) {
             Log.w(TAG, "processFrame error: " + e.getMessage());
         } finally {
+            if (scaled != null && scaled != cropped) scaled.recycle();
+            if (cropped != null && cropped != bmp) cropped.recycle();
+            if (bmp != null) bmp.recycle();
             if (image != null) image.close();
         }
     }
@@ -284,6 +349,12 @@ public class ScreenSharePlugin extends Plugin {
 
     private void teardown() {
         isCapturing = false;
+        captureStartGeneration.incrementAndGet();
+        captureStartInProgress.set(false);
+        if (foregroundServicePoll != null) {
+            mainHandler.removeCallbacks(foregroundServicePoll);
+            foregroundServicePoll = null;
+        }
         pendingResultCode = 0;
         pendingResultData = null;
         if (virtualDisplay != null) {

@@ -283,16 +283,23 @@ describe('delete all data — transactional rollback (N3)', () => {
   });
 
   it('restores everything when re-applying server auth throws (no half-wipe)', async () => {
+    const relationshipSnapshot = JSON.stringify({ currentGoal: 'rollback-goal', commitments: [{ id: 'c1' }] });
+    const proactiveSnapshot = JSON.stringify({ prefs: { enabled: true }, scheduledMessages: [{ id: 'scheduled-1' }] });
+    localStorage.setItem('misa_relationship_state_v2', relationshipSnapshot);
+    localStorage.setItem('misa_proactive_agent_prefs_v2', proactiveSnapshot);
+
     vi.spyOn(app.providerSettings, 'configureServerAuth').mockImplementationOnce(() => {
       throw new Error('auth failed');
     });
 
     await expect(deleteAllData(app, SESSION)).rejects.toThrow('auth failed');
 
-    // Nothing is left half-deleted: state + chat are intact.
+    // Nothing is left half-deleted: state + chat + Misa's independent blobs are intact.
     expect(app.store.get().startDateISO).toBe('2026-01-01');
     expect(app.store.get().studyTimeMinutes).toBe(480);
     expect(app.chat.listSessions()).toHaveLength(1);
+    expect(localStorage.getItem('misa_relationship_state_v2')).toBe(relationshipSnapshot);
+    expect(localStorage.getItem('misa_proactive_agent_prefs_v2')).toBe(proactiveSnapshot);
     // Re-attach re-seeds the (wiped) server backup from the restored data.
     await settle();
     expect(server.perUser.has(SESSION.username)).toBe(true);
@@ -307,5 +314,16 @@ describe('delete all data — transactional rollback (N3)', () => {
     expect(reloaded.taskLogs).toEqual({});
     expect(reloaded.memory.entries).toHaveLength(0);
     expect(reloaded.studyTimeMinutes).toBe(360);
+  });
+
+  it('removes the owner marker when rollback starts from an unowned guest state', async () => {
+    localStorage.removeItem('levelup.data-owner');
+    const spy = vi.spyOn(app.chat, 'replaceStore').mockImplementationOnce(() => {
+      throw new Error('storage write failed');
+    });
+
+    await expect(deleteAllData(app, SESSION)).rejects.toThrow('storage write failed');
+    expect(spy).toHaveBeenCalled();
+    expect(localStorage.getItem('levelup.data-owner')).toBeNull();
   });
 });

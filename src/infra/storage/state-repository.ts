@@ -12,6 +12,9 @@ export const STATE_KEY = 'levelup-state-v2';
 
 /** Serialized state budget — kept safely under the ~5MB localStorage quota. */
 const STATE_SAVE_BUDGET = 3_500_000;
+/** AI action snapshots are intentionally capped because each version can contain a whole collection. */
+const AI_ACTION_HISTORY_MAX_VERSIONS = 50;
+const AI_ACTION_HISTORY_BYTES_BUDGET = 600_000;
 
 const REQUIRED_V2_KEYS = [
   'schemaVersion',
@@ -88,12 +91,12 @@ export function normalizeState(raw: unknown): AppState {
     studyTimeMinutes: typeof r.studyTimeMinutes === 'number' && r.studyTimeMinutes > 0 ? r.studyTimeMinutes : 360,
     aiActionHistory:
       isRecord(r.aiActionHistory) && Array.isArray((r.aiActionHistory as { versions?: unknown }).versions)
-        ? {
+        ? pruneAiActionHistory({
             versions: (r.aiActionHistory as { versions: AppState['aiActionHistory']['versions']; undone?: unknown }).versions,
             undone: Array.isArray((r.aiActionHistory as { undone?: unknown }).undone)
               ? ((r.aiActionHistory as { undone: AppState['aiActionHistory']['undone'] }).undone)
               : [],
-          }
+          })
         : base.aiActionHistory,
     lastSummaryDate: typeof r.lastSummaryDate === 'string' ? r.lastSummaryDate : null,
     // Post-journey (v3) - handles migration from older versions
@@ -123,6 +126,24 @@ export function normalizeState(raw: unknown): AppState {
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function pruneAiActionHistory(history: AppState['aiActionHistory']): AppState['aiActionHistory'] {
+  let versions = [...history.versions];
+  // Redo only needs the latest undone action; keeping the full duplicate snapshot
+  // list wastes the same localStorage budget that this guard is designed to protect.
+  let undone = history.undone.slice(-1);
+
+  const fits = (candidateVersions: AppState['aiActionHistory']['versions'], candidateUndone: AppState['aiActionHistory']['undone']) =>
+    JSON.stringify({ versions: candidateVersions, undone: candidateUndone }).length <= AI_ACTION_HISTORY_BYTES_BUDGET;
+
+  while (versions.length > AI_ACTION_HISTORY_MAX_VERSIONS || !fits(versions, undone)) {
+    if (versions.length === 0) return { versions: [], undone: [] };
+    versions.shift();
+    undone = undone.filter((version) => versions.some((candidate) => candidate.id === version.id));
+  }
+
+  return { versions, undone };
 }
 
 export class LocalStateRepository {
@@ -173,6 +194,17 @@ export class LocalStateRepository {
       // user should know instead of wondering where their early-day notes went.
       this.pruneNotice =
         'Storage was full, so some older memories were compacted to fit. Your progress is safe — only old AI memory notes were trimmed.';
+    }
+    // AI action snapshots can themselves dominate the remaining storage budget.
+    // Trim the newest-safe history only after memory compaction so user progress
+    // is preserved before disposable undo/redo metadata is discarded.
+    if (serialized.length > STATE_SAVE_BUDGET) {
+      normalized = { ...normalized, aiActionHistory: pruneAiActionHistory(normalized.aiActionHistory) };
+      serialized = JSON.stringify(normalized);
+      if (serialized.length <= STATE_SAVE_BUDGET) {
+        this.pruneNotice =
+          'Storage was full, so older AI undo history was compacted to fit. Your progress is safe — only undo/redo history was trimmed.';
+      }
     }
     this.store.setItem(STATE_KEY, serialized);
     // AUDIT FIX: read the backend's write-failure flag right after the

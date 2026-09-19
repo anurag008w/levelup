@@ -21,7 +21,10 @@ import { todayISO } from './storage';
 export function useAppState() {
   const [state, setState] = useState<AppState>(() => container.store.get());
   const [realToday, setRealToday] = useState<string>(() => todayISO(container.store.get().timeZone));
-  const [adminUnlocked, setAdminUnlockedState] = useState<boolean>(() => isAdminUnlocked(loadSession()?.username ?? null));
+  const [adminUnlocked, setAdminUnlockedState] = useState<boolean>(() => {
+    const session = loadSession();
+    return isAdminUnlocked(session?.username ?? null, session?.loggedInAt ?? null);
+  });
   const [adminDay, setAdminDayState] = useState<number | null>(null);
   /** One-time banner when storage was full and old memories got trimmed (M7). */
   const [pruneNotice, setPruneNotice] = useState<string | null>(null);
@@ -30,7 +33,7 @@ export function useAppState() {
    *  restart unless the user frees space (audit round 1). */
   const [storageWriteError, setStorageWriteError] = useState<string | null>(null);
   /** One-time banner when the CHAT blob failed to persist (quota) — chats are
-   *  safe in memory but lost on restart (audit round 2). */
+   *  safe in memory but lost on restart (audit round 2 — quota asymmetry). */
   const [chatWriteError, setChatWriteError] = useState<string | null>(null);
 
   // Listen for external store updates (e.g., from chat tools) and sync state.
@@ -39,14 +42,10 @@ export function useAppState() {
   useEffect(() => {
     const syncFromStore = () => {
       setState(container.store.get());
-      // Surface any silent memory-pruning notice (M7) — consumed once, so the
-      // banner never re-appears unless a NEW prune happens.
       const notice = container.store.consumePruneNotice();
       if (notice) setPruneNotice(notice);
-      // Same one-shot pattern for storage WRITE failures (audit round 1).
       const writeErr = container.store.consumeWriteError();
       if (writeErr) setStorageWriteError(writeErr);
-      // Chat-blob persist failures (audit round 2 — quota asymmetry).
       const chatWriteErr = container.consumeChatWriteError();
       if (chatWriteErr) setChatWriteError(chatWriteErr);
     };
@@ -60,11 +59,7 @@ export function useAppState() {
     return () => clearInterval(id);
   }, []);
 
-  // Day snapshot (M8): the daily summary pipeline used to be dead code. Run it
-  // once per calendar day — on mount and on the minute tick — so the journey
-  // context finally sees real day snapshots. Best-effort: a failure must never
-  // block the app, and the merged result is based on the LATEST state so
-  // concurrent edits are never lost.
+  // Day snapshot (M8): run once per calendar day on mount and on the minute tick.
   useEffect(() => {
     let cancelled = false;
     async function maybeRollupDay() {
@@ -75,11 +70,11 @@ export function useAppState() {
       try {
         next = await container.summaries.runDailyPipeline(s, date);
       } catch {
-        return; // summary is best-effort
+        return;
       }
       if (cancelled) return;
       const latest = container.store.get();
-      if (!shouldRollupDay(latest, date)) return; // another rollup already landed
+      if (!shouldRollupDay(latest, date)) return;
       container.store.save(mergeDaySummary(latest, next, date));
     }
     void maybeRollupDay();
@@ -103,7 +98,6 @@ export function useAppState() {
     });
   }
 
-  /** Re-reads the store snapshot (after service-level mutations, e.g. chat tools). */
   function refresh() {
     setState(container.store.get());
   }
@@ -118,32 +112,43 @@ export function useAppState() {
     }
   }
 
-  /** Unlocks straight away when the logged-in session is a server super admin. */
   function autoUnlock(): boolean {
     const session = loadSession();
-    if (!canAutoUnlockSession(session)) return false;
-    setAdminUnlocked(session?.username ?? null, true);
+    if (!canAutoUnlockSession(session) || !session?.username || !session.loggedInAt) return false;
+    setAdminUnlocked(session.username, session.loggedInAt, true);
     setAdminUnlockedState(true);
     return true;
   }
 
-  /** Verifies credentials against the server; unlocks only for a super admin. */
   async function unlockAdmin(username: string, password: string): Promise<AdminVerifyResult> {
     const result = await verifyAdminLogin(username, password);
     if (!result.ok) return result;
-    setAdminUnlocked(username.trim(), true);
-    setAdminUnlockedState(true);
-    return { ok: true };
+
+    const session = loadSession();
+    const clean = username.trim();
+    if (!session || session.username.trim() !== clean || !session.loggedInAt) {
+      // Verifying another account's credentials must never grant admin UI state
+      // to the currently logged-in account. The local unlock marker is bound to
+      // the active auth session, so a matching username + login timestamp is
+      // required before the in-memory gate can turn on.
+      return { ok: false, error: 'Admin unlock ke liye isi account ka active login session zaroori hai.' };
+    }
+
+    setAdminUnlocked(clean, session.loggedInAt, true);
+    const unlocked = isAdminUnlocked(clean, session.loggedInAt);
+    setAdminUnlockedState(unlocked);
+    return unlocked
+      ? { ok: true }
+      : { ok: false, error: 'Admin unlock marker save nahi hua. Dobara try karo.' };
   }
 
-  /** Locks the panel and drops any previewed day. */
   function lockAdmin() {
-    setAdminUnlocked(loadSession()?.username ?? null, false);
+    const session = loadSession();
+    setAdminUnlocked(session?.username ?? null, session?.loggedInAt ?? null, false);
     setAdminUnlockedState(false);
     setAdminDayState(null);
   }
 
-  /** Jumps the preview to an absolute day (1-based); null returns to real date. */
   function setAdminDay(day: number | null) {
     setAdminDayState(day);
   }

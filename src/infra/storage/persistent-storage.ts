@@ -68,8 +68,11 @@ class PersistentStorage {
 
     try {
       const serialized = JSON.stringify(value);
-      this.cache.set(storageKey, serialized);
+      // Persist first. Do not update the cache until the backing store accepts
+      // the write, otherwise a quota/permission failure creates a false
+      // same-session success that disappears after the next app restart.
       localStorage.setItem(storageKey, serialized);
+      this.cache.set(storageKey, serialized);
       this.lastWriteError = null;
       return true;
     } catch (error) {

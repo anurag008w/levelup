@@ -36,8 +36,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pkgPath = path.join(root, 'package.json');
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
 
-/** App version scheme: YYYY.MM.BUILD (e.g. 2026.09.7002). */
-const VERSION_RE = /^\d{4}\.\d{2}\.\d+$/;
+/** App version scheme: YYYY.MM.DD or YYYY.MM.DDSS (e.g. 2026.09.7004). */
+const VERSION_RE = /^\d{4}\.\d{2}\.\d{1,4}$/;
 
 /** Safe list — jahan exact OLD version string replace ho sakta hai. */
 const SYNC_FILES = [
@@ -66,7 +66,7 @@ const dryRun = args.includes('--dry-run');
 // Normalise: leading "v" hatao, spaces ko dots me badlo ("v2026 09 7002" → "2026.09.7002").
 const next = raw.trim().replace(/^v/i, '').replace(/\s+/g, '.');
 if (!VERSION_RE.test(next)) {
-  fail(`Invalid app version "${next}" — expected YYYY.MM.BUILD (e.g. 2026.09.7002)`);
+  fail(`Invalid app version "${next}" — expected YYYY.MM.DD or YYYY.MM.DDSS (max 4 digits in the final component)`);
 }
 
 const current = pkg.version;

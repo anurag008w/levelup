@@ -31,7 +31,17 @@ vi.mock('../notifications', () => ({
 
 import { REPLY_GRACE_MS, setupNotificationActions } from '../notification-actions';
 
-type ActionHandler = (action: { actionId: string; inputValue?: string; sessionId?: string }) => void;
+type ActionHandler = (action: { actionId: string; inputValue?: string; sessionId?: string; authSessionMarker?: string }) => void;
+
+const AUTH_SESSION = JSON.stringify({
+  serverUrl: 'https://example.test',
+  username: 'user_1',
+  role: 'user',
+  isSuperAdmin: false,
+  apiKey: 'sk-test',
+  token: 'token',
+  loggedInAt: '2026-09-16T10:00:00.000Z',
+});
 
 describe('notification-actions', () => {
   let handler: ActionHandler | null = null;
@@ -41,6 +51,8 @@ describe('notification-actions', () => {
     sendMock.mockReset();
     notifyAiReplyMock.mockReset();
     minimizeAppMock.mockReset();
+    localStorage.clear();
+    localStorage.setItem('levelup.auth.session', AUTH_SESSION);
     onActionHandlerMock.mockImplementation((h: ActionHandler) => {
       handler = h;
     });
@@ -49,6 +61,7 @@ describe('notification-actions', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    localStorage.clear();
   });
 
   it('sends an inline reply without opening the chat, minimizes ~1s, then reveals the bubble like chat', async () => {
@@ -58,7 +71,7 @@ describe('notification-actions', () => {
     window.addEventListener('levelup:open-chat', openChat);
     window.addEventListener('levelup:chat-updated', chatUpdated);
 
-    handler!({ actionId: 'reply', inputValue: '  hello  ', sessionId: 's1' });
+    handler!({ actionId: 'reply', inputValue: '  hello  ', sessionId: 's1', authSessionMarker: '2026-09-16T10:00:00.000Z' });
 
     expect(sendMock).toHaveBeenCalledWith('s1', 'hello');
     expect(minimizeAppMock).not.toHaveBeenCalled();
@@ -81,10 +94,31 @@ describe('notification-actions', () => {
     expect(sendMock).toHaveBeenCalledBefore(minimizeAppMock);
   });
 
+  it('rejects inline replies after logout so an old notification cannot mutate the previous session', async () => {
+    localStorage.removeItem('levelup.auth.session');
+    localStorage.removeItem('levelup:guest');
+
+    handler!({ actionId: 'reply', inputValue: 'stale account reply', sessionId: 'old-session' });
+    await vi.advanceTimersByTimeAsync(REPLY_GRACE_MS + 3000);
+
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(minimizeAppMock).not.toHaveBeenCalled();
+    expect(notifyAiReplyMock).not.toHaveBeenCalled();
+  });
+
+  it('ignores a reply when its auth marker does not match the current session', async () => {
+    handler!({ actionId: 'reply', inputValue: 'marker check', sessionId: 'old-session', authSessionMarker: '2026-09-16T09:00:00.000Z' });
+    await vi.advanceTimersByTimeAsync(REPLY_GRACE_MS + 3000);
+
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(minimizeAppMock).not.toHaveBeenCalled();
+    expect(notifyAiReplyMock).not.toHaveBeenCalled();
+  });
+
   it('reveals multi-bubble replies bubble-by-bubble exactly like chat (fire-time merge, not OS pre-schedule)', async () => {
     const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
     sendMock.mockResolvedValue({ content: 'Pehla paragraph.\n\nDusra paragraph.' });
-    handler!({ actionId: 'reply', inputValue: 'hello again', sessionId: 's1' });
+    handler!({ actionId: 'reply', inputValue: 'hello again', sessionId: 's1', authSessionMarker: '2026-09-16T10:00:00.000Z' });
 
     // Pehla bubble 3000ms pe (thinking pause).
     await vi.advanceTimersByTimeAsync(REPLY_GRACE_MS + 3000);
@@ -121,7 +155,7 @@ describe('notification-actions', () => {
 
   it('fires an immediate notification for an empty/whitespace reply', async () => {
     sendMock.mockResolvedValue({ content: '   ' });
-    handler!({ actionId: 'reply', inputValue: 'whitespace check', sessionId: 's1' });
+    handler!({ actionId: 'reply', inputValue: 'whitespace check', sessionId: 's1', authSessionMarker: '2026-09-16T10:00:00.000Z' });
     await vi.advanceTimersByTimeAsync(REPLY_GRACE_MS);
 
     expect(minimizeAppMock).toHaveBeenCalledTimes(1);
@@ -133,7 +167,7 @@ describe('notification-actions', () => {
     const chatUpdated = vi.fn();
     window.addEventListener('levelup:chat-updated', chatUpdated);
 
-    handler!({ actionId: 'reply', inputValue: 'dusra message', sessionId: 's1' });
+    handler!({ actionId: 'reply', inputValue: 'dusra message', sessionId: 's1', authSessionMarker: '2026-09-16T10:00:00.000Z' });
     await vi.advanceTimersByTimeAsync(REPLY_GRACE_MS);
 
     expect(minimizeAppMock).toHaveBeenCalledTimes(1);
@@ -164,8 +198,8 @@ describe('notification-actions', () => {
     sendMock.mockResolvedValue({ content: 'AI reply text' });
     // Cold-start fallback me same reply 2 baar aa sakta hai — dono events ka
     // sessionId + inputValue same hota hai. Sirf pehla send hona chahiye.
-    handler!({ actionId: 'reply', inputValue: 'duplicate check', sessionId: 's1' });
-    handler!({ actionId: 'reply', inputValue: 'duplicate check', sessionId: 's1' });
+    handler!({ actionId: 'reply', inputValue: 'duplicate check', sessionId: 's1', authSessionMarker: '2026-09-16T10:00:00.000Z' });
+    handler!({ actionId: 'reply', inputValue: 'duplicate check', sessionId: 's1', authSessionMarker: '2026-09-16T10:00:00.000Z' });
     await vi.advanceTimersByTimeAsync(REPLY_GRACE_MS + 3000);
 
     expect(sendMock).toHaveBeenCalledTimes(1);

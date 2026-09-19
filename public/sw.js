@@ -20,7 +20,7 @@ self.addEventListener('notificationclick', (event) => {
         for (const client of clients) {
           if ('focus' in client) return client.focus();
         }
-        return self.clients.openWindow('/');
+        return self.clients.openWindow(self.registration.scope);
       }),
   );
 });

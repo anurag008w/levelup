@@ -30,7 +30,12 @@ public class ScreenShareForegroundService extends Service {
     public static final String CHANNEL_ID = "misa_screenshare_channel";
     public static final int NOTIF_ID = 7421;
 
+    private static volatile boolean active;
     private PowerManager.WakeLock wakeLock;
+
+    static boolean isActive() {
+        return active;
+    }
 
     @Override
     public void onCreate() {
@@ -76,12 +81,14 @@ public class ScreenShareForegroundService extends Service {
         } else {
             startForeground(NOTIF_ID, notification);
         }
+        active = true;
 
         return START_NOT_STICKY;
     }
 
     @Override
     public void onDestroy() {
+        active = false;
         if (wakeLock != null && wakeLock.isHeld()) {
             try {
                 wakeLock.release();

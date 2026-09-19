@@ -1,5 +1,5 @@
 #!/bin/bash
-# Release script for Human OS
+# Release script for LevelUp
 # Usage: ./scripts/release.sh [version]
 # If no version provided, uses today's date (vYYYY.MM.DD)
 #
@@ -40,11 +40,18 @@ if [[ "$BRANCH" != "main" ]]; then
 fi
 echo "✅ On main branch"
 
-# Check for uncommitted changes
-if ! git diff-index --quiet HEAD --; then
+# Check for uncommitted changes only for a real release. Dry-run must remain
+# non-interactive and observational, so it must never block on a dirty checkout.
+if [[ "$DRY_RUN" != "1" ]] && ! git diff-index --quiet HEAD --; then
     echo "⚠️  You have uncommitted changes!"
     git status --short
     echo ""
+    # A manual terminal release may ask for explicit confirmation, but a
+    # non-interactive caller must fail closed instead of hanging on `read`.
+    if [[ ! -t 0 ]]; then
+        echo "❌ Cannot ask for confirmation from a non-interactive terminal. Commit/stash the changes and retry the release."
+        exit 1
+    fi
     read -p "Continue anyway? (y/n) " -n 1 -r
     echo ""
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -52,9 +59,12 @@ if ! git diff-index --quiet HEAD --; then
     fi
 fi
 
-# Pull latest
-echo "📥 Pulling latest changes..."
-git pull origin main
+# Pull latest only for a real release. Dry-run must remain observational and
+# must not mutate the checkout through a network update.
+if [[ "$DRY_RUN" != "1" ]]; then
+  echo "📥 Pulling latest changes..."
+  git pull origin main
+fi
 
 # Run tests first
 echo ""
@@ -103,7 +113,7 @@ echo ""
 echo "📋 To create release:"
 echo ""
 echo "   1. Go to GitHub Actions:"
-echo "      https://github.com/anurag008w/jee-human-os/actions"
+echo "      https://github.com/anurag008w/levelup/actions"
 echo ""
 echo "   2. Click 'Release' workflow"
 echo ""

@@ -297,15 +297,19 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
   async healthCheck(): Promise<HealthCheckResult> {
     const start = Date.now();
-    
-    // Must have API key for remote providers
-    if (!this.config.apiKey) {
+    const baseUrl = this.requireBaseUrl();
+    const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(baseUrl);
+
+    // Remote providers require credentials. Local OpenAI-compatible servers
+    // such as Ollama/llama.cpp commonly do not, so a missing key must not make
+    // their health indicator disagree with isConfigured().
+    if (!this.config.apiKey && !isLocal) {
       return { ok: false, provider: this.id, latencyMs: Date.now() - start, message: 'API key missing' };
     }
-    
+
     try {
       await this.http.requestJson<unknown>({
-        url: `${this.requireBaseUrl()}/models`,
+        url: `${baseUrl}/models`,
         headers: this.headers(),
         method: 'GET',
         timeoutMs: Math.min(this.config.timeoutMs ?? 15_000, 15_000),

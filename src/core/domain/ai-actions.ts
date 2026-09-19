@@ -171,7 +171,6 @@ export function executeAiAction(input: AiActionExecutionInput): AiActionExecutio
   };
 }
 
-
 const DESTRUCTIVE_PERMISSIONS = new Set<AiActionPermission>(['delete', 'bulk-edit', 'admin']);
 
 /**
@@ -254,7 +253,10 @@ export function redoLastAiAction(state: AppState): AppState {
 export function restoreVersionBefore(state: AppState, versionId: string): AppState {
   const version = state.aiActionHistory.versions.find((item) => item.id === versionId);
   if (!version) return state;
-  const restored = applySnapshot(state, version.entityType, version.beforeState);
+  if (version.entityType === 'taskLogs' && (!isTaskLogsSnapshot(version.beforeState) || !isTaskLogsSnapshot(version.afterState))) return state;
+  const restored = version.entityType === 'taskLogs'
+    ? restoreTaskLogsSnapshot(state, version.beforeState, version.afterState)
+    : applySnapshot(state, version.entityType, version.beforeState);
   return {
     ...restored,
     aiActionHistory: {
@@ -267,7 +269,10 @@ export function restoreVersionBefore(state: AppState, versionId: string): AppSta
 export function applyVersionAfter(state: AppState, versionId: string): AppState {
   const version = state.aiActionHistory.undone.find((item) => item.id === versionId);
   if (!version) return state;
-  const restored = applySnapshot(state, version.entityType, version.afterState);
+  if (version.entityType === 'taskLogs' && (!isTaskLogsSnapshot(version.beforeState) || !isTaskLogsSnapshot(version.afterState))) return state;
+  const restored = version.entityType === 'taskLogs'
+    ? restoreTaskLogsSnapshot(state, version.afterState, version.beforeState)
+    : applySnapshot(state, version.entityType, version.afterState);
   return {
     ...restored,
     aiActionHistory: {
@@ -275,6 +280,66 @@ export function applyVersionAfter(state: AppState, versionId: string): AppState 
       undone: state.aiActionHistory.undone.filter((item) => item.id !== versionId),
     },
   };
+}
+
+/**
+ * Task-log snapshots are optimistic undo/redo patches rather than whole-state
+ * replacements. If a task value changed after the AI snapshot, it is a newer
+ * user/device write and must survive the undo/redo. Only values still equal to
+ * the snapshot being replaced are reverted.
+ */
+function restoreTaskLogsSnapshot(state: AppState, replacement: unknown, expectedCurrent: unknown): AppState {
+  if (!isTaskLogsSnapshot(replacement) || !isTaskLogsSnapshot(expectedCurrent)) return state;
+  const current = state.taskLogs;
+  const replacementLogs = replacement;
+  const expectedLogs = expectedCurrent;
+  const dayKeys = new Set([...Object.keys(current), ...Object.keys(replacementLogs), ...Object.keys(expectedLogs)]);
+  const merged: AppState['taskLogs'] = { ...current };
+
+  for (const day of dayKeys) {
+    const currentDay = current[day] ?? {};
+    const replacementDay = replacementLogs[day] ?? {};
+    const expectedDay = expectedLogs[day] ?? {};
+    const taskIds = new Set([...Object.keys(currentDay), ...Object.keys(replacementDay), ...Object.keys(expectedDay)]);
+    const mergedDay = { ...currentDay };
+    let changed = false;
+
+    for (const taskId of taskIds) {
+      const currentValue = currentDay[taskId];
+      const expectedValue = expectedDay[taskId];
+      const replacementValue = replacementDay[taskId];
+      if (currentValue !== expectedValue) continue;
+
+      if (replacementValue === undefined) {
+        if (currentValue !== undefined) {
+          delete mergedDay[taskId];
+          changed = true;
+        }
+      } else if (currentValue !== replacementValue) {
+        mergedDay[taskId] = replacementValue;
+        changed = true;
+      }
+    }
+
+    if (changed) merged[day] = mergedDay;
+    else if (!(day in current) && Object.keys(mergedDay).length > 0) merged[day] = mergedDay;
+  }
+
+  return { ...state, taskLogs: merged };
+}
+
+/** Validates persisted/AI task-log snapshots before they can affect app state. */
+function isTaskLogsSnapshot(value: unknown): value is Record<string, Record<string, boolean>> {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every((day) => (
+    isRecord(day) && Object.values(day).every((completed) => typeof completed === 'boolean')
+  ));
+}
+
+/** Day-mode arrays represent sets; canonicalize them when action snapshots are persisted/restored. */
+function normalizeDayNumbers(value: unknown, fallback: AppState['restDays']): AppState['restDays'] {
+  if (!Array.isArray(value)) return fallback;
+  return [...new Set(value)].filter((day): day is number => typeof day === 'number' && Number.isInteger(day));
 }
 
 function applySnapshot(state: AppState, entityType: string, snapshot: unknown): AppState {
@@ -285,17 +350,17 @@ function applySnapshot(state: AppState, entityType: string, snapshot: unknown): 
     return { ...state, taskLogs: snapshot as AppState['taskLogs'] };
   }
   if (entityType === 'restDays' && Array.isArray(snapshot)) {
-    return { ...state, restDays: snapshot as AppState['restDays'] };
+    return { ...state, restDays: normalizeDayNumbers(snapshot, state.restDays) };
   }
   if (entityType === 'testDays' && Array.isArray(snapshot)) {
-    return { ...state, testDays: snapshot as AppState['testDays'] };
+    return { ...state, testDays: normalizeDayNumbers(snapshot, state.testDays) as AppState['testDays'] };
   }
   if (entityType === 'dayModes' && isRecord(snapshot)) {
     const dayModes = snapshot as { restDays?: unknown; testDays?: unknown };
     return {
       ...state,
-      restDays: Array.isArray(dayModes.restDays) ? (dayModes.restDays as AppState['restDays']) : state.restDays,
-      testDays: Array.isArray(dayModes.testDays) ? (dayModes.testDays as AppState['testDays']) : state.testDays,
+      restDays: normalizeDayNumbers(dayModes.restDays, state.restDays),
+      testDays: normalizeDayNumbers(dayModes.testDays, state.testDays) as AppState['testDays'],
     };
   }
   if (entityType === 'aiSettings' && isRecord(snapshot)) {

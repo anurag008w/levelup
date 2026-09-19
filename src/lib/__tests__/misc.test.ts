@@ -21,11 +21,13 @@ describe('admin gate (server-backed, no hardcoded credentials)', () => {
   });
 
   it('auto-unlocks only for server super admins — role alone is not enough', () => {
-    expect(canAutoUnlockSession({ isSuperAdmin: true, role: 'admin' })).toBe(true);
-    expect(canAutoUnlockSession({ isSuperAdmin: true })).toBe(true);
+    expect(canAutoUnlockSession({ isSuperAdmin: true, role: 'admin', username: 'admin_1', loggedInAt: '2026-09-16T09:00:00.000Z' })).toBe(true);
+    expect(canAutoUnlockSession({ isSuperAdmin: true, username: 'admin_1', loggedInAt: '2026-09-16T09:00:00.000Z' })).toBe(true);
     expect(canAutoUnlockSession({ isSuperAdmin: false, role: 'admin' })).toBe(false);
     expect(canAutoUnlockSession({ role: 'admin' })).toBe(false);
-    expect(canAutoUnlockSession({ isSuperAdmin: false })).toBe(false);
+    expect(canAutoUnlockSession({ isSuperAdmin: false, username: 'admin_1', loggedInAt: '2026-09-16T09:00:00.000Z' })).toBe(false);
+    expect(canAutoUnlockSession({ isSuperAdmin: true, username: 'admin_1' })).toBe(false);
+    expect(canAutoUnlockSession({ isSuperAdmin: true, loggedInAt: '2026-09-16T09:00:00.000Z' })).toBe(false);
     expect(canAutoUnlockSession(null)).toBe(false);
     expect(canAutoUnlockSession(undefined)).toBe(false);
   });
@@ -41,7 +43,6 @@ describe('admin gate (server-backed, no hardcoded credentials)', () => {
       });
     const res = await verifyAdminLogin('  ADMIN_1  ', 'secret');
     expect(res.ok).toBe(true);
-    // The trimmed username is sent to the server.
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ body: { username: 'ADMIN_1', password: 'secret' } }));
   });
 
@@ -66,20 +67,24 @@ describe('admin gate (server-backed, no hardcoded credentials)', () => {
     expect(res.error).toMatch(/galat/i);
   });
 
-  it('per-user unlock flags are independent', () => {
-    expect(isAdminUnlocked('admin_1')).toBe(false);
-    setAdminUnlocked('admin_1', true);
-    expect(isAdminUnlocked('admin_1')).toBe(true);
-    expect(isAdminUnlocked('admin_2')).toBe(false); // other user unaffected
-    expect(isAdminUnlocked(null)).toBe(false); // guest unaffected
-    setAdminUnlocked('admin_1', false);
-    expect(isAdminUnlocked('admin_1')).toBe(false);
+  it('binds unlock flags to the exact login session', () => {
+    const sessionA = '2026-09-16T09:00:00.000Z';
+    const sessionB = '2026-09-16T09:30:00.000Z';
+    expect(isAdminUnlocked('admin_1', sessionA)).toBe(false);
+    setAdminUnlocked('admin_1', sessionA, true);
+    expect(isAdminUnlocked('admin_1', sessionA)).toBe(true);
+    expect(isAdminUnlocked('admin_1', sessionB)).toBe(false);
+    expect(isAdminUnlocked('admin_2', sessionA)).toBe(false);
+    expect(isAdminUnlocked(null, sessionA)).toBe(false);
+    expect(isAdminUnlocked('admin_1', null)).toBe(false);
+    setAdminUnlocked('admin_1', sessionA, false);
+    expect(isAdminUnlocked('admin_1', sessionA)).toBe(false);
   });
 
-  it('guest (null user) uses its own flag', () => {
-    setAdminUnlocked(null, true);
-    expect(isAdminUnlocked(null)).toBe(true);
-    expect(isAdminUnlocked('someone')).toBe(false);
+  it('does not persist an admin unlock without a logged-in session marker', () => {
+    setAdminUnlocked(null, null, true);
+    setAdminUnlocked('admin_1', null, true);
+    expect(isAdminUnlocked('admin_1', '2026-09-16T09:00:00.000Z')).toBe(false);
   });
 });
 

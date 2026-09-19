@@ -15,6 +15,48 @@ export function isNativePlatform(): boolean {
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
 /**
+ * Race a native request against the caller's abort signal. CapacitorHttp does
+ * not currently expose an AbortSignal cancellation hook, so this only makes
+ * the app-facing promise cancel promptly; the native request itself still
+ * relies on its connect/read timeout. Listener cleanup prevents long-lived
+ * abort signals from accumulating one handler per request.
+ */
+function requestWithAbort<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return operation();
+  if (signal.aborted) return Promise.reject(new HttpError('Request aborted', 0, 'aborted', null));
+
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    const onAbort = () => {
+      cleanup();
+      reject(new HttpError('Request aborted', 0, 'aborted', null));
+    };
+
+    signal.addEventListener('abort', onAbort, { once: true });
+
+    let pending: Promise<T>;
+    try {
+      pending = operation();
+    } catch (err) {
+      cleanup();
+      reject(err);
+      return;
+    }
+
+    pending.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (err) => {
+        cleanup();
+        reject(err);
+      },
+    );
+  });
+}
+
+/**
  * HttpClient backed by the Capacitor native HTTP plugin. On web it falls back
  * to the native plugin's own fetch implementation (same CORS rules apply); the
  * DI container only uses this client on real devices.
@@ -25,23 +67,13 @@ export class CapacitorHttpClient implements HttpClient {
     let lastError: unknown;
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        if (init.signal?.aborted) {
-          throw new HttpError('Request aborted', 0, 'aborted', null);
-        }
-        // AUDIT FIX (round 3, MEDIUM): CapacitorHttp can't abort an in-flight
-        // request via a signal, so we honor the external abort by:
-        //  1. pre-flight check above, and
-        //  2. racing the response against the abort event right after it lands,
-        //     so a user "stop" during a long request still surfaces as 'aborted'
-        //     instead of completing the (now-wasted) call. Same contract as the
-        //     web FetchHttpClient, which the rest of the app relies on.
-        const aborted = new Promise<never>((_, reject) => {
-          if (init.signal) {
-            if (init.signal.aborted) reject(new HttpError('Request aborted', 0, 'aborted', null));
-            else init.signal.addEventListener('abort', () => reject(new HttpError('Request aborted', 0, 'aborted', null)), { once: true });
-          }
-        });
-        const res = await Promise.race([CapacitorHttp.request(this.toOptions(init)), aborted]);
+        // CapacitorHttp can't abort an in-flight request directly, so race its
+        // response against the external signal and clean up the listener when
+        // either side settles. A user "stop" therefore surfaces promptly.
+        const res = await requestWithAbort(
+          () => CapacitorHttp.request(this.toOptions(init)),
+          init.signal,
+        );
         const status = res.status ?? 0;
         if (status < 200 || status >= 300) {
           const message = extractErrorMessage(res.data) ?? `HTTP ${status}`;
@@ -61,16 +93,23 @@ export class CapacitorHttpClient implements HttpClient {
         return res.data as T;
       } catch (err) {
         lastError = err;
-        if (attempt >= retries) throw lastError;
-        const retryable = !(err instanceof HttpError) || RETRYABLE_STATUS.has(err.status);
-        if (retryable) await delayMs(backoffMs(attempt, err instanceof HttpError ? err.status : undefined));
+        if (isRetryableNativeError(err) && attempt < retries) {
+          await delayMs(backoffMs(attempt, err instanceof HttpError ? err.status : undefined));
+          continue;
+        }
+        throw lastError;
       }
     }
     throw lastError;
   }
 
   async requestSse(init: HttpRequestInit, onData: (payload: string) => void): Promise<void> {
-    const res = await CapacitorHttp.request({ ...this.toOptions(init), responseType: 'text' });
+    // Keep SSE cancellation semantics aligned with requestJson: callers can
+    // stop a native live request without waiting for the full native timeout.
+    const res = await requestWithAbort(
+      () => CapacitorHttp.request({ ...this.toOptions(init), responseType: 'text' }),
+      init.signal,
+    );
     const status = res.status ?? 0;
     if (status < 200 || status >= 300) {
       const message = extractErrorMessage(res.data) ?? `SSE HTTP ${status}`;
@@ -98,6 +137,14 @@ export class CapacitorHttpClient implements HttpClient {
     }
     return options;
   }
+}
+
+function isRetryableNativeError(err: unknown): boolean {
+  if (err instanceof HttpError) {
+    if (err.kind === 'aborted') return false;
+    return RETRYABLE_STATUS.has(err.status);
+  }
+  return true;
 }
 
 function statusToKind(status: number): HttpError['kind'] {

@@ -56,6 +56,7 @@ import { App } from '@capacitor/app';
 import { container } from '../di/container';
 import { buildNotificationSteps, computeRevealSchedule, splitReplyIntoBubbles } from '../features/chat/message-segments';
 import { isNativePlatform, notifyAiReply, onNotificationAction, registerNotificationActions, trackAppState } from './notifications';
+import { loadSession } from './auth';
 
 let setup = false;
 
@@ -131,12 +132,37 @@ async function resolveOrCreateSession(): Promise<string> {
   return container.chat.createSession('Notification Reply').id;
 }
 
+/**
+ * Notification replies are actionable only while the app still has an owner.
+ * A notification can outlive logout because Android keeps it in the shade;
+ * accepting it after logout could otherwise mutate the previous account's
+ * local chat or invoke its provider path while the login gate is visible.
+ * Guest mode is also an explicit local owner, so it remains eligible.
+ */
+function isNotificationReplyBoundToActiveOwner(authSessionMarker?: string): boolean {
+  const session = loadSession();
+  if (session) {
+    return Boolean(authSessionMarker) && authSessionMarker === session.loggedInAt;
+  }
+  try {
+    return !authSessionMarker && localStorage.getItem('levelup:guest') === 'true';
+  } catch {
+    return false;
+  }
+}
+
 export function setupNotificationActions(): void {
   if (setup) return;
   setup = true;
   trackAppState();
   void registerNotificationActions();
-  void onNotificationAction(({ actionId, inputValue, sessionId }) => {
+  void onNotificationAction(({ actionId, inputValue, sessionId, authSessionMarker }) => {
+    // Android notifications can outlive the auth session. Replies are valid only
+    // for the exact login session that created the notification. Guest replies
+    // remain valid only while guest mode is still the explicit local owner.
+    // Tap/open remains allowed below because it only navigates.
+    if (actionId === 'reply' && !isNotificationReplyBoundToActiveOwner(authSessionMarker)) return;
+
     // Live-call notifications: reply goes straight into the Gemini Live
     // session (same Activity-launch + minimize trick as chat, so the reply
     // reliably reaches the WebView), tap just opens the app.
@@ -193,12 +219,11 @@ export function setupNotificationActions(): void {
           if (bubbles.length > 0) {
             // HAR bubble apne reveal moment pe JS timer se fire hota hai
             // (delayMs=0 + force=true → turant show/update, same sessionId =
-            // same notification id = purana merge hoke update hota hai), bilkul
-            // ChatScreen ke normal flow jaisa. OS-level pre-scheduling yahan
-            // kaam nahi karta — Android plugin same id ke pending alarms cancel
-            // kar deta hai, isliye pehle se schedule kiye steps me se sirf aakhri
-            // fire hota (poora reply, total reveal delay ke baad) aur bubble
-            // reveal kabhi dikhta nahi.
+            // same id = merge). OS-level pre-scheduling yahan
+            // use nahi hota — Android plugin same id ke pending alarms cancel
+            // kar deta hai, isliye pehle se schedule kiye steps me se sirf
+            // aakhri fire hota tha (poora reply, total delay ke baad — bubble reveal
+            // kabhi dikhta hi nahi tha).
             //
             // Body = latest bubble (collapsed/heads-up — warna Android har
             // popup me cumulative text ka pehla line dikhata, "pehla message

@@ -85,6 +85,36 @@ describe('PersistentStorage', () => {
     }
   });
 
+  it('does not expose a failed write from the in-memory cache', async () => {
+    const storage = await fresh();
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = () => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    };
+    try {
+      expect(await storage.set('big', { value: 'unsaved' })).toBe(false);
+      expect(await storage.get('big')).toBeNull();
+    } finally {
+      Storage.prototype.setItem = original;
+    }
+  });
+
+  it('preserves the last known persisted value when a replacement write fails', async () => {
+    const storage = await fresh();
+    expect(await storage.set('stable', { version: 1 })).toBe(true);
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = () => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    };
+    try {
+      expect(await storage.set('stable', { version: 2 })).toBe(false);
+      expect(await storage.get('stable')).toEqual({ version: 1 });
+      expect(localStorage.getItem('@levelup:stable')).toBe(JSON.stringify({ version: 1 }));
+    } finally {
+      Storage.prototype.setItem = original;
+    }
+  });
+
   it('a successful write clears the last write error', async () => {
     const storage = await fresh();
     const original = Storage.prototype.setItem;

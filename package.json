@@ -10,7 +10,7 @@
     "lint": "oxlint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "postinstall": "patch-package",
+    "postinstall": "patch-package --error-on-fail",
     "preview": "vite preview",
     "release": "bash scripts/release.sh",
     "release:date": "bash scripts/release.sh v$(date +%Y.%m.%d)",

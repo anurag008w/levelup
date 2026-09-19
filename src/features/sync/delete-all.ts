@@ -6,6 +6,9 @@ import { emptyAppState } from '../../core/domain/state';
 import type { ChatSession } from '../../core/domain/chat';
 import { relationshipManager } from '../ai/relationship-state';
 
+const RELATIONSHIP_STORAGE_KEY = 'misa_relationship_state_v2';
+const PROACTIVE_STORAGE_KEY = 'misa_proactive_agent_prefs_v2';
+
 /**
  * Everything needed to restore the app if the wipe sequence fails part-way
  * (N3 rollback source). Snapshotted BEFORE the first destructive step and only
@@ -16,6 +19,8 @@ export interface DeleteAllSnapshot {
   chatSessions: ChatSession[];
   state: AppState;
   syncSession: AuthSession | null;
+  relationshipStateRaw: string | null;
+  proactiveStateRaw: string | null;
 }
 
 /**
@@ -50,6 +55,8 @@ export async function deleteAllData(container: AppContainer, session: AuthSessio
     chatSessions: container.chat.listSessions(),
     state: container.store.get(),
     syncSession: container.syncCoordinator.getSession(),
+    relationshipStateRaw: localStorage.getItem(RELATIONSHIP_STORAGE_KEY),
+    proactiveStateRaw: localStorage.getItem(PROACTIVE_STORAGE_KEY),
   };
 
   try {
@@ -83,7 +90,7 @@ export async function deleteAllData(container: AppContainer, session: AuthSessio
     }
 
     // 7. Durable commit — the debounced state write must not be the thing that
-    //    decides whether the wipe survives an app close/restart.
+    // decides whether the wipe survives an app close/restart.
     container.store.flush();
   } catch (err) {
     rollbackDelete(container, snapshot);
@@ -101,7 +108,26 @@ function rollbackDelete(container: AppContainer, snapshot: DeleteAllSnapshot): v
     container.chat.replaceStore(snapshot.chatSessions);
     container.store.save(snapshot.state);
     container.store.flush();
-    if (snapshot.owner !== null) localStorage.setItem('levelup.data-owner', snapshot.owner);
+
+    // Restore the owner exactly, including the intentionally-unowned state.
+    // Leaving a newly-created owner marker behind would violate account/guest
+    // isolation after a failed delete-all transaction.
+    if (snapshot.owner === null) {
+      localStorage.removeItem('levelup.data-owner');
+    } else {
+      localStorage.setItem('levelup.data-owner', snapshot.owner);
+    }
+
+    if (snapshot.relationshipStateRaw === null) {
+      localStorage.removeItem(RELATIONSHIP_STORAGE_KEY);
+    } else {
+      localStorage.setItem(RELATIONSHIP_STORAGE_KEY, snapshot.relationshipStateRaw);
+    }
+    if (snapshot.proactiveStateRaw === null) {
+      localStorage.removeItem(PROACTIVE_STORAGE_KEY);
+    } else {
+      localStorage.setItem(PROACTIVE_STORAGE_KEY, snapshot.proactiveStateRaw);
+    }
     if (snapshot.syncSession) {
       container.syncCoordinator.attach(snapshot.syncSession);
     }
