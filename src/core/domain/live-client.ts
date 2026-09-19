@@ -122,6 +122,9 @@ export class GeminiLiveClient {
    */
   private pendingReasoning = '';
   private framesSentCount = 0;
+  /** Latest vision frame retained across short Live reconnect gaps so the replacement
+   * Gemini session receives actual camera/screen content immediately. */
+  private latestVisionFrame: { data: string; capturedAt: number } | null = null;
   private lastUserVoiceTime = 0;
   private lastTurnFinishedTime = 0;
   private sessionStartTime = 0;
@@ -1336,6 +1339,10 @@ ${this.recentChatSummary}
       this.sessionStartTime = Date.now();
       this.setStatus('connected');
       this.startKeepAliveAndSilenceObserver();
+      // Re-prime the replacement Gemini session with the most recent real
+      // camera/screen frame. The vision source survives reconnect, but the new
+      // WebSocket has never seen the old session's frames.
+      this.sendLatestVisionFrame();
       void this.installAudioFocusListener();
 
       // A reconnect is a continuation, not a fresh call.  Do not duplicate the
@@ -2787,6 +2794,9 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
   }
 
   private sendVideoFrame(jpegBase64: string, attempt = this.connectionAttempt): void {
+    // Always retain the newest real frame. During reconnect session is null,
+    // so frames were previously discarded until the next timer tick.
+    this.latestVisionFrame = { data: jpegBase64, capturedAt: Date.now() };
     if (!this.session || !this.isActiveAttempt(attempt)) return;
     try {
       this.framesSentCount += 1;
@@ -2799,6 +2809,27 @@ HOW TO SPEAK: Greet naturally like a close friend picking up. TONE EXAMPLES ONLY
       this.updateStats(0, 0);
     } catch (e) {
       console.warn('[GeminiLive] Failed to send video frame:', e);
+    }
+  }
+
+  private sendLatestVisionFrame(): void {
+    const latest = this.latestVisionFrame;
+    if (!latest || !this.session || !this.isActiveAttempt(this.connectionAttempt)) return;
+    // Avoid replaying an old frame after a long outage; the continuous vision
+    // source will provide a fresh frame shortly.
+    if (Date.now() - latest.capturedAt > 5000) return;
+    try {
+      this.framesSentCount += 1;
+      this.session.sendRealtimeInput({
+        video: {
+          data: latest.data,
+          mimeType: 'image/jpeg',
+        },
+      });
+      this.updateStats(0, 0);
+      console.info('[GeminiLive] Re-primed replacement session with latest vision frame.');
+    } catch (e) {
+      console.warn('[GeminiLive] Failed to re-prime latest vision frame:', e);
     }
   }
 
