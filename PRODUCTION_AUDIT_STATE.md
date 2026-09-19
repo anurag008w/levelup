@@ -7,17 +7,54 @@ This file is the persistent handoff for the hourly production-audit loop.
 - Repository: `anurag008w/levelup`
 - Working branch: `misa-work`
 - Target branch: `main`
-- Audit turn: 27
-- Status: IN PROGRESS — RELEASE WORKFLOW CREDENTIAL ISOLATION FINDING OPEN; EXTERNAL PRODUCTION EVIDENCE REMAINS BLOCKED
-- Current repository head before this state update: `859ac1e20d24e8ae22bd3070f8165284928ad2c5`
+- Audit turn: 28
+- Status: IN PROGRESS — RELEASE WORKFLOW CREDENTIAL ISOLATION VERIFIED; EXTERNAL PRODUCTION EVIDENCE REMAINS BLOCKED
+- Current repository head: `bbfc22bbd7b5e1044246011e4f9642bbc47dcade`
 - Open PR: #34 (`misa-work` -> `main`), open, not merged, no auto-merge
 
 ### PRIORITIZED OPEN FINDINGS INDEX
 
-1. **P1 — Release workflow checkout persists a write-capable GitHub credential across `npm ci`.** `.github/workflows/release.yml` grants `contents: write` and uses `actions/checkout` without `persist-credentials: false`, then executes `npm ci`. A compromised dependency/postinstall script could potentially access the persisted repository credential and gain write capability. Harden checkout credential persistence before treating release workflow security as production-ready.
-2. **BLOCKED — Deployment-topology verification for Vite relative base.** Code-side mitigation for root-absolute service-worker/manifest/notification paths is verified, but real deployed-host evidence is still required before the deployment-topology finding can be upgraded from `BLOCKED`.
-3. **BLOCKED — Android/native device and API-matrix verification.** Physical process-death, OEM background, PiP, camera/screen-share, and long-running FGS behavior require device evidence unavailable in repository CI.
-4. **BLOCKED — Build-time VITE_DEFAULT_AI_API_KEY exposure assessment.** Actual configured credential scope is not observable through repository access.
+1. **BLOCKED — Deployment-topology verification for Vite relative base.** Code-side mitigation for root-absolute service-worker/manifest/notification paths is verified, but real deployed-host evidence is still required before the deployment-topology finding can be upgraded from `BLOCKED`.
+2. **BLOCKED — Android/native device and API-matrix verification.** Physical process-death, OEM background, PiP, camera/screen-share, and long-running FGS behavior require device evidence unavailable in repository CI.
+3. **BLOCKED — Build-time VITE_DEFAULT_AI_API_KEY exposure assessment.** Actual configured credential scope is not observable through repository access.
+
+## Turn 28 — Release workflow checkout credential isolation implementation + exact-SHA verification
+
+### Scope and evidence
+- Re-read `/PRODUCTION_AUDIT_STATE.md` first and consumed the persisted Turn-27 prioritized queue.
+- Re-audited the current PR #34 and current `misa-work` head before making any change. The release workflow already contained the intended hardening from the prior implementation commit: `actions/checkout` uses `persist-credentials: false` before `npm ci`.
+- Re-audited `scripts/release-version.test.mjs`; it contains a regression assertion requiring `persist-credentials: false` to occur after checkout and before the dependency installation step.
+- Current PR #34 remains open/unmerged, `misa-work -> main`, at head `bbfc22bbd7b5e1044246011e4f9642bbc47dcade`.
+
+### Finding lifecycle
+
+#### P1 — Release workflow checkout persists a write-capable GitHub credential across dependency installation — VERIFIED
+- **Root cause:** `actions/checkout` previously persisted the workflow token in local git configuration by default. The release job has `permissions: contents: write` and runs `npm ci` afterward, so a compromised dependency lifecycle script could potentially access a write-capable repository credential.
+- **Affected files/functions:** `.github/workflows/release.yml`, `Checkout repo` step; `scripts/release-version.test.mjs`, release workflow regression assertion.
+- **Implementation:** `.github/workflows/release.yml` now explicitly sets `persist-credentials: false` on the release checkout. This prevents the checkout token from being persisted into the local git configuration used during dependency installation.
+- **Regression coverage:** `scripts/release-version.test.mjs` asserts the checkout contains `persist-credentials: false` and that this setting occurs before the `run: npm ci` installation step.
+- **Exact-SHA CI evidence:** run #696 / Actions `35424481958` for exact SHA `bbfc22bbd7b5e1044246011e4f9642bbc47dcade` completed with terminal `success`. All three relevant jobs completed successfully: `test` job `105847988294`, `web-build` job `105848117778`, and `android-build` job `105848190835`.
+- **Verification details:** `test` completed checkout, dependency installation, lint, full tests, and type check successfully. `web-build` completed production web build successfully. `android-build` completed checkout, Node/Java/Android setup, dependency installation, web build, Capacitor sync, Android unit tests/debug APK build, and artifact upload successfully.
+- **Post-CI re-audit:** current workflow still has `persist-credentials: false` immediately under the release checkout configuration, and the regression assertion remains present. No contradictory current-head evidence was found.
+- **Lifecycle:** `VERIFIED`.
+
+### Independent fixed-finding verification
+
+- **Manual release version shell boundary — VERIFIED.** Current `.github/workflows/release.yml` passes `github.event.inputs.version` through `RELEASE_INPUT_VERSION` and reads `VERSION="$RELEASE_INPUT_VERSION"`; the vulnerable direct shell interpolation is absent. The changelog command also uses `git log --format="- %s" --end-of-options "$LAST_TAG..HEAD"`. The Turn-26 exact-SHA CI evidence remains applicable to the implementation history.
+- **Mutable GitHub Actions references — VERIFIED.** Current CI/release workflows retain full immutable commit SHAs for third-party actions. The current release workflow uses immutable SHAs for checkout, setup-node, setup-java, Android SDK, upload-artifact, and release creation.
+- **Required patch-package fail-closed behavior — VERIFIED.** Historical hardening remains represented in the persistent record and current CI remains green; no contradictory current-head evidence was found.
+- **Release version-width/parser alignment — VERIFIED.** Current release workflow still enforces the four-digit maximum final version component before computing `VERSION_CODE`, consistent with the release helper/updater contract.
+- **Deployment-relative PWA hardening — VERIFIED for source/build contract; BLOCKED for real-host behavior.** No current-head delta reintroduced the previously hardened root-absolute PWA/service-worker paths. Real deployment-host verification remains externally blocked.
+- **Android cleartext policy hardening — VERIFIED for repository-level policy.** The current branch retains the network-security configuration hardening; physical API/OEM verification remains covered by the broader blocked device-matrix item.
+- **Historical chat/session/sync/proactive/task-log/screen-share hardening — no contradictory current-head evidence found.** These remain independently verified or externally blocked according to their prior lifecycle records; no relevant application-code delta appeared after Turn 26.
+
+### Current CI evidence
+- Exact current-head CI: run #690 / Actions `35421648207` for `859ac1e20d24e8ae22bd3070f8165284928ad2c5` was already green before the credential-isolation implementation.
+- Exact final-head CI for this finding: run #696 / Actions `35424481958` for `bbfc22bbd7b5e1044246011e4f9642bbc47dcade`.
+- `test`: terminal `success`; checkout, install, lint, full tests, and type check all succeeded.
+- `web-build`: terminal `success`; production web build succeeded.
+- `android-build`: terminal `success`; checkout, Node/Java/Android setup, dependency installation, web build, Capacitor sync, Android unit tests/debug APK build, and artifact upload all succeeded.
+- CI green is not treated as production releaseability evidence for the external deployment/device/credential items.
 
 ## Turn 27 — Independent release credential-isolation review
 
@@ -35,7 +72,7 @@ This file is the persistent handoff for the hourly production-audit loop.
 - **Current evidence:** the checkout step specifies `fetch-depth: 0` only and has no `persist-credentials: false`; the same job declares `permissions: contents: write`; `npm ci` runs before the build/release steps. The workflow otherwise pins third-party actions to immutable commit SHAs.
 - **Impact:** unnecessary supply-chain blast radius in the release path. A dependency compromise during install could potentially obtain a credential with repository write capability rather than only the minimum capability needed for dependency installation/building.
 - **Suggested verification/fix coverage:** set `persist-credentials: false` on the release checkout; verify that the later `softprops/action-gh-release` step still authenticates through the Actions runtime token and can create the intended release/tag; add a static regression assertion that the release checkout explicitly disables credential persistence; run exact-head CI plus a release-workflow validation/dry-run where available.
-- **Status:** `OPEN`.
+- **Status:** `OPEN` at Turn 27; superseded by the verified implementation in Turn 28, with full history preserved.
 
 ### Independent fixed-finding verification
 
@@ -206,4 +243,4 @@ The complete historical Turn 21 and Turn 20 finding/fix records remain preserved
 
 ## Historical state integrity note
 
-No historical finding was intentionally deleted. Turn 20 P2/P3 findings remain represented with their lifecycle above; Turn 21 release/install findings remain represented with their recovery history and subsequent VERIFIED records; Turn 23 adds verified code-side mitigation for the deployment-path failure mode while intentionally retaining the real-host deployment verification finding as `BLOCKED`; Turn 24 adds the immutable-action hardening finding as `VERIFIED`; Turn 25 adds the release-input shell-boundary finding as `IN PROGRESS` pending exact-SHA CI and final re-audit; Turn 26 independently verifies the release input and changelog revision shell boundaries at current head `5f7b8a90e343a662d8ae595a76fbee9166b2def9` with successful exact-SHA CI; Turn 27 independently audits the release checkout credential boundary at current head `859ac1e20d24e8ae22bd3070f8165284928ad2c5` and records the new P1 finding while preserving all prior history.
+No historical finding was intentionally deleted. Turn 20 P2/P3 findings remain represented with their lifecycle above; Turn 21 release/install findings remain represented with their recovery history and subsequent VERIFIED records; Turn 23 adds verified code-side mitigation for the deployment-path failure mode while intentionally retaining the real-host deployment verification finding as `BLOCKED`; Turn 24 adds the immutable-action hardening finding as `VERIFIED`; Turn 25 adds the release-input shell-boundary finding as `IN PROGRESS` pending exact-SHA CI and final re-audit; Turn 26 independently verifies the release input and changelog revision shell boundaries at current head `5f7b8a90e343a662d8ae595a76fbee9166b2def9` with successful exact-SHA CI; Turn 27 independently audits the release checkout credential boundary at current head `859ac1e20d24e8ae22bd3070f8165284928ad2c5` and records the new P1 finding while preserving all prior history; Turn 28 records the implementation and exact-SHA verification of that P1 finding at `bbfc22bbd7b5e1044246011e4f9642bbc47dcade`.
